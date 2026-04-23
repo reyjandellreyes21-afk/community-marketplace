@@ -21,9 +21,9 @@ export default function HomeStickyHeader({
   logout,
 }) {
   return (
-    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/85">
+    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80">
       <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-4 py-3 md:px-8">
-        <a href="#" className="logo text-xl font-extrabold tracking-tight text-slate-900">
+        <a href="#" className="logo text-xl font-semibold tracking-tight text-slate-900">
           cpr/p
         </a>
 
@@ -80,7 +80,7 @@ export default function HomeStickyHeader({
                 setShowAuthPanel(true);
                 setAuthMode("login");
               }}
-              className="rounded-full bg-teal-600 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-500"
+              className="btn-primary px-4 py-2 text-xs"
             >
               Login / Sign up
             </button>
@@ -90,7 +90,7 @@ export default function HomeStickyHeader({
               type="button"
               aria-label="Open navigation menu"
               onClick={() => setShowNavMenu((prev) => !prev)}
-              className="group flex items-center justify-center rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold transition hover:border-teal-400 hover:bg-teal-50"
+              className="group flex items-center justify-center rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold transition hover:border-teal-300 hover:bg-teal-50"
             >
               <span className="text-sm font-bold leading-none text-slate-700 transition group-hover:text-teal-600">
                 ☰
@@ -145,7 +145,7 @@ export default function HomeStickyHeader({
                       setAuthMode("login");
                       setShowNavMenu(false);
                     }}
-                    className="w-full rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-500"
+                    className="btn-primary w-full px-3 py-2 text-sm"
                   >
                     Login / Sign up
                   </button>

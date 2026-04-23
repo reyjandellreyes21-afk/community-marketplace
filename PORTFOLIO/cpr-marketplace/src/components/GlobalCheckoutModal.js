@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { loadPersistedState, persistMarketplaceState } from "@/lib/cprMarketplaceStorage";
+import { createOrderApi } from "@/lib/marketplaceApi";
 
 function canBuy(user) {
   return Boolean(user?.roles?.includes("admin") || user?.roles?.includes("buyer"));
@@ -167,6 +168,9 @@ export default function GlobalCheckoutModal() {
       orders: [newOrder, ...orders],
       cart: [],
     });
+    createOrderApi(newOrder).catch(() => {
+      // Keep local checkout functional if API is unavailable.
+    });
     setCheckoutForm((prev) => ({ ...prev, notes: "", address: "" }));
     setOpen(false);
     window.dispatchEvent(
@@ -180,7 +184,7 @@ export default function GlobalCheckoutModal() {
 
   return (
     <section className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6">
+      <div className="surface-card max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-xl font-semibold">Buyer Checkout</h3>
           <button
@@ -287,11 +291,7 @@ export default function GlobalCheckoutModal() {
               placeholder="Order notes (optional)"
               className="h-24 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
-            <button
-              type="button"
-              onClick={checkout}
-              className="rounded-full bg-teal-600 px-5 py-2 text-sm font-semibold text-white hover:bg-teal-500"
-            >
+            <button type="button" onClick={checkout} className="btn-primary px-5 py-2 text-sm">
               Place Order
             </button>
           </div>

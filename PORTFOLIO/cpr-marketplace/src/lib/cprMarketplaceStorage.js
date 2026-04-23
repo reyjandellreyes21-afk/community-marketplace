@@ -1,4 +1,5 @@
 export const CPR_MARKETPLACE_STORAGE_KEY = "cpr-marketplace-state-v1";
+export const CPR_MARKETPLACE_SESSION_KEY = "cpr-marketplace-session-v1";
 
 export function loadPersistedState() {
   if (typeof window === "undefined") return null;
@@ -32,4 +33,24 @@ export function persistMarketplaceState(updates, options = {}) {
   if (!silent) {
     window.dispatchEvent(new Event("cpr-marketplace-state-changed"));
   }
+}
+
+export function loadSession() {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(CPR_MARKETPLACE_SESSION_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function persistSession(session) {
+  if (typeof window === "undefined") return;
+  if (!session) {
+    localStorage.removeItem(CPR_MARKETPLACE_SESSION_KEY);
+    return;
+  }
+  localStorage.setItem(CPR_MARKETPLACE_SESSION_KEY, JSON.stringify(session));
 }

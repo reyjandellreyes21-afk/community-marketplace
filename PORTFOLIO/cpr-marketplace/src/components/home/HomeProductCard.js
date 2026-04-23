@@ -1,6 +1,6 @@
 export default function HomeProductCard({ product, onAddToCart }) {
   return (
-    <article className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-3">
+    <article className="surface-card flex h-full flex-col p-3">
       <div
         className={`relative h-32 overflow-hidden rounded-xl ${
           product.imageDataUrl ? "bg-slate-100" : `bg-gradient-to-r ${product.imageClass}`
@@ -19,10 +19,10 @@ export default function HomeProductCard({ product, onAddToCart }) {
           </span>
         )}
       </div>
-      <h3 className="mt-3 line-clamp-2 text-[22px] font-semibold leading-tight text-slate-900">
+      <h3 className="mt-3 line-clamp-2 text-xl font-semibold leading-tight text-slate-900">
         {product.name}
       </h3>
-      <p className="mt-1 line-clamp-2 text-sm text-slate-500">{product.subtitle}</p>
+      <p className="mt-1 line-clamp-2 text-sm text-slate-600">{product.subtitle}</p>
       <div className="mt-3 flex items-center gap-3 text-sm text-slate-500">
         <span className="text-amber-400">★</span>
         <span>{product.rating}</span>
@@ -41,7 +41,7 @@ export default function HomeProductCard({ product, onAddToCart }) {
       <button
         type="button"
         onClick={() => onAddToCart(product)}
-        className="mt-3 rounded-full border border-slate-300 px-3 py-2 text-xs font-semibold hover:bg-slate-100"
+        className="btn-secondary mt-3 px-3 py-2 text-xs"
       >
         Add to Cart
       </button>

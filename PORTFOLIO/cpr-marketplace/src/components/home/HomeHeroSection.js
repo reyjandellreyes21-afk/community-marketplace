@@ -7,14 +7,14 @@ export default function HomeHeroSection({
   setAuthMode,
 }) {
   return (
-    <section className="rounded-3xl border border-slate-200 bg-gradient-to-br from-teal-50 to-blue-50 p-8 md:p-12">
-      <p className="mb-3 inline-block rounded-full border border-teal-300/50 bg-teal-100 px-3 py-1 text-xs font-medium uppercase tracking-widest text-teal-700">
+    <section className="surface-card p-8 md:p-12">
+      <p className="mb-4 inline-block rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-medium uppercase tracking-widest text-teal-700">
         Community Marketplace
       </p>
-      <h1 className="max-w-2xl text-4xl font-bold tracking-tight md:text-5xl">
+      <h1 className="max-w-2xl text-4xl font-semibold tracking-tight md:text-5xl">
         Empowering Homeowners to Offer Products and Services Locally.
       </h1>
-      <p className="mt-4 max-w-2xl text-base text-slate-700 md:text-lg">
+      <p className="mt-4 max-w-2xl text-base text-slate-600 md:text-lg">
         Connect trusted neighbors, support local sellers, and discover everyday products and reliable services in one
         community-driven platform.
       </p>
@@ -25,7 +25,7 @@ export default function HomeHeroSection({
               <button
                 type="button"
                 onClick={() => enableRole("seller")}
-                className="rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-800 transition hover:bg-slate-100"
+                className="btn-secondary px-5 py-3 text-sm"
               >
                 Become a Seller
               </button>
@@ -34,7 +34,7 @@ export default function HomeHeroSection({
               <button
                 type="button"
                 onClick={() => enableRole("buyer")}
-                className="rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-800 transition hover:bg-slate-100"
+                className="btn-secondary px-5 py-3 text-sm"
               >
                 Enable Buyer Mode
               </button>
@@ -48,7 +48,7 @@ export default function HomeHeroSection({
                 setShowAuthPanel(true);
                 setAuthMode("login");
               }}
-              className="rounded-full bg-teal-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-teal-500"
+              className="btn-primary px-5 py-3 text-sm"
             >
               Login to Buy
             </button>
@@ -58,7 +58,7 @@ export default function HomeHeroSection({
                 setShowAuthPanel(true);
                 setAuthMode("register");
               }}
-              className="rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-800 transition hover:bg-slate-100"
+              className="btn-secondary px-5 py-3 text-sm"
             >
               Create Seller Account
             </button>

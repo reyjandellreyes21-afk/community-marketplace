@@ -11,19 +11,28 @@ import {
 } from "react";
 import { marketplaceCategories } from "@/data/categories";
 import { initialProducts, initialUsers, withoutLegacyDemoProducts } from "@/data/seedMarketplace";
-import { loadPersistedState, persistMarketplaceState } from "@/lib/cprMarketplaceStorage";
+import {
+  loadPersistedState,
+  loadSession,
+  persistMarketplaceState,
+  persistSession,
+} from "@/lib/cprMarketplaceStorage";
+import {
+  createOrderApi,
+  createProductApi,
+  fetchMarketplaceSnapshot,
+  loginUser,
+  registerUser,
+} from "@/lib/marketplaceApi";
 import FeaturedCategoriesSection from "@/components/home/FeaturedCategoriesSection";
 import HomeAddToCartModal from "@/components/home/HomeAddToCartModal";
 import HomeAuthPanel from "@/components/home/HomeAuthPanel";
 import HomeFlyToCartLayer from "@/components/home/HomeFlyToCartLayer";
 import HomeHeroSection from "@/components/home/HomeHeroSection";
 import HomeMarketplaceNotice from "@/components/home/HomeMarketplaceNotice";
-import HomeProductCard from "@/components/home/HomeProductCard";
-import HomeProductPlaceholder from "@/components/home/HomeProductPlaceholder";
+import HomeProductSection from "@/components/home/HomeProductSection";
 import HomeSellerDashboardModal from "@/components/home/HomeSellerDashboardModal";
 import HomeStickyHeader from "@/components/home/HomeStickyHeader";
-
-const EMPTY_GRID_SLOTS = 4;
 
 export default function HomePage() {
   const router = useRouter();
@@ -36,6 +45,7 @@ export default function HomePage() {
   const initialCategories = marketplaceCategories;
 
   const persistedState = useMemo(() => loadPersistedState(), []);
+  const persistedSession = useMemo(() => loadSession(), []);
   const [categories] = useState(initialCategories);
   const [users, setUsers] = useState(persistedState?.users ?? initialUsers);
   const [products, setProducts] = useState(() =>
@@ -43,7 +53,9 @@ export default function HomePage() {
   );
   const [orders, setOrders] = useState(persistedState?.orders ?? []);
   const [cart, setCart] = useState(persistedState?.cart ?? []);
-  const [currentUserId, setCurrentUserId] = useState(persistedState?.currentUserId ?? null);
+  const [currentUserId, setCurrentUserId] = useState(
+    persistedState?.currentUserId ?? persistedSession?.userId ?? null
+  );
   const [activeMode, setActiveMode] = useState(persistedState?.activeMode ?? "buyer");
   const [authMode, setAuthMode] = useState("login");
   const [showAuthPanel, setShowAuthPanel] = useState(false);
@@ -66,6 +78,23 @@ export default function HomePage() {
     isPromo: false,
     imageDataUrl: null,
   });
+
+  useEffect(() => {
+    let active = true;
+    fetchMarketplaceSnapshot()
+      .then((snapshot) => {
+        if (!active || !snapshot) return;
+        if (snapshot.users?.length) setUsers(snapshot.users);
+        if (snapshot.products) setProducts(withoutLegacyDemoProducts(snapshot.products));
+        if (snapshot.orders) setOrders(snapshot.orders);
+      })
+      .catch(() => {
+        // Keep local experience when backend is unavailable.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     persistMarketplaceState(
@@ -214,7 +243,7 @@ export default function HomePage() {
     return true;
   };
 
-  const handleAuthSubmit = (event) => {
+  const handleAuthSubmit = async (event) => {
     event.preventDefault();
     setAuthError("");
 
@@ -228,6 +257,25 @@ export default function HomePage() {
     }
 
     if (authMode === "login") {
+      try {
+        const result = await loginUser({ email, password });
+        const loggedUser = result.user;
+        setUsers((prev) => {
+          const exists = prev.some((u) => u.id === loggedUser.id);
+          return exists ? prev.map((u) => (u.id === loggedUser.id ? loggedUser : u)) : [...prev, loggedUser];
+        });
+        setCurrentUserId(loggedUser.id);
+        setActiveMode(
+          loggedUser.roles.includes("buyer") || loggedUser.roles.includes("admin") ? "buyer" : "seller"
+        );
+        persistSession({ token: result.token, userId: loggedUser.id });
+        setShowAuthPanel(false);
+        setAuthInput({ name: "", email: "", password: "" });
+        setNotice(`Welcome back, ${loggedUser.name}.`);
+        return;
+      } catch {
+        // Fallback to local auth while backend is still provisioning.
+      }
       const foundUser = users.find((user) => user.email === email && user.password === password);
       if (!foundUser) {
         setAuthError("Invalid email or password.");
@@ -247,6 +295,21 @@ export default function HomePage() {
     if (emailExists) {
       setAuthError("Email is already registered.");
       return;
+    }
+
+    try {
+      const result = await registerUser({ name, email, password });
+      const createdUser = result.user;
+      setUsers((prev) => [...prev, createdUser]);
+      setCurrentUserId(createdUser.id);
+      setActiveMode("buyer");
+      persistSession({ token: result.token, userId: createdUser.id });
+      setShowAuthPanel(false);
+      setAuthInput({ name: "", email: "", password: "" });
+      setNotice(`Account created for ${createdUser.name}.`);
+      return;
+    } catch {
+      // Fallback to local registration during migration.
     }
 
     const newUser = {
@@ -270,6 +333,7 @@ export default function HomePage() {
     setCurrentUserId(null);
     setActiveMode("buyer");
     setCart([]);
+    persistSession(null);
     setShowSellerDashboardModal(false);
     setNotice("Logged out.");
   };
@@ -358,7 +422,7 @@ export default function HomePage() {
     [cart, products]
   );
 
-  const createProduct = (event) => {
+  const createProduct = async (event) => {
     event.preventDefault();
     if (!requireAuth("seller")) return;
     if (!newProductForm.name.trim() || !newProductForm.price.trim()) {
@@ -391,6 +455,9 @@ export default function HomePage() {
       created.imageDataUrl = newProductForm.imageDataUrl;
     }
     setProducts((prev) => [created, ...prev]);
+    createProductApi(created).catch(() => {
+      // Non-blocking while backend endpoints are rolling out.
+    });
     setNewProductForm({
       name: "",
       subtitle: "",
@@ -563,44 +630,26 @@ export default function HomePage() {
           handleNextClick={handleNextClick}
         />
 
-        <section>
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-semibold">Popular Products</h2>
-          </div>
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {activeProducts.length === 0
-              ? Array.from({ length: EMPTY_GRID_SLOTS }, (_, i) => <HomeProductPlaceholder key={`pop-ph-${i}`} />)
-              : activeProducts.map((product) => (
-                  <HomeProductCard key={product.id} product={product} onAddToCart={openAddToCartModal} />
-                ))}
-          </div>
-        </section>
+        <HomeProductSection
+          title="Popular Products"
+          products={activeProducts}
+          sectionKey="popular"
+          onAddToCart={openAddToCartModal}
+        />
 
-        <section>
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-semibold">Latest Products</h2>
-          </div>
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {latestProducts.length === 0
-              ? Array.from({ length: EMPTY_GRID_SLOTS }, (_, i) => <HomeProductPlaceholder key={`latest-ph-${i}`} />)
-              : latestProducts.map((product) => (
-                  <HomeProductCard key={`latest-${product.id}`} product={product} onAddToCart={openAddToCartModal} />
-                ))}
-          </div>
-        </section>
+        <HomeProductSection
+          title="Latest Products"
+          products={latestProducts}
+          sectionKey="latest"
+          onAddToCart={openAddToCartModal}
+        />
 
-        <section>
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-semibold">Services</h2>
-          </div>
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {serviceProducts.length === 0
-              ? Array.from({ length: EMPTY_GRID_SLOTS }, (_, i) => <HomeProductPlaceholder key={`svc-ph-${i}`} />)
-              : serviceProducts.map((product) => (
-                  <HomeProductCard key={`service-${product.id}`} product={product} onAddToCart={openAddToCartModal} />
-                ))}
-          </div>
-        </section>
+        <HomeProductSection
+          title="Services"
+          products={serviceProducts}
+          sectionKey="services"
+          onAddToCart={openAddToCartModal}
+        />
       </main>
     </div>
   );
