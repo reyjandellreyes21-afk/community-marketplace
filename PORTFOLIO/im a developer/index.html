@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rey Jandell | Full-Stack Developer</title>
+  <meta name="description"
+    content="Portfolio of Rey Jandell - full-stack developer focused on performant and user-focused web products." />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Rey Jandell | Full-Stack Developer" />
+  <meta property="og:description"
+    content="Portfolio of Rey Jandell - full-stack developer focused on performant and user-focused web products." />
+  <meta property="og:url" content="https://reyjandellreyes21-afk.github.io/im-a-developer/" />
+  <meta property="og:image"
+    content="https://reyjandellreyes21-afk.github.io/im-a-developer/assets/portfolio-cover.png" />
+  <meta property="og:site_name" content="ReyJandell.dev" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Rey Jandell | Full-Stack Developer" />
+  <meta name="twitter:description"
+    content="Portfolio of Rey Jandell - full-stack developer focused on performant and user-focused web products." />
+  <meta name="twitter:image"
+    content="https://reyjandellreyes21-afk.github.io/im-a-developer/assets/portfolio-cover.png" />
+  <!--
+      Supabase contact form configuration for static hosting (GitHub Pages).
+      Set values before deploy:
+      - portfolio-supabase-url: https://YOUR_PROJECT_REF.supabase.co
+      - portfolio-supabase-anon-key: your public anon key (safe for frontend use)
+      - portfolio-supabase-table: table to insert contact submissions into
+    -->
+  <meta name="portfolio-supabase-url" content="https://hesoleajfeehzqlnfwrr.supabase.co" />
+  <meta name="portfolio-supabase-anon-key" content="sb_publishable_mLku7XeNVNiFeGbNBJ2rSQ_vm49KFvH" />
+  <meta name="portfolio-supabase-table" content="contact_messages" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/devicon.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <a href="#mainContent" class="skip-link">Skip to main content</a>
+  <header class="navbar" id="top">
+    <div class="container nav-wrap">
+      <a href="#intro" class="logo">ReyJandell.dev</a>
+
+      <button class="menu-btn" id="menuBtn" type="button" aria-label="Toggle navigation menu" aria-expanded="false"
+        aria-controls="navPanel">
+        <span></span><span></span><span></span>
+      </button>
+
+      <nav class="nav-panel" id="navPanel" aria-label="Primary navigation">
+        <div class="section-links">
+          <a class="nav-text-link section-text-link" href="#about">About</a>
+          <a class="nav-text-link section-text-link" href="#projects">Projects</a>
+          <a class="nav-text-link section-text-link" href="#experience">Experience</a>
+          <a class="nav-text-link section-text-link" href="#skills">Skills</a>
+          <a class="nav-text-link section-text-link" href="#contact">Contact</a>
+        </div>
+        <div class="nav-utility">
+          <button class="theme-toggle nav-icon-btn" id="themeToggle" type="button" aria-label="Switch theme"
+            data-tooltip="Theme">
+            <span class="theme-icon" aria-hidden="true">
+              <svg class="theme-svg theme-svg-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="4" />
+                <path
+                  d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+              </svg>
+              <svg class="theme-svg theme-svg-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            </span>
+          </button>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main id="mainContent" tabindex="-1">
+    <section class="section hero hero--simple hero--ref" id="intro">
+      <div class="hero-float-boxes" aria-hidden="true">
+        <span class="hero-float-box hero-float-box--1"></span>
+        <span class="hero-float-box hero-float-box--2"></span>
+        <span class="hero-float-box hero-float-box--3"></span>
+        <span class="hero-float-box hero-float-box--4"></span>
+        <span class="hero-float-box hero-float-box--5"></span>
+        <span class="hero-float-box hero-float-box--6"></span>
+      </div>
+      <div class="container hero-simple">
+        <div class="hero-simple-copy reveal-target">
+          <h1 class="hero-name hero-name-simple">
+            <span class="hero-name-accent">Rey Jandell</span>
+          </h1>
+          <p class="hero-role">Full-Stack Developer for Reliable Business Systems</p>
+          <p class="hero-bio">
+            I help teams turn manual processes into reliable web systems. I build clean,
+            user-friendly interfaces and connect them to stable backend workflows so your 
+            team can work faster, with fewer errors and less downtime.
+          </p>
+          <div class="hero-actions">
+            <a href="#contact" class="btn btn-primary">Start a Project</a>
+            <a href="assets/Resume-Rey-Jandell-dev.pdf" class="btn btn-outline btn-hero-secondary btn-resume"
+              target="_blank" rel="noreferrer">
+              <svg class="btn-resume-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              View Resume
+            </a>
+          </div>
+          <ul class="hero-social" aria-label="GitHub, Upwork, and LinkedIn">
+            <li>
+              <a class="nav-icon-btn hero-social-icon" href="https://github.com/reyjandellreyes21-afk" target="_blank"
+                rel="noreferrer" aria-label="GitHub profile" data-tooltip="GitHub">
+                <i class="devicon-github-original nav-icon-devicon" aria-hidden="true"></i>
+              </a>
+            </li>
+            <li>
+              <a class="nav-icon-btn hero-social-icon" href="https://www.upwork.com/freelancers/~01b58fb342e2312fc8"
+                target="_blank" rel="noreferrer" aria-label="Upwork profile" data-tooltip="Upwork">
+                <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path
+                    d="M18.561 13.158c-1.102 0-2.135-.467-3.074-1.227l.228-1.076.008-.042c.207-1.143.849-3.06 2.839-3.06 1.492 0 2.703 1.212 2.703 2.703-.001 1.489-1.212 2.702-2.704 2.702zm0-8.14c-2.539 0-4.51 1.649-5.31 4.366-1.22-1.834-2.148-4.036-2.687-5.892H7.828v7.112c-.002 1.406-1.141 2.546-2.547 2.548-1.405-.002-2.543-1.143-2.545-2.548V3.492H0v7.112c0 2.914 2.37 5.303 5.281 5.303 2.913 0 5.283-2.389 5.283-5.303v-1.19c.529 1.107 1.182 2.229 1.974 3.221l-1.673 7.873h2.797l1.213-5.71c1.063.679 2.285 1.109 3.686 1.109 3 0 5.439-2.452 5.439-5.45 0-3-2.439-5.439-5.439-5.439z" />
+                </svg>
+              </a>
+            </li>
+            <li>
+              <a class="nav-icon-btn hero-social-icon" href="https://www.linkedin.com/in/reyes-rey-jandell-119467270/"
+                target="_blank" rel="noreferrer" aria-label="LinkedIn profile" data-tooltip="LinkedIn">
+                <i class="devicon-linkedin-plain nav-icon-devicon" aria-hidden="true"></i>
+              </a>
+            </li>
+          </ul>
+        </div>
+        <div class="hero-visual reveal-target reveal-delay-1">
+          <div class="hero-avatar-ring">
+            <div class="hero-avatar-inner">
+              <img class="hero-avatar" src="assets/image_12.png" width="360" height="360" alt="Rey Jandell" loading="eager"
+                decoding="async" />
+              <span class="hero-avatar-placeholder" aria-hidden="true">RJ</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <a class="hero-scroll-hint" href="#about" aria-label="Scroll to About section">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round" aria-hidden="true">
+          <line x1="12" y1="3" x2="12" y2="9" />
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </a>
+    </section>
+
+    <section class="section" id="about">
+      <div class="container about-shell">
+        <div class="about-head reveal-target">
+          <h2 class="about-title">About <span>Me</span></h2>
+          <p class="about-subtitle">I build practical software that improves operations, saves time, and supports better decisions.</p>
+          <div class="about-pill">
+            <span class="about-pill-chip">
+              <svg class="about-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 8l10-5 10 5-10 5-10-5z" />
+                <path d="M6 10.5v4.5c0 1.1 2.7 3 6 3s6-1.9 6-3v-4.5" />
+              </svg>
+              Bachelor of Science in Information Technology
+            </span>
+            <span class="about-pill-divider"></span>
+            <span>Dalubhasaan ng Lungsod ng Lucena</span>
+          </div>
+        </div>
+
+        <div class="about-layout">
+          <article class="about-story reveal-target reveal-delay-1">
+            <h3>My Journey</h3>
+            <p>
+              I have 4+ years of hands-on development experience building web-based tools for operational teams.
+              My work focuses on internal systems, process improvement, and dependable feature delivery.
+            </p>
+            <p>
+              I combine frontend clarity with backend integration to produce software that is easy to use and easy to
+              maintain.
+            </p>
+            <p>
+              I work closely with stakeholders to understand requirements, turn them into clear implementation plans, and
+              deliver features that match real operational needs.
+            </p>
+            <p>
+              I prioritize accessibility, performance, and long-term reliability in every build so teams can confidently
+              use and scale the systems over time.
+            </p>
+          </article>
+
+          <div class="about-work reveal-target reveal-delay-2">
+            <h3>How I Work</h3>
+            <div class="about-work-grid">
+              <article class="about-work-card">
+                <span class="about-work-icon"><i class="devicon-codeigniter-plain" aria-hidden="true"></i></span>
+                <h4>Clean Code</h4>
+                <p>Writing maintainable, scalable systems that stand the test of time.</p>
+              </article>
+              <article class="about-work-card">
+                <span class="about-work-icon"><i class="devicon-chrome-plain" aria-hidden="true"></i></span>
+                <h4>Innovation</h4>
+                <p>Staying ahead of trends and implementing practical modern solutions.</p>
+              </article>
+              <article class="about-work-card">
+                <span class="about-work-icon"><i class="devicon-slack-plain" aria-hidden="true"></i></span>
+                <h4>Collaboration</h4>
+                <p>Working effectively with teams to deliver high-quality outcomes.</p>
+              </article>
+              <article class="about-work-card">
+                <span class="about-work-icon"><i class="devicon-graphql-plain" aria-hidden="true"></i></span>
+                <h4>Performance</h4>
+                <p>Optimizing speed, accessibility, and user experience in every build.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+
+        <div class="about-stats reveal-target">
+          <article class="about-stat-card">
+            <p class="about-stat-value">10+</p>
+            <p class="about-stat-label">Projects Completed</p>
+          </article>
+          <article class="about-stat-card">
+            <p class="about-stat-value">4+</p>
+            <p class="about-stat-label">Years Experience</p>
+          </article>
+          <article class="about-stat-card">
+            <p class="about-stat-value">30+</p>
+          <p class="about-stat-label">Tools &amp; Technologies Used</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="projects">
+      <div class="container">
+        <h2 class="reveal-target">Featured <span class="featured-work-accent">Work</span></h2>
+        <p class="section-subtext reveal-target">
+          Real projects focused on usability, system reliability, and measurable business value.
+        </p>
+
+        <div class="projects-grid reveal-target">
+          <article class="project-card reveal-target">
+            <div class="project-cover-wrap">
+              <img class="project-cover" src="assets/quiz-app-cover.png" alt="Quiz App preview" />
+            </div>
+            <h3>Quiz App</h3>
+            <div class="project-portfolio-share">
+              <div class="project-portfolio-share-header">
+                <span class="project-portfolio-share-label">Progress</span>
+                <span class="project-portfolio-share-value">47%</span>
+              </div>
+              <div
+                class="project-portfolio-share-bar"
+                role="progressbar"
+                aria-valuenow="47"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuetext="47 percent"
+                aria-label="This project is 47 percent complete"
+              >
+                <span class="project-portfolio-share-fill" style="width: 47%" aria-hidden="true"></span>
+              </div>
+            </div>
+            <p class="project-summary">
+              Full-stack quiz platform with separate client and server apps, focused on clean gameplay flow, secure input
+              handling, and reliable score interactions.
+            </p>
+            <div class="project-tags">
+              <span><i class="devicon-react-original" aria-hidden="true"></i> React</span>
+              <span><i class="devicon-vitejs-plain" aria-hidden="true"></i> Vite</span>
+              <span><i class="devicon-tailwindcss-plain" aria-hidden="true"></i> Tailwind CSS</span>
+              <span><i class="devicon-javascript-plain" aria-hidden="true"></i> JavaScript</span>
+              <span><i class="devicon-nodejs-plain" aria-hidden="true"></i> Node.js</span>
+              <span><i class="devicon-express-original" aria-hidden="true"></i> Express</span>
+              <span><i class="devicon-mongodb-plain" aria-hidden="true"></i> MongoDB</span>
+              <span><span class="stack-chip-fallback" aria-hidden="true">Mg</span> Mongoose</span>
+              <span><i class="devicon-githubactions-plain" aria-hidden="true"></i> GitHub Actions</span>
+              <span><i class="devicon-github-original" aria-hidden="true"></i> GitHub Pages</span>
+            </div>
+            <div class="project-links">
+              <a href="https://reyjandellreyes21-afk.github.io/quiz-app/" target="_blank" rel="noreferrer">Live Demo</a>
+              <a href="https://github.com/reyjandellreyes21-afk/quiz-app" target="_blank" rel="noreferrer">GitHub</a>
+            </div>
+          </article>
+
+          <article class="project-card reveal-target">
+            <div class="project-cover-wrap">
+              <img class="project-cover" src="assets/cpr-p-cover.png" alt="cpr/p local marketplace preview" />
+            </div>
+            <h3>cpr/p</h3>
+            <div class="project-portfolio-share">
+              <div class="project-portfolio-share-header">
+                <span class="project-portfolio-share-label">Progress</span>
+                <span class="project-portfolio-share-value">20%</span>
+              </div>
+              <div
+                class="project-portfolio-share-bar"
+                role="progressbar"
+                aria-valuenow="20"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuetext="20 percent"
+                aria-label="This project is 20 percent complete"
+              >
+                <span class="project-portfolio-share-fill" style="width: 20%" aria-hidden="true"></span>
+              </div>
+            </div>
+            <p class="project-summary">
+              Empowering Homeowners to Offer Products and Services Locally.<br /><br />
+              Connect trusted neighbors, support local sellers, and discover everyday products and reliable services in one community-driven platform.
+            </p>
+            <div class="project-tags">
+              <span><i class="devicon-react-original" aria-hidden="true"></i> React</span>
+              <span><i class="devicon-nextjs-plain" aria-hidden="true"></i> Next.js</span>
+              <span><i class="devicon-tailwindcss-plain" aria-hidden="true"></i> Tailwind CSS</span>
+              <span><i class="devicon-vercel-plain" aria-hidden="true"></i> Vercel</span>
+            </div>
+            <div class="project-links">
+              <a href="https://cpr-marketplace.vercel.app/" target="_blank" rel="noreferrer">Live Demo</a>
+              <a href="https://github.com/reyjandellreyes21-afk/cpr-marketplace" target="_blank" rel="noreferrer">GitHub</a>
+            </div>
+          </article>
+
+          <article class="project-card reveal-target">
+            <div class="project-cover-wrap">
+              <img class="project-cover" src="assets/neon-siege-cover.png" alt="Neon Siege interactive game preview" />
+            </div>
+            <h3>Neon Siege</h3>
+            <div class="project-portfolio-share">
+              <div class="project-portfolio-share-header">
+                <span class="project-portfolio-share-label">Progress</span>
+                <span class="project-portfolio-share-value">29%</span>
+              </div>
+              <div
+                class="project-portfolio-share-bar"
+                role="progressbar"
+                aria-valuenow="29"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuetext="29 percent"
+                aria-label="This project is 29 percent complete"
+              >
+                <span class="project-portfolio-share-fill" style="width: 29%" aria-hidden="true"></span>
+              </div>
+            </div>
+            <p class="project-summary">
+              Interactive web project built to ensure smooth performance, responsive controls, and consistent user feedback
+              across devices.
+            </p>
+            <div class="project-tags">
+              <span><i class="devicon-html5-plain" aria-hidden="true"></i> HTML</span>
+              <span><i class="devicon-css3-plain" aria-hidden="true"></i> CSS</span>
+              <span><i class="devicon-javascript-plain" aria-hidden="true"></i> JavaScript</span>
+              <span><span class="stack-chip-fallback" aria-hidden="true">Ca</span> Canvas API</span>
+            </div>
+            <div class="project-links">
+              <a href="https://reyjandellreyes21-afk.github.io/game-developer-portfolio/" target="_blank" rel="noreferrer">Live Demo</a>
+              <a href="https://github.com/reyjandellreyes21-afk/game-developer-portfolio" target="_blank"
+                rel="noreferrer">GitHub</a>
+            </div>
+          </article>
+
+          <article class="project-card reveal-target">
+            <div class="project-cover-wrap">
+              <img class="project-cover" src="assets/portfolio-cover.png" alt="Personal developer portfolio preview" />
+            </div>
+            <h3>My Portfolio</h3>
+            <div class="project-portfolio-share">
+              <div class="project-portfolio-share-header">
+                <span class="project-portfolio-share-label">Progress</span>
+                <span class="project-portfolio-share-value">45%</span>
+              </div>
+              <div
+                class="project-portfolio-share-bar"
+                role="progressbar"
+                aria-valuenow="45"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuetext="45 percent"
+                aria-label="This project is 45 percent complete"
+              >
+                <span class="project-portfolio-share-fill" style="width: 45%" aria-hidden="true"></span>
+              </div>
+            </div>
+            <p class="project-summary">
+              High-impact personal portfolio engineered to communicate value fast, build trust, and turn visits into real
+              project inquiries through clear messaging, strong visual hierarchy, and conversion-ready calls to action.
+            </p>
+            <div class="project-tags">
+              <span><i class="devicon-html5-plain" aria-hidden="true"></i> HTML</span>
+              <span><i class="devicon-css3-plain" aria-hidden="true"></i> CSS</span>
+              <span><i class="devicon-javascript-plain" aria-hidden="true"></i> JavaScript</span>
+              <span><i class="devicon-github-original" aria-hidden="true"></i> GitHub Pages</span>
+              <span><span class="stack-chip-fallback" aria-hidden="true">Sb</span> Supabase</span>
+            </div>
+            <div class="project-links">
+              <a href="https://reyjandellreyes21-afk.github.io/im-a-developer/" target="_blank" rel="noreferrer">Live Demo</a>
+              <a href="https://github.com/reyjandellreyes21-afk/im-a-developer" target="_blank" rel="noreferrer">GitHub</a>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-journey" id="experience">
+      <div class="container">
+        <h2 class="reveal-target">Professional <span class="journey-accent">Journey</span></h2>
+        <p class="section-subtext reveal-target">
+          Professional roles where I delivered internal tools, solved day-to-day technical issues, and improved workflow
+          efficiency.
+        </p>
+
+        <div class="timeline timeline--first-only">
+          <span class="timeline-rail" aria-hidden="true"></span>
+          <div class="timeline-first">
+            <span class="timeline-dot" aria-hidden="true"></span>
+            <span class="timeline-connector" aria-hidden="true"></span>
+            <article class="timeline-item reveal-target">
+              <button
+                type="button"
+                class="timeline-expand"
+                aria-expanded="false"
+                aria-controls="experience-details-1"
+                aria-label="Show responsibilities"
+              >
+                <svg
+                  class="timeline-expand-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+              <div class="timeline-card-head">
+                <div class="timeline-card-head__row">
+                  <div class="timeline-logo-box" aria-hidden="true">
+                    <img
+                      src="assets/rito-logo.png"
+                      alt=""
+                      width="64"
+                      height="64"
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  </div>
+                  <div class="timeline-card-head__body">
+                    <h3>Software Development Section</h3>
+                    <p class="timeline-meta">Philippine National Police</p>
+                    <div class="timeline-inline-meta">
+                      <span class="timeline-inline-meta__item">
+                        <svg
+                          class="timeline-inline-meta__icon"
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                        >
+                          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                          <line x1="16" y1="2" x2="16" y2="6" />
+                          <line x1="8" y1="2" x2="8" y2="6" />
+                          <line x1="3" y1="10" x2="21" y2="10" />
+                        </svg>
+                        <span>Nov 2023 – Present</span>
+                      </span>
+                      <span class="timeline-inline-meta__item">
+                        <svg
+                          class="timeline-inline-meta__icon"
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                          <circle cx="12" cy="10" r="3" />
+                        </svg>
+                        <span>Calamba, Philippines</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <p class="timeline-card-desc">
+                  I lead the development and continuous improvement of internal systems used by the Philippine National
+                  Police. My role focuses on turning operational needs into secure, practical tools that streamline
+                  workflows, reduce manual effort, and improve day-to-day service reliability.
+                </p>
+              </div>
+              <div
+                id="experience-details-1"
+                class="timeline-details"
+                aria-hidden="true"
+              >
+                <div class="timeline-details-inner">
+                  <ul class="project-meta-list">
+                    <li>Design, build, and maintain mission-support web systems aligned with operational workflows</li>
+                    <li>Resolve production issues, deliver UI/UX improvements, and respond quickly to field-driven support requests</li>
+                    <li>Coordinate stable releases, documentation, and system handoff to ensure continuity and long-term maintainability</li>
+                  </ul>
+                  <div class="experience-tech">
+                    <h4 class="experience-tech-title">
+                      <svg
+                        class="experience-tech-title-icon"
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <polyline points="16 18 22 12 16 6" />
+                        <polyline points="8 6 2 12 8 18" />
+                      </svg>
+                      Technologies Used
+                    </h4>
+                    <div class="project-tags experience-tech-tags">
+                      <span><i class="devicon-html5-plain" aria-hidden="true"></i> HTML</span>
+                      <span><i class="devicon-css3-plain" aria-hidden="true"></i> CSS</span>
+                      <span><i class="devicon-javascript-plain" aria-hidden="true"></i> JavaScript</span>
+                      <span><i class="devicon-dart-plain" aria-hidden="true"></i> Dart</span>
+                      <span><i class="devicon-flutter-plain" aria-hidden="true"></i> Flutter</span>
+                      <span><i class="devicon-firebase-plain" aria-hidden="true"></i> Firebase</span>
+                      <span><i class="devicon-nodejs-plain" aria-hidden="true"></i> Node.js</span>
+                      <span><i class="devicon-figma-plain" aria-hidden="true"></i> Figma</span>
+                      <span><i class="devicon-wordpress-plain" aria-hidden="true"></i> WordPress</span>
+                      <span><i class="devicon-photoshop-plain" aria-hidden="true"></i> Adobe Photoshop</span>
+                      <span><i class="devicon-premierepro-plain" aria-hidden="true"></i> Adobe PR</span>
+                      <span><i class="devicon-vscode-plain" aria-hidden="true"></i> VS Code</span>
+                      <span><i class="devicon-github-original" aria-hidden="true"></i> GitHub</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+          <div class="timeline-second">
+            <span class="timeline-dot" aria-hidden="true"></span>
+            <span class="timeline-connector" aria-hidden="true"></span>
+            <article class="timeline-item reveal-target">
+            <button
+              type="button"
+              class="timeline-expand"
+              aria-expanded="false"
+              aria-controls="experience-details-2"
+              aria-label="Show responsibilities"
+            >
+              <svg
+                class="timeline-expand-icon"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+            <div class="timeline-card-head">
+              <div class="timeline-card-head__row">
+                <div class="timeline-logo-box" aria-hidden="true">
+                  <img
+                    src="assets/congress-logo.png"
+                    alt=""
+                    width="64"
+                    height="64"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </div>
+                <div class="timeline-card-head__body">
+                  <h3>Graphic Designer / IT Support</h3>
+                  <p class="timeline-meta">Congress 2nd District, Quezon Province</p>
+                  <div class="timeline-inline-meta">
+                    <span class="timeline-inline-meta__item">
+                      <svg
+                        class="timeline-inline-meta__icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                        <line x1="16" y1="2" x2="16" y2="6" />
+                        <line x1="8" y1="2" x2="8" y2="6" />
+                        <line x1="3" y1="10" x2="21" y2="10" />
+                      </svg>
+                      <span>Oct 2022 – Oct 2023</span>
+                    </span>
+                    <span class="timeline-inline-meta__item">
+                      <svg
+                        class="timeline-inline-meta__icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                        <circle cx="12" cy="10" r="3" />
+                      </svg>
+                      <span>Quezon Province, Philippines</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <p class="timeline-card-desc">
+                I delivered creative and technical support for the district office, combining visual communication with
+                day-to-day IT operations. I helped teams work more efficiently by producing high-quality media assets,
+                resolving technical issues quickly, and maintaining reliable digital workflows.
+              </p>
+            </div>
+            <div
+              id="experience-details-2"
+              class="timeline-details"
+              aria-hidden="true"
+            >
+              <div class="timeline-details-inner">
+                <ul class="project-meta-list">
+                  <li>Created branded visual and video assets for public communication, events, and office campaigns</li>
+                  <li>Provided frontline IT support, troubleshooting system issues to keep daily operations uninterrupted</li>
+                  <li>Improved workflow consistency by standardizing design outputs and strengthening stakeholder communication</li>
+                </ul>
+                <div class="experience-tech">
+                  <h4 class="experience-tech-title">
+                    <svg
+                      class="experience-tech-title-icon"
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <polyline points="16 18 22 12 16 6" />
+                      <polyline points="8 6 2 12 8 18" />
+                    </svg>
+                    Technologies Used
+                  </h4>
+                  <div class="project-tags experience-tech-tags">
+                    <span><i class="devicon-photoshop-plain" aria-hidden="true"></i> Adobe Photoshop</span>
+                    <span><i class="devicon-premierepro-plain" aria-hidden="true"></i> Adobe Premiere Pro</span>
+                    <span><span class="stack-chip-fallback" aria-hidden="true">Cv</span> Canva</span>
+                    <span><span class="stack-chip-fallback" aria-hidden="true">Cc</span> CapCut</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="skills">
+      <div class="container">
+        <h2 class="reveal-target">Technical <span class="toolkit-accent">toolkit</span></h2>
+        <p class="section-subtext reveal-target">
+          A hands-on toolkit from shipped work and professional settings - technologies I've leaned on where outcomes,
+          stakeholders, and reliability actually matter.
+        </p>
+
+        <div class="stack-panel reveal-target" id="techStackPanel">
+          <div class="stack-group reveal-target">
+            <h3 class="stack-group-title stack-group-title--panel">TypeScript monorepo &amp; languages</h3>
+            <div class="stack-chips">
+              <span class="stack-chip"><i class="devicon-typescript-plain colored" aria-hidden="true"></i>
+                TypeScript</span>
+              <span class="stack-chip"><i class="devicon-javascript-plain colored" aria-hidden="true"></i>
+                JavaScript</span>
+              <span class="stack-chip"><i class="devicon-python-plain colored" aria-hidden="true"></i> Python</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">Mono</span> TypeScript
+                monorepo</span>
+              <span class="stack-chip"><i class="devicon-html5-plain colored" aria-hidden="true"></i> HTML5</span>
+              <span class="stack-chip"><i class="devicon-css3-plain colored" aria-hidden="true"></i> CSS3</span>
+              <span class="stack-chip"><i class="devicon-php-plain colored" aria-hidden="true"></i> PHP</span>
+            </div>
+          </div>
+
+          <div class="stack-group reveal-target">
+            <h3 class="stack-group-title stack-group-title--panel">Frontend — React &amp; Next.js</h3>
+            <div class="stack-chips">
+              <span class="stack-chip"><i class="devicon-react-original colored" aria-hidden="true"></i> React 18</span>
+              <span class="stack-chip"><i class="devicon-nextjs-plain colored" aria-hidden="true"></i> Next.js 14</span>
+              <span class="stack-chip"><i class="devicon-tailwindcss-plain colored" aria-hidden="true"></i> Tailwind
+                CSS</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">Rx</span> Radix UI</span>
+            </div>
+          </div>
+
+          <div class="stack-group reveal-target">
+            <h3 class="stack-group-title stack-group-title--panel">Backend &amp; runtime</h3>
+            <div class="stack-chips">
+              <span class="stack-chip"><i class="devicon-nodejs-plain colored" aria-hidden="true"></i> Node.js</span>
+              <span class="stack-chip"><i class="devicon-nestjs-plain colored" aria-hidden="true"></i> NestJS 11</span>
+            </div>
+          </div>
+
+          <div class="stack-group reveal-target">
+            <h3 class="stack-group-title stack-group-title--panel">Data, infra &amp; cloud</h3>
+            <div class="stack-chips">
+              <span class="stack-chip"><i class="devicon-docker-plain colored" aria-hidden="true"></i> Docker</span>
+              <span class="stack-chip"><i class="devicon-postgresql-plain colored" aria-hidden="true"></i>
+                PostgreSQL</span>
+              <span class="stack-chip"><i class="devicon-mongodb-plain colored" aria-hidden="true"></i> MongoDB</span>
+              <span class="stack-chip"><i class="devicon-redis-plain colored" aria-hidden="true"></i> Redis</span>
+              <span class="stack-chip"><i class="devicon-prisma-original colored" aria-hidden="true"></i> Prisma</span>
+              <span class="stack-chip"><i class="devicon-googlecloud-plain colored" aria-hidden="true"></i> Google Cloud</span>
+              <span class="stack-chip"><i class="devicon-vercel-plain colored" aria-hidden="true"></i> Vercel</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">Sb</span> Supabase</span>
+              <span class="stack-chip"><i class="devicon-firebase-plain colored" aria-hidden="true"></i> Firebase</span>
+              <span class="stack-chip"><i class="devicon-cloudflare-plain colored" aria-hidden="true"></i> Cloudflare R2</span>
+              <span class="stack-chip"><i class="devicon-mysql-plain colored" aria-hidden="true"></i> MySQL</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">Tp</span> Temporal</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">Re</span> Render</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">NS</span> NetSuite</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">Xp</span> XAMPP</span>
+            </div>
+          </div>
+
+          <div class="stack-group reveal-target">
+            <h3 class="stack-group-title stack-group-title--panel">Testing, docs &amp; workflow</h3>
+            <div class="stack-chips">
+              <span class="stack-chip"><i class="devicon-git-plain colored" aria-hidden="true"></i> Git</span>
+              <span class="stack-chip"><i class="devicon-github-original colored" aria-hidden="true"></i> GitHub</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">Cr</span> Cursor</span>
+              <span class="stack-chip"><i class="devicon-vscode-plain colored" aria-hidden="true"></i> VS Code</span>
+              <span class="stack-chip"><i class="devicon-playwright-plain colored" aria-hidden="true"></i> Playwright</span>
+              <span class="stack-chip"><i class="devicon-figma-plain colored" aria-hidden="true"></i> Figma</span>
+              <span class="stack-chip"><i class="devicon-storybook-plain colored" aria-hidden="true"></i> Storybook</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">Ch</span> Chromatic</span>
+            </div>
+          </div>
+
+          <div class="stack-group reveal-target">
+            <h3 class="stack-group-title stack-group-title--panel">Product craft</h3>
+            <div class="stack-chips">
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">UX</span> UX thinking</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">A11Y</span>
+                Accessibility</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">Perf</span>
+                Performance</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">RWD</span> Responsive
+                design</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">SEO</span> Technical
+                SEO</span>
+            </div>
+          </div>
+
+          <div class="stack-group reveal-target">
+            <h3 class="stack-group-title stack-group-title--panel">Mobile &amp; creative</h3>
+            <div class="stack-chips">
+              <span class="stack-chip"><i class="devicon-flutter-plain colored" aria-hidden="true"></i> Flutter</span>
+              <span class="stack-chip"><i class="devicon-dart-plain colored" aria-hidden="true"></i> Dart</span>
+              <span class="stack-chip"><i class="devicon-photoshop-plain colored" aria-hidden="true"></i> Adobe
+                Photoshop</span>
+              <span class="stack-chip"><i class="devicon-premierepro-plain colored" aria-hidden="true"></i> Adobe
+                Premiere Pro</span>
+              <span class="stack-chip"><i class="devicon-aftereffects-plain colored" aria-hidden="true"></i> Adobe After
+                Effects</span>
+              <span class="stack-chip"><i class="devicon-illustrator-plain colored" aria-hidden="true"></i> Adobe
+                Illustrator</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">Lr</span> Adobe
+                Lightroom</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">X</span> Microsoft
+                Excel</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">P</span> Microsoft
+                PowerPoint</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">W</span> Microsoft
+                Word</span>
+              <span class="stack-chip"><span class="stack-chip-fallback" aria-hidden="true">Pub</span> Microsoft
+                Publisher</span>
+            </div>
+          </div>
+        </div>
+
+        <p class="skills-more reveal-target">
+          <a class="skills-more-link" href="#projects">See featured projects →</a>
+        </p>
+      </div>
+    </section>
+
+    <section class="section section-contact-cta" id="contact">
+      <div class="container reveal-target">
+        <header class="contact-head">
+          <h2 class="contact-title">Get In <span>Touch</span></h2>
+          <p class="contact-intro">Have a project in mind? Let's build a reliable solution that fits your goals, timeline, and workflow.</p>
+        </header>
+
+        <div class="contact-layout">
+          <form class="contact-card contact-form-card" id="contactForm" novalidate>
+            <h3 class="contact-card-title">Send Message</h3>
+
+            <div class="contact-row">
+              <div class="contact-field">
+                <label class="contact-label" for="contactName">Name <span>*</span></label>
+                <input class="contact-input" id="contactName" name="name" type="text" autocomplete="name"
+                  placeholder="Your full name" required />
+              </div>
+              <div class="contact-field">
+                <label class="contact-label" for="contactEmail">Email <span>*</span></label>
+                <input class="contact-input" id="contactEmail" name="email" type="email" autocomplete="email"
+                  placeholder="your.email@example.com" required />
+              </div>
+            </div>
+
+            <div class="contact-field">
+              <label class="contact-label" for="contactSubject">Subject <span>*</span></label>
+              <input class="contact-input" id="contactSubject" name="subject" type="text"
+                placeholder="Project discussion, collaboration, etc." required />
+            </div>
+
+            <div class="contact-field">
+              <label class="contact-label" for="contactMessage">Message <span>*</span></label>
+              <textarea class="contact-input contact-textarea" id="contactMessage" name="message" rows="6"
+                placeholder="Tell me about your project, timeline, budget, and any specific requirements..."
+                required></textarea>
+            </div>
+
+            <button class="btn btn-primary contact-submit" id="contactSubmitBtn" type="submit">Send Message</button>
+            <p class="contact-feedback" id="contactFeedback" aria-live="polite"></p>
+            <p class="contact-note">Typical response time: within 24 hours on business days.</p>
+          </form>
+
+          <aside class="contact-side">
+            <article class="contact-card contact-info-card">
+              <h3 class="contact-card-title">Contact Information</h3>
+              <ul class="contact-info-list">
+                <li class="contact-info-item">
+                  <span class="contact-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M4 4h16v16H4z" />
+                      <path d="m22 6-10 7L2 6" />
+                    </svg>
+                  </span>
+                  <div>
+                    <p class="contact-item-label">Email</p>
+                    <a class="contact-item-link" href="mailto:reyjandellreyes21@gmail.com">reyjandellreyes21@gmail.com</a>
+                  </div>
+                </li>
+                <li class="contact-info-item">
+                  <span class="contact-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 1 1 18 0z" />
+                      <circle cx="12" cy="10" r="3" />
+                    </svg>
+                  </span>
+                  <div>
+                    <p class="contact-item-label">Location</p>
+                    <p class="contact-item-text">Calamba City, Philippines</p>
+                  </div>
+                </li>
+              </ul>
+            </article>
+
+            <article class="contact-card contact-social-card">
+              <h3 class="contact-card-title">Follow Me</h3>
+              <ul class="contact-social-list">
+                <li>
+                  <a class="contact-social-link" href="https://github.com/reyjandellreyes21-afk" target="_blank"
+                    rel="noreferrer">
+                    <span class="contact-icon" aria-hidden="true"><i class="devicon-github-original"></i></span>
+                    <span class="contact-social-copy">
+                      <span class="contact-social-title">GitHub</span>
+                      <span class="contact-social-handle">reyjandellreyes21-afk</span>
+                    </span>
+                  </a>
+                </li>
+                <li>
+                  <a class="contact-social-link" href="https://www.upwork.com/freelancers/~01b58fb342e2312fc8"
+                    target="_blank" rel="noreferrer">
+                    <span class="contact-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                          d="M18.561 13.158c-1.102 0-2.135-.467-3.074-1.227l.228-1.076.008-.042c.207-1.143.849-3.06 2.839-3.06 1.492 0 2.703 1.212 2.703 2.703-.001 1.489-1.212 2.702-2.704 2.702zm0-8.14c-2.539 0-4.51 1.649-5.31 4.366-1.22-1.834-2.148-4.036-2.687-5.892H7.828v7.112c-.002 1.406-1.141 2.546-2.547 2.548-1.405-.002-2.543-1.143-2.545-2.548V3.492H0v7.112c0 2.914 2.37 5.303 5.281 5.303 2.913 0 5.283-2.389 5.283-5.303v-1.19c.529 1.107 1.182 2.229 1.974 3.221l-1.673 7.873h2.797l1.213-5.71c1.063.679 2.285 1.109 3.686 1.109 3 0 5.439-2.452 5.439-5.45 0-3-2.439-5.439-5.439-5.439z" />
+                      </svg>
+                    </span>
+                    <span class="contact-social-copy">
+                      <span class="contact-social-title">Upwork</span>
+                      <span class="contact-social-handle">Rey Jandell R.</span>
+                    </span>
+                  </a>
+                </li>
+                <li>
+                  <a class="contact-social-link" href="https://www.linkedin.com/in/reyes-rey-jandell-119467270/"
+                    target="_blank" rel="noreferrer">
+                    <span class="contact-icon" aria-hidden="true"><i class="devicon-linkedin-plain"></i></span>
+                    <span class="contact-social-copy">
+                      <span class="contact-social-title">LinkedIn</span>
+                      <span class="contact-social-handle">Rey Jandell</span>
+                    </span>
+                  </a>
+                </li>
+              </ul>
+            </article>
+          </aside>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-main">
+      <section class="footer-brand">
+        <a href="#intro" class="footer-logo">ReyJandell.dev</a>
+        <p>
+          I build reliable, practical software for teams that need results. If you're looking for a developer who values
+          clarity, speed, and long-term maintainability, let's talk.
+        </p>
+      </section>
+
+      <nav class="footer-links" aria-label="Quick links">
+        <h3>Quick Links</h3>
+        <ul>
+          <li><a href="#about">About</a></li>
+          <li><a href="#skills">Skills</a></li>
+          <li><a href="#experience">Experience</a></li>
+          <li><a href="#projects">Projects</a></li>
+          <li><a href="#contact">Contact</a></li>
+          <li><a href="assets/Resume-Rey-Jandell-dev.pdf" target="_blank" rel="noreferrer">Resume</a></li>
+        </ul>
+      </nav>
+
+      <section class="footer-touch">
+        <h3>Get In Touch</h3>
+        <p>Ready to work together?</p>
+        <a class="footer-email" href="mailto:reyjandellreyes21@gmail.com">reyjandellreyes21@gmail.com</a>
+        <p>Calamba City, Philippines</p>
+      </section>
+    </div>
+
+    <div class="container footer-bottom">
+      <p>&copy; <span id="year"></span> Rey Jandell. Made with care and lots of coffee.</p>
+      <p>Built with HTML, CSS &amp; JavaScript</p>
+    </div>
+  </footer>
+
+  <script src="index.js"></script>
+</body>
+
+</html>
