@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import linkMarkLogo from "./assets/LinkMark.png";
-import cscLogo from "./assets/csc-logo.png";
-import prcLogo from "./assets/prc-logo.png";
+import navLogo from "./assets/LM-LIGHT.png";
+import tabLogo from "./assets/logo-png.png";
 import heroStudyImage from "./assets/hero.png";
-import websiteLeadersImage from "./assets/website-leaders.png";
+import communityImage from "./assets/community-image.png";
 import { createSupabaseClient } from "./lib/supabaseClient";
 
 /**
@@ -322,37 +321,34 @@ const defaultHomePosts = [
 
 const LANDING_TARGET_EXAMS = [
   {
-    badge: "CSC",
-    logo: cscLogo,
-    title: "Civil Service Examinations",
-    description:
-      "Prepare for Civil Service Commission eligibility tests used for careers across Philippine government agencies.",
+    badge: "GRC",
+    title: "Groceries and Essentials",
+    description: "Find daily needs from trusted sellers in your neighborhood with quick local pickup options.",
   },
   {
-    badge: "PRC",
-    logo: prcLogo,
-    title: "Professional Regulation Commission",
-    description: "Board exams and professional licensure aligned with your field and regulatory requirements.",
+    badge: "HOM",
+    title: "Home and Living",
+    description: "Browse furniture, appliances, and home upgrades posted by people in your area.",
   },
   {
-    badge: "UCE",
-    title: "University Entrance Exams",
-    description: "Practice and readiness for college admissions and campus-specific screening assessments.",
+    badge: "FAS",
+    title: "Fashion and Personal",
+    description: "Shop preloved and brand new fashion finds from nearby community sellers.",
   },
   {
-    badge: "Bar",
-    title: "Philippine Bar Examination",
-    description: "Structured preparation focus for the Supreme Court bar and legal practice readiness.",
+    badge: "GAD",
+    title: "Gadgets and Electronics",
+    description: "Discover phones, accessories, and devices sold locally for safer meetups and faster deals.",
   },
   {
-    badge: "NAT",
-    title: "National Achievement Test",
-    description: "National Assessment milestones for basic education outcomes and institutional benchmarks.",
+    badge: "SVS",
+    title: "Local Services",
+    description: "Connect with nearby service providers for repairs, errands, and home-based work.",
   },
   {
-    badge: "LET",
-    title: "Licensure Exam for Teachers",
-    description: "LET coverage for classroom practice, pedagogy, and professional teaching standards.",
+    badge: "COM",
+    title: "Community Deals",
+    description: "See curated listings and time-limited offers happening around your subdivision or barangay.",
   },
 ];
 
@@ -363,12 +359,20 @@ const LANDING_EXAM_SLIDES = Array.from({ length: Math.ceil(LANDING_TARGET_EXAMS.
 
 function LandingIllustration() {
   return (
-    <img src={websiteLeadersImage} alt="Exam community leaders" className="h-auto w-full max-w-xl drop-shadow-2xl" />
+    <div className="relative w-full overflow-hidden rounded-[1.75rem] border border-neutral-200/80 bg-gradient-to-br from-white to-violet-50/60 shadow-[0_18px_45px_-28px_rgba(67,56,202,0.45)] dark:border-slate-700 dark:from-slate-900 dark:to-slate-800/80">
+      <div className="aspect-[16/10] w-full">
+        <img
+          src={communityImage}
+          alt="Local community marketplace"
+          className="h-full w-full object-cover object-[74%_center]"
+        />
+      </div>
+    </div>
   );
 }
 
 function QuizAppLogo({ className = "h-7 w-auto max-w-[11rem] shrink-0 object-contain sm:h-8 sm:max-w-[13rem]" }) {
-  return <img src={linkMarkLogo} alt="LinkMark logo" className={className} />;
+  return <img src={navLogo} alt="LinkMark logo" className={className} />;
 }
 
 function EyeShowPasswordIcon(props) {
@@ -599,21 +603,21 @@ function LandingFeatureRow({ Icon, eyebrow, title, body }) {
 const LANDING_FEATURE_ROWS = [
   {
     Icon: LandingFeatureIconDiscussion,
-    eyebrow: "Guided Discussions",
-    title: "Clarify difficult topics faster",
-    body: "Discuss confusing concepts with fellow reviewees and learn from practical explanations.",
+    eyebrow: "Verified Local Sellers",
+    title: "Buy with more confidence nearby",
+    body: "Transact with sellers in your own community so pickups and communication are easier to manage.",
   },
   {
     Icon: LandingFeatureIconExchange,
-    eyebrow: "Resource Exchange",
-    title: "Get quality reviewers and drills",
-    body: "Access community-shared notes, flashcards, and mock tests by exam category.",
+    eyebrow: "Fast Local Listings",
+    title: "Post and sell in minutes",
+    body: "Create listings quickly and reach active buyers around your area without complex setup.",
   },
   {
     Icon: LandingFeatureIconBuddy,
-    eyebrow: "Study Buddy Matching",
-    title: "Stay consistent until exam day",
-    body: "Pair up with exam buddies for daily check-ins, goal tracking, and motivation.",
+    eyebrow: "Community Connections",
+    title: "Build trust through repeat transactions",
+    body: "Grow your reputation with neighbors and keep a reliable marketplace network close to home.",
   },
 ];
 
@@ -870,7 +874,7 @@ function App() {
         link.setAttribute("rel", rel);
         document.head.appendChild(link);
       }
-      link.setAttribute("href", linkMarkLogo);
+      link.setAttribute("href", tabLogo);
       link.setAttribute("type", "image/png");
     };
     ensureIconLink('link[rel="icon"]', "icon");
@@ -1684,32 +1688,32 @@ function App() {
               <div className="flex max-w-xl flex-col items-center gap-7 text-center sm:gap-8 lg:max-w-none lg:items-start lg:text-left">
                 <div className="flex w-full flex-col gap-5 sm:gap-6">
                   <h1 className="text-balance text-[2rem] font-extrabold leading-[1.12] tracking-tight text-neutral-900 sm:text-5xl sm:leading-[1.08] dark:text-slate-50">
-                    A learning forum for <span className="text-brand-primary dark:text-brand-accent">Filipino exam takers</span>
+                    A marketplace built for <span className="text-brand-primary dark:text-brand-accent">your local community</span>
                   </h1>
                   <p className="mx-auto max-w-xl text-pretty text-lg leading-relaxed text-neutral-600 dark:text-slate-400 md:text-xl md:leading-relaxed lg:mx-0">
-                    Exchange knowledge, share reviewers, and test your readiness before Philippine licensure and career exams.
+                    LinkMart helps local buyers and sellers connect within communities, making everyday buying and selling faster, safer, and more convenient.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 lg:justify-start">
                   <button type="button" className="landing-hero-cta px-10" onClick={() => openAuthPanel("signup")}>
-                    Join Exam Forum
+                    Start selling locally
                   </button>
                   <button type="button" className="btn-secondary rounded-full px-8 py-3 text-sm" onClick={() => openAuthPanel("login")}>
-                    Continue learning
+                    Browse nearby listings
                   </button>
                 </div>
                 <div className="flex w-full max-w-md flex-wrap justify-center gap-x-10 gap-y-8 border-t border-neutral-200/80 pt-9 dark:border-slate-700/80 sm:max-w-lg sm:gap-x-12 lg:max-w-none lg:justify-start">
                   <div className="min-w-[5.5rem] text-center lg:text-left">
-                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">12k+</span>
-                    <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Forum posts</span>
+                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">8k+</span>
+                    <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Local listings</span>
                   </div>
                   <div className="min-w-[5.5rem] text-center lg:text-left">
-                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">250+</span>
-                    <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Mock quizzes</span>
+                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">1.2k+</span>
+                    <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Neighborhood sellers</span>
                   </div>
                   <div className="min-w-[5.5rem] text-center lg:text-left">
-                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">24/7</span>
-                    <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Peer support</span>
+                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">50+</span>
+                    <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Active communities</span>
                   </div>
                 </div>
               </div>
@@ -1737,13 +1741,13 @@ function App() {
             className="scroll-mt-24 px-4 py-10 sm:scroll-mt-28 sm:px-8 md:px-10 md:py-12"
           >
             <p className="mx-auto max-w-3xl text-center text-lg font-semibold leading-snug tracking-tight text-neutral-900 dark:text-slate-100 sm:text-xl">
-              All the exams you need to prepare for in one place
+              Everything you need to buy and sell locally in one place
             </p>
             <div className="relative mt-10">
               <button
                 type="button"
                 className="absolute left-0 top-[42%] z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-500 shadow-sm transition hover:border-neutral-300 hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500 sm:left-1 md:left-2"
-                aria-label="Previous exams"
+                aria-label="Previous categories"
                 onClick={() =>
                   setLandingExamSlide((s) => (s - 1 + LANDING_EXAM_SLIDES.length) % LANDING_EXAM_SLIDES.length)
                 }
@@ -1753,7 +1757,7 @@ function App() {
               <button
                 type="button"
                 className="absolute right-0 top-[42%] z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-500 shadow-sm transition hover:border-neutral-300 hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500 sm:right-1 md:right-2"
-                aria-label="Next exams"
+                aria-label="Next categories"
                 onClick={() => setLandingExamSlide((s) => (s + 1) % LANDING_EXAM_SLIDES.length)}
               >
                 <ChevronRightIcon className="h-5 w-5" />
@@ -1781,7 +1785,7 @@ function App() {
                     key={i}
                     type="button"
                     className={`h-2 w-2 rounded-full transition ${i === landingExamSlide ? "bg-neutral-700 dark:bg-slate-200" : "bg-neutral-300 dark:bg-slate-600"}`}
-                    aria-label={`Exam slide ${i + 1}`}
+                    aria-label={`Category slide ${i + 1}`}
                     aria-current={i === landingExamSlide}
                     onClick={() => setLandingExamSlide(i)}
                   />
@@ -1792,7 +1796,7 @@ function App() {
 
           <section className="mt-16 lg:mt-24">
             <h2 className="mx-auto max-w-3xl text-center text-2xl font-bold tracking-tight text-neutral-900 dark:text-slate-100 md:text-3xl">
-              The best way to prepare for Philippine exams
+              The easiest way to trade inside your community
             </h2>
             <div className="mt-12 grid grid-cols-1 gap-12 lg:mt-14 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center lg:gap-8 xl:gap-14">
               <div className="order-2 flex max-w-lg flex-col gap-12 justify-self-center lg:order-1 lg:justify-self-end">
@@ -1802,7 +1806,7 @@ function App() {
               <div className="order-1 flex justify-center px-4 lg:order-2 lg:px-2">
                 <img
                   src={heroStudyImage}
-                  alt="Student preparing for exams"
+                  alt="Marketplace platform features"
                   className="h-auto w-full max-w-[280px] object-contain drop-shadow-lg md:max-w-[320px] lg:max-w-[340px]"
                 />
               </div>
@@ -1813,9 +1817,9 @@ function App() {
           </section>
 
           <section className="mt-16 border-t border-neutral-200/90 pt-16 text-center dark:border-slate-700 md:mt-24 md:pt-20">
-            <h2 className="mx-auto max-w-2xl text-2xl font-bold tracking-tight text-neutral-900 dark:text-slate-100 md:text-3xl">Start your review journey with people who get it</h2>
+            <h2 className="mx-auto max-w-2xl text-2xl font-bold tracking-tight text-neutral-900 dark:text-slate-100 md:text-3xl">Start buying and selling with people nearby</h2>
             <p className="mx-auto mt-5 max-w-lg text-base leading-relaxed text-neutral-600 dark:text-slate-400 md:mt-6">
-              Build confidence, sharpen your weak areas, and prepare smarter with a supportive exam community.
+              Discover trusted local deals, post your items, and connect with your community in just a few taps.
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-5">
               <button type="button" className="landing-hero-cta min-w-[12rem] px-10" onClick={() => openAuthPanel("signup")}>
@@ -1855,8 +1859,8 @@ function App() {
                   </h2>
                   <p className="mt-4 max-w-md text-sm leading-relaxed text-neutral-600 dark:text-slate-400 md:text-[15px] md:leading-relaxed">
                     {authMode === "signup"
-                      ? "Create your account to join exam-focused groups and start your review plan."
-                      : "Sign in with email or Google to continue your forum and review progress."}
+                      ? "Create your account to post items, manage listings, and connect with buyers in your community."
+                      : "Sign in with email or Google to continue buying and selling in your local area."}
                   </p>
                 </div>
 
