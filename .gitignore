@@ -12,6 +12,3 @@ out/
 **/.env
 .cursor/
 .vscode/
-
-# Nested repo — version control lives in PORTFOLIO/quiz-app/.git only
-PORTFOLIO/quiz-app/
