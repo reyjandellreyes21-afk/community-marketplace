@@ -18,8 +18,12 @@ create table if not exists public.profiles (
   phone text not null default '',
   birthday date,
   address text not null default '',
+  address_url text not null default '',
   education text not null default '',
   gender text not null default '',
+  facebook_url text not null default '',
+  twitter_url text not null default '',
+  instagram_url text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -30,3 +34,5 @@ drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own" on public.profiles for select using (auth.uid() = id);
 drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_update_own" on public.profiles for update using (auth.uid() = id);
+
+-- Marketplace tables (listings, orders, communities, …) live in `supabase/migrations/`.

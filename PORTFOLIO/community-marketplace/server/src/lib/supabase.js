@@ -9,10 +9,13 @@ const ensureConfig = () => {
 
 ensureConfig();
 
-export const supabaseAdmin = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
-  auth: { persistSession: false, autoRefreshToken: false },
+/** Trailing slashes or spaces break Storage REST paths (`requested path is invalid`). */
+const supabaseUrl = String(config.supabaseUrl).trim().replace(/\/+$/, "");
+
+export const supabaseAdmin = createClient(supabaseUrl, config.supabaseServiceRoleKey, {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
 });
 
-export const supabaseAuth = createClient(config.supabaseUrl, config.supabasePublishableKey, {
-  auth: { persistSession: false, autoRefreshToken: false },
+export const supabaseAuth = createClient(supabaseUrl, config.supabasePublishableKey, {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
 });

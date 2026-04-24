@@ -1,6 +1,7 @@
 import { OAuth2Client } from "google-auth-library";
 import { config } from "../config/config.js";
 import { AppError } from "../errors/AppError.js";
+import { syncSellerListingsCommunityId } from "../lib/profileListingCommunity.js";
 import { supabaseAdmin, supabaseAuth } from "../lib/supabase.js";
 import { splitGoogleDisplayName, userToClient } from "../utils/displayName.js";
 
@@ -13,6 +14,7 @@ const profileToClient = (profile) =>
     middleName: profile.middle_name || "",
     lastName: profile.last_name || "",
     email: profile.email || "",
+    joinedAt: profile.created_at || null,
     username: profile.username || "",
     country: profile.country || "",
     age: profile.age,
@@ -21,8 +23,12 @@ const profileToClient = (profile) =>
     phone: profile.phone || "",
     birthday: profile.birthday,
     address: profile.address || "",
+    addressUrl: profile.address_url || "",
     education: profile.education || "",
     gender: profile.gender || "",
+    facebookUrl: profile.facebook_url || "",
+    twitterUrl: profile.twitter_url || "",
+    instagramUrl: profile.instagram_url || "",
   });
 
 const authUserToClient = (authUser) =>
@@ -31,6 +37,7 @@ const authUserToClient = (authUser) =>
     return userToClient({
       id: authUser.id,
       email: authUser.email || "",
+      joinedAt: authUser.created_at || null,
       firstName: meta.first_name || "",
       middleName: meta.middle_name || "",
       lastName: meta.last_name || "",
@@ -42,8 +49,12 @@ const authUserToClient = (authUser) =>
       phone: meta.phone || "",
       birthday: meta.birthday || null,
       address: meta.address || "",
+      addressUrl: meta.address_url || "",
       education: meta.education || "",
       gender: meta.gender || "",
+      facebookUrl: meta.facebook_url || "",
+      twitterUrl: meta.twitter_url || "",
+      instagramUrl: meta.instagram_url || "",
     });
   };
 
@@ -70,8 +81,12 @@ const ensureProfile = async (user, partial = {}) => {
     phone: partial.phone || "",
     birthday: partial.birthday || null,
     address: partial.address || "",
+    address_url: partial.address_url || "",
     education: partial.education || "",
     gender: partial.gender || "",
+    facebook_url: partial.facebook_url || "",
+    twitter_url: partial.twitter_url || "",
+    instagram_url: partial.instagram_url || "",
   };
   const { data, error } = await supabaseAdmin.from("profiles").upsert(payload).select("*").single();
   if (error?.code === "PGRST205") return null;
@@ -206,7 +221,7 @@ export const updateMe = async (req, res, next) => {
   try {
     const existingProfile = await getProfileById(req.user.id);
     const {
-      firstName, middleName, lastName, username, avatarUrl, email, phone, birthday, address, country, age, education, gender,
+      firstName, middleName, lastName, username, avatarUrl, email, phone, birthday, address, addressUrl, country, age, education, gender, facebookUrl, twitterUrl, instagramUrl,
     } = req.body || {};
 
     const updates = {};
@@ -217,9 +232,13 @@ export const updateMe = async (req, res, next) => {
     if (avatarUrl !== undefined) updates.avatar_url = String(avatarUrl).trim();
     if (phone !== undefined) updates.phone = String(phone).trim();
     if (address !== undefined) updates.address = String(address).trim();
+    if (addressUrl !== undefined) updates.address_url = String(addressUrl).trim();
     if (country !== undefined) updates.country = String(country).trim();
     if (education !== undefined) updates.education = String(education).trim();
     if (gender !== undefined) updates.gender = String(gender).trim();
+    if (facebookUrl !== undefined) updates.facebook_url = String(facebookUrl).trim();
+    if (twitterUrl !== undefined) updates.twitter_url = String(twitterUrl).trim();
+    if (instagramUrl !== undefined) updates.instagram_url = String(instagramUrl).trim();
     if (age !== undefined) updates.age = Number(age);
 
     if (birthday !== undefined) {
@@ -250,6 +269,9 @@ export const updateMe = async (req, res, next) => {
     if (existingProfile) {
       const { data, error } = await supabaseAdmin.from("profiles").update(updates).eq("id", req.user.id).select("*").single();
       if (error) throw new AppError(500, error.message || "Failed to update profile.");
+      if (updates.address !== undefined) {
+        await syncSellerListingsCommunityId(supabaseAdmin, req.user.id, String(data?.address ?? ""));
+      }
       return res.json({ user: profileToClient(data) });
     }
 
@@ -262,10 +284,14 @@ export const updateMe = async (req, res, next) => {
     if (updates.phone !== undefined) userMetadata.phone = updates.phone;
     if (updates.birthday !== undefined) userMetadata.birthday = updates.birthday;
     if (updates.address !== undefined) userMetadata.address = updates.address;
+    if (updates.address_url !== undefined) userMetadata.address_url = updates.address_url;
     if (updates.country !== undefined) userMetadata.country = updates.country;
     if (updates.age !== undefined) userMetadata.age = updates.age;
     if (updates.education !== undefined) userMetadata.education = updates.education;
     if (updates.gender !== undefined) userMetadata.gender = updates.gender;
+    if (updates.facebook_url !== undefined) userMetadata.facebook_url = updates.facebook_url;
+    if (updates.twitter_url !== undefined) userMetadata.twitter_url = updates.twitter_url;
+    if (updates.instagram_url !== undefined) userMetadata.instagram_url = updates.instagram_url;
 
     const { data: updatedAuth, error: updateAuthError } = await supabaseAdmin.auth.admin.updateUserById(req.user.id, {
       ...(updates.email !== undefined ? { email: updates.email } : {}),
@@ -273,6 +299,9 @@ export const updateMe = async (req, res, next) => {
     });
     if (updateAuthError || !updatedAuth?.user) {
       throw new AppError(500, updateAuthError?.message || "Failed to update profile.");
+    }
+    if (updates.address !== undefined) {
+      await syncSellerListingsCommunityId(supabaseAdmin, req.user.id, String(updates.address ?? ""));
     }
     return res.json({ user: authUserToClient(updatedAuth.user) });
   } catch (error) {
