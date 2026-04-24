@@ -6,6 +6,8 @@ const bootstrap = async () => {
   app.listen(config.port, () => {
     // eslint-disable-next-line no-console
     console.log(`community-marketplace API running on http://localhost:${config.port}`);
+    // eslint-disable-next-line no-console
+    console.log("Communities: GET /api/v1/communities | POST /api/v1/communities (auth + multipart)");
   });
 };
 

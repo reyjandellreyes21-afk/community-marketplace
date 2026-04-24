@@ -27,6 +27,7 @@ export function userToClient(doc) {
     lastName: o.lastName ?? "",
     name: displayNameFromDocument(o),
     email: o.email,
+    joinedAt: o.joinedAt ?? o.createdAt ?? o.created_at ?? null,
     username: o.username ?? "",
     country: o.country ?? "",
     age: o.age ?? null,
@@ -35,8 +36,12 @@ export function userToClient(doc) {
     phone: o.phone ?? "",
     birthday: birthdayToIsoDate(o.birthday),
     address: o.address ?? "",
+    addressUrl: o.addressUrl ?? "",
     education: o.education ?? "",
     gender: o.gender ?? "",
+    facebookUrl: o.facebookUrl ?? "",
+    twitterUrl: o.twitterUrl ?? "",
+    instagramUrl: o.instagramUrl ?? "",
   };
 }
 

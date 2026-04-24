@@ -1,33 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import navLogo from "./assets/LM-LIGHT.png";
 import tabLogo from "./assets/logo-png.png";
 import heroStudyImage from "./assets/hero.png";
 import communityImage from "./assets/community-image.png";
 import { createSupabaseClient } from "./lib/supabaseClient";
+import {
+  isLikelySameCommunityName,
+  isSameCityAndProvince,
+  isSameCommunityLocale,
+  levenshteinDistance,
+} from "./lib/communityNameSimilarity.js";
+import { formatBrowseLabel, getVerticalById, VERTICALS } from "./categoryNav.js";
+import { gradientForId, initialsFromName } from "./communityUi.js";
+import { LoggedInHeader } from "./components/LoggedInHeader.jsx";
+import { PublicListingPage } from "./components/PublicListingPage.jsx";
+import { formatCents } from "./marketplace/money.js";
+import { SELLER_TABS, VIEWS } from "./views.js";
+import { getApiV1Base } from "./apiBase.js";
 
 /**
  * Dev: call the API on its own origin. The Vite proxy (`/api` → 4000) can 404 some POST routes
  * even when GET works. `cors()` on the server allows the browser origin.
  */
-const defaultApiUrl = () => {
-  if (!import.meta.env.DEV) return "http://localhost:4000/api/v1";
-  return "http://127.0.0.1:4000/api/v1";
-};
-const API_URL = (import.meta.env.VITE_API_URL || defaultApiUrl()).replace(/\/+$/, "");
+const API_URL = getApiV1Base();
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
-const VIEWS = {
-  DASHBOARD: "dashboard",
-  BROWSE: "browse",
-  QUIZ_INTRO: "quiz_intro",
-  QUIZ: "quiz",
-  RESULT: "result",
-  HISTORY: "history",
-  CREATE: "create",
-  EDIT: "edit",
-  PROFILE: "profile",
-  USERS: "users",
-};
-
 /** Success toast: full visible time before fade; fade length (should match CSS transition) */
 const PUBLISH_TOAST_DURATION_MS = 7500;
 const PUBLISH_TOAST_FADE_MS = 350;
@@ -116,10 +113,42 @@ const toTitleCase = (value) =>
     .map((segment) => (segment ? segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase() : ""))
     .filter(Boolean)
     .join(" ");
-const splitAddressParts = (address) => {
-  const [addressApartment = "", addressCity = "", addressProvince = "", addressCountry = "", addressPostalCode = ""] = String(address || "")
+/** City, province, postal line on marketplace community cards (structured fields or comma-separated `address`). */
+const formatCommunityMarketplaceSubtitle = (c) => {
+  const city = String(c.city || "").trim();
+  const prov = String(c.province || "").trim();
+  const zip = String(c.postalCode || "").trim();
+  if (city || prov || zip) return [toTitleCase(city), toTitleCase(prov), zip].filter(Boolean).join(", ");
+  return String(c.address || "")
     .split(",")
-    .map((part) => part.trim());
+    .map((part) => toTitleCase(part.trim()))
+    .filter(Boolean)
+    .join(", ");
+};
+/** Align with server `profileListingCommunity.js` — "Barangay 5" vs "Brgy. 5" */
+const stripBrgyPrefixLabel = (s) =>
+  String(s || "")
+    .trim()
+    .replace(/^(barangay|brgy\.?|bgy\.?|bar\.?)\s+/i, "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+const splitAddressParts = (address) => {
+  const parts = String(address || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length <= 5) {
+    const [addressApartment = "", addressCity = "", addressProvince = "", addressCountry = "", addressPostalCode = ""] = parts;
+    return { addressApartment, addressCity, addressProvince, addressCountry, addressPostalCode };
+  }
+  // If users include extra commas in the first line, preserve stable tail mapping:
+  // ... , city, province, country, postalCode
+  const addressPostalCode = parts.at(-1) || "";
+  const addressCountry = parts.at(-2) || "";
+  const addressProvince = parts.at(-3) || "";
+  const addressCity = parts.at(-4) || "";
+  const addressApartment = parts.slice(0, -4).join(", ");
   return { addressApartment, addressCity, addressProvince, addressCountry, addressPostalCode };
 };
 const buildAddressValue = (draft) =>
@@ -206,6 +235,13 @@ const toCreateDraftQuestion = (question) => {
 };
 const getApiErrorMessage = (payload, fallback) => {
   if (!payload || typeof payload !== "object") return fallback;
+  const rawDetails = payload.error?.details;
+  if (rawDetails && typeof rawDetails === "object" && !Array.isArray(rawDetails)) {
+    const { method, url } = rawDetails;
+    if (typeof method === "string" && typeof url === "string" && url) {
+      return `Route not found (${method} ${url}).`;
+    }
+  }
   const detailed = Array.isArray(payload.error?.details)
     ? payload.error.details
         .map((entry) => {
@@ -282,6 +318,9 @@ const apiRequest = async (path, { method = "GET", token, body, headers = {} } = 
   return payload;
 };
 
+/** Only treat 401 as invalid session — do not clear the token on network or server errors. */
+const isUnauthorizedApiError = (error) => typeof error?.status === "number" && error.status === 401;
+
 const getStreakDays = (attempts) => {
   if (!attempts.length) return 0;
   const uniqueDays = [...new Set(attempts.map((a) => new Date(a.submittedAt).toISOString().slice(0, 10)))].sort().reverse();
@@ -295,29 +334,6 @@ const getStreakDays = (attempts) => {
   }
   return streak;
 };
-
-const defaultHomePosts = [
-  {
-    id: "seed-1",
-    author: "Ana Dela Cruz",
-    role: "Civil Service Reviewee",
-    content:
-      "Anyone reviewing for the Civil Service Professional exam this month? I made a quick reviewer for analogy and grammar. I can share it if you need.",
-    timeLabel: "2h ago",
-    likes: 18,
-    comments: 7,
-  },
-  {
-    id: "seed-2",
-    author: "Mark Santos",
-    role: "PRC Board Exam Taker",
-    content:
-      "Sharing my routine: 50-item mock quiz every night + 30 mins discussion with my study buddy. Huge help for retention.",
-    timeLabel: "4h ago",
-    likes: 24,
-    comments: 10,
-  },
-];
 
 const LANDING_TARGET_EXAMS = [
   {
@@ -356,6 +372,12 @@ const LANDING_EXAM_SLIDE_SIZE = 3;
 const LANDING_EXAM_SLIDES = Array.from({ length: Math.ceil(LANDING_TARGET_EXAMS.length / LANDING_EXAM_SLIDE_SIZE) }, (_, i) =>
   LANDING_TARGET_EXAMS.slice(i * LANDING_EXAM_SLIDE_SIZE, i * LANDING_EXAM_SLIDE_SIZE + LANDING_EXAM_SLIDE_SIZE),
 );
+
+const BROWSE_QUICK_FILTERS = [
+  { id: "all", label: "All categories" },
+  { id: "new", label: "New" },
+  { id: "sale", label: "Sale" },
+];
 
 function LandingIllustration() {
   return (
@@ -426,14 +448,6 @@ function LandingFooterIconMail(props) {
   );
 }
 
-function LandingFooterIconPhone(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" />
-    </svg>
-  );
-}
-
 function LandingFooterIconMapPin(props) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
@@ -445,56 +459,35 @@ function LandingFooterIconMapPin(props) {
 
 function LandingSiteFooter() {
   const accent = "text-teal-400 shrink-0";
-  const aboutLinks = ["Blog", "Media", "Careers", "Our team", "Community", "Partnership"];
   return (
     <footer className="landing-site-footer w-full" role="contentinfo">
       <svg className="block h-11 w-full shrink-0" viewBox="0 0 1440 48" preserveAspectRatio="none" aria-hidden>
         <path fill="#2d3748" d="M0 48V16Q720 0 1440 16V48H0z" />
       </svg>
       <div className="-mt-px bg-[#2d3748] px-6 pb-8 pt-0 sm:px-8 lg:px-12">
-        <div className="app-container mx-auto grid max-w-7xl grid-cols-1 gap-12 pb-14 md:grid-cols-2 md:gap-10 lg:grid-cols-4 lg:gap-8 lg:pb-16">
+        <div className="app-container mx-auto grid max-w-7xl grid-cols-1 gap-12 pb-14 md:grid-cols-2 md:gap-10 lg:grid-cols-3 lg:gap-8 lg:pb-16">
           <div className="text-left">
-            <h2 className="text-base font-bold tracking-tight text-white">Why Exam Forum</h2>
+            <h2 className="text-base font-bold tracking-tight text-white">Why LinkMart</h2>
             <p className="mt-4 text-sm leading-relaxed text-white/85">
-              We offer free practice and peer support for Filipino learners working toward licensure and career exams.
+              LinkMart is built for local communities where neighbors can buy and sell with people they trust.
             </p>
             <p className="mt-3 text-sm leading-relaxed text-white/85">
-              Prepare with quizzes, forum discussions, and instant feedback—stay motivated, learn faster, and track your progress in one place.
+              Discover nearby listings, support local sellers, and complete faster transactions inside your subdivision, barangay, or compound.
             </p>
           </div>
-          <nav className="text-left" aria-label="About">
-            <h2 className="text-base font-bold tracking-tight text-white">About</h2>
-            <ul className="mt-4 flex flex-col gap-2.5">
-              {aboutLinks.map((label) => (
-                <li key={label}>
-                  <a href="#" className="landing-footer-about-link">
-                    {label}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </nav>
           <div className="text-left">
             <h2 className="text-base font-bold tracking-tight text-white">Contact</h2>
             <ul className="mt-4 flex flex-col gap-4 text-sm">
               <li className="flex gap-3">
                 <LandingFooterIconMail className={`${accent} mt-0.5`} />
-                <a href="mailto:support@examforum.ph">support@examforum.ph</a>
-              </li>
-              <li className="flex gap-3">
-                <LandingFooterIconPhone className={`${accent} mt-0.5`} />
-                <span className="text-white/90">
-                  +63 917 000 0000
-                  <br />
-                  +63 920 000 0000
-                </span>
+                <a href="mailto:reyjandellreyes21@gmail.com">reyjandellreyes21@gmail.com</a>
               </li>
               <li className="flex gap-3">
                 <LandingFooterIconMapPin className={`${accent} mt-0.5 self-start`} />
                 <span className="text-white/90">
-                  Ayala Ave, Makati City
+                  CPR, Calamba City,
                   <br />
-                  Metro Manila, Philippines
+                  Laguna, Philippines
                 </span>
               </li>
             </ul>
@@ -503,16 +496,16 @@ function LandingSiteFooter() {
             <h2 className="text-base font-bold tracking-tight text-white">Key stats</h2>
             <dl className="mt-4 flex flex-col gap-6">
               <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Forum posts</dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">12k+</dd>
+                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Active listings</dt>
+                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">8k+</dd>
               </div>
               <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Mock quizzes</dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">250+</dd>
+                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Local sellers</dt>
+                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">1.2k+</dd>
               </div>
               <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Avg. pass rate</dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">87%</dd>
+                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Covered communities</dt>
+                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">50+</dd>
               </div>
             </dl>
           </div>
@@ -521,7 +514,7 @@ function LandingSiteFooter() {
           <div className="flex flex-col items-center gap-8 lg:flex-row lg:items-end lg:justify-between">
             <div className="flex flex-col items-center gap-1 lg:items-start">
               <QuizAppLogo className="h-9 w-auto max-w-[12rem] shrink-0 object-contain brightness-0 invert sm:h-10 sm:max-w-[13rem]" />
-              <p className="text-xs font-medium tracking-wide text-white/55">Path to pass</p>
+              <p className="text-xs font-medium tracking-wide text-white/55">Local marketplace for every community</p>
             </div>
             <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-sm text-white/85" aria-label="Legal">
               <a href="#">Privacy Policy</a>
@@ -621,30 +614,54 @@ const LANDING_FEATURE_ROWS = [
   },
 ];
 
-function MenuIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden {...props}>
-      <line x1="4" x2="20" y1="7" y2="7" />
-      <line x1="4" x2="20" y1="12" y2="12" />
-      <line x1="4" x2="20" y1="17" y2="17" />
-    </svg>
-  );
-}
+function OrderPlacementForm({ listing, token, onDone, onError }) {
+  const modes = listing?.fulfillmentModes?.length ? listing.fulfillmentModes : ["pickup"];
+  const [fulfillmentType, setFulfillmentType] = useState(() => (modes.includes("pickup") ? "pickup" : modes[0]));
+  const [submitting, setSubmitting] = useState(false);
 
-function SunIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-    </svg>
-  );
-}
+  useEffect(() => {
+    const m = listing?.fulfillmentModes?.length ? listing.fulfillmentModes : ["pickup"];
+    setFulfillmentType(m.includes("pickup") ? "pickup" : m[0]);
+  }, [listing?.id, listing?.fulfillmentModes]);
 
-function MoonIcon(props) {
+  const place = async () => {
+    if (!token) return;
+    setSubmitting(true);
+    try {
+      await apiRequest("/orders", {
+        method: "POST",
+        token,
+        body: { listingId: listing.id, fulfillmentType, quantity: 1 },
+      });
+      onDone("Order placed. Pay COD at pickup or when delivery is completed.");
+    } catch (e) {
+      onError(e.message || "Could not place order.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
-    </svg>
+    <div className="mt-4 space-y-3 rounded-xl border border-neutral-200/90 bg-white/80 p-4 dark:border-slate-600 dark:bg-slate-900/60">
+      <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">Place order (COD)</p>
+      <div className="flex flex-wrap gap-3 text-sm">
+        {modes.includes("pickup") ? (
+          <label className="inline-flex cursor-pointer items-center gap-2">
+            <input type="radio" name="fulfillment" checked={fulfillmentType === "pickup"} onChange={() => setFulfillmentType("pickup")} />
+            Pickup (pay seller in cash when you meet)
+          </label>
+        ) : null}
+        {modes.includes("delivery") ? (
+          <label className="inline-flex cursor-pointer items-center gap-2">
+            <input type="radio" name="fulfillment" checked={fulfillmentType === "delivery"} onChange={() => setFulfillmentType("delivery")} />
+            Delivery (couriers bid; pay COD at handoff)
+          </label>
+        ) : null}
+      </div>
+      <button type="button" className="btn-primary" disabled={submitting} onClick={place}>
+        {submitting ? "Placing…" : "Confirm order"}
+      </button>
+    </div>
   );
 }
 
@@ -713,6 +730,9 @@ function App() {
   });
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(() => localStorage.getItem("quiz_token") || "");
+  const navigate = useNavigate();
+  const location = useLocation();
+  const routeListingId = useMemo(() => /\/l\/([0-9a-f-]{36})/i.exec(location.pathname)?.[1] ?? null, [location.pathname]);
   useEffect(() => {
     const supabase = createSupabaseClient();
     if (!supabase) return undefined;
@@ -727,9 +747,9 @@ function App() {
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       const accessToken = session?.access_token || "";
+      if (!accessToken) return;
       setToken(accessToken);
-      if (accessToken) localStorage.setItem("quiz_token", accessToken);
-      else localStorage.removeItem("quiz_token");
+      localStorage.setItem("quiz_token", accessToken);
     });
 
     return () => {
@@ -739,9 +759,6 @@ function App() {
   }, []);
 
   const [message, setMessage] = useState("");
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const accountMenuRef = useRef(null);
   const [theme, setTheme] = useState(() => {
     try {
       return typeof window !== "undefined" && localStorage.getItem("quiz_theme_v2") === "dark" ? "dark" : "light";
@@ -753,8 +770,136 @@ function App() {
   const [usersList, setUsersList] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState("");
+  const [profileJoinedAt, setProfileJoinedAt] = useState("");
+  const [profileJoinedAtResolved, setProfileJoinedAtResolved] = useState(false);
 
-  const [activeView, setActiveView] = useState(VIEWS.PROFILE);
+  const [activeView, setActiveView] = useState(VIEWS.BROWSE);
+  const isBrowseLikeView = useMemo(
+    () => activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP,
+    [activeView],
+  );
+  /** @type {[string | null, import('react').Dispatch<import('react').SetStateAction<string | null>>]} */
+  const [browseVerticalId, setBrowseVerticalId] = useState(null);
+  const [browseSubId, setBrowseSubId] = useState(null);
+  const [browseQuickFilter, setBrowseQuickFilter] = useState("all");
+  const [selectedListingId, setSelectedListingId] = useState(null);
+  const [listingDetail, setListingDetail] = useState(null);
+  const [listings, setListings] = useState([]);
+  const [sellerListings, setSellerListings] = useState([]);
+  const [listingsLoading, setListingsLoading] = useState(false);
+  const [listingsError, setListingsError] = useState("");
+  const [favoriteIds, setFavoriteIds] = useState(() => new Set());
+  const [favoritesLoading, setFavoritesLoading] = useState(false);
+  const [favoritesList, setFavoritesList] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [ordersRole, setOrdersRole] = useState("buyer");
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [sellerSummary, setSellerSummary] = useState(null);
+  const [expenses, setExpenses] = useState([]);
+  const [expenseDraft, setExpenseDraft] = useState({ amountPesos: "", category: "supplies", note: "" });
+  const [listingForm, setListingForm] = useState({
+    title: "",
+    description: "",
+    pricePesos: "",
+    quantity: "",
+    verticalId: "",
+    subId: "all",
+    pickup: true,
+    delivery: true,
+  });
+  const [listingSaving, setListingSaving] = useState(false);
+  const [marketplaceMessage, setMarketplaceMessage] = useState("");
+  const [communities, setCommunities] = useState([]);
+  const [communitiesLoading, setCommunitiesLoading] = useState(false);
+  const [communitiesError, setCommunitiesError] = useState("");
+  const [communityFormOpen, setCommunityFormOpen] = useState(false);
+  const [communityImageFile, setCommunityImageFile] = useState(null);
+  const communityImageInputRef = useRef(null);
+  const [communitySaving, setCommunitySaving] = useState(false);
+  /** Profile edit: Brgy field combobox dropdown for existing community names. */
+  const [profileBrgySuggestOpen, setProfileBrgySuggestOpen] = useState(false);
+  /** Community marketplace scope (same shell as global browse — not stored in the URL). */
+  const [shopCommunityId, setShopCommunityId] = useState(null);
+  const activeCommunity = useMemo(
+    () => (shopCommunityId ? communities.find((x) => x.id === shopCommunityId) ?? null : null),
+    [communities, shopCommunityId],
+  );
+  /** City · province · postal for the open community shop header (structured fields from API). */
+  const activeCommunityLocaleLine = useMemo(() => {
+    const ac = activeCommunity;
+    if (!ac) return "";
+    const cCity = String(ac.city || "").trim();
+    const cProv = String(ac.province || "").trim();
+    const cZip = String(ac.postalCode || "").trim();
+    return [toTitleCase(cCity), toTitleCase(cProv), cZip].filter(Boolean).join(" · ");
+  }, [activeCommunity]);
+  /** First segment of saved profile `address` — Brgy/Community/Subdivision (see profile form). */
+  const profileBrgyCommunitySubdivision = useMemo(() => {
+    const raw = splitAddressParts(user?.address).addressApartment;
+    return String(raw || "").trim();
+  }, [user?.address]);
+  /** City, province, postal code segments from the same comma-separated profile `address`. */
+  const profileCityProvincePostal = useMemo(() => {
+    const p = splitAddressParts(user?.address);
+    return {
+      city: String(p.addressCity || "").trim(),
+      province: String(p.addressProvince || "").trim(),
+      postalCode: String(p.addressPostalCode || "").trim(),
+    };
+  }, [user?.address]);
+  /** Community row whose name matches profile Brgy and city/province when set — listings + “New community” visibility. */
+  const listingCommunityFromProfile = useMemo(() => {
+    const label = profileBrgyCommunitySubdivision.trim();
+    if (!label) return { id: null, matchedName: "" };
+    const pc = profileCityProvincePostal;
+    const hasLoc = Boolean(pc.city && pc.province);
+
+    const pickFromPool = (pool) => {
+      const exact = pool.find((c) => String(c.name || "").trim() === label);
+      if (exact) return { id: exact.id, matchedName: String(exact.name || "").trim() };
+      const sl = stripBrgyPrefixLabel(label).toLowerCase();
+      const byStrip = pool.find((c) => stripBrgyPrefixLabel(String(c.name || "").trim()).toLowerCase() === sl);
+      if (byStrip) return { id: byStrip.id, matchedName: String(byStrip.name || "").trim() };
+      const lower = label.toLowerCase();
+      const ci = pool.find((c) => String(c.name || "").trim().toLowerCase() === lower);
+      if (ci) return { id: ci.id, matchedName: String(ci.name || "").trim() };
+      const fuzzy = pool.find((c) => isLikelySameCommunityName(label, String(c.name || "").trim()));
+      if (fuzzy) return { id: fuzzy.id, matchedName: String(fuzzy.name || "").trim() };
+      return { id: null, matchedName: "" };
+    };
+
+    if (!hasLoc) {
+      return pickFromPool(communities);
+    }
+
+    const strictPool = communities.filter((c) =>
+      isSameCommunityLocale(
+        { city: pc.city, province: pc.province, postalCode: pc.postalCode },
+        { city: c.city, province: c.province, postalCode: c.postalCode },
+      ),
+    );
+    const strict = pickFromPool(strictPool);
+    if (strict.id) return strict;
+
+    const cityPool = communities.filter((c) =>
+      isSameCityAndProvince(pc.city, pc.province, c.city, c.province),
+    );
+    const byCity = pickFromPool(cityPool);
+    if (byCity.id) return byCity;
+
+    return pickFromPool(communities);
+  }, [communities, profileBrgyCommunitySubdivision, profileCityProvincePostal]);
+  /** Compact header “In [community] / All areas” — only on marketplace browse screens, not Orders/Delivery/Profile. */
+  const showCommunityShopHeaderStrip = useMemo(
+    () => Boolean(shopCommunityId) && isBrowseLikeView && activeView !== VIEWS.COMMUNITY_SHOP,
+    [shopCommunityId, isBrowseLikeView, activeView],
+  );
+  const prevShopCommunityIdRef = useRef(null);
+  const [expandedBidOrderId, setExpandedBidOrderId] = useState(null);
+  const [bidsForOrder, setBidsForOrder] = useState([]);
+  const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
+  /** Inline notice by “Upload product” on Profile (not the global marketplace banner). */
+  const [profileUploadProductNotice, setProfileUploadProductNotice] = useState("");
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("");
   const [quizzes, setQuizzes] = useState([]);
@@ -803,11 +948,6 @@ function App() {
   const [editSaving, setEditSaving] = useState(false);
   const [editMessage, setEditMessage] = useState("");
   const [quizMessage, setQuizMessage] = useState("");
-  const [homePostDraft, setHomePostDraft] = useState("");
-  const [homePosts, setHomePosts] = useState(defaultHomePosts);
-  const [likedPostIds, setLikedPostIds] = useState({});
-  const [postComments, setPostComments] = useState({});
-  const [commentDraftByPost, setCommentDraftByPost] = useState({});
   const [profileEditing, setProfileEditing] = useState(false);
   const [profileDraft, setProfileDraft] = useState({
     avatarUrl: "",
@@ -824,6 +964,10 @@ function App() {
     addressProvince: "",
     addressCountry: "",
     addressPostalCode: "",
+    addressUrl: "",
+    facebookUrl: "",
+    twitterUrl: "",
+    instagramUrl: "",
     education: "",
     gender: "",
   });
@@ -831,7 +975,68 @@ function App() {
   const [profileError, setProfileError] = useState("");
   const [profileAddressExpanded, setProfileAddressExpanded] = useState(false);
   const [profilePreferencesExpanded, setProfilePreferencesExpanded] = useState(false);
+  const [profileSocialExpanded, setProfileSocialExpanded] = useState(false);
+  /** Existing `communities.name` values matching the typed Brgy segment (profile edit): substring + fuzzy typos; scoped by city/province when both are set in the draft. */
+  const profileBrgyCommunitySuggestions = useMemo(() => {
+    const q = String(profileDraft.addressApartment || "").trim();
+    if (q.length < 1 || !communities.length) return [];
+    const draftCity = String(profileDraft.addressCity || "").trim();
+    const draftProv = String(profileDraft.addressProvince || "").trim();
+    const draftPostal = String(profileDraft.addressPostalCode || "").trim();
+    const restrictLoc = Boolean(draftCity && draftProv);
+    const ql = q.toLowerCase().replace(/\s+/g, " ");
+    const seen = new Set();
+    const rows = [];
+    for (const c of communities) {
+      if (
+        restrictLoc &&
+        !isSameCommunityLocale(
+          { city: draftCity, province: draftProv, postalCode: draftPostal },
+          { city: c.city, province: c.province, postalCode: c.postalCode },
+        )
+      )
+        continue;
+      const name = String(c.name || "").trim();
+      if (!name) continue;
+      const nl = name.toLowerCase().replace(/\s+/g, " ");
+      if (seen.has(nl)) continue;
+      const substring = nl.includes(ql);
+      const fuzzy = q.length >= 5 && isLikelySameCommunityName(q, name);
+      if (!substring && !fuzzy) continue;
+      seen.add(nl);
+      rows.push({
+        name,
+        city: String(c.city || "").trim(),
+        province: String(c.province || "").trim(),
+        postalCode: String(c.postalCode || "").trim(),
+        startsWith: nl.startsWith(ql),
+        fuzzy: !substring && fuzzy,
+        dist: substring ? 0 : levenshteinDistance(ql, nl),
+      });
+    }
+    rows.sort((a, b) => {
+      if (a.fuzzy !== b.fuzzy) return a.fuzzy ? 1 : -1;
+      if (a.startsWith !== b.startsWith) return a.startsWith ? -1 : 1;
+      if (a.dist !== b.dist) return a.dist - b.dist;
+      return a.name.localeCompare(b.name);
+    });
+    return rows.slice(0, 10).map(({ name, city, province, postalCode, startsWith }) => ({
+      name,
+      city,
+      province,
+      postalCode,
+      startsWith,
+    }));
+  }, [
+    communities,
+    profileDraft.addressApartment,
+    profileDraft.addressCity,
+    profileDraft.addressProvince,
+    profileDraft.addressPostalCode,
+  ]);
   const profileAvatarInputRef = useRef(null);
+  /** Delay closing Brgy suggestions so mousedown on an option runs before blur. */
+  const profileBrgySuggestBlurTimerRef = useRef(null);
 
   const googleBtnRef = useRef(null);
 
@@ -913,7 +1118,7 @@ function App() {
       });
       setResult(data);
       setActiveQuiz(null);
-      setActiveView(VIEWS.RESULT);
+      setActiveView(VIEWS.BROWSE);
     } catch (error) {
       setSubmitError(error.message || "Unable to submit quiz.");
     } finally {
@@ -926,10 +1131,21 @@ function App() {
     (async () => {
       try {
         const data = await apiRequest("/auth/me", { token });
-        setUser(data.user);
-      } catch {
-        localStorage.removeItem("quiz_token");
-        setToken("");
+        setUser((prev) => {
+          const incoming = data.user || {};
+          const preservedJoined =
+            incoming.joinedAt || incoming.createdAt || incoming.created_at || prev?.joinedAt || prev?.createdAt || prev?.created_at || "";
+          return { ...(prev || {}), ...incoming, joinedAt: preservedJoined };
+        });
+        const joined = data?.user?.joinedAt || data?.user?.createdAt || data?.user?.created_at || "";
+        if (joined) setProfileJoinedAt(joined);
+        setProfileJoinedAtResolved(true);
+      } catch (error) {
+        if (isUnauthorizedApiError(error)) {
+          localStorage.removeItem("quiz_token");
+          setToken("");
+        }
+        setProfileJoinedAtResolved(true);
       }
     })();
   }, [token, user]);
@@ -1022,7 +1238,7 @@ function App() {
             setToken(data.token);
             localStorage.setItem("quiz_token", data.token);
             setMessage("");
-            setActiveView(VIEWS.PROFILE);
+            setActiveView(VIEWS.BROWSE);
             setAuthPanelVisible(false);
           } catch (error) {
             setMessage(error.message || "Google login failed.");
@@ -1077,36 +1293,29 @@ function App() {
   }, [authPanelVisible, user, closeAuthPanel]);
 
   useEffect(() => {
-    if (!accountMenuOpen) return undefined;
-    const onPointerDown = (event) => {
-      if (accountMenuRef.current && !accountMenuRef.current.contains(event.target)) {
-        setAccountMenuOpen(false);
-      }
-    };
-    const onKeyDown = (event) => {
-      if (event.key === "Escape") setAccountMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [accountMenuOpen]);
-
-  useEffect(() => {
     if (!token || activeView !== VIEWS.PROFILE) return undefined;
     let cancelled = false;
     (async () => {
       try {
         const data = await apiRequest("/auth/me", { token });
-        if (!cancelled) setUser(data.user);
-      } catch {
         if (!cancelled) {
+          setUser((prev) => {
+            const incoming = data.user || {};
+            const preservedJoined =
+              incoming.joinedAt || incoming.createdAt || incoming.created_at || prev?.joinedAt || prev?.createdAt || prev?.created_at || "";
+            return { ...(prev || {}), ...incoming, joinedAt: preservedJoined };
+          });
+          const joined = data?.user?.joinedAt || data?.user?.createdAt || data?.user?.created_at || "";
+          if (joined) setProfileJoinedAt(joined);
+          setProfileJoinedAtResolved(true);
+        }
+      } catch (error) {
+        if (!cancelled && isUnauthorizedApiError(error)) {
           localStorage.removeItem("quiz_token");
           setToken("");
           setUser(null);
         }
+        if (!cancelled) setProfileJoinedAtResolved(true);
       }
     })();
     return () => {
@@ -1118,8 +1327,13 @@ function App() {
     if (activeView !== VIEWS.PROFILE) {
       setProfileEditing(false);
       setProfileError("");
+      setProfileUploadProductNotice("");
     }
   }, [activeView]);
+
+  useEffect(() => {
+    if (profileBrgyCommunitySubdivision.trim()) setProfileUploadProductNotice("");
+  }, [profileBrgyCommunitySubdivision]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.USERS) return undefined;
@@ -1140,6 +1354,51 @@ function App() {
       cancelled = true;
     };
   }, [token, activeView]);
+
+  useEffect(() => {
+    if (!token || activeView !== VIEWS.PROFILE || !user?.id) return undefined;
+    setProfileJoinedAtResolved(false);
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiRequest("/users", { token });
+        if (cancelled) return;
+        const me = (data.users || []).find((u) => String(u.id) === String(user.id));
+        if (me?.joinedAt) setProfileJoinedAt(me.joinedAt);
+        setProfileJoinedAtResolved(true);
+      } catch {
+        if (!cancelled) {
+          setProfileJoinedAtResolved(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeView, user?.id]);
+
+  useEffect(() => {
+    if (!token || activeView !== VIEWS.PROFILE || profileJoinedAt) return undefined;
+    const supabase = createSupabaseClient();
+    if (!supabase) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getUser(token);
+        const joined = data?.user?.created_at || "";
+        if (!cancelled) {
+          if (joined) setProfileJoinedAt(joined);
+          setProfileJoinedAtResolved(true);
+        }
+      } catch {
+        // Ignore: this is only a last-resort fallback for joined date.
+        if (!cancelled) setProfileJoinedAtResolved(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeView, profileJoinedAt]);
 
   const handleAuth = async (event) => {
     event.preventDefault();
@@ -1169,7 +1428,7 @@ function App() {
       setUser(data.user);
       setToken(data.token);
       localStorage.setItem("quiz_token", data.token);
-      setActiveView(VIEWS.PROFILE);
+      setActiveView(VIEWS.BROWSE);
       setAuthPanelVisible(false);
       setForm({
         email: "",
@@ -1207,7 +1466,7 @@ function App() {
       setAnswers({});
       setCurrentQuestionIndex(0);
       setSecondsLeft(data.questions.length * 30);
-      setActiveView(VIEWS.QUIZ);
+      setActiveView(VIEWS.BROWSE);
     } catch (error) {
       setQuizMessage(error.message || "Unable to load quiz.");
     } finally {
@@ -1220,10 +1479,555 @@ function App() {
     setToken("");
     setUser(null);
     setAuthPanelVisible(false);
-    setAccountMenuOpen(false);
     setActiveQuiz(null);
     setResult(null);
     setSelectedQuiz(null);
+    setShopCommunityId(null);
+  };
+
+  const pickBrowseScope = useCallback(
+    (verticalId, subId) => {
+      setBrowseVerticalId(verticalId);
+      setBrowseSubId(subId);
+      setBrowseQuickFilter("all");
+      setSelectedListingId(null);
+      navigate("/", { replace: true });
+      setActiveView(shopCommunityId ? VIEWS.COMMUNITY_SHOP : VIEWS.BROWSE);
+    },
+    [navigate, shopCommunityId],
+  );
+
+  const goOrders = useCallback(() => {
+    setActiveView(VIEWS.ORDERS);
+  }, []);
+
+  const goDelivery = useCallback(() => {
+    setActiveView(VIEWS.DELIVERY);
+  }, []);
+
+  const leaveCommunityToGlobalMarketplace = useCallback(() => {
+    setShopCommunityId(null);
+    setBrowseVerticalId(null);
+    setBrowseSubId(null);
+    setBrowseQuickFilter("all");
+    setSelectedListingId(null);
+    navigate("/", { replace: true });
+    setActiveView(VIEWS.BROWSE);
+  }, [navigate]);
+
+  const goBrowse = useCallback(() => {
+    setShopCommunityId(null);
+    setBrowseVerticalId(null);
+    setBrowseSubId(null);
+    setBrowseQuickFilter("all");
+    setSelectedListingId(null);
+    navigate("/", { replace: true });
+    setActiveView(VIEWS.BROWSE);
+  }, [navigate]);
+
+  const visibleBrowseListings = useMemo(() => {
+    if (browseQuickFilter === "all") return listings;
+    if (browseQuickFilter === "new") {
+      return listings.filter((l) => {
+        if (l?.createdAt) {
+          const ageMs = Date.now() - new Date(l.createdAt).getTime();
+          return Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 1000 * 60 * 60 * 24 * 14;
+        }
+        const text = `${l?.title || ""} ${l?.description || ""}`.toLowerCase();
+        return /\bnew\b|brand new|sealed|unused/.test(text);
+      });
+    }
+    if (browseQuickFilter === "sale") {
+      return listings.filter((l) => {
+        const text = `${l?.title || ""} ${l?.description || ""}`.toLowerCase();
+        return /\bsale\b|discount|promo|markdown|clearance/.test(text);
+      });
+    }
+    return listings;
+  }, [browseQuickFilter, listings]);
+
+  const refreshFavorites = useCallback(async () => {
+    if (!token) return;
+    try {
+      const d = await apiRequest("/me/favorites", { token });
+      setFavoritesList(d.favorites || []);
+      setFavoriteIds(new Set((d.favorites || []).map((x) => x.id)));
+    } catch {
+      setFavoriteIds(new Set());
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) {
+      setFavoriteIds(new Set());
+      setFavoritesList([]);
+      return undefined;
+    }
+    refreshFavorites();
+    return undefined;
+  }, [token, refreshFavorites]);
+
+  useEffect(() => {
+    if (!user || !routeListingId) return undefined;
+    setSelectedListingId(routeListingId);
+    setActiveView(shopCommunityId ? VIEWS.COMMUNITY_SHOP : VIEWS.BROWSE);
+    return undefined;
+  }, [user, routeListingId, shopCommunityId]);
+
+  useEffect(() => {
+    if (!shopCommunityId) {
+      prevShopCommunityIdRef.current = null;
+      return undefined;
+    }
+    if (shopCommunityId !== prevShopCommunityIdRef.current) {
+      prevShopCommunityIdRef.current = shopCommunityId;
+      setBrowseVerticalId(null);
+      setBrowseSubId(null);
+      setBrowseQuickFilter("all");
+      setSelectedListingId(null);
+      setActiveView(VIEWS.COMMUNITY_SHOP);
+    }
+    return undefined;
+  }, [shopCommunityId]);
+
+  /** Old bookmarked `/c/:id` or `/c/:id/shop` URLs → same in-app state, then clean path. */
+  useEffect(() => {
+    if (!user) return undefined;
+    const m = /^\/c\/([0-9a-f-]{36})(?:\/shop)?\/?$/i.exec(location.pathname);
+    if (!m?.[1]) return undefined;
+    setShopCommunityId(m[1]);
+    navigate("/", { replace: true });
+    return undefined;
+  }, [user, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (!selectedListingId) {
+      setListingDetail(null);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await apiRequest(`/listings/${selectedListingId}`, token ? { token } : {});
+        if (!cancelled) setListingDetail(d.listing);
+      } catch {
+        if (!cancelled) setListingDetail(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedListingId, token]);
+
+  useEffect(() => {
+    if (!token || activeView !== VIEWS.COMMUNITY_SHOP) return undefined;
+    const inCommunity = !!shopCommunityId;
+    const hasVertical = browseVerticalId != null;
+    setListings([]);
+    setListingsError("");
+    let cancelled = false;
+    (async () => {
+      setListingsLoading(true);
+      setListingsError("");
+      try {
+        const qs = new URLSearchParams();
+        if (inCommunity) qs.set("communityId", shopCommunityId);
+        if (hasVertical) {
+          qs.set("verticalId", browseVerticalId);
+          if (browseSubId && browseSubId !== "all") qs.set("subId", browseSubId);
+        }
+        const data = await apiRequest(`/listings?${qs.toString()}`, { token });
+        if (!cancelled) setListings(data.listings || []);
+      } catch (e) {
+        if (!cancelled) {
+          setListingsError(e.message || "Could not load listings.");
+          setListings([]);
+        }
+      } finally {
+        if (!cancelled) setListingsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeView, browseVerticalId, browseSubId, shopCommunityId, user?.address]);
+
+  useEffect(() => {
+    if (!token || activeView !== VIEWS.FAVORITES) return undefined;
+    let cancelled = false;
+    (async () => {
+      setFavoritesLoading(true);
+      try {
+        await refreshFavorites();
+      } finally {
+        if (!cancelled) setFavoritesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeView, refreshFavorites]);
+
+  useEffect(() => {
+    if (!token || activeView !== VIEWS.ORDERS) return undefined;
+    let cancelled = false;
+    (async () => {
+      setOrdersLoading(true);
+      try {
+        const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+        if (!cancelled) setOrders(data.orders || []);
+      } catch {
+        if (!cancelled) setOrders([]);
+      } finally {
+        if (!cancelled) setOrdersLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeView, ordersRole]);
+
+  useEffect(() => {
+    if (!token || activeView !== VIEWS.PROFILE) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [sum, exp] = await Promise.all([
+          apiRequest("/me/seller/summary", { token }),
+          apiRequest("/me/expenses", { token }),
+        ]);
+        if (!cancelled) {
+          setSellerSummary(sum);
+          setExpenses(exp.expenses || []);
+        }
+      } catch {
+        if (!cancelled) {
+          setSellerSummary(null);
+          setExpenses([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeView, sellerTab]);
+
+  useEffect(() => {
+    if (!token) return undefined;
+    const loadMyListings =
+      activeView === VIEWS.MY_LISTINGS ||
+      (activeView === VIEWS.PROFILE && sellerTab === SELLER_TABS.PRODUCTS);
+    if (!loadMyListings) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiRequest("/me/listings", { token });
+        if (!cancelled) setSellerListings(data.listings || []);
+      } catch {
+        if (!cancelled) setSellerListings([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeView, sellerTab]);
+
+  useEffect(() => {
+    if (!token || (!isBrowseLikeView && activeView !== VIEWS.MY_LISTINGS && activeView !== VIEWS.PROFILE)) return undefined;
+    let cancelled = false;
+    (async () => {
+      setCommunitiesLoading(true);
+      setCommunitiesError("");
+      try {
+        const res = await apiRequest("/communities", { token });
+        if (!cancelled) setCommunities(res.communities || []);
+      } catch (e) {
+        if (!cancelled) {
+          setCommunitiesError(e.message || "Could not load communities.");
+          setCommunities([]);
+        }
+      } finally {
+        if (!cancelled) setCommunitiesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, isBrowseLikeView, activeView]);
+
+  useEffect(() => {
+    if (profileEditing) return undefined;
+    setProfileBrgySuggestOpen(false);
+    if (profileBrgySuggestBlurTimerRef.current) {
+      clearTimeout(profileBrgySuggestBlurTimerRef.current);
+      profileBrgySuggestBlurTimerRef.current = null;
+    }
+    return undefined;
+  }, [profileEditing]);
+
+  useEffect(() => {
+    return () => {
+      if (profileBrgySuggestBlurTimerRef.current) {
+        clearTimeout(profileBrgySuggestBlurTimerRef.current);
+        profileBrgySuggestBlurTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const closeAddCommunityModal = useCallback(() => {
+    setCommunityFormOpen(false);
+    setCommunityImageFile(null);
+    if (communityImageInputRef.current) communityImageInputRef.current.value = "";
+  }, []);
+
+  useEffect(() => {
+    if (!communityFormOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") closeAddCommunityModal();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [communityFormOpen, closeAddCommunityModal]);
+
+  const handleCreateCommunity = async (ev) => {
+    ev.preventDefault();
+    if (!token) {
+      setMarketplaceMessage("Sign in again to add a community.");
+      return;
+    }
+    const brgyFromProfile = String(splitAddressParts(user?.address).addressApartment || "").trim();
+    if (!brgyFromProfile) {
+      setMarketplaceMessage("Save your Brgy/Community/Subdivision in Profile (Address) before adding a community.");
+      return;
+    }
+    const { city: cityFromProfile, province: provinceFromProfile, postalCode: postalFromProfile } =
+      profileCityProvincePostal;
+    if (!cityFromProfile || !provinceFromProfile || !postalFromProfile) {
+      setMarketplaceMessage(
+        "Save City, Province, and Postal code in Profile (Address) before creating a community.",
+      );
+      return;
+    }
+    if (brgyFromProfile.length < 2) {
+      setMarketplaceMessage("Brgy/Community/Subdivision in Profile must be at least 2 characters.");
+      return;
+    }
+    setCommunitySaving(true);
+    setMarketplaceMessage("");
+    try {
+      const fd = new FormData();
+      fd.append("name", brgyFromProfile);
+      fd.append("city", cityFromProfile);
+      fd.append("province", provinceFromProfile);
+      fd.append("postalCode", postalFromProfile);
+      if (communityImageFile) fd.append("image", communityImageFile);
+      const createdRes = await apiRequest("/communities", { method: "POST", token, body: fd });
+      const createdCommunity = createdRes?.community;
+      closeAddCommunityModal();
+      const res = await apiRequest("/communities", { token });
+      let nextCommunities = res.communities || [];
+      if (createdCommunity?.id && !nextCommunities.some((c) => c.id === createdCommunity.id)) {
+        nextCommunities = [createdCommunity, ...nextCommunities];
+      }
+      setCommunities(nextCommunities);
+      setMarketplaceMessage("Community added.");
+    } catch (e) {
+      setMarketplaceMessage(e.message || "Could not create new community.");
+    } finally {
+      setCommunitySaving(false);
+    }
+  };
+
+  const toggleFavorite = async (listingId, makeFavorite) => {
+    if (!token) return;
+    setMarketplaceMessage("");
+    try {
+      if (makeFavorite) await apiRequest(`/me/favorites/${listingId}`, { method: "POST", token });
+      else await apiRequest(`/me/favorites/${listingId}`, { method: "DELETE", token });
+      await refreshFavorites();
+    } catch (e) {
+      setMarketplaceMessage(e.message || "Could not update favorites.");
+    }
+  };
+
+  const openListing = (id) => {
+    setSelectedListingId(id);
+    setActiveView(VIEWS.BROWSE);
+  };
+
+  const closeListingDetail = () => {
+    setSelectedListingId(null);
+    navigate("/", { replace: true });
+  };
+
+  const patchOrderTransition = async (orderId, transition) => {
+    setMarketplaceMessage("");
+    try {
+      await apiRequest(`/orders/${orderId}`, { method: "PATCH", token, body: { transition } });
+      const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+      setOrders(data.orders || []);
+      setMarketplaceMessage("Order updated.");
+    } catch (e) {
+      setMarketplaceMessage(e.message || "Could not update order.");
+    }
+  };
+
+  const acceptOrderBid = async (orderId, bidId) => {
+    setMarketplaceMessage("");
+    try {
+      await apiRequest(`/orders/${orderId}/bids/${bidId}/accept`, { method: "POST", token });
+      const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+      setOrders(data.orders || []);
+      setExpandedBidOrderId(null);
+      setBidsForOrder([]);
+      setMarketplaceMessage("Bid accepted. Agreed delivery fee is stored for COD at handoff.");
+    } catch (e) {
+      setMarketplaceMessage(e.message || "Could not accept bid.");
+    }
+  };
+
+  const loadBidsForOrder = async (orderId) => {
+    setExpandedBidOrderId(orderId);
+    try {
+      const d = await apiRequest(`/orders/${orderId}/bids`, { token });
+      setBidsForOrder(d.bids || []);
+    } catch {
+      setBidsForOrder([]);
+    }
+  };
+
+  const handleAddExpense = async (ev) => {
+    ev.preventDefault();
+    const pesos = Number(expenseDraft.amountPesos);
+    if (!Number.isFinite(pesos) || pesos < 0) {
+      setMarketplaceMessage("Invalid expense amount.");
+      return;
+    }
+    setMarketplaceMessage("");
+    try {
+      await apiRequest("/me/expenses", {
+        method: "POST",
+        token,
+        body: {
+          amountCents: Math.round(pesos * 100),
+          category: expenseDraft.category,
+          note: expenseDraft.note,
+        },
+      });
+      setExpenseDraft({ amountPesos: "", category: "supplies", note: "" });
+      const [sum, exp] = await Promise.all([apiRequest("/me/seller/summary", { token }), apiRequest("/me/expenses", { token })]);
+      setSellerSummary(sum);
+      setExpenses(exp.expenses || []);
+      setMarketplaceMessage("Expense added.");
+    } catch (e) {
+      setMarketplaceMessage(e.message || "Could not add expense.");
+    }
+  };
+
+  const deleteExpenseById = async (id) => {
+    try {
+      await apiRequest(`/me/expenses/${id}`, { method: "DELETE", token });
+      const [sum, exp] = await Promise.all([apiRequest("/me/seller/summary", { token }), apiRequest("/me/expenses", { token })]);
+      setSellerSummary(sum);
+      setExpenses(exp.expenses || []);
+    } catch (e) {
+      setMarketplaceMessage(e.message || "Could not delete.");
+    }
+  };
+
+  const handleCreateListing = async (ev) => {
+    ev.preventDefault();
+    if (!token) return;
+    if (!profileBrgyCommunitySubdivision.trim()) {
+      setMarketplaceMessage("Save your Brgy/Community/Subdivision in Profile (Address) before publishing a listing.");
+      return;
+    }
+    const catMissing = !String(listingForm.verticalId || "").trim();
+    const qtyStr = String(listingForm.quantity ?? "").trim();
+    const qtyMissing = qtyStr === "";
+    if (catMissing && qtyMissing) {
+      setMarketplaceMessage("Select a category and enter a quantity before publishing.");
+      return;
+    }
+    if (catMissing) {
+      setMarketplaceMessage("Select a category before publishing.");
+      return;
+    }
+    if (qtyMissing) {
+      setMarketplaceMessage("Enter a quantity before publishing.");
+      return;
+    }
+    const qtyNum = Number(qtyStr);
+    if (!Number.isFinite(qtyNum) || qtyNum < 0 || !Number.isInteger(qtyNum)) {
+      setMarketplaceMessage("Enter a valid whole number for quantity (0 or more).");
+      return;
+    }
+
+    const pesos = Number(listingForm.pricePesos);
+    if (!Number.isFinite(pesos) || pesos < 0) {
+      setMarketplaceMessage("Enter a valid price in pesos.");
+      return;
+    }
+    const modes = [];
+    if (listingForm.pickup) modes.push("pickup");
+    if (listingForm.delivery) modes.push("delivery");
+    if (modes.length === 0) {
+      setMarketplaceMessage("Choose pickup and/or delivery.");
+      return;
+    }
+    const effectiveCommunityId =
+      shopCommunityId || String(listingCommunityFromProfile.id || "").trim();
+    if (!effectiveCommunityId) {
+      setMarketplaceMessage(
+        profileBrgyCommunitySubdivision.trim()
+          ? "No community matches your profile Brgy/Community/Subdivision. Add one from the marketplace with the same name."
+          : "Save your Brgy/Community/Subdivision in Profile (Address), then add a community that uses that name.",
+      );
+      return;
+    }
+    setListingSaving(true);
+    setMarketplaceMessage("");
+    try {
+      await apiRequest("/me/listings", {
+        method: "POST",
+        token,
+        body: {
+          title: listingForm.title.trim(),
+          description: listingForm.description.trim(),
+          priceCents: Math.round(pesos * 100),
+          quantity: qtyNum,
+          verticalId: String(listingForm.verticalId).trim(),
+          ...(listingForm.subId && listingForm.subId !== "all" ? { subId: listingForm.subId } : {}),
+          fulfillmentModes: modes,
+          cityLabel: "",
+          communityId: effectiveCommunityId,
+        },
+      });
+      const [listRes, sumRes] = await Promise.all([
+        apiRequest("/me/listings", { token }),
+        apiRequest("/me/seller/summary", { token }),
+      ]);
+      setSellerListings(listRes.listings || []);
+      setSellerSummary(sumRes);
+      setListingForm({
+        title: "",
+        description: "",
+        pricePesos: "",
+        quantity: "",
+        verticalId: "",
+        subId: "all",
+        pickup: true,
+        delivery: true,
+      });
+      setMarketplaceMessage("Listing published.");
+      setSellerTab(SELLER_TABS.PRODUCTS);
+      setActiveView(VIEWS.PROFILE);
+      navigate("/", { replace: true });
+    } catch (e) {
+      setMarketplaceMessage(e.message || "Could not publish listing.");
+    } finally {
+      setListingSaving(false);
+    }
   };
 
   const openProfileEdit = () => {
@@ -1244,12 +2048,17 @@ function App() {
       addressProvince: parsedAddress.addressProvince,
       addressCountry: normalizeCountryValue(parsedAddress.addressCountry),
       addressPostalCode: parsedAddress.addressPostalCode,
+      addressUrl: user.addressUrl ?? "",
+      facebookUrl: user.facebookUrl ?? (user.socialPlatform === "facebook" ? user.socialUrl ?? user.url ?? "" : ""),
+      twitterUrl: user.twitterUrl ?? (user.socialPlatform === "x_twitter" ? user.socialUrl ?? user.url ?? "" : ""),
+      instagramUrl: user.instagramUrl ?? (user.socialPlatform === "instagram" ? user.socialUrl ?? user.url ?? "" : ""),
       education: user.education ?? "",
       gender: user.gender ?? "",
     });
     setProfileError("");
     setProfileAddressExpanded(false);
     setProfilePreferencesExpanded(false);
+    setProfileSocialExpanded(false);
     setProfileEditing(true);
   };
 
@@ -1258,6 +2067,12 @@ function App() {
     setProfileError("");
     setProfileAddressExpanded(false);
     setProfilePreferencesExpanded(false);
+    setProfileSocialExpanded(false);
+    setProfileBrgySuggestOpen(false);
+    if (profileBrgySuggestBlurTimerRef.current) {
+      clearTimeout(profileBrgySuggestBlurTimerRef.current);
+      profileBrgySuggestBlurTimerRef.current = null;
+    }
   };
 
   const handleProfileAvatarChange = (event) => {
@@ -1283,33 +2098,99 @@ function App() {
 
   const handleProfileSubmit = async (event) => {
     event.preventDefault();
-    if (!token) return;
+    const normalizedUsername = String(profileDraft.username || "").trim();
+    const normalizedFirstName = String(profileDraft.firstName || "").trim();
+    if (normalizedUsername.length < 3) {
+      setProfileError("Username must be at least 3 characters.");
+      return;
+    }
+    if (normalizedFirstName.length < 2) {
+      setProfileError("First name must be at least 2 characters.");
+      return;
+    }
+    const effectiveToken = token || localStorage.getItem("quiz_token") || "";
+    if (!effectiveToken) {
+      setProfileError("Your session expired. Please log in again.");
+      return;
+    }
     setProfileSaving(true);
     setProfileError("");
     try {
+      const primarySocial = profileDraft.facebookUrl.trim()
+        ? { socialPlatform: "facebook", socialUrl: profileDraft.facebookUrl.trim() }
+        : profileDraft.twitterUrl.trim()
+        ? { socialPlatform: "x_twitter", socialUrl: profileDraft.twitterUrl.trim() }
+        : profileDraft.instagramUrl.trim()
+        ? { socialPlatform: "instagram", socialUrl: profileDraft.instagramUrl.trim() }
+        : { socialPlatform: "", socialUrl: "" };
+
       const data = await apiRequest("/auth/me", {
         method: "PATCH",
-        token,
+        token: effectiveToken,
         body: {
           avatarUrl: profileDraft.avatarUrl.trim(),
-          username: profileDraft.username.trim(),
-          firstName: profileDraft.firstName.trim(),
+          username: normalizedUsername,
+          firstName: normalizedFirstName,
           middleName: profileDraft.middleName.trim(),
           lastName: profileDraft.lastName.trim(),
           email: (user?.email || "").trim(),
           phone: profileDraft.phone.trim(),
           birthday: profileDraft.birthday.trim() || null,
           address: buildAddressValue(profileDraft),
+          addressUrl: profileDraft.addressUrl.trim(),
           country: normalizeCountryValue(profileDraft.addressCountry),
+          facebookUrl: profileDraft.facebookUrl.trim(),
+          twitterUrl: profileDraft.twitterUrl.trim(),
+          instagramUrl: profileDraft.instagramUrl.trim(),
+          socialPlatform: primarySocial.socialPlatform,
+          socialUrl: primarySocial.socialUrl,
           age: profileDraft.age ? Number(profileDraft.age) : undefined,
           education: profileDraft.education.trim(),
           gender: profileDraft.gender.trim(),
         },
       });
-      setUser(data.user);
+      setUser((prev) => ({
+        ...(prev || {}),
+        ...(data.user || {}),
+        avatarUrl: profileDraft.avatarUrl.trim(),
+        username: normalizedUsername,
+        firstName: normalizedFirstName,
+        middleName: profileDraft.middleName.trim(),
+        lastName: profileDraft.lastName.trim(),
+        phone: profileDraft.phone.trim(),
+        birthday: profileDraft.birthday.trim() || null,
+        address: buildAddressValue(profileDraft),
+        addressUrl: profileDraft.addressUrl.trim(),
+        country: normalizeCountryValue(profileDraft.addressCountry),
+        facebookUrl: profileDraft.facebookUrl.trim(),
+        twitterUrl: profileDraft.twitterUrl.trim(),
+        instagramUrl: profileDraft.instagramUrl.trim(),
+      }));
+      setProfileJoinedAt(data?.user?.joinedAt || data?.user?.createdAt || data?.user?.created_at || profileJoinedAt || "");
       if (data.token) {
         setToken(data.token);
         localStorage.setItem("quiz_token", data.token);
+      }
+      const listToken = data.token || effectiveToken;
+      try {
+        const listData = await apiRequest("/me/listings", { token: listToken });
+        setSellerListings(listData.listings || []);
+      } catch {
+        /* ignore — optional refresh after address-driven community sync */
+      }
+      if (activeView === VIEWS.COMMUNITY_SHOP && shopCommunityId) {
+        try {
+          const qs = new URLSearchParams();
+          qs.set("communityId", shopCommunityId);
+          if (browseVerticalId != null) {
+            qs.set("verticalId", browseVerticalId);
+            if (browseSubId && browseSubId !== "all") qs.set("subId", browseSubId);
+          }
+          const shopData = await apiRequest(`/listings?${qs.toString()}`, { token: listToken });
+          setListings(shopData.listings || []);
+        } catch {
+          /* ignore */
+        }
       }
       setProfileEditing(false);
     } catch (error) {
@@ -1319,347 +2200,18 @@ function App() {
     }
   };
 
-  const handleClearHistory = async () => {
-    if (!token || attempts.length === 0) return;
-    if (!window.confirm("Clear all quiz history? This cannot be undone.")) return;
-    setHistoryClearLoading(true);
-    try {
-      await apiRequest("/users/me/history/clear", { method: "POST", token, body: {} });
-      setHistoryRefreshTick((t) => t + 1);
-    } catch (error) {
-      window.alert(error.message || "Could not clear history.");
-    } finally {
-      setHistoryClearLoading(false);
-    }
-  };
-
-  const handleDeleteQuiz = async (quiz) => {
-    const quizId = getQuizListId(quiz);
-    if (!quizId || !token || !isQuizOwner(quiz, user)) return;
-    const title = quiz.title?.trim() || "this quiz";
-    if (!window.confirm(`Delete "${title}"? This cannot be undone.`)) return;
-    setBrowseDeleteId(quizId);
-    try {
-      await apiRequest(`/quizzes/${quizId}`, { method: "DELETE", token });
-      if (selectedQuiz && getQuizListId(selectedQuiz) === quizId) {
-        setSelectedQuiz(null);
-        setActiveView(VIEWS.BROWSE);
-      }
-      setQuizzesRefreshTick((t) => t + 1);
-    } catch (error) {
-      window.alert(error.message || "Could not delete quiz.");
-    } finally {
-      setBrowseDeleteId(null);
-    }
-  };
-
-  const openEditQuiz = async (quiz) => {
-    const quizId = getQuizListId(quiz);
-    if (!quizId || !token || !isQuizOwner(quiz, user)) return;
-    setEditLoading(true);
-    setEditMessage("");
-    try {
-      const meta = await apiRequest(`/quizzes/${quizId}`);
-      let questions;
-      try {
-        questions = await apiRequest(`/quizzes/${quizId}/questions/manage`, { token });
-      } catch (error) {
-        if (error?.status === 404 || String(error?.message || "").toLowerCase().includes("route not found")) {
-          throw new Error("Edit route is not available on your running backend yet. Restart the server (quiz-app/server -> npm run dev), then try Edit again.");
-        }
-        throw error;
-      }
-      const preparedQuestions = (Array.isArray(questions) ? questions : []).map(toEditableQuestion);
-      setEditState({
-        quizId,
-        title: meta?.title ?? quiz.title ?? "",
-        category: meta?.category ?? quiz.category ?? "",
-        description: meta?.description ?? quiz.description ?? "",
-        questions: preparedQuestions.length ? preparedQuestions : [buildEmptyQuestion()],
-      });
-      setEditRemovedQuestionIds([]);
-      setActiveView(VIEWS.EDIT);
-    } catch (error) {
-      window.alert(error.message || "Unable to open editor.");
-    } finally {
-      setEditLoading(false);
-    }
-  };
-
-  const addQuestion = () => setCreateState((prev) => ({ ...prev, questions: [...prev.questions, buildEmptyQuestion()] }));
-  const removeQuestion = (index) => setCreateState((prev) => ({ ...prev, questions: prev.questions.filter((_, idx) => idx !== index) }));
-  const updateQuestionField = (index, key, value) => setCreateState((prev) => {
-    const next = [...prev.questions];
-    next[index] = { ...next[index], [key]: value };
-    return { ...prev, questions: next };
-  });
-  const setQuestionKind = (questionIndex, kind) => setCreateState((prev) => {
-    const next = [...prev.questions];
-    const q = next[questionIndex];
-    const prevKind = q.kind === "tf" ? "tf" : q.kind === "fill" ? "fill" : "mcq";
-    if (prevKind === kind) return prev;
-    if (kind === "tf") {
-      next[questionIndex] = {
-        ...q,
-        kind: "tf",
-        options: ["True", "False"],
-        correctOptionIndex: Math.min(q.correctOptionIndex, 1),
-        blankAnswer: "",
-      };
-    } else if (kind === "fill") {
-      next[questionIndex] = {
-        ...q,
-        kind: "fill",
-        options: [],
-        blankAnswer: "",
-        correctOptionIndex: 0,
-      };
-    } else {
-      next[questionIndex] = {
-        ...q,
-        kind: "mcq",
-        options: ["", "", "", ""],
-        correctOptionIndex: 0,
-        blankAnswer: "",
-      };
-    }
-    return { ...prev, questions: next };
-  });
-  const updateOption = (questionIndex, optionIndex, value) => setCreateState((prev) => {
-    const next = [...prev.questions];
-    const options = [...next[questionIndex].options];
-    options[optionIndex] = value;
-    next[questionIndex] = { ...next[questionIndex], options };
-    return { ...prev, questions: next };
-  });
-  const addQuestionOption = (questionIndex) => setCreateState((prev) => {
-    const next = [...prev.questions];
-    const q = next[questionIndex];
-    if (q.kind === "tf" || q.kind === "fill") return prev;
-    next[questionIndex] = { ...q, options: [...q.options, ""] };
-    return { ...prev, questions: next };
-  });
-  const removeQuestionOption = (questionIndex, optionIndex) => setCreateState((prev) => {
-    const next = [...prev.questions];
-    const q = next[questionIndex];
-    if (q.kind === "tf" || q.kind === "fill") return prev;
-    if (q.options.length <= 2) return prev;
-    const options = q.options.filter((_, i) => i !== optionIndex);
-    let { correctOptionIndex } = q;
-    if (optionIndex === correctOptionIndex) correctOptionIndex = 0;
-    else if (optionIndex < correctOptionIndex) correctOptionIndex -= 1;
-    next[questionIndex] = { ...q, options, correctOptionIndex };
-    return { ...prev, questions: next };
-  });
-
-  const handleGenerateQuestions = async () => {
-    setCreateMessage("");
-    const normalizedTitle = toTitleCase(createState.title);
-    const normalizedCategory = toTitleCase(createState.category);
-    if (!normalizedTitle || !normalizedCategory) {
-      setCreateMessage("Add title and category first so Gemini can generate relevant questions.");
-      return;
-    }
-    setCreateGeneratorLoading(true);
-    try {
-      const data = await apiRequest("/quizzes/generate", {
-        method: "POST",
-        token,
-        body: {
-          title: normalizedTitle,
-          category: normalizedCategory,
-          description: createState.description.trim(),
-          questionCount: Number(createState.generatorQuestionCount) || 5,
-        },
-      });
-      const generatedQuestions = Array.isArray(data?.questions) ? data.questions.map(toCreateDraftQuestion) : [];
-      if (!generatedQuestions.length) {
-        setCreateMessage("Gemini did not return valid questions. Try a more specific topic.");
-        return;
-      }
-      setCreateState((prev) => ({
-        ...prev,
-        title: normalizedTitle,
-        category: normalizedCategory,
-        questions: generatedQuestions,
-      }));
-      setCreateMessage(`Generated ${generatedQuestions.length} question${generatedQuestions.length === 1 ? "" : "s"} with Gemini.`);
-    } catch (error) {
-      setCreateMessage(error.message || "Unable to generate questions right now.");
-    } finally {
-      setCreateGeneratorLoading(false);
-    }
-  };
-
-  const handleCreateQuiz = async (event) => {
-    event.preventDefault();
-    setCreateMessage("");
-    const normalizedTitle = toTitleCase(createState.title);
-    const normalizedCategory = toTitleCase(createState.category);
-    const hasInvalidQuestion = createState.questions.some((q) => {
-      if (!q.text.trim() || q.text.trim().length < 5) return true;
-      const k = q.kind === "tf" ? "tf" : q.kind === "fill" ? "fill" : "mcq";
-      if (k === "fill") return !(q.blankAnswer && String(q.blankAnswer).trim().length >= 1);
-      return q.options.some((o) => !o.trim()) || !q.options[q.correctOptionIndex]?.trim();
-    });
-    if (!normalizedTitle || !normalizedCategory || hasInvalidQuestion) return setCreateMessage("Complete title, category, and all question fields.");
-    if (normalizedTitle.length < 3) return setCreateMessage("Quiz title must be at least 3 characters.");
-    if (normalizedCategory.length < 2) return setCreateMessage("Category must be at least 2 characters.");
-    setCreateLoading(true);
-    try {
-      const questionsPayload = createState.questions.map((question) => {
-        const k = question.kind === "tf" ? "tf" : question.kind === "fill" ? "fill" : "mcq";
-        if (k === "fill") {
-          return {
-            text: question.text.trim(),
-            kind: "fill",
-            options: [],
-            correctAnswer: String(question.blankAnswer).trim(),
-          };
-        }
-        return {
-          text: question.text.trim(),
-          kind: k,
-          options: question.options.map((option) => option.trim()),
-          correctAnswer: question.options[question.correctOptionIndex].trim(),
-        };
-      });
-
-      await apiRequest("/quizzes/with-questions", {
-        method: "POST",
-        token,
-        body: {
-          title: normalizedTitle,
-          category: normalizedCategory,
-          description: createState.description.trim(),
-          questions: questionsPayload,
-        },
-      });
-      setCreateState((prev) => ({ ...prev, title: normalizedTitle, category: normalizedCategory }));
-      setPublishFlash("Quiz published successfully.");
-      setCreateState({
-        title: "",
-        category: "",
-        description: "",
-        generatorProvider: "manual",
-        generatorQuestionCount: 5,
-        questions: [buildEmptyQuestion()],
-      });
-      setQuizzesRefreshTick((prev) => prev + 1);
-      setActiveView(VIEWS.BROWSE);
-    } catch (error) {
-      setCreateMessage(error.message || "Unable to publish now.");
-    } finally {
-      setCreateLoading(false);
-    }
-  };
-
-  const addEditQuestion = () => setEditState((prev) => ({ ...prev, questions: [...prev.questions, buildEmptyQuestion()] }));
-  const removeEditQuestion = (index) => setEditState((prev) => {
-    const target = prev.questions[index];
-    const targetId = getQuestionId(target);
-    if (targetId) setEditRemovedQuestionIds((ids) => [...ids, targetId]);
-    const nextQuestions = prev.questions.filter((_, idx) => idx !== index);
-    return { ...prev, questions: nextQuestions.length ? nextQuestions : [buildEmptyQuestion()] };
-  });
-  const updateEditQuestionField = (index, key, value) => setEditState((prev) => {
-    const next = [...prev.questions];
-    next[index] = { ...next[index], [key]: value };
-    return { ...prev, questions: next };
-  });
-  const setEditQuestionKind = (questionIndex, kind) => setEditState((prev) => {
-    const next = [...prev.questions];
-    const q = next[questionIndex];
-    const prevKind = normalizeQuestionKind(q.kind);
-    if (prevKind === kind) return prev;
-    if (kind === "tf") {
-      next[questionIndex] = { ...q, kind: "tf", options: ["True", "False"], correctOptionIndex: 0, blankAnswer: "" };
-    } else if (kind === "fill") {
-      next[questionIndex] = { ...q, kind: "fill", options: [], correctOptionIndex: 0, blankAnswer: "" };
-    } else {
-      next[questionIndex] = { ...q, kind: "mcq", options: ["", "", "", ""], correctOptionIndex: 0, blankAnswer: "" };
-    }
-    return { ...prev, questions: next };
-  });
-  const updateEditOption = (questionIndex, optionIndex, value) => setEditState((prev) => {
-    const next = [...prev.questions];
-    const options = [...next[questionIndex].options];
-    options[optionIndex] = value;
-    next[questionIndex] = { ...next[questionIndex], options };
-    return { ...prev, questions: next };
-  });
-  const addEditOption = (questionIndex) => setEditState((prev) => {
-    const next = [...prev.questions];
-    const q = next[questionIndex];
-    if (normalizeQuestionKind(q.kind) !== "mcq") return prev;
-    next[questionIndex] = { ...q, options: [...q.options, ""] };
-    return { ...prev, questions: next };
-  });
-  const removeEditOption = (questionIndex, optionIndex) => setEditState((prev) => {
-    const next = [...prev.questions];
-    const q = next[questionIndex];
-    if (normalizeQuestionKind(q.kind) !== "mcq" || q.options.length <= 2) return prev;
-    const options = q.options.filter((_, i) => i !== optionIndex);
-    let { correctOptionIndex } = q;
-    if (optionIndex === correctOptionIndex) correctOptionIndex = 0;
-    else if (optionIndex < correctOptionIndex) correctOptionIndex -= 1;
-    next[questionIndex] = { ...q, options, correctOptionIndex };
-    return { ...prev, questions: next };
-  });
-  const handleSaveQuizEdits = async (event) => {
-    event.preventDefault();
-    setEditMessage("");
-    const normalizedTitle = toTitleCase(editState.title);
-    const normalizedCategory = toTitleCase(editState.category);
-    if (normalizedTitle.length < 3) return setEditMessage("Quiz title must be at least 3 characters.");
-    if (normalizedCategory.length < 2) return setEditMessage("Category must be at least 2 characters.");
-    if (editState.questions.some(isQuestionInvalid)) return setEditMessage("Complete all question fields before saving.");
-    setEditSaving(true);
-    try {
-      await apiRequest(`/quizzes/${editState.quizId}`, {
-        method: "PUT",
-        token,
-        body: { title: normalizedTitle, category: normalizedCategory, description: editState.description.trim() },
-      });
-      setEditState((prev) => ({ ...prev, title: normalizedTitle, category: normalizedCategory }));
-      for (const questionId of editRemovedQuestionIds) {
-        await apiRequest(`/quizzes/${editState.quizId}/questions/${questionId}`, { method: "DELETE", token });
-      }
-      for (const question of editState.questions) {
-        const payload = buildQuestionPayload(question);
-        const questionId = getQuestionId(question);
-        if (questionId) {
-          await apiRequest(`/quizzes/${editState.quizId}/questions/${questionId}`, { method: "PUT", token, body: payload });
-        } else {
-          await apiRequest(`/quizzes/${editState.quizId}/questions`, { method: "POST", token, body: payload });
-        }
-      }
-      setEditMessage("Quiz updated successfully.");
-      setQuizzesRefreshTick((prev) => prev + 1);
-      setActiveView(VIEWS.BROWSE);
-    } catch (error) {
-      setEditMessage(error.message || "Unable to save quiz changes.");
-    } finally {
-      setEditSaving(false);
-    }
-  };
-
-  const renderNavButton = (id, label) => (
-    <button
-      type="button"
-      onClick={() => {
-        setActiveView(id);
-        setMobileMenuOpen(false);
-      }}
-      className={`w-full rounded-xl px-3 py-2.5 text-center text-sm font-medium transition-colors md:w-auto md:min-w-[5.5rem] md:shrink-0 md:rounded-full md:px-4 md:py-2 ${
-        activeView === id
-          ? "bg-brand-soft text-brand-primary ring-1 ring-brand-border md:bg-white md:font-semibold md:text-brand-primary md:shadow-sm md:ring-0 md:dark:bg-slate-800 md:dark:text-slate-100 md:dark:shadow-md"
-          : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 md:hover:bg-white/85 md:hover:text-neutral-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 md:dark:hover:bg-slate-800/80"
-      }`}
-    >
-      {label}
-    </button>
-  );
+  if (!user && routeListingId) {
+    return (
+      <PublicListingPage
+        listingId={routeListingId}
+        onBack={() => navigate("/")}
+        onOpenLogin={() => {
+          navigate("/");
+          openAuthPanel("login");
+        }}
+      />
+    );
+  }
 
   if (!user) {
     return (
@@ -1691,7 +2243,8 @@ function App() {
                     A marketplace built for <span className="text-brand-primary dark:text-brand-accent">your local community</span>
                   </h1>
                   <p className="mx-auto max-w-xl text-pretty text-lg leading-relaxed text-neutral-600 dark:text-slate-400 md:text-xl md:leading-relaxed lg:mx-0">
-                    LinkMart helps local buyers and sellers connect within communities, making everyday buying and selling faster, safer, and more convenient.
+                    LinkMart connects neighbors for COD pickup or delivery: no in-app wallet, optional courier bids (walk, run, bike), and seller tools for stock and
+                    profit.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 lg:justify-start">
@@ -2088,667 +2641,774 @@ function App() {
           </div>
         </div>
       ) : null}
-      <header className="sticky top-0 z-50 border-b border-neutral-200/80 bg-white/90 shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/95">
-        <div className="app-container flex h-[4.25rem] items-center justify-between gap-3">
-          <button
-            type="button"
-            className="rounded-xl px-1 py-1 focus:outline-none"
-            onClick={() => {
-              setActiveView(VIEWS.PROFILE);
-              setMobileMenuOpen(false);
-            }}
-            aria-label="Go to profile"
-          >
-            <QuizAppLogo className="h-7 w-auto max-w-[9rem] shrink-0 object-contain sm:h-8 sm:max-w-[11rem]" />
-          </button>
-          <nav className="hidden items-center md:flex" aria-label="Main">
-            <div className="flex items-center gap-0.5 rounded-full border border-neutral-200/80 bg-slate-100/70 p-1 shadow-inner shadow-slate-200/40 dark:border-slate-600/80 dark:bg-slate-800/70 dark:shadow-slate-950/50">
-              {renderNavButton(VIEWS.PROFILE, "Profile")}
-            </div>
-          </nav>
-          <div className="hidden items-center md:flex">
-            <div className="relative" ref={accountMenuRef}>
-              <button
-                type="button"
-                className="inline-flex items-center gap-2 rounded-full border border-neutral-200/90 bg-white px-3.5 py-2 text-sm font-medium text-neutral-800 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500 dark:hover:bg-slate-800"
-                aria-expanded={accountMenuOpen}
-                aria-haspopup="menu"
-                aria-label="Account menu"
-                onClick={() => setAccountMenuOpen((prev) => !prev)}
-              >
-                <span className="max-w-[10rem] truncate">{user?.username || getDisplayNameFromUser(user) || "Account"}</span>
-                <ChevronDownIcon className={`shrink-0 text-neutral-500 transition-transform dark:text-slate-400 ${accountMenuOpen ? "rotate-180" : ""}`} />
-              </button>
-              {accountMenuOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 z-50 mt-1.5 w-[min(100vw-1.5rem,16rem)] min-w-[16rem] overflow-hidden rounded-xl border border-neutral-200/90 bg-white py-1 shadow-lg shadow-slate-900/10 dark:border-slate-600 dark:bg-slate-900 dark:shadow-black/40"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="flex w-full px-4 py-2.5 text-left text-sm text-neutral-800 hover:bg-neutral-50 dark:text-slate-200 dark:hover:bg-slate-800"
-                    onClick={() => {
-                      setActiveView(VIEWS.PROFILE);
-                      setAccountMenuOpen(false);
-                    }}
-                  >
-                    Profile
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="flex w-full px-4 py-2.5 text-left text-sm text-neutral-800 hover:bg-neutral-50 dark:text-slate-200 dark:hover:bg-slate-800"
-                    onClick={() => {
-                      setActiveView(VIEWS.USERS);
-                      setAccountMenuOpen(false);
-                    }}
-                  >
-                    Users
-                  </button>
-                  <div role="none" className="border-t border-neutral-200 px-4 pb-3 pt-3 dark:border-slate-700">
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Theme</p>
-                    <div className="flex w-full rounded-lg bg-neutral-100 p-0.5 dark:bg-slate-800" role="group" aria-label="Theme">
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={theme === "light"}
-                        className={`flex flex-1 items-center justify-center gap-1 rounded-md py-2 text-xs font-semibold transition ${
-                          theme === "light"
-                            ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-700 dark:text-white"
-                            : "text-neutral-500 hover:text-neutral-800 dark:text-slate-400 dark:hover:text-slate-200"
-                        }`}
-                        onClick={() => setTheme("light")}
-                      >
-                        <SunIcon />
-                        Light
-                      </button>
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={theme === "dark"}
-                        className={`flex flex-1 items-center justify-center gap-1 rounded-md py-2 text-xs font-semibold transition ${
-                          theme === "dark"
-                            ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-700 dark:text-white"
-                            : "text-neutral-500 hover:text-neutral-800 dark:text-slate-400 dark:hover:text-slate-200"
-                        }`}
-                        onClick={() => setTheme("dark")}
-                      >
-                        <MoonIcon />
-                        Dark
-                      </button>
-                    </div>
-                  </div>
-                  <button type="button" role="menuitem" className="flex w-full px-4 py-2.5 text-left text-sm font-medium text-rose-700 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/50" onClick={logout}>
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-          <button
-            type="button"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 md:hidden"
-            onClick={() => setMobileMenuOpen((prev) => !prev)}
-            aria-expanded={mobileMenuOpen}
-            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
-          >
-            <MenuIcon />
-          </button>
-        </div>
-        {mobileMenuOpen && (
-          <div className="app-container border-t border-neutral-100 bg-slate-50/80 pb-3 pt-2 dark:border-slate-800 dark:bg-slate-950/80 md:hidden">
-            <div className="flex flex-col gap-1 rounded-xl border border-neutral-200/80 bg-white p-2 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-              {renderNavButton(VIEWS.PROFILE, "Profile")}
-              <div className="my-1 border-t border-neutral-200 pt-2 dark:border-slate-700">
-                <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Account</p>
-                <div className="mb-3 px-1">
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Theme</p>
-                  <div className="flex w-full rounded-lg bg-neutral-100 p-0.5 dark:bg-slate-800" role="group" aria-label="Theme">
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={theme === "light"}
-                      className={`flex flex-1 items-center justify-center gap-1 rounded-md py-2.5 text-xs font-semibold transition ${
-                        theme === "light"
-                          ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-700 dark:text-white"
-                          : "text-neutral-500 hover:text-neutral-800 dark:text-slate-400 dark:hover:text-slate-200"
-                      }`}
-                      onClick={() => setTheme("light")}
-                    >
-                      <SunIcon />
-                      Light
-                    </button>
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={theme === "dark"}
-                      className={`flex flex-1 items-center justify-center gap-1 rounded-md py-2.5 text-xs font-semibold transition ${
-                        theme === "dark"
-                          ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-700 dark:text-white"
-                          : "text-neutral-500 hover:text-neutral-800 dark:text-slate-400 dark:hover:text-slate-200"
-                      }`}
-                      onClick={() => setTheme("dark")}
-                    >
-                      <MoonIcon />
-                      Dark
-                    </button>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="w-full rounded-xl px-3 py-2 text-center text-sm text-neutral-800 hover:bg-neutral-100 dark:text-slate-200 dark:hover:bg-slate-800"
-                  onClick={() => {
-                    setActiveView(VIEWS.PROFILE);
-                    setMobileMenuOpen(false);
-                  }}
-                >
-                  Profile
-                </button>
-                <button
-                  type="button"
-                  className="w-full rounded-xl px-3 py-2 text-center text-sm text-neutral-800 hover:bg-neutral-100 dark:text-slate-200 dark:hover:bg-slate-800"
-                  onClick={() => {
-                    setActiveView(VIEWS.USERS);
-                    setMobileMenuOpen(false);
-                  }}
-                >
-                  Users
-                </button>
-                <button type="button" className="btn-danger mt-2 w-full dark:border-rose-900/50 dark:text-rose-400 dark:hover:bg-rose-950/40" onClick={() => { logout(); setMobileMenuOpen(false); }}>
-                  Logout
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </header>
+      <LoggedInHeader
+        user={user}
+        activeView={activeView}
+        setActiveView={setActiveView}
+        goBrowse={goBrowse}
+        goOrders={goOrders}
+        goDelivery={goDelivery}
+        theme={theme}
+        setTheme={setTheme}
+        onLogout={logout}
+        getDisplayNameFromUser={getDisplayNameFromUser}
+        onNavigateHome={() => navigate("/")}
+        communityShopName={
+          showCommunityShopHeaderStrip ? toTitleCase(activeCommunity?.name?.trim()) || "Community" : null
+        }
+        onLeaveCommunityShop={
+          showCommunityShopHeaderStrip ? leaveCommunityToGlobalMarketplace : undefined
+        }
+      />
 
-      <main className="app-container space-y-4 py-6 pb-12 md:space-y-6 md:py-8">
-        {false && activeView === VIEWS.DASHBOARD && (
-          <section className="space-y-4 md:space-y-6">
-            {dashboardLoading && <p className="text-sm text-neutral-600 dark:text-slate-400">Loading home feed...</p>}
-            {dashboardError && <p className="app-alert-danger-text text-sm">{dashboardError}</p>}
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-              <div className="space-y-4 lg:col-span-2">
-                <article className="app-card">
-                  <h2 className="text-xl font-semibold">What's on your mind?</h2>
-                  <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">Share tips, ask questions, or post your exam progress.</p>
-                  <textarea
-                    className="input-base mt-3 min-h-[110px] resize-y"
-                    placeholder="Post something helpful for your fellow examinees..."
-                    value={homePostDraft}
-                    onChange={(e) => setHomePostDraft(e.target.value)}
-                  />
-                  <div className="mt-3 flex justify-end">
+      <main className="app-container space-y-4 py-5 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] max-sm:pt-4 md:space-y-6 md:py-8 md:pb-24 lg:pb-12">
+        {marketplaceMessage ? (
+          <div
+            className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200/90 bg-amber-50/90 px-3 py-2 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100"
+            role="status"
+          >
+            <span>{marketplaceMessage}</span>
+            <button type="button" className="text-xs font-semibold text-amber-800 underline dark:text-amber-200" onClick={() => setMarketplaceMessage("")}>
+              Dismiss
+            </button>
+          </div>
+        ) : null}
+
+        {isBrowseLikeView && (
+          <section className="app-card space-y-4 md:space-y-6">
+            <div className="space-y-4">
+              {activeView === VIEWS.COMMUNITY_SHOP ? (
+                <div className="space-y-3 border-b border-neutral-200/80 pb-4 dark:border-slate-700 sm:pb-6">
+                  <button
+                    type="button"
+                    className="btn-secondary w-full text-sm sm:w-auto"
+                    onClick={() => leaveCommunityToGlobalMarketplace()}
+                  >
+                    ← All communities
+                  </button>
+                  <div className="min-w-0">
+                    <h2 className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100 sm:text-2xl md:text-3xl">
+                      {toTitleCase(activeCommunity?.name?.trim()) || "Community"}
+                    </h2>
+                    {activeCommunityLocaleLine ? (
+                      <p className="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-slate-400 sm:text-sm">
+                        {activeCommunityLocaleLine}
+                      </p>
+                    ) : null}
+                    <p className="mt-3 max-w-prose text-xs leading-relaxed text-neutral-600 dark:text-slate-400 sm:text-sm">
+                      Listings in this shop are visible to this community only. Use the top navigation for orders, profile, and the rest of the app.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <h2 className="whitespace-nowrap text-2xl font-semibold text-neutral-900 dark:text-slate-100">Marketplace</h2>
+                  </div>
+                  <div className="rounded-xl border border-neutral-200/90 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-slate-900/80">
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-brand-primary">Communities</p>
+                    <p className="mt-1 max-w-prose text-sm text-neutral-600 dark:text-slate-400">
+                      Local groups (CPR, CPP, barangays, sitios, phases) are saved in the database table <span className="font-mono text-neutral-800 dark:text-slate-200">communities</span> — not on your profile. Add one so neighbors can anchor listings to a place.
+                    </p>
+                  </div>
+                  {!listingCommunityFromProfile.id ? (
                     <button
                       type="button"
-                      className="btn-primary px-6 disabled:opacity-50"
-                      disabled={!homePostDraft.trim()}
+                      className="btn-secondary shrink-0 text-sm"
                       onClick={() => {
-                        const content = homePostDraft.trim();
-                        if (!content) return;
-                        setHomePosts((prev) => [
-                          {
-                            id: `post-${Date.now()}`,
-                            author: getDisplayNameFromUser(user) || "You",
-                            role: "Forum Member",
-                            content,
-                            timeLabel: "Just now",
-                            likes: 0,
-                            comments: 0,
-                          },
-                          ...prev,
-                        ]);
-                        setHomePostDraft("");
+                      setMarketplaceMessage("");
+                      setCommunityFormOpen(true);
                       }}
                     >
-                      Post
+                      New community
                     </button>
-                  </div>
-                </article>
-
-                <div className="space-y-3">
-                  {homePosts.map((post) => (
-                    <article key={post.id} className="app-card">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-neutral-900 dark:text-slate-100">{post.author}</p>
-                          <p className="text-xs text-neutral-500 dark:text-slate-400">
-                            {post.role} • {post.timeLabel}
-                          </p>
-                        </div>
-                      </div>
-                      <p className="mt-3 text-sm leading-relaxed text-neutral-700 dark:text-slate-300">{post.content}</p>
-                      <div className="mt-4 flex items-center gap-4 border-t border-neutral-100 pt-3 text-xs text-neutral-500 dark:border-slate-700 dark:text-slate-400">
-                        <span>{post.likes + (likedPostIds[post.id] ? 1 : 0)} likes</span>
-                        <span>{post.comments + (postComments[post.id]?.length || 0)} comments</span>
-                      </div>
-                      <div className="mt-3 flex items-center gap-2">
-                        <button
-                          type="button"
-                          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-                            likedPostIds[post.id]
-                              ? "border-brand-border bg-brand-soft text-brand-primary"
-                              : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                          }`}
-                          onClick={() =>
-                            setLikedPostIds((prev) => ({
-                              ...prev,
-                              [post.id]: !prev[post.id],
-                            }))
-                          }
-                        >
-                          {likedPostIds[post.id] ? "Liked" : "Like"}
-                        </button>
-                      </div>
-                      <div className="mt-3 space-y-2">
-                        {(postComments[post.id] || []).map((entry) => (
-                          <div key={entry.id} className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-slate-600 dark:bg-slate-800/80">
-                            <p className="text-xs font-semibold text-neutral-800 dark:text-slate-200">{entry.author}</p>
-                            <p className="mt-1 text-sm text-neutral-700 dark:text-slate-300">{entry.content}</p>
-                          </div>
-                        ))}
-                        <div className="flex items-center gap-2">
-                          <input
-                            className="input-base h-10"
-                            placeholder="Write a comment..."
-                            value={commentDraftByPost[post.id] || ""}
-                            onChange={(e) =>
-                              setCommentDraftByPost((prev) => ({
-                                ...prev,
-                                [post.id]: e.target.value,
-                              }))
-                            }
-                          />
+                  ) : null}
+                </div>
+                {communitiesError ? <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{communitiesError}</p> : null}
+                {communitiesLoading ? <p className="mt-3 text-sm text-neutral-600 dark:text-slate-400">Loading communities…</p> : null}
+                <ul
+                  className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4"
+                  aria-label="Communities"
+                >
+                  {!communitiesLoading && communities.length === 0 ? (
+                    <li className="col-span-full min-w-0 text-sm text-neutral-600 dark:text-slate-400">
+                      No communities yet. Use New community to create the first one.
+                    </li>
+                  ) : null}
+                  {communities.map((c) => {
+                    const g = gradientForId(c.id);
+                    const initials = initialsFromName(c.name);
+                    return (
+                      <li key={c.id} className="min-w-0">
+                        <div className="flex h-full flex-col gap-2 rounded-xl border border-neutral-200/90 bg-neutral-50/40 p-2.5 dark:border-slate-600 dark:bg-slate-800/50">
                           <button
                             type="button"
-                            className="btn-secondary h-10 px-4 py-0 disabled:opacity-50"
-                            disabled={!String(commentDraftByPost[post.id] || "").trim()}
+                            className="group flex w-full flex-col gap-2 text-left transition hover:opacity-95"
                             onClick={() => {
-                              const content = String(commentDraftByPost[post.id] || "").trim();
-                              if (!content) return;
-                              setPostComments((prev) => ({
-                                ...prev,
-                                [post.id]: [
-                                  ...(prev[post.id] || []),
-                                  {
-                                    id: `comment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                                    author: getDisplayNameFromUser(user) || "You",
-                                    content,
-                                  },
-                                ],
-                              }));
-                              setCommentDraftByPost((prev) => ({ ...prev, [post.id]: "" }));
+                              setShopCommunityId(c.id);
+                              setActiveView(VIEWS.COMMUNITY_SHOP);
+                              navigate("/", { replace: true });
                             }}
                           >
-                            Comment
+                            <div className="relative aspect-[4/3] overflow-hidden rounded-lg shadow-inner ring-1 ring-black/5 transition group-hover:ring-brand-primary/30 dark:ring-white/10">
+                              {c.imageUrl ? (
+                                <img src={c.imageUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                              ) : (
+                                <div
+                                  className="flex h-full w-full items-center justify-center text-lg font-bold tracking-tight text-white sm:text-2xl"
+                                  style={{ backgroundImage: `linear-gradient(135deg, ${g.from}, ${g.to})` }}
+                                  aria-hidden
+                                >
+                                  {initials}
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-w-0 px-0.5">
+                              <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">
+                                {toTitleCase(String(c.name || "").trim())}
+                              </p>
+                              <p className="mt-0.5 line-clamp-2 text-xs text-neutral-600 dark:text-slate-400">
+                                {formatCommunityMarketplaceSubtitle(c)}
+                              </p>
+                              <p className="mt-0.5 text-xs text-neutral-600 dark:text-slate-400">
+                                Members:{" "}
+                                <span className="font-medium text-neutral-800 dark:text-slate-200">
+                                  {Number.isFinite(Number(c.memberCount)) ? Number(c.memberCount) : 0}
+                                </span>
+                              </p>
+                            </div>
                           </button>
+                          {c.googleUrl ? (
+                            <a
+                              href={c.googleUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-0.5 text-xs font-medium text-brand-primary underline decoration-brand-primary/35 underline-offset-2 hover:text-brand-primary/80"
+                            >
+                              Open in Google Maps
+                            </a>
+                          ) : null}
                         </div>
-                      </div>
-                    </article>
-                  ))}
-                </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
-
-              <div className="space-y-4">
-                <article className="app-card">
-                  <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">Quick Stats</h3>
-                  <div className="mt-3 space-y-2 text-sm">
-                    <p className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 dark:bg-slate-800/70">
-                      <span className="text-neutral-600 dark:text-slate-400">Quizzes Taken</span>
-                      <span className="font-semibold text-neutral-900 dark:text-slate-100">{dashboard.totalAttempts || 0}</span>
-                    </p>
-                    <p className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 dark:bg-slate-800/70">
-                      <span className="text-neutral-600 dark:text-slate-400">Average Score</span>
-                      <span className="font-semibold text-neutral-900 dark:text-slate-100">{dashboard.averageScore || 0}%</span>
-                    </p>
-                    <p className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 dark:bg-slate-800/70">
-                      <span className="text-neutral-600 dark:text-slate-400">Current Streak</span>
-                      <span className="font-semibold text-neutral-900 dark:text-slate-100">{streakDays} days</span>
-                    </p>
-                  </div>
-                </article>
-                <article className="app-card">
-                  <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">Community Tips</h3>
-                  <ul className="mt-3 space-y-2 text-sm text-neutral-700 dark:text-slate-300">
-                    <li className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-slate-600 dark:bg-slate-800/80">Answer at least one forum question daily.</li>
-                    <li className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-slate-600 dark:bg-slate-800/80">Share one reviewer per week to help others.</li>
-                    <li className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-slate-600 dark:bg-slate-800/80">Join a study buddy group for accountability.</li>
-                  </ul>
-                </article>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {false && activeView === VIEWS.BROWSE && (
-          <section className="space-y-4 md:space-y-6">
-            {browseLoading && <p className="text-sm text-neutral-600 dark:text-slate-400">Loading quizzes...</p>}
-            {browseError && <p className="app-alert-danger-text text-sm">{browseError}</p>}
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => setSelectedCategory("")} className={`rounded-full px-3 py-1 text-xs font-medium ${selectedCategory === "" ? "bg-brand-soft text-brand-primary ring-1 ring-brand-border" : "bg-neutral-100 text-neutral-700 dark:bg-slate-800 dark:text-slate-200"}`}>All</button>
-              {categories.map((category) => (
-                <button key={category} type="button" onClick={() => setSelectedCategory(category)} className={`rounded-full px-3 py-1 text-xs font-medium ${selectedCategory === category ? "bg-brand-soft text-brand-primary ring-1 ring-brand-border" : "bg-neutral-100 text-neutral-700 dark:bg-slate-800 dark:text-slate-200"}`}>
-                  {category}
-                </button>
-              ))}
-            </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {quizzes.map((quiz) => {
-                const qid = getQuizListId(quiz);
-                const own = isQuizOwner(quiz, user);
-                const deleting = browseDeleteId === qid;
-                return (
-                  <article key={qid} className="app-card-interactive group flex h-full flex-col">
-                    <div className="min-h-0 flex-1">
-                      <span className="inline-flex rounded-full border border-brand-border bg-brand-soft px-3 py-1 text-xs font-medium text-brand-primary">{quiz.category}</span>
-                      <h3 className="mt-2 text-lg font-semibold text-neutral-900 dark:text-slate-100">{quiz.title}</h3>
-                      <p className="mt-2 line-clamp-2 text-sm text-neutral-600 dark:text-slate-400">{quiz.description || "Challenge yourself with this quiz."}</p>
-                      <p className="mt-3 text-sm text-neutral-600 dark:text-slate-400">{quiz.questionCount} questions • {Math.max(1, Math.round(quiz.questionCount / 2))} min</p>
-                    </div>
-                    <div className="mt-auto flex shrink-0 flex-col gap-2 border-t border-neutral-100 pt-4 dark:border-slate-700">
-                      <button type="button" onClick={() => { setSelectedQuiz(quiz); setActiveView(VIEWS.QUIZ_INTRO); }} className="btn-primary w-full">View Quiz</button>
-                      {own && (
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            className="btn-secondary w-full min-w-0 disabled:opacity-60"
-                            disabled={editLoading}
-                            onClick={() => openEditQuiz(quiz)}
-                          >
-                            {editLoading ? "Opening editor..." : "Edit quiz"}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-danger w-full min-w-0 disabled:opacity-60"
-                            disabled={deleting}
-                            onClick={() => handleDeleteQuiz(quiz)}
-                          >
-                            {deleting ? "Deleting…" : "Delete quiz"}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-            {!browseLoading && quizzes.length === 0 && (
-              <article className="app-card">
-                <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">No playable quizzes yet</h3>
-                <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">Create a quiz and add at least one question to make it appear here.</p>
-                <button type="button" className="btn-primary mt-4" onClick={() => setActiveView(VIEWS.CREATE)}>Go to Create</button>
-              </article>
-            )}
-          </section>
-        )}
-
-        {activeView === VIEWS.EDIT && (
-          <section className="app-card space-y-4 md:space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Edit Quiz</h2>
-                <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">Update quiz info and manage questions.</p>
-              </div>
-              <button type="button" className="btn-secondary" onClick={() => setActiveView(VIEWS.BROWSE)}>Back to Browse</button>
-            </div>
-            <form onSubmit={handleSaveQuizEdits} className="space-y-4">
-              <div>
-                <label className="label-base">Quiz Title</label>
-                <input className="input-base" value={editState.title} onChange={(e) => setEditState((prev) => ({ ...prev, title: e.target.value }))} required />
-              </div>
-              <div>
-                <label className="label-base">Category</label>
-                <CategoryDropdown
-                  value={editState.category}
-                  onChange={(nextCategory) => setEditState((prev) => ({ ...prev, category: nextCategory }))}
-                  categories={categories}
-                />
-              </div>
-              <div>
-                <label className="label-base">Description</label>
-                <textarea className="input-base" rows={3} value={editState.description} onChange={(e) => setEditState((prev) => ({ ...prev, description: e.target.value }))} />
-              </div>
-              <div className="space-y-3">
-                {editState.questions.map((question, qIndex) => {
-                  const qKind = normalizeQuestionKind(question.kind);
-                  return (
-                    <div key={`edit-q-${getQuestionId(question) || qIndex}`} className="rounded-xl border border-neutral-200 bg-neutral-50 p-4 dark:border-slate-600 dark:bg-slate-800/50">
-                      <div className="mb-2 flex items-center justify-between">
-                        <p className="text-sm font-semibold text-neutral-900 dark:text-slate-100">Question {qIndex + 1}</p>
-                        <button type="button" className="text-xs text-rose-600 dark:text-rose-400" onClick={() => removeEditQuestion(qIndex)}>Remove</button>
-                      </div>
-                      <input className="input-base mb-2" placeholder="Question text" value={question.text} onChange={(e) => updateEditQuestionField(qIndex, "text", e.target.value)} required />
-                      <div className="mb-3">
-                        <p className="label-base mb-2">Answer type</p>
-                        <div className="flex flex-wrap gap-2">
-                          <button type="button" onClick={() => setEditQuestionKind(qIndex, "mcq")} className={`rounded-xl px-3 py-2 text-sm ${qKind === "mcq" ? "bg-brand-soft text-brand-primary ring-1 ring-brand-border" : "border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800"}`}>Multiple choice</button>
-                          <button type="button" onClick={() => setEditQuestionKind(qIndex, "tf")} className={`rounded-xl px-3 py-2 text-sm ${qKind === "tf" ? "bg-brand-soft text-brand-primary ring-1 ring-brand-border" : "border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800"}`}>True / false</button>
-                          <button type="button" onClick={() => setEditQuestionKind(qIndex, "fill")} className={`rounded-xl px-3 py-2 text-sm ${qKind === "fill" ? "bg-brand-soft text-brand-primary ring-1 ring-brand-border" : "border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800"}`}>Fill in the blank</button>
-                        </div>
-                      </div>
-                      {qKind === "fill" ? (
-                        <div>
-                          <label className="label-base">Correct answer</label>
-                          <input className="input-base mt-1" value={question.blankAnswer || ""} onChange={(e) => updateEditQuestionField(qIndex, "blankAnswer", e.target.value)} required />
-                        </div>
-                      ) : (
-                        <>
-                          <div className="space-y-2">
-                            {question.options.map((option, optIndex) => (
-                              <div key={`edit-q-${qIndex}-o-${optIndex}`} className="flex items-center gap-2">
-                                <input type="radio" name={`edit-correct-${qIndex}`} checked={question.correctOptionIndex === optIndex} onChange={() => updateEditQuestionField(qIndex, "correctOptionIndex", optIndex)} />
-                                <input className="input-base min-w-0 flex-1" placeholder={qKind === "tf" ? (optIndex === 0 ? "True" : "False") : `Option ${optIndex + 1}`} value={option} onChange={(e) => updateEditOption(qIndex, optIndex, e.target.value)} required />
-                                {qKind === "mcq" && question.options.length > 2 && (
-                                  <button type="button" className="shrink-0 text-xs text-neutral-500 hover:text-rose-600" onClick={() => removeEditOption(qIndex, optIndex)}>Remove</button>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                          {qKind === "mcq" && (
-                            <button type="button" className="btn-secondary mt-2 w-full md:w-auto" onClick={() => addEditOption(qIndex)}>
-                              Add option
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <button type="button" className="btn-secondary w-full md:w-auto" onClick={addEditQuestion}>Add Question</button>
-              {editMessage && (
-                <p className={`text-sm font-medium ${editMessage.includes("success") ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>
-                  {editMessage}
-                </p>
+                </>
               )}
-              <button type="submit" className="btn-primary w-full" disabled={editSaving}>{editSaving ? "Saving..." : "Save Changes"}</button>
-            </form>
-          </section>
-        )}
-
-        {activeView === VIEWS.QUIZ_INTRO && selectedQuiz && (
-          <section className="app-card relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-brand-soft via-white to-neutral-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-950" />
-            <div className="relative space-y-4">
-              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">{selectedQuiz.title}</h2>
-              <p className="text-sm text-neutral-700 dark:text-slate-300">{selectedQuiz.description || "No description provided."}</p>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <div className="app-surface-muted p-3 text-sm">Category: {selectedQuiz.category}</div>
-                <div className="app-surface-muted p-3 text-sm">Questions: {selectedQuiz.questionCount}</div>
-                <div className="app-surface-muted p-3 text-sm">Estimated: {selectedQuiz.questionCount * 30}s</div>
-              </div>
-              {quizMessage && <p className="app-alert-danger-text text-sm">{quizMessage}</p>}
-              <label className="flex items-center gap-2 text-sm text-neutral-700 dark:text-slate-300">
-                <input type="checkbox" checked={timedMode} onChange={(e) => setTimedMode(e.target.checked)} />
-                Timed mode
-              </label>
-              <div className="flex flex-col gap-2 md:flex-row">
-                <button type="button" className="btn-primary w-full md:w-auto disabled:opacity-50" onClick={startQuiz} disabled={quizLoading || (selectedQuiz.questionCount || 0) < 1}>
-                  {quizLoading ? "Loading..." : "Start Quiz"}
-                </button>
-                <button type="button" className="btn-secondary w-full md:w-auto" onClick={() => setActiveView(VIEWS.BROWSE)}>Back</button>
-              </div>
             </div>
-          </section>
-        )}
-
-        {activeView === VIEWS.QUIZ && activeQuiz && currentQuestion && (
-          <section className="mx-auto max-w-3xl space-y-4">
-            <div className="app-card">
-              <div className="mb-3 flex items-center justify-between text-sm">
-                <p className="text-neutral-600 dark:text-slate-400">{activeQuiz.title}</p>
-                <p className="font-medium text-brand-primary">{timedMode ? formatTime(secondsLeft) : "Practice Mode"}</p>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full bg-neutral-200/90 dark:bg-slate-700">
-                <div
-                  className="h-2 rounded-full bg-gradient-to-r from-brand-primary to-brand-accent transition-all duration-300 ease-out"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <p className="mt-2 text-xs uppercase tracking-wide text-neutral-500 dark:text-slate-400">Question {currentQuestionIndex + 1} of {activeQuiz.questions.length}</p>
-            </div>
-
-            <div className="app-card">
-              <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">{currentQuestion.text}</h3>
-              {(() => {
-                const cqKey = getQuestionKey(currentQuestion, currentQuestionIndex);
-                const fillVal = answers[cqKey];
-                return currentQuestion.kind === "fill" ? (
-                  <div className="mt-4">
-                    <label className="label-base" htmlFor={`fill-${cqKey}`}>
-                      Your answer
-                    </label>
-                    <input
-                      id={`fill-${cqKey}`}
-                      type="text"
-                      className="input-base mt-1"
-                      value={typeof fillVal === "string" ? fillVal : ""}
-                      onChange={(e) => setAnswers((prev) => ({ ...prev, [cqKey]: e.target.value }))}
-                      placeholder="Type your answer"
-                      autoComplete="off"
-                    />
-                  </div>
-                ) : (
-                  <div className="mt-4 grid gap-2">
-                    {currentQuestion.options.map((option, optionIndex) => (
+            {activeView === VIEWS.COMMUNITY_SHOP ? (
+            <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,17.5rem)_minmax(0,1fr)] lg:items-start lg:gap-6">
+              <aside className="order-1 space-y-3 rounded-2xl border border-neutral-200/80 bg-neutral-50/40 p-3 shadow-sm dark:border-slate-600 dark:bg-slate-900/50 sm:space-y-4 sm:p-4 lg:sticky lg:top-24 lg:order-none lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto">
+                  <div>
+                    <p className="mb-1.5 px-0.5 text-xs font-semibold text-neutral-500 dark:text-slate-400 sm:mb-2">Browse</p>
+                    <div className="grid grid-cols-3 gap-2 lg:flex lg:flex-col lg:gap-1.5">
+                    {BROWSE_QUICK_FILTERS.map((filter) => (
                       <button
-                        key={`${cqKey}-${optionIndex}`}
+                        key={filter.id}
                         type="button"
-                        onClick={() => setAnswers((prev) => ({ ...prev, [cqKey]: optionIndex }))}
-                        className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition ${answers[cqKey] === optionIndex ? "border-brand-primary bg-brand-soft text-brand-primary" : "border-neutral-200 bg-white text-neutral-800 hover:border-brand-border dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:hover:border-brand-border/80"}`}
+                        className={`min-h-[2.75rem] w-full rounded-xl border px-2 py-2 text-center text-xs font-medium leading-tight transition sm:px-3 sm:py-2.5 sm:text-left sm:text-sm ${
+                          browseQuickFilter === filter.id
+                            ? "border-brand-primary/50 bg-white text-brand-primary shadow-sm ring-1 ring-brand-primary/15 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-primary/20"
+                            : "border-transparent bg-white/80 text-neutral-700 hover:border-neutral-200 hover:bg-white dark:bg-slate-800/60 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+                        }`}
+                        onClick={() => {
+                          if (filter.id === "all") {
+                            setBrowseVerticalId(null);
+                            setBrowseSubId(null);
+                            setBrowseQuickFilter("all");
+                            setSelectedListingId(null);
+                            navigate("/", { replace: true });
+                            setActiveView(VIEWS.COMMUNITY_SHOP);
+                            return;
+                          }
+                          setBrowseQuickFilter(filter.id);
+                          setSelectedListingId(null);
+                        }}
                       >
-                        {option}
+                        {filter.label}
                       </button>
                     ))}
-                  </div>
-                );
-              })()}
-            </div>
-
-            <div className="sticky bottom-3 rounded-2xl border border-neutral-200 bg-white/95 p-3 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 md:static md:border-none md:bg-transparent md:p-0 md:shadow-none dark:md:bg-transparent">
-              <div className="flex flex-col gap-2 md:flex-row">
-                <button type="button" className="btn-secondary w-full md:w-auto" disabled={currentQuestionIndex === 0} onClick={() => setCurrentQuestionIndex((prev) => Math.max(0, prev - 1))}>Previous</button>
-                {currentQuestionIndex < activeQuiz.questions.length - 1 ? (
-                  <button type="button" className="btn-primary w-full md:w-auto" onClick={() => setCurrentQuestionIndex((prev) => prev + 1)}>Next</button>
-                ) : (
-                  <button type="button" className="btn-primary w-full md:w-auto disabled:opacity-50" onClick={submitQuiz} disabled={submitLoading}>
-                    {submitLoading ? "Submitting..." : "Submit Quiz"}
-                  </button>
-                )}
-              </div>
-              {submitError && <p className="app-alert-danger-text mt-2 text-sm">{submitError}</p>}
-            </div>
-          </section>
-        )}
-
-        {activeView === VIEWS.QUIZ && activeQuiz && !currentQuestion && (
-          <section className="mx-auto max-w-3xl">
-            <article className="app-card">
-              <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">No questions available</h3>
-              <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">This quiz cannot be played because it has no questions.</p>
-              <button type="button" className="btn-primary mt-4" onClick={() => setActiveView(VIEWS.BROWSE)}>Back to Browse</button>
-            </article>
-          </section>
-        )}
-
-        {activeView === VIEWS.RESULT && result && (
-          <section className="mx-auto max-w-3xl space-y-4">
-            <article className="app-card ring-1 ring-brand-border">
-              <p className="meta-label">Result</p>
-              <h2 className="mt-1 text-2xl font-semibold text-neutral-900 dark:text-slate-100">{result.scorePercent}%</h2>
-              <span className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${result.scorePercent >= 80 ? "bg-brand-muted text-brand-primary" : result.scorePercent >= 60 ? "bg-brand-soft text-brand-primary" : "bg-neutral-100 text-neutral-600 dark:bg-slate-800 dark:text-slate-300"}`}>
-                {result.scorePercent >= 80 ? "Excellent" : result.scorePercent >= 60 ? "Good" : "Try Again"}
-              </span>
-              <div className="mt-4 grid grid-cols-1 gap-2 text-sm md:grid-cols-3">
-                <div className="app-surface-muted p-3">Correct: {result.correctCount}</div>
-                <div className="app-surface-muted p-3">Wrong: {result.totalQuestions - result.correctCount}</div>
-                <div className="app-surface-muted p-3">Total: {result.totalQuestions}</div>
-              </div>
-            </article>
-            <article className="app-card space-y-2">
-              {result.breakdown.map((entry, idx) => (
-                <div key={entry.questionId} className={`rounded-xl border p-3 text-sm ${entry.isCorrect ? "border-brand-border bg-brand-soft text-brand-primary" : "border-neutral-200 bg-neutral-50 text-neutral-800 dark:border-slate-600 dark:bg-slate-800/70 dark:text-slate-200"}`}>
-                  Q{idx + 1}: {entry.isCorrect ? "Correct" : `Wrong (answer: ${entry.correctAnswer})`}
-                </div>
-              ))}
-            </article>
-            <div className="flex flex-col gap-2 md:flex-row">
-              <button type="button" className="btn-primary w-full md:w-auto" onClick={() => setActiveView(VIEWS.BROWSE)}>Take Similar Quiz</button>
-              <button type="button" className="btn-secondary w-full md:w-auto" onClick={() => setActiveView(VIEWS.DASHBOARD)}>Back to Home</button>
-            </div>
-          </section>
-        )}
-
-        {false && activeView === VIEWS.HISTORY && (
-          <section className="app-card space-y-4 md:space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Quiz History</h2>
-              <button
-                type="button"
-                className="btn-danger shrink-0 disabled:opacity-50"
-                disabled={attempts.length === 0 || historyLoading || historyClearLoading}
-                onClick={handleClearHistory}
-              >
-                {historyClearLoading ? "Clearing…" : "Clear history"}
-              </button>
-            </div>
-            {historyLoading && <p className="text-sm text-neutral-600 dark:text-slate-400">Loading history...</p>}
-            {historyError && <p className="app-alert-danger-text text-sm">{historyError}</p>}
-            <div className="space-y-2">
-              {attempts.length === 0 && <p className="text-sm text-neutral-500 dark:text-slate-400">No attempts yet.</p>}
-              {attempts.map((attempt) => (
-                <article key={attempt._id || attempt.id} className="app-history-row">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-neutral-900 dark:text-slate-100">{attempt.quizTitle}</p>
-                    <div className="flex items-center gap-2">
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${attempt.scorePercent >= 60 ? "bg-brand-soft text-brand-primary" : "bg-neutral-100 text-neutral-600 dark:bg-slate-800 dark:text-slate-300"}`}>
-                        {attempt.scorePercent >= 60 ? "Pass" : "Needs Retry"}
-                      </span>
-                      <span className="text-sm font-medium text-brand-primary">{attempt.scorePercent}%</span>
                     </div>
                   </div>
-                  <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">{new Date(attempt.submittedAt).toLocaleString()}</p>
-                </article>
+                  <div className="border-t border-neutral-200/80 pt-3 dark:border-slate-700 sm:pt-4">
+                    <p className="mb-1.5 px-0.5 text-xs font-semibold text-neutral-500 dark:text-slate-400 sm:mb-2">Categories</p>
+                    <div className="flex max-h-[min(36vh,13rem)] flex-col gap-1 overflow-y-auto overscroll-contain pr-0.5 [-webkit-overflow-scrolling:touch] sm:max-h-[min(42vh,17rem)] lg:max-h-[min(52vh,22rem)]">
+                    {VERTICALS.map((v) => {
+                      const allSub = v.subs.find((s) => s.id === "all") ?? v.subs[0];
+                      const isActive = browseVerticalId === v.id;
+                      return (
+                        <button
+                          key={v.id}
+                          type="button"
+                          className={`min-h-[2.625rem] w-full rounded-xl border px-2.5 py-2 text-left text-xs font-medium leading-snug transition sm:px-3 sm:py-2.5 sm:text-sm ${
+                            isActive
+                              ? "border-brand-primary/50 bg-white text-brand-primary shadow-sm ring-1 ring-brand-primary/15 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-primary/20"
+                              : "border-transparent bg-white/80 text-neutral-800 hover:border-neutral-200 hover:bg-white dark:bg-slate-800/60 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+                          }`}
+                          onClick={() => pickBrowseScope(v.id, allSub?.id ?? null)}
+                        >
+                          {v.label}
+                        </button>
+                      );
+                    })}
+                    </div>
+                  </div>
+                  <div className="border-t border-neutral-200/80 pt-3 dark:border-slate-700 sm:pt-4">
+                    <p className="mb-1.5 px-0.5 text-xs font-semibold text-neutral-500 dark:text-slate-400 sm:mb-2">Location</p>
+                    <div className="rounded-xl border border-neutral-200/70 bg-white px-2.5 py-2 text-left text-xs font-medium leading-snug text-neutral-800 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100 sm:px-3 sm:py-2.5 sm:text-sm">
+                      {activeCommunity?.id
+                        ? formatCommunityMarketplaceSubtitle(activeCommunity)
+                        : toTitleCase(String(user?.city || "").trim()) || "Calamba, Laguna"}
+                    </div>
+                    {activeCommunity?.id ? (
+                      <p className="mt-1.5 px-0.5 text-xs text-neutral-600 dark:text-slate-400">
+                        Members:{" "}
+                        <span className="font-medium text-neutral-800 dark:text-slate-200">
+                          {Number.isFinite(Number(activeCommunity.memberCount))
+                            ? Number(activeCommunity.memberCount)
+                            : 0}
+                        </span>
+                      </p>
+                    ) : null}
+                  </div>
+                </aside>
+              <div className="order-2 min-w-0 space-y-3 sm:space-y-4 lg:order-none">
+                {shopCommunityId && browseVerticalId == null ? (
+                  <div className="rounded-xl border border-neutral-200/80 bg-white/90 px-3 py-2.5 text-xs leading-relaxed text-neutral-700 shadow-sm dark:border-slate-600 dark:bg-slate-800/50 dark:text-slate-200 sm:px-4 sm:py-3 sm:text-sm">
+                    <span className="font-medium text-neutral-900 dark:text-slate-100">All categories</span>
+                    <span className="text-neutral-600 dark:text-slate-400">
+                      {" "}
+                      — every listing in this community. Tap a category above to filter.
+                    </span>
+                  </div>
+                ) : null}
+                {listingDetail && selectedListingId ? (
+                  <div className="space-y-4 rounded-xl border border-brand-primary/25 bg-brand-soft/20 p-4 dark:border-slate-600 dark:bg-slate-900/50">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">{listingDetail.title}</h3>
+                      <button type="button" className="btn-secondary text-xs" onClick={closeListingDetail}>
+                        Close
+                      </button>
+                    </div>
+                    <p className="text-xl font-bold text-brand-primary">{formatCents(listingDetail.priceCents)}</p>
+                    <p className="text-sm text-neutral-600 dark:text-slate-400">
+                      Qty available: <span className="font-medium text-neutral-800 dark:text-slate-200">{Number(listingDetail.quantity) || 0}</span>
+                    </p>
+                    {listingDetail.cityLabel ? (
+                      <p className="text-sm text-neutral-600 dark:text-slate-400">{listingDetail.cityLabel}</p>
+                    ) : null}
+                    <p className="whitespace-pre-wrap text-sm text-neutral-700 dark:text-slate-300">{listingDetail.description}</p>
+                    <p className="min-w-0 break-words text-xs text-neutral-500 dark:text-slate-400">
+                      Fulfillment: {(listingDetail.fulfillmentModes || []).join(" · ") || "pickup"}. Share this listing:{" "}
+                      <span className="inline-block max-w-full break-all font-mono text-[11px]">
+                        {typeof window !== "undefined" ? `${window.location.origin}/l/${listingDetail.id}` : ""}
+                      </span>
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className={`rounded-full border px-3 py-1.5 text-sm font-medium ${favoriteIds.has(listingDetail.id) ? "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200" : "border-neutral-200 dark:border-slate-600"}`}
+                        onClick={() => toggleFavorite(listingDetail.id, !favoriteIds.has(listingDetail.id))}
+                      >
+                        {favoriteIds.has(listingDetail.id) ? "Saved" : "Save to favorites"}
+                      </button>
+                    </div>
+                    {listingDetail.sellerId !== user?.id ? (
+                      <OrderPlacementForm
+                        listing={listingDetail}
+                        token={token}
+                        onDone={(msg) => {
+                          setMarketplaceMessage(msg);
+                          goOrders();
+                        }}
+                        onError={(m) => setMarketplaceMessage(m)}
+                      />
+                    ) : (
+                      <p className="text-sm text-neutral-600 dark:text-slate-400">This is your listing.</p>
+                    )}
+                  </div>
+                ) : null}
+                {listingsLoading ? (
+                  <div className="flex min-h-[12rem] items-center justify-center rounded-2xl border border-neutral-200/60 bg-neutral-50/50 dark:border-slate-700 dark:bg-slate-900/40">
+                    <p className="text-sm font-medium text-neutral-600 dark:text-slate-400">Loading listings…</p>
+                  </div>
+                ) : null}
+                {listingsError ? <p className="app-alert-error text-sm">{listingsError}</p> : null}
+                {!listingsLoading && !listingsError && visibleBrowseListings.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {visibleBrowseListings.map((l) => (
+                      <div
+                        key={l.id}
+                        role="button"
+                        tabIndex={0}
+                        className="relative cursor-pointer rounded-xl border border-neutral-200/90 bg-white p-4 text-left shadow-sm transition hover:border-brand-primary/40 dark:border-slate-600 dark:bg-slate-900/80 dark:hover:border-slate-500"
+                        onClick={() => openListing(l.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openListing(l.id);
+                          }
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="absolute right-3 top-3 z-10 rounded-full border border-neutral-200/90 bg-white/95 p-1.5 text-rose-500 shadow-sm hover:bg-rose-50 dark:border-slate-600 dark:bg-slate-900/95 dark:hover:bg-rose-950/30"
+                          aria-label={favoriteIds.has(l.id) ? "Remove from favorites" : "Add to favorites"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFavorite(l.id, !favoriteIds.has(l.id));
+                          }}
+                        >
+                          <span className="text-base leading-none">{favoriteIds.has(l.id) ? "♥" : "♡"}</span>
+                        </button>
+                        <p className="pr-10 text-xs font-semibold text-brand-primary">
+                          {getVerticalById(l.verticalId)?.label ?? l.verticalId}
+                        </p>
+                        <h3 className="mt-1 font-semibold text-neutral-900 dark:text-slate-100">{l.title}</h3>
+                        <p className="mt-1 text-sm font-medium text-brand-primary">{formatCents(l.priceCents)}</p>
+                        <p className="mt-1 text-xs text-neutral-600 dark:text-slate-400">
+                          Qty <span className="font-medium text-neutral-800 dark:text-slate-200">{Number(l.quantity) || 0}</span>
+                        </p>
+                        {l.cityLabel ? <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">{l.cityLabel}</p> : null}
+                        <p className="mt-2 line-clamp-2 text-xs text-neutral-600 dark:text-slate-400">{l.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {!listingsLoading && !listingsError && visibleBrowseListings.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-neutral-200/90 bg-gradient-to-b from-neutral-50/80 to-white px-4 py-10 text-center dark:border-slate-600 dark:from-slate-900/50 dark:to-slate-900/20 sm:px-6 sm:py-14">
+                    <p className="text-base font-semibold text-neutral-900 dark:text-slate-100 sm:text-lg">No listings to show</p>
+                    <p className="mt-2 max-w-md text-xs leading-relaxed text-neutral-600 dark:text-slate-400 sm:text-sm">
+                      {shopCommunityId
+                        ? browseVerticalId == null
+                          ? "Nothing has been posted in this community shop yet. Publish from Profile → My listings (with this community open in Marketplace, or your profile address matching this place)."
+                          : "No active listings in this category here yet. Try another category, or add a listing under My listings for this community."
+                        : browseVerticalId == null
+                          ? "No active listings yet."
+                          : "No active listings in this category yet."}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            ) : null}
+          </section>
+        )}
+
+        {activeView === VIEWS.MESSAGES && (
+          <section className="app-card space-y-4 md:space-y-6">
+            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Messages</h2>
+            <p className="text-sm text-neutral-600 dark:text-slate-400">
+              Chat with buyers and sellers in one inbox. Threading, attachments, and read receipts will ship when messaging is connected to the backend.
+            </p>
+            <div className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/50 p-8 text-center dark:border-slate-700 dark:bg-slate-900/40 md:p-10">
+              <p className="text-sm font-medium text-neutral-700 dark:text-slate-300">Messaging — coming soon</p>
+              <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">
+                You will see conversations and new-message alerts here once the feature is live.
+              </p>
+            </div>
+          </section>
+        )}
+
+        {activeView === VIEWS.NOTIFICATIONS && (
+          <section className="app-card space-y-4 md:space-y-6">
+            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Notifications</h2>
+            <p className="text-sm text-neutral-600 dark:text-slate-400">
+              Order updates, delivery status, and marketplace alerts will appear here once notifications are wired to the backend.
+            </p>
+            <div className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/50 p-8 text-center dark:border-slate-700 dark:bg-slate-900/40 md:p-10">
+              <p className="text-sm font-medium text-neutral-700 dark:text-slate-300">No notifications yet</p>
+              <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">You are all caught up for now.</p>
+            </div>
+          </section>
+        )}
+
+        {activeView === VIEWS.FAVORITES && (
+          <section className="app-card space-y-4 md:space-y-6">
+            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My Favorites</h2>
+            <p className="text-sm text-neutral-600 dark:text-slate-400">
+              Listings you heart in Browse appear here. Tap a card to open details and place a COD order. Unavailable items show as inactive.
+            </p>
+            {favoritesLoading ? <p className="text-sm text-neutral-600 dark:text-slate-400">Loading…</p> : null}
+            {!favoritesLoading && favoritesList.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/50 p-8 text-center dark:border-slate-700 dark:bg-slate-900/40 md:p-10">
+                <p className="text-sm font-medium text-neutral-700 dark:text-slate-300">No favorites yet</p>
+                <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">Use the heart on Browse cards to save items.</p>
+              </div>
+            ) : null}
+            {!favoritesLoading && favoritesList.length > 0 ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {favoritesList.map((l) => (
+                  <div
+                    key={l.id}
+                    className="relative rounded-xl border border-neutral-200/90 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-slate-900/80"
+                  >
+                    <button
+                      type="button"
+                      className="absolute right-3 top-3 rounded-full border border-neutral-200/90 bg-white/95 p-1.5 text-rose-500 dark:border-slate-600 dark:bg-slate-900/95"
+                      aria-label="Remove from favorites"
+                      onClick={() => toggleFavorite(l.id, false)}
+                    >
+                      <span className="text-base leading-none">♥</span>
+                    </button>
+                    <button type="button" className="w-full text-left" onClick={() => openListing(l.id)}>
+                      <p className="pr-10 text-xs font-semibold text-brand-primary">
+                        {getVerticalById(l.verticalId)?.label ?? l.verticalId}
+                      </p>
+                      <h3 className="mt-1 font-semibold text-neutral-900 dark:text-slate-100">{l.title}</h3>
+                      <p className="mt-1 text-sm font-medium text-brand-primary">{formatCents(l.priceCents)}</p>
+                      {l.status !== "active" ? (
+                        <span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950/50 dark:text-amber-100">
+                          Unavailable
+                        </span>
+                      ) : null}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </section>
+        )}
+
+        {activeView === VIEWS.MY_LISTINGS && (
+          <section className="app-card space-y-6 md:space-y-8">
+            <div>
+              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My listings</h2>
+              <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
+                Publish items for your neighborhood. Prices are in PHP; buyers pay COD at pickup or delivery. No wallet in the app.
+              </p>
+            </div>
+            <form onSubmit={handleCreateListing} className="grid gap-4 rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 dark:border-slate-600 dark:bg-slate-900/40 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Product</label>
+                <input
+                  className="input-base w-full"
+                  value={listingForm.title}
+                  onChange={(e) => setListingForm((p) => ({ ...p, title: e.target.value }))}
+                  required
+                  minLength={2}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Description (optional)</label>
+                <textarea
+                  className="input-base min-h-[5rem] w-full"
+                  value={listingForm.description}
+                  onChange={(e) => setListingForm((p) => ({ ...p, description: e.target.value }))}
+                  rows={3}
+                />
+              </div>
+              <div className="md:col-span-2 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="min-w-0">
+                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Price (PHP)</label>
+                  <input
+                    className="input-base w-full"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={listingForm.pricePesos}
+                    onChange={(e) => setListingForm((p) => ({ ...p, pricePesos: e.target.value }))}
+                    required
+                  />
+                </div>
+                <div className="min-w-0">
+                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Quantity</label>
+                  <input
+                    className="input-base w-full"
+                    type="number"
+                    min={0}
+                    step={1}
+                    placeholder="e.g. 1"
+                    value={listingForm.quantity}
+                    onChange={(e) => setListingForm((p) => ({ ...p, quantity: e.target.value }))}
+                  />
+                </div>
+                <div className="min-w-0">
+                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Categories</label>
+                  <select
+                    className="input-base w-full"
+                    value={listingForm.verticalId}
+                    onChange={(e) => setListingForm((p) => ({ ...p, verticalId: e.target.value }))}
+                  >
+                    <option value="">Select a category</option>
+                    {VERTICALS.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="md:col-span-2">
+                {shopCommunityId ? (
+                  <p className="text-sm text-neutral-700 dark:text-slate-300">
+                    <span className="font-medium text-neutral-900 dark:text-slate-100">Community:</span>{" "}
+                    {toTitleCase(activeCommunity?.name?.trim()) || "This community"} — listing will only show in this community shop.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-sm text-neutral-700 dark:text-slate-300">
+                      <span className="font-medium text-neutral-900 dark:text-slate-100">Brgy/Community/Subdivision:</span>{" "}
+                      {profileBrgyCommunitySubdivision.trim() || "—"}
+                      {listingCommunityFromProfile.id ? (
+                        <>
+                          {" "}
+                          — listings publish to{" "}
+                          <span className="font-medium text-neutral-900 dark:text-slate-100">
+                            {listingCommunityFromProfile.matchedName || "Community"}
+                          </span>
+                          .
+                        </>
+                      ) : profileBrgyCommunitySubdivision.trim() ? (
+                        <span className="text-amber-900 dark:text-amber-100/90">
+                          {" "}
+                          — no community with this name yet. Add it from the marketplace, then publish.
+                        </span>
+                      ) : (
+                        <span className="text-neutral-600 dark:text-slate-400">
+                          {" "}
+                          — set this under Profile → Address to link listings to your community shop.
+                        </span>
+                      )}
+                    </p>
+                    {!communitiesLoading && communities.length === 0 ? (
+                      <p className="mt-2 text-sm text-amber-800 dark:text-amber-200/90">
+                        No communities yet. Create one from the marketplace browse screen, then publish here.
+                      </p>
+                    ) : null}
+                  </>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-4 md:col-span-2">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={listingForm.pickup}
+                    onChange={(e) => setListingForm((p) => ({ ...p, pickup: e.target.checked }))}
+                  />
+                  Pickup
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={listingForm.delivery}
+                    onChange={(e) => setListingForm((p) => ({ ...p, delivery: e.target.checked }))}
+                  />
+                  Delivery (COD bids)
+                </label>
+              </div>
+              <div className="md:col-span-2">
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={
+                    listingSaving ||
+                    !profileBrgyCommunitySubdivision.trim() ||
+                    (!shopCommunityId && (communitiesLoading || !listingCommunityFromProfile.id))
+                  }
+                >
+                  {listingSaving ? "Publishing…" : "Publish listing"}
+                </button>
+              </div>
+            </form>
+            <div>
+              <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">Your listings</h3>
+              <ul className="mt-3 divide-y divide-neutral-200 rounded-xl border border-neutral-200 dark:divide-slate-700 dark:border-slate-600">
+                {sellerListings.length === 0 ? (
+                  <li className="px-4 py-6 text-sm text-neutral-500 dark:text-slate-400">No listings yet.</li>
+                ) : null}
+                {sellerListings.map((l) => (
+                  <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
+                    <span className="font-medium text-neutral-900 dark:text-slate-100">{l.title}</span>
+                    <span className="text-neutral-600 dark:text-slate-400">
+                      {formatCents(l.priceCents)} · {l.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
+        )}
+
+        {activeView === VIEWS.DELIVERY && (
+          <section className="app-card space-y-4 md:space-y-6">
+            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Local delivery</h2>
+            <div className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/50 p-8 text-center dark:border-slate-700 dark:bg-slate-900/40 md:p-10">
+              <p className="text-sm text-neutral-600 dark:text-slate-400">Nothing here yet.</p>
+            </div>
+          </section>
+        )}
+
+        {activeView === VIEWS.ORDERS && (
+          <section className="app-card space-y-4 md:space-y-6">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Orders</h2>
+                <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
+                  COD pickup or delivery. Goods total plus agreed delivery fee (if any) is paid in cash — LinkMart does not store balances.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${ordersRole === "buyer" ? "bg-brand-soft text-brand-primary" : "btn-secondary"}`}
+                  onClick={() => setOrdersRole("buyer")}
+                >
+                  Buying
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${ordersRole === "seller" ? "bg-brand-soft text-brand-primary" : "btn-secondary"}`}
+                  onClick={() => setOrdersRole("seller")}
+                >
+                  Selling
+                </button>
+              </div>
+            </div>
+            {ordersLoading ? <p className="text-sm text-neutral-600 dark:text-slate-400">Loading…</p> : null}
+            <ul className="divide-y divide-neutral-200 rounded-xl border border-neutral-200 dark:divide-slate-700 dark:border-slate-600">
+              {orders.length === 0 && !ordersLoading ? (
+                <li className="px-4 py-6 text-sm text-neutral-500 dark:text-slate-400">No orders in this tab.</li>
+              ) : null}
+              {orders.map((o) => (
+                <li key={o.id} className="space-y-2 px-4 py-4 text-sm">
+                  <div className="flex flex-wrap justify-between gap-2">
+                    <span className="font-mono text-xs text-neutral-500 dark:text-slate-400">{o.id}</span>
+                    <span className="font-medium text-neutral-800 dark:text-slate-200">{o.status.replace(/_/g, " ")}</span>
+                  </div>
+                  <p className="text-neutral-700 dark:text-slate-300">
+                    {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods {formatCents(o.codGoodsCents)}
+                    {o.codDeliveryCents > 0 ? <span> · delivery {formatCents(o.codDeliveryCents)}</span> : null}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {ordersRole === "seller" && o.status === "placed" ? (
+                      <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "seller_accept")}>
+                        Accept order
+                      </button>
+                    ) : null}
+                    {o.status === "ready_for_pickup" ? (
+                      <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_pickup_done")}>
+                        Mark pickup complete (COD)
+                      </button>
+                    ) : null}
+                    {ordersRole === "seller" && o.status === "bid_accepted" ? (
+                      <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_out_for_delivery")}>
+                        Mark out for delivery
+                      </button>
+                    ) : null}
+                    {o.status === "out_for_delivery" ? (
+                      <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_delivered")}>
+                        Mark delivered (COD)
+                      </button>
+                    ) : null}
+                    {o.status !== "completed" && o.status !== "cancelled" ? (
+                      <button type="button" className="text-xs text-rose-600 hover:underline dark:text-rose-400" onClick={() => patchOrderTransition(o.id, "cancel")}>
+                        Cancel
+                      </button>
+                    ) : null}
+                    {o.status === "bidding_open" ? (
+                      <button type="button" className="btn-secondary text-xs" onClick={() => loadBidsForOrder(o.id)}>
+                        {expandedBidOrderId === o.id ? "Reload bids" : "View bids"}
+                      </button>
+                    ) : null}
+                  </div>
+                  {expandedBidOrderId === o.id && o.status === "bidding_open" ? (
+                    <ul className="mt-2 space-y-2 rounded-lg border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-slate-600 dark:bg-slate-900/50">
+                      {bidsForOrder.length === 0 ? <li className="text-xs text-neutral-500">No bids yet.</li> : null}
+                      {bidsForOrder.map((b) => (
+                        <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <span>
+                            {formatCents(b.amountCents)} · {b.mode} · {b.status}
+                          </span>
+                          {b.status === "pending" && (o.buyerId === user?.id || o.sellerId === user?.id) ? (
+                            <button type="button" className="text-brand-primary hover:underline" onClick={() => acceptOrderBid(o.id, b.id)}>
+                              Accept bid
+                            </button>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
               ))}
+            </ul>
+          </section>
+        )}
+
+        {activeView === VIEWS.ABOUT && (
+          <section className="app-card max-w-3xl space-y-4 md:space-y-6">
+            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">About LinkMart</h2>
+            <p className="text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
+              LinkMart is a community marketplace for discovering what is available near you. Commerce is cash-on-delivery or cash at pickup — we do not operate
+              an in-app wallet. Delivery can be fulfilled by neighbors who walk, run, or bike, with transparent bidding on the delivery fee. Sellers stay organized
+              with stock, expenses, and profit views tied to real orders.
+            </p>
+            <p className="text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
+              For support or partnerships, use the contact options on the public landing page.
+            </p>
+          </section>
+        )}
+
+        {activeView === VIEWS.TERMS && (
+          <section className="app-card max-w-3xl space-y-6 text-sm leading-relaxed text-neutral-700 dark:text-slate-300">
+            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Terms & conditions (summary)</h2>
+            <p className="text-xs text-neutral-500 dark:text-slate-400">This is a plain-language outline, not legal advice. Have counsel review before production launch.</p>
+            <div>
+              <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">1. No wallet; COD</h3>
+              <p className="mt-1 text-neutral-600 dark:text-slate-400">
+                LinkMart does not hold buyer or seller funds. Payment for goods and any agreed delivery fee is settled directly between parties (typically cash on
+                delivery or at pickup). You are responsible for confirming payment at handoff.
+              </p>
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">2. Pickup and delivery</h3>
+              <p className="mt-1 text-neutral-600 dark:text-slate-400">
+                Listings may offer pickup, delivery, or both. Delivery fees proposed by couriers are offers only until a buyer or seller accepts a bid. The platform
+                coordinates information; it does not guarantee delivery times or service quality.
+              </p>
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">3. Couriers</h3>
+              <p className="mt-1 text-neutral-600 dark:text-slate-400">
+                Couriers using the marketplace are independent of LinkMart unless separately contracted. They must follow local laws and safe handoff practices.
+              </p>
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">4. Disputes</h3>
+              <p className="mt-1 text-neutral-600 dark:text-slate-400">
+                Because the platform does not hold funds, disputes over quality, non-payment, or failed delivery should first be resolved between users. LinkMart may
+                offer reporting tools but does not arbitrate cash transactions.
+              </p>
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">5. Accounts</h3>
+              <p className="mt-1 text-neutral-600 dark:text-slate-400">
+                You agree to provide accurate profile information and to comply with these rules when using messaging, listings, and delivery features.
+              </p>
             </div>
           </section>
         )}
 
         {activeView === VIEWS.PROFILE && (
           <section className="app-card space-y-4 md:space-y-6">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Profile</h2>
-              {user && !profileEditing ? (
-                <button type="button" className="btn-secondary shrink-0" onClick={openProfileEdit}>
-                  Edit profile
-                </button>
-              ) : null}
-            </div>
-            {user ? (
+            <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start">
+              <div className="space-y-4 rounded-2xl border border-neutral-200/90 bg-white p-4 shadow-sm md:space-y-6 dark:border-slate-600 dark:bg-slate-900/80">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My profile</h2>
+                  {user && !profileEditing ? (
+                    <button type="button" className="btn-secondary shrink-0" onClick={openProfileEdit}>
+                      Edit profile
+                    </button>
+                  ) : null}
+                </div>
+                {user ? (
               profileEditing ? (
-                <form onSubmit={handleProfileSubmit} className="space-y-6">
+                <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
+                  <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.25)] dark:border-slate-600 dark:bg-slate-900">
+                <form onSubmit={handleProfileSubmit} noValidate className="space-y-6">
                   <div className="grid grid-cols-1 items-end gap-4 rounded-2xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50 p-5 shadow-sm ring-1 ring-neutral-100/80 dark:border-slate-700/80 dark:from-slate-900 dark:to-slate-900/70 dark:ring-slate-800/80 md:grid-cols-[auto_minmax(13rem,1fr)_minmax(16rem,1fr)]">
                     <div className="flex flex-col items-start gap-2">
                       <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-xl font-bold text-brand-primary ring-1 ring-brand-border">
@@ -3001,17 +3661,98 @@ function App() {
                       <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-x-4">
                         <div className="min-w-0">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-apartment">
-                          Appartment, suite, etc
+                          Brgy/Community/Subdivision
                         </label>
-                        <input
-                          id="profile-address-apartment"
-                          name="addressApartment"
-                          type="text"
-                          autoComplete="address-line1"
-                          className="input-base mt-1"
-                          value={profileDraft.addressApartment}
-                          onChange={(e) => setProfileDraft((prev) => ({ ...prev, addressApartment: e.target.value }))}
-                        />
+                        <div className="relative mt-1">
+                          <input
+                            id="profile-address-apartment"
+                            name="addressApartment"
+                            type="text"
+                            autoComplete="address-line1"
+                            role="combobox"
+                            aria-autocomplete="list"
+                            aria-expanded={profileBrgySuggestOpen && profileBrgyCommunitySuggestions.length > 0}
+                            aria-controls="profile-brgy-suggestions-list"
+                            className="input-base w-full"
+                            value={profileDraft.addressApartment}
+                            onChange={(e) => {
+                              if (profileBrgySuggestBlurTimerRef.current) {
+                                clearTimeout(profileBrgySuggestBlurTimerRef.current);
+                                profileBrgySuggestBlurTimerRef.current = null;
+                              }
+                              setProfileDraft((prev) => ({ ...prev, addressApartment: e.target.value }));
+                              setProfileBrgySuggestOpen(true);
+                            }}
+                            onFocus={() => {
+                              if (profileBrgySuggestBlurTimerRef.current) {
+                                clearTimeout(profileBrgySuggestBlurTimerRef.current);
+                                profileBrgySuggestBlurTimerRef.current = null;
+                              }
+                              if (profileBrgyCommunitySuggestions.length > 0) setProfileBrgySuggestOpen(true);
+                            }}
+                            onBlur={() => {
+                              profileBrgySuggestBlurTimerRef.current = window.setTimeout(() => {
+                                setProfileBrgySuggestOpen(false);
+                                profileBrgySuggestBlurTimerRef.current = null;
+                              }, 180);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") {
+                                e.stopPropagation();
+                                if (profileBrgySuggestBlurTimerRef.current) {
+                                  clearTimeout(profileBrgySuggestBlurTimerRef.current);
+                                  profileBrgySuggestBlurTimerRef.current = null;
+                                }
+                                setProfileBrgySuggestOpen(false);
+                              }
+                            }}
+                          />
+                          {profileBrgySuggestOpen && profileBrgyCommunitySuggestions.length > 0 ? (
+                            <ul
+                              id="profile-brgy-suggestions-list"
+                              role="listbox"
+                              className="absolute left-0 right-0 z-[100] mt-1 max-h-48 overflow-auto rounded-lg border border-neutral-200/95 bg-white py-1 text-sm shadow-lg dark:border-slate-600 dark:bg-slate-900"
+                            >
+                              {profileBrgyCommunitySuggestions.map((row) => (
+                                <li key={row.name} role="presentation">
+                                  <button
+                                    type="button"
+                                    role="option"
+                                    className="w-full px-3 py-2 text-left hover:bg-brand-soft/50 dark:hover:bg-slate-800"
+                                    onMouseDown={(ev) => {
+                                      ev.preventDefault();
+                                      if (profileBrgySuggestBlurTimerRef.current) {
+                                        clearTimeout(profileBrgySuggestBlurTimerRef.current);
+                                        profileBrgySuggestBlurTimerRef.current = null;
+                                      }
+                                      setProfileDraft((prev) => ({
+                                        ...prev,
+                                        addressApartment: row.name,
+                                        addressCity: prev.addressCity.trim()
+                                          ? prev.addressCity
+                                          : row.city || prev.addressCity,
+                                        addressProvince: prev.addressProvince.trim()
+                                          ? prev.addressProvince
+                                          : row.province || prev.addressProvince,
+                                        addressPostalCode: prev.addressPostalCode.trim()
+                                          ? prev.addressPostalCode
+                                          : row.postalCode || prev.addressPostalCode,
+                                      }));
+                                      setProfileBrgySuggestOpen(false);
+                                    }}
+                                  >
+                                    <span className="font-medium text-neutral-900 dark:text-slate-100">{row.name}</span>
+                                    {row.city || row.province ? (
+                                      <span className="mt-0.5 block text-xs text-neutral-500 dark:text-slate-400">
+                                        {[row.city, row.province].filter(Boolean).join(" · ")}
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
                       </div>
                         <div className="min-w-0">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-city">
@@ -3080,6 +3821,96 @@ function App() {
                         />
                         </div>
                       </div>
+                      <div className="mt-4">
+                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-url">
+                          Address link (Google Maps URL)
+                        </label>
+                        <input
+                          id="profile-address-url"
+                          name="addressUrl"
+                          type="url"
+                          autoComplete="url"
+                          className="input-base mt-1"
+                          placeholder="https://maps.google.com/..."
+                          value={profileDraft.addressUrl}
+                          onChange={(e) => setProfileDraft((prev) => ({ ...prev, addressUrl: e.target.value }))}
+                        />
+                      </div>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="space-y-3 rounded-2xl border border-neutral-200/80 bg-white p-4 shadow-sm ring-1 ring-neutral-100/80 dark:border-slate-700/80 dark:bg-slate-900/70 dark:ring-slate-800/80">
+                    <button
+                      type="button"
+                      className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition ${
+                        profileSocialExpanded
+                          ? "bg-transparent shadow-none"
+                          : "bg-neutral-50 shadow-sm hover:bg-neutral-100 dark:bg-slate-800/60 dark:hover:bg-slate-800"
+                      }`}
+                      onClick={() => setProfileSocialExpanded((prev) => !prev)}
+                      aria-expanded={profileSocialExpanded}
+                      aria-controls="profile-social-fields"
+                    >
+                      <span className="block text-sm font-semibold tracking-tight text-neutral-900 dark:text-slate-100">Social media</span>
+                      <span
+                        className={`inline-flex h-7 w-7 items-center justify-center rounded-lg text-neutral-500 dark:text-slate-300 ${
+                          profileSocialExpanded
+                            ? "border border-neutral-200 bg-transparent dark:border-slate-600"
+                            : "border border-transparent bg-neutral-50 dark:bg-slate-800/60"
+                        }`}
+                      >
+                        <ChevronDownIcon className={`h-4 w-4 transition-transform ${profileSocialExpanded ? "rotate-180" : ""}`} />
+                      </span>
+                    </button>
+                    {profileSocialExpanded ? (
+                      <div id="profile-social-fields" className="space-y-4 border-t border-neutral-200/80 pt-3 dark:border-slate-700/80">
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-x-4">
+                          <div className="min-w-0">
+                            <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-facebook-url">
+                              Facebook URL
+                            </label>
+                            <input
+                              id="profile-facebook-url"
+                              name="facebookUrl"
+                              type="url"
+                              autoComplete="url"
+                              className="input-base mt-1"
+                              placeholder="https://facebook.com/yourprofile"
+                              value={profileDraft.facebookUrl}
+                              onChange={(e) => setProfileDraft((prev) => ({ ...prev, facebookUrl: e.target.value }))}
+                            />
+                          </div>
+                          <div className="min-w-0">
+                            <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-twitter-url">
+                              X / Twitter URL
+                            </label>
+                            <input
+                              id="profile-twitter-url"
+                              name="twitterUrl"
+                              type="url"
+                              autoComplete="url"
+                              className="input-base mt-1"
+                              placeholder="https://x.com/yourprofile"
+                              value={profileDraft.twitterUrl}
+                              onChange={(e) => setProfileDraft((prev) => ({ ...prev, twitterUrl: e.target.value }))}
+                            />
+                          </div>
+                          <div className="min-w-0">
+                            <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-instagram-url">
+                              Instagram URL
+                            </label>
+                            <input
+                              id="profile-instagram-url"
+                              name="instagramUrl"
+                              type="url"
+                              autoComplete="url"
+                              className="input-base mt-1"
+                              placeholder="https://instagram.com/yourprofile"
+                              value={profileDraft.instagramUrl}
+                              onChange={(e) => setProfileDraft((prev) => ({ ...prev, instagramUrl: e.target.value }))}
+                            />
+                          </div>
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -3097,9 +3928,11 @@ function App() {
                     </button>
                   </div>
                 </form>
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-6">
-                  <div className="flex flex-wrap items-center gap-5 rounded-2xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50 p-5 shadow-sm dark:border-slate-700/80 dark:from-slate-900 dark:to-slate-900/70">
+                  <div className="flex flex-col items-center gap-4 rounded-2xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50 p-5 text-center shadow-sm dark:border-slate-700/80 dark:from-slate-900 dark:to-slate-900/70">
                     <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-2xl font-bold text-brand-primary ring-1 ring-brand-border">
                       {user.avatarUrl ? (
                         <img src={user.avatarUrl} alt="Profile avatar" className="h-full w-full object-cover" />
@@ -3107,89 +3940,247 @@ function App() {
                         (String(user?.username || "").trim().charAt(0) || "?").toUpperCase()
                       )}
                     </div>
-                    <div>
-                      <p className="text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">{getDisplayNameFromUser(user)}</p>
-                      <p className="mt-1 text-base text-neutral-600 dark:text-slate-400">{user.email}</p>
+                    <div className="w-full">
+                      <p className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">{getDisplayNameFromUser(user)}</p>
+                      <div className="mt-2 flex items-center justify-center gap-3">
+                        {(() => {
+                          const facebookHref = user.facebookUrl || (user.socialPlatform === "facebook" ? user.socialUrl || user.url : "");
+                          return facebookHref ? (
+                            <a
+                              href={facebookHref}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label="Facebook profile"
+                              className="text-neutral-500 transition hover:text-brand-primary dark:text-slate-400 dark:hover:text-slate-100"
+                            >
+                              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                                <path d="M24 12a12 12 0 1 0-13.88 11.86v-8.39H7.08V12h3.04V9.36c0-3 1.8-4.67 4.55-4.67 1.32 0 2.7.24 2.7.24v2.96h-1.52c-1.5 0-1.97.93-1.97 1.89V12h3.35l-.54 3.47h-2.81v8.39A12 12 0 0 0 24 12" />
+                              </svg>
+                            </a>
+                          ) : (
+                            <span aria-label="Facebook not linked" className="cursor-not-allowed text-neutral-300 dark:text-slate-700">
+                              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                                <path d="M24 12a12 12 0 1 0-13.88 11.86v-8.39H7.08V12h3.04V9.36c0-3 1.8-4.67 4.55-4.67 1.32 0 2.7.24 2.7.24v2.96h-1.52c-1.5 0-1.97.93-1.97 1.89V12h3.35l-.54 3.47h-2.81v8.39A12 12 0 0 0 24 12" />
+                              </svg>
+                            </span>
+                          );
+                        })()}
+                        {(() => {
+                          const twitterHref = user.twitterUrl || (user.socialPlatform === "x_twitter" ? user.socialUrl || user.url : "");
+                          return twitterHref ? (
+                            <a
+                              href={twitterHref}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label="X or Twitter profile"
+                              className="text-neutral-500 transition hover:text-brand-primary dark:text-slate-400 dark:hover:text-slate-100"
+                            >
+                              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                                <path d="M18.9 2H22l-6.8 7.77L23.2 22h-6.26l-4.9-6.4L6.5 22H3.4l7.3-8.35L.8 2h6.42l4.43 5.85L18.9 2Zm-1.1 18h1.73L6.3 3.9H4.45L17.8 20Z" />
+                              </svg>
+                            </a>
+                          ) : (
+                            <span aria-label="X or Twitter not linked" className="cursor-not-allowed text-neutral-300 dark:text-slate-700">
+                              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                                <path d="M18.9 2H22l-6.8 7.77L23.2 22h-6.26l-4.9-6.4L6.5 22H3.4l7.3-8.35L.8 2h6.42l4.43 5.85L18.9 2Zm-1.1 18h1.73L6.3 3.9H4.45L17.8 20Z" />
+                              </svg>
+                            </span>
+                          );
+                        })()}
+                        {(() => {
+                          const instagramHref = user.instagramUrl || (user.socialPlatform === "instagram" ? user.socialUrl || user.url : "");
+                          return instagramHref ? (
+                            <a
+                              href={instagramHref}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label="Instagram profile"
+                              className="text-neutral-500 transition hover:text-brand-primary dark:text-slate-400 dark:hover:text-slate-100"
+                            >
+                              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+                                <path d="M16 11.37a4 4 0 1 1-3.37-3.37 4 4 0 0 1 3.37 3.37z" />
+                                <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
+                              </svg>
+                            </a>
+                          ) : (
+                            <span aria-label="Instagram not linked" className="cursor-not-allowed text-neutral-300 dark:text-slate-700">
+                              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+                                <path d="M16 11.37a4 4 0 1 1-3.37-3.37 4 4 0 0 1 3.37 3.37z" />
+                                <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
+                              </svg>
+                            </span>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
-                  {(user.phone ||
-                    user.birthday ||
-                    user.address ||
-                    user.country ||
-                    user.age ||
-                    user.education ||
-                    user.gender) && (
-                    <dl className="grid gap-3 text-sm md:grid-cols-2">
-                      {user.country ? (
-                        <>
-                          <dt className="sr-only">Country</dt>
-                          <dd className="rounded-xl border border-neutral-200/80 bg-white px-4 py-3 dark:border-slate-700/80 dark:bg-slate-900/70">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Country</p>
-                            <p className="mt-1 text-base font-medium text-neutral-900 dark:text-slate-100">{user.country}</p>
-                          </dd>
-                        </>
-                      ) : null}
-                      {user.age ? (
-                        <>
-                          <dt className="sr-only">Age</dt>
-                          <dd className="rounded-xl border border-neutral-200/80 bg-white px-4 py-3 dark:border-slate-700/80 dark:bg-slate-900/70">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Age</p>
-                            <p className="mt-1 text-base font-medium text-neutral-900 dark:text-slate-100">{user.age}</p>
-                          </dd>
-                        </>
-                      ) : null}
+                  <div className="rounded-2xl border border-neutral-200/80 bg-white px-4 py-4 dark:border-slate-700/80 dark:bg-slate-900/70">
+                    <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">About</h3>
+                    <div className="mt-3 border-t border-neutral-200/80 dark:border-slate-700/80" />
+                    <ul className="mt-3 space-y-3 text-sm text-neutral-800 dark:text-slate-200">
+                      <li className="flex items-center gap-2">
+                        <svg className="h-4 w-4 text-neutral-500 dark:text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                          <rect x="3" y="4" width="18" height="18" rx="2" />
+                          <path d="M16 2v4M8 2v4M3 10h18" />
+                        </svg>
+                        <span>Joined </span>
+                        <span className="font-semibold">
+                          {user.joinedAt || user.createdAt || user.created_at || profileJoinedAt
+                            ? new Date(user.joinedAt || user.createdAt || user.created_at || profileJoinedAt).toLocaleDateString(undefined, {
+                                day: "numeric",
+                                month: "long",
+                                year: "numeric",
+                              })
+                            : ""}
+                        </span>
+                      </li>
                       {user.phone ? (
-                        <>
-                          <dt className="sr-only">Phone</dt>
-                          <dd className="rounded-xl border border-neutral-200/80 bg-white px-4 py-3 dark:border-slate-700/80 dark:bg-slate-900/70">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Phone</p>
-                            <p className="mt-1 text-base font-medium text-neutral-900 dark:text-slate-100">{user.phone}</p>
-                          </dd>
-                        </>
+                        <li className="flex items-center gap-2">
+                          <svg className="h-4 w-4 text-neutral-500 dark:text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.62 2.62a2 2 0 0 1-.45 2.11L8 9.71a16 16 0 0 0 6.29 6.29l1.26-1.28a2 2 0 0 1 2.11-.45c.84.29 1.72.5 2.62.62A2 2 0 0 1 22 16.92z" />
+                          </svg>
+                          <span>Phone: </span>
+                          <span className="font-semibold">{user.phone}</span>
+                        </li>
                       ) : null}
-                      {user.birthday ? (
-                        <>
-                          <dt className="sr-only">Birthday</dt>
-                          <dd className="rounded-xl border border-neutral-200/80 bg-white px-4 py-3 dark:border-slate-700/80 dark:bg-slate-900/70">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Birthday</p>
-                            <p className="mt-1 text-base font-medium text-neutral-900 dark:text-slate-100">{formatBirthdayDisplay(user.birthday)}</p>
-                          </dd>
-                        </>
+                      {user.country ? (
+                        <li className="flex items-center gap-2">
+                          <svg className="h-4 w-4 text-neutral-500 dark:text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <circle cx="12" cy="12" r="10" />
+                            <path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" />
+                          </svg>
+                          <span>Country: </span>
+                          <span className="font-semibold">{user.country}</span>
+                        </li>
                       ) : null}
                       {user.address ? (
-                        <>
-                          <dt className="sr-only">Address</dt>
-                          <dd className="rounded-xl border border-neutral-200/80 bg-white px-4 py-3 md:col-span-2 dark:border-slate-700/80 dark:bg-slate-900/70">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Address</p>
-                            <p className="mt-1 whitespace-pre-wrap text-base font-medium text-neutral-900 dark:text-slate-100">{user.address}</p>
-                          </dd>
-                        </>
+                        <li className="flex items-start gap-2">
+                          <svg className="mt-0.5 h-4 w-4 text-neutral-500 dark:text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z" />
+                            <circle cx="12" cy="10" r="3" />
+                          </svg>
+                          <span>Address: </span>
+                          {user.addressUrl ? (
+                            <a
+                              href={user.addressUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-semibold text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:text-brand-primary/80"
+                            >
+                              {user.address}
+                            </a>
+                          ) : (
+                            <span className="font-semibold">{user.address}</span>
+                          )}
+                        </li>
                       ) : null}
-                      {user.education ? (
-                        <>
-                          <dt className="sr-only">Education</dt>
-                          <dd className="rounded-xl border border-neutral-200/80 bg-white px-4 py-3 dark:border-slate-700/80 dark:bg-slate-900/70">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Education</p>
-                            <p className="mt-1 text-base font-medium text-neutral-900 dark:text-slate-100">{user.education}</p>
-                          </dd>
-                        </>
-                      ) : null}
-                      {user.gender ? (
-                        <>
-                          <dt className="sr-only">Gender</dt>
-                          <dd className="rounded-xl border border-neutral-200/80 bg-white px-4 py-3 dark:border-slate-700/80 dark:bg-slate-900/70">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Gender</p>
-                            <p className="mt-1 text-base font-medium text-neutral-900 dark:text-slate-100">{formatGenderDisplay(user.gender)}</p>
-                          </dd>
-                        </>
-                      ) : null}
-                    </dl>
-                  )}
+                    </ul>
+                  </div>
                 </div>
               )
             ) : (
               <p className="app-alert-danger-text text-sm">Could not load your profile. Try signing in again.</p>
             )}
+              </div>
+              <aside className="space-y-4 rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-slate-900/80">
+                <div className="flex flex-wrap gap-2" role="tablist" aria-label="Seller hub sections">
+                  {[
+                    { id: SELLER_TABS.PRODUCTS, label: "Products" },
+                    { id: SELLER_TABS.REVIEW, label: "Review" },
+                  ].map(({ id, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      role="tab"
+                      aria-selected={sellerTab === id}
+                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                        sellerTab === id
+                          ? "bg-brand-soft text-brand-primary ring-2 ring-brand-primary/30 dark:bg-slate-800 dark:text-slate-100"
+                          : "border border-neutral-200/90 text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                      }`}
+                      onClick={() => setSellerTab(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {sellerTab === SELLER_TABS.PRODUCTS && (
+                  <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 dark:border-slate-700 dark:bg-slate-900/40">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">Listings & quantity</p>
+                      <button
+                        type="button"
+                        className="btn-primary shrink-0 text-sm"
+                        onClick={() => {
+                          if (!profileBrgyCommunitySubdivision.trim()) {
+                            setProfileUploadProductNotice("Add Brgy/Community/Subdivision under Edit profile → Address, then try again.");
+                            return;
+                          }
+                          setProfileUploadProductNotice("");
+                          setActiveView(VIEWS.MY_LISTINGS);
+                        }}
+                      >
+                        Upload product
+                      </button>
+                    </div>
+                    {profileUploadProductNotice ? (
+                      <div
+                        className="mt-3 flex flex-wrap items-start justify-between gap-2 rounded-xl border border-amber-200/90 bg-amber-50/90 px-3 py-2 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100"
+                        role="status"
+                      >
+                        <span className="min-w-0 flex-1">{profileUploadProductNotice}</span>
+                        <button
+                          type="button"
+                          className="shrink-0 text-xs font-semibold text-amber-800 underline dark:text-amber-200"
+                          onClick={() => setProfileUploadProductNotice("")}
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    ) : null}
+                    {sellerListings.length ? (
+                      <ul className="mt-3 divide-y divide-neutral-200 dark:divide-slate-700">
+                        {sellerListings.map((l) => (
+                          <li key={l.id} className="flex flex-col gap-0.5 py-2 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+                            <span className="font-medium text-neutral-800 dark:text-slate-200">{l.title}</span>
+                            <span className="shrink-0 text-neutral-600 dark:text-slate-400">
+                              {formatCents(l.priceCents)} · Qty {l.quantity} · {l.status}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">Publish listings to see them here.</p>
+                    )}
+                  </div>
+                )}
+                {sellerTab === SELLER_TABS.REVIEW && (
+                  <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 dark:border-slate-700 dark:bg-slate-900/40">
+                    <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">COD review snapshot</p>
+                    {sellerSummary ? (
+                      <dl className="mt-4 grid gap-3">
+                        <div className="rounded-lg bg-white p-3 dark:bg-slate-900/80">
+                          <dt className="text-xs uppercase text-neutral-500 dark:text-slate-400">Revenue (completed)</dt>
+                          <dd className="text-lg font-semibold text-neutral-900 dark:text-slate-100">{formatCents(sellerSummary.revenueCents)}</dd>
+                        </div>
+                        <div className="rounded-lg bg-white p-3 dark:bg-slate-900/80">
+                          <dt className="text-xs uppercase text-neutral-500 dark:text-slate-400">Expenses</dt>
+                          <dd className="text-lg font-semibold text-neutral-900 dark:text-slate-100">{formatCents(sellerSummary.expenseCents)}</dd>
+                        </div>
+                        <div className="rounded-lg bg-white p-3 dark:bg-slate-900/80">
+                          <dt className="text-xs uppercase text-neutral-500 dark:text-slate-400">Profit</dt>
+                          <dd className="text-lg font-semibold text-brand-primary">{formatCents(sellerSummary.profitCents)}</dd>
+                        </div>
+                      </dl>
+                    ) : (
+                      <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">Load data by opening this tab when logged in.</p>
+                    )}
+                  </div>
+                )}
+              </aside>
+            </div>
           </section>
         )}
 
@@ -3217,219 +4208,178 @@ function App() {
           </section>
         )}
 
-        {false && activeView === VIEWS.CREATE && (
-          <section className="app-card space-y-4 md:space-y-6">
-            <div>
-              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Create Quiz</h2>
-              <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">Create and publish a quiz with multiple-choice, true/false, or fill-in-the-blank questions.</p>
-            </div>
-            <form onSubmit={handleCreateQuiz} className="space-y-4">
-              <div>
-                <label className="label-base">Quiz Title</label>
-                <input
-                  className="input-base"
-                  placeholder="e.g. Math"
-                  value={createState.title}
-                  onChange={(e) => setCreateState((prev) => ({ ...prev, title: e.target.value }))}
-                  required
-                />
-              </div>
-              <div>
-                <label className="label-base">Category</label>
-                <CategoryDropdown
-                  value={createState.category}
-                  onChange={(nextCategory) => setCreateState((prev) => ({ ...prev, category: nextCategory }))}
-                  categories={categories}
-                />
-              </div>
-              <div>
-                <label className="label-base">Description</label>
-                <textarea
-                  className="input-base"
-                  rows={3}
-                  placeholder="e.g. Practice problems for beginners"
-                  value={createState.description}
-                  onChange={(e) => setCreateState((prev) => ({ ...prev, description: e.target.value }))}
-                />
-              </div>
-              <div className="relative overflow-hidden rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-indigo-50 to-fuchsia-50 p-4 shadow-sm dark:border-violet-800/60 dark:from-slate-900 dark:via-indigo-950 dark:to-violet-950">
-                <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-violet-300/25 blur-2xl dark:bg-violet-500/15" />
-                <div className="pointer-events-none absolute -bottom-10 -left-10 h-28 w-28 rounded-full bg-fuchsia-300/20 blur-2xl dark:bg-fuchsia-500/10" />
-                <div className="relative">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300">AI Assistant</p>
-                  <p className="mt-1 text-sm font-semibold text-violet-950 dark:text-slate-100">Quiz generator</p>
-                  <p className="mt-1 text-xs text-violet-700/90 dark:text-violet-200/90">Switch to Gemini to auto-create questions from your topic.</p>
-                </div>
-                <div className="mt-2 grid gap-3 md:grid-cols-3 md:items-start">
-                  <div className="md:col-span-1">
-                    <label className="label-base text-violet-900 dark:text-violet-200">Provider</label>
-                    <div className="relative mt-1">
-                      <select
-                        className="input-base appearance-none border-violet-200 bg-white/90 pr-10 focus:border-violet-500 focus:ring-violet-500/25 dark:border-violet-700 dark:bg-slate-900/90 dark:focus:border-violet-400 dark:focus:ring-violet-400/25"
-                        value={createState.generatorProvider}
-                        onChange={(e) => setCreateState((prev) => ({ ...prev, generatorProvider: e.target.value }))}
-                      >
-                        <option value="manual">Manual</option>
-                        <option value="gemini">Gemini</option>
-                      </select>
-                      <ChevronDownIcon className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-violet-600 dark:text-violet-400" />
-                    </div>
-                  </div>
-                  <div
-                    className={`contents transition-all duration-300 ease-out ${
-                      createState.generatorProvider === "gemini"
-                        ? "opacity-100"
-                        : "pointer-events-none opacity-0"
-                    }`}
-                    aria-hidden={createState.generatorProvider !== "gemini"}
-                  >
-                    <div
-                      className={`md:col-span-1 overflow-hidden transition-all duration-300 ease-out ${
-                        createState.generatorProvider === "gemini" ? "max-h-40 translate-y-0" : "max-h-0 -translate-y-1"
-                      }`}
-                    >
-                      <label className="label-base text-violet-900 dark:text-violet-200">Question count</label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={20}
-                        className="input-base mt-1 border-violet-200 bg-white/90 focus:border-violet-500 focus:ring-violet-500/25 dark:border-violet-700 dark:bg-slate-900/90 dark:focus:border-violet-400 dark:focus:ring-violet-400/25"
-                        value={createState.generatorQuestionCount}
-                        onChange={(e) =>
-                          setCreateState((prev) => ({
-                            ...prev,
-                            generatorQuestionCount: Math.min(20, Math.max(1, Number(e.target.value) || 1)),
-                          }))
-                        }
-                      />
-                    </div>
-                    <div
-                      className={`md:col-span-1 md:self-end overflow-hidden transition-all duration-300 ease-out ${
-                        createState.generatorProvider === "gemini" ? "max-h-40 translate-y-0" : "max-h-0 -translate-y-1"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        className="btn-base w-full cursor-not-allowed bg-gradient-to-r from-violet-400 to-indigo-400 text-white opacity-75"
-                        aria-disabled="true"
-                        onClick={() =>
-                          setCreateMessage("AI generation is temporarily unavailable. The owner currently has no budget yet for this API.")
-                        }
-                      >
-                        Generate with Gemini
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <p className="mt-3 text-xs text-violet-700/90 dark:text-violet-200/85">
-                  {createState.generatorProvider === "gemini"
-                    ? "This feature will be fully available soon. The owner currently has no budget yet for this API."
-                    : "Manual mode is active. Add your own questions below and publish when ready."}
-                </p>
-              </div>
-              <div className="space-y-3">
-                {createState.questions.map((question, qIndex) => {
-                  const qKind = question.kind === "tf" ? "tf" : question.kind === "fill" ? "fill" : "mcq";
-                  return (
-                  <div key={`q-${qIndex}`} className="rounded-xl border border-neutral-200 bg-neutral-50 p-4 dark:border-slate-600 dark:bg-slate-800/50">
-                    <div className="mb-2 flex items-center justify-between">
-                      <p className="text-sm font-semibold text-neutral-900 dark:text-slate-100">Question {qIndex + 1}</p>
-                      {createState.questions.length > 1 && <button type="button" className="text-xs text-brand-primary" onClick={() => removeQuestion(qIndex)}>Remove</button>}
-                    </div>
-                    <input className="input-base mb-2" placeholder="Question text" value={question.text} onChange={(e) => updateQuestionField(qIndex, "text", e.target.value)} required />
-                    <div className="mb-3">
-                      <p className="label-base mb-2">Answer type</p>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setQuestionKind(qIndex, "mcq")}
-                          className={`rounded-xl px-3 py-2 text-sm ${qKind === "mcq" ? "bg-brand-soft text-brand-primary ring-1 ring-brand-border" : "border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800"}`}
-                        >
-                          Multiple choice
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setQuestionKind(qIndex, "tf")}
-                          className={`rounded-xl px-3 py-2 text-sm ${qKind === "tf" ? "bg-brand-soft text-brand-primary ring-1 ring-brand-border" : "border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800"}`}
-                        >
-                          True / false
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setQuestionKind(qIndex, "fill")}
-                          className={`rounded-xl px-3 py-2 text-sm ${qKind === "fill" ? "bg-brand-soft text-brand-primary ring-1 ring-brand-border" : "border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800"}`}
-                        >
-                          Fill in the blank
-                        </button>
-                      </div>
-                      <p className="mt-1.5 text-xs text-neutral-500 dark:text-slate-400">
-                        {qKind === "mcq"
-                          ? "Starts with four answer choices. Use Add option if you need more."
-                          : qKind === "tf"
-                            ? "Two choices, True and False by default—you can edit the labels if needed."
-                            : "Players type the answer. Grading ignores uppercase vs lowercase."}
-                      </p>
-                    </div>
-                    {qKind === "fill" ? (
-                      <div>
-                        <label className="label-base">Correct answer</label>
-                        <input
-                          className="input-base mt-1"
-                          placeholder="e.g. Paris"
-                          value={question.blankAnswer ?? ""}
-                          onChange={(e) => updateQuestionField(qIndex, "blankAnswer", e.target.value)}
-                          required
-                        />
-                      </div>
-                    ) : (
-                      <>
-                        <div className="space-y-2">
-                          {question.options.map((option, optIndex) => (
-                            <div key={`q-${qIndex}-o-${optIndex}`} className="flex items-center gap-2">
-                              <input type="radio" name={`correct-${qIndex}`} checked={question.correctOptionIndex === optIndex} onChange={() => updateQuestionField(qIndex, "correctOptionIndex", optIndex)} />
-                              <input
-                                className="input-base min-w-0 flex-1"
-                                placeholder={qKind === "tf" ? (optIndex === 0 ? "True" : "False") : `Option ${optIndex + 1}`}
-                                value={option}
-                                onChange={(e) => updateOption(qIndex, optIndex, e.target.value)}
-                                required
-                              />
-                              {qKind === "mcq" && question.options.length > 2 && (
-                                <button
-                                  type="button"
-                                  className="shrink-0 text-xs text-neutral-500 hover:text-rose-600"
-                                  onClick={() => removeQuestionOption(qIndex, optIndex)}
-                                >
-                                  Remove
-                                </button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                        {qKind === "mcq" && (
-                          <button type="button" className="btn-secondary mt-2 w-full md:w-auto" onClick={() => addQuestionOption(qIndex)}>
-                            Add option
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </div>
-                  );
-                })}
-              </div>
-              <button type="button" className="btn-secondary w-full md:w-auto" onClick={addQuestion}>Add Question</button>
-              {createMessage && (
-                <p
-                  className={`text-sm font-medium ${createMessage.includes("success") ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}
-                >
-                  {createMessage}
-                </p>
-              )}
-              <button type="submit" className="btn-primary w-full" disabled={createLoading}>{createLoading ? "Publishing..." : "Publish Quiz"}</button>
-            </form>
-          </section>
-        )}
       </main>
+
+      {communityFormOpen ? (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center p-4 sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-community-modal-title"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-neutral-900/45 backdrop-blur-[2px] dark:bg-black/55"
+            aria-label="Close new community dialog"
+            onClick={closeAddCommunityModal}
+          />
+          <div
+            className="relative z-10 max-h-[min(90vh,36rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 id="add-community-modal-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
+                  New community
+                </h2>
+                <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
+                  Anchor listings to your profile address: Brgy/Community/Subdivision, city, province, and postal code.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-neutral-200/90 text-lg leading-none text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                aria-label="Close"
+                onClick={closeAddCommunityModal}
+              >
+                <span aria-hidden>×</span>
+              </button>
+            </div>
+            <form onSubmit={handleCreateCommunity} className="space-y-3 rounded-lg border border-neutral-200/90 bg-neutral-50/60 p-3 dark:border-slate-600 dark:bg-slate-800/50">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Add image</label>
+                <input
+                  ref={communityImageInputRef}
+                  className="block w-full max-w-lg cursor-pointer text-sm text-neutral-700 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-brand-soft file:px-3 file:py-2 file:text-sm file:font-medium file:text-brand-primary dark:text-slate-300 dark:file:bg-slate-800 dark:file:text-slate-200"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={(e) => setCommunityImageFile(e.target.files?.[0] ?? null)}
+                />
+                <p className="mt-1 text-[11px] text-neutral-500 dark:text-slate-500">
+                  JPEG, PNG, WebP, or GIF — up to 5 MB. Optional; communities without a photo use a color placeholder.
+                </p>
+                {communityImageFile ? (
+                  <p className="mt-1 text-xs text-neutral-600 dark:text-slate-400">Selected: {communityImageFile.name}</p>
+                ) : null}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="add-community-brgy">
+                  Brgy/Community/Subdivision
+                </label>
+                <input
+                  id="add-community-brgy"
+                  type="text"
+                  readOnly
+                  aria-readonly="true"
+                  className="input-base w-full cursor-default bg-neutral-100/90 dark:bg-slate-800/80"
+                  value={toTitleCase(profileBrgyCommunitySubdivision)}
+                  placeholder="— Not set in profile —"
+                />
+                {!profileBrgyCommunitySubdivision ? (
+                  <p className="mt-1.5 text-xs text-neutral-600 dark:text-slate-400">
+                    Add it under{" "}
+                    <button
+                      type="button"
+                      className="font-medium text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:decoration-brand-primary dark:text-brand-accent dark:decoration-brand-accent/40 dark:hover:decoration-brand-accent"
+                      onClick={() => {
+                        closeAddCommunityModal();
+                        setActiveView(VIEWS.PROFILE);
+                      }}
+                    >
+                      Profile
+                    </button>{" "}
+                    → Address → Brgy/Community/Subdivision, then open this form again.
+                  </p>
+                ) : null}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="sm:col-span-1">
+                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="add-community-city">
+                    City
+                  </label>
+                  <input
+                    id="add-community-city"
+                    type="text"
+                    readOnly
+                    className="input-base w-full cursor-default bg-neutral-100/90 dark:bg-slate-800/80"
+                    value={toTitleCase(profileCityProvincePostal.city)}
+                    placeholder="—"
+                  />
+                </div>
+                <div className="sm:col-span-1">
+                  <label
+                    className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400"
+                    htmlFor="add-community-province"
+                  >
+                    Province
+                  </label>
+                  <input
+                    id="add-community-province"
+                    type="text"
+                    readOnly
+                    className="input-base w-full cursor-default bg-neutral-100/90 dark:bg-slate-800/80"
+                    value={toTitleCase(profileCityProvincePostal.province)}
+                    placeholder="—"
+                  />
+                </div>
+                <div className="sm:col-span-1">
+                  <label
+                    className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400"
+                    htmlFor="add-community-postal"
+                  >
+                    Postal code
+                  </label>
+                  <input
+                    id="add-community-postal"
+                    type="text"
+                    readOnly
+                    className="input-base w-full cursor-default bg-neutral-100/90 dark:bg-slate-800/80"
+                    value={toTitleCase(profileCityProvincePostal.postalCode)}
+                    placeholder="—"
+                  />
+                </div>
+              </div>
+              {!profileBrgyCommunitySubdivision ? null : !profileCityProvincePostal.city ||
+                !profileCityProvincePostal.province ||
+                !profileCityProvincePostal.postalCode ? (
+                <p className="text-xs text-neutral-600 dark:text-slate-400">
+                  City, province, and postal code come from your saved address. Add them under{" "}
+                  <button
+                    type="button"
+                    className="font-medium text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:decoration-brand-primary dark:text-brand-accent dark:decoration-brand-accent/40 dark:hover:decoration-brand-accent"
+                    onClick={() => {
+                      closeAddCommunityModal();
+                      setActiveView(VIEWS.PROFILE);
+                    }}
+                  >
+                    Profile
+                  </button>{" "}
+                  → Address (City, Province, Postal code), then open this form again.
+                </p>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  className="btn-primary text-sm"
+                  disabled={
+                    communitySaving ||
+                    !profileBrgyCommunitySubdivision ||
+                    !profileCityProvincePostal.city ||
+                    !profileCityProvincePostal.province ||
+                    !profileCityProvincePostal.postalCode ||
+                    profileBrgyCommunitySubdivision.trim().length < 2
+                  }
+                >
+                  {communitySaving ? "Saving…" : "Save community"}
+                </button>
+                <button type="button" className="btn-secondary text-sm" disabled={communitySaving} onClick={closeAddCommunityModal}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
