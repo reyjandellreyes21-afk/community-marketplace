@@ -16,7 +16,6 @@ const profileToClient = (profile) =>
     email: profile.email || "",
     joinedAt: profile.created_at || null,
     username: profile.username || "",
-    country: profile.country || "",
     age: profile.age,
     acceptedTerms: profile.accepted_terms,
     avatarUrl: profile.avatar_url || "",
@@ -24,7 +23,6 @@ const profileToClient = (profile) =>
     birthday: profile.birthday,
     address: profile.address || "",
     addressUrl: profile.address_url || "",
-    education: profile.education || "",
     gender: profile.gender || "",
     facebookUrl: profile.facebook_url || "",
     twitterUrl: profile.twitter_url || "",
@@ -42,7 +40,6 @@ const authUserToClient = (authUser) =>
       middleName: meta.middle_name || "",
       lastName: meta.last_name || "",
       username: meta.username || "",
-      country: meta.country || "",
       age: meta.age ?? null,
       acceptedTerms: Boolean(meta.accepted_terms),
       avatarUrl: meta.avatar_url || "",
@@ -50,7 +47,6 @@ const authUserToClient = (authUser) =>
       birthday: meta.birthday || null,
       address: meta.address || "",
       addressUrl: meta.address_url || "",
-      education: meta.education || "",
       gender: meta.gender || "",
       facebookUrl: meta.facebook_url || "",
       twitterUrl: meta.twitter_url || "",
@@ -73,7 +69,6 @@ const ensureProfile = async (user, partial = {}) => {
     middle_name: partial.middle_name || "",
     last_name: partial.last_name || "",
     username: partial.username || "",
-    country: partial.country || "",
     age: partial.age ?? null,
     accepted_terms: Boolean(partial.accepted_terms),
     accepted_terms_at: partial.accepted_terms ? new Date().toISOString() : null,
@@ -82,7 +77,6 @@ const ensureProfile = async (user, partial = {}) => {
     birthday: partial.birthday || null,
     address: partial.address || "",
     address_url: partial.address_url || "",
-    education: partial.education || "",
     gender: partial.gender || "",
     facebook_url: partial.facebook_url || "",
     twitter_url: partial.twitter_url || "",
@@ -96,7 +90,7 @@ const ensureProfile = async (user, partial = {}) => {
 
 export const register = async (req, res, next) => {
   try {
-    const { username, country, age, acceptedTerms, email, password } = req.body;
+    const { username, age, acceptedTerms, email, password } = req.body;
     const normalizedUsername = String(username || "").trim();
     const normalizedEmail = String(email || "").trim().toLowerCase();
     let chosenUsername = normalizedUsername;
@@ -130,7 +124,6 @@ export const register = async (req, res, next) => {
 
     const profile = await ensureProfile(createdData.user, {
       username: chosenUsername,
-      country: String(country || "").trim(),
       age: age === undefined || age === null || age === "" ? null : Number(age),
       accepted_terms: Boolean(acceptedTerms),
     });
@@ -221,7 +214,7 @@ export const updateMe = async (req, res, next) => {
   try {
     const existingProfile = await getProfileById(req.user.id);
     const {
-      firstName, middleName, lastName, username, avatarUrl, email, phone, birthday, address, addressUrl, country, age, education, gender, facebookUrl, twitterUrl, instagramUrl,
+      firstName, middleName, lastName, username, avatarUrl, email, phone, birthday, address, addressUrl, age, gender, facebookUrl, twitterUrl, instagramUrl,
     } = req.body || {};
 
     const updates = {};
@@ -233,8 +226,6 @@ export const updateMe = async (req, res, next) => {
     if (phone !== undefined) updates.phone = String(phone).trim();
     if (address !== undefined) updates.address = String(address).trim();
     if (addressUrl !== undefined) updates.address_url = String(addressUrl).trim();
-    if (country !== undefined) updates.country = String(country).trim();
-    if (education !== undefined) updates.education = String(education).trim();
     if (gender !== undefined) updates.gender = String(gender).trim();
     if (facebookUrl !== undefined) updates.facebook_url = String(facebookUrl).trim();
     if (twitterUrl !== undefined) updates.twitter_url = String(twitterUrl).trim();
@@ -285,9 +276,7 @@ export const updateMe = async (req, res, next) => {
     if (updates.birthday !== undefined) userMetadata.birthday = updates.birthday;
     if (updates.address !== undefined) userMetadata.address = updates.address;
     if (updates.address_url !== undefined) userMetadata.address_url = updates.address_url;
-    if (updates.country !== undefined) userMetadata.country = updates.country;
     if (updates.age !== undefined) userMetadata.age = updates.age;
-    if (updates.education !== undefined) userMetadata.education = updates.education;
     if (updates.gender !== undefined) userMetadata.gender = updates.gender;
     if (updates.facebook_url !== undefined) userMetadata.facebook_url = updates.facebook_url;
     if (updates.twitter_url !== undefined) userMetadata.twitter_url = updates.twitter_url;
