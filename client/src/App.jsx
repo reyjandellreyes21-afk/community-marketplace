@@ -658,6 +658,353 @@ const BROWSE_QUICK_FILTERS = [
   { id: "new", label: "New" },
   { id: "sale", label: "Sale" },
 ];
+const SALE_PERCENT_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40, 50, 70, 90];
+const formatPesoWhole = (priceCents) => `₱${Math.floor((Number(priceCents) || 0) / 100)}`;
+const parseSaleMetaFromDescription = (description) => {
+  const text = String(description || "");
+  const pctMatch = text.match(/Sale\s+(\d{1,2})%\s+off/i);
+  const originalMatch = text.match(/Original\s+₱\s*(\d+)/i);
+  return {
+    percent: pctMatch ? Number(pctMatch[1]) : null,
+    originalPesos: originalMatch ? Number(originalMatch[1]) : null,
+  };
+};
+const removeSaleMetaLines = (description) =>
+  String(description || "")
+    .split("\n")
+    .filter((line) => !/Sale\s+\d{1,2}%\s+off/i.test(line) && !/Original\s+₱\s*\d+/i.test(line))
+    .join("\n")
+    .trim();
+
+const UI_KIT = {
+  viewSection:
+    "app-card rounded-2xl border border-brand-primary/15 bg-gradient-to-b from-white to-violet-50/30 shadow-sm ring-1 ring-brand-primary/5 dark:border-slate-700 dark:from-slate-900 dark:to-slate-900/70 dark:ring-slate-800/80",
+  sectionTitle: "text-[1.65rem] font-semibold tracking-tight text-neutral-900 dark:text-slate-100",
+  sectionSubtitle: "mt-1 text-sm leading-relaxed text-neutral-600 dark:text-slate-400",
+  headerEyebrow: "text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent",
+  surfaceCard:
+    "rounded-2xl border border-brand-primary/15 bg-white/95 shadow-sm ring-1 ring-brand-primary/5 dark:border-slate-700 dark:bg-slate-900/80 dark:ring-slate-800/70",
+  surfaceRaised:
+    "rounded-2xl border border-brand-primary/20 bg-gradient-to-b from-white to-brand-soft/20 shadow-sm dark:border-slate-700 dark:from-slate-900 dark:to-slate-900/70",
+  surfaceFloating:
+    "rounded-2xl border border-brand-primary/20 bg-white/95 shadow-[0_18px_45px_rgba(76,29,149,0.12)] dark:border-slate-700 dark:bg-slate-900/95",
+  surfaceMuted: "rounded-xl border border-neutral-200/80 bg-neutral-50/60 dark:border-slate-700 dark:bg-slate-900/45",
+  stateSuccess:
+    "border-emerald-200/90 bg-emerald-50/90 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
+  stateWarning:
+    "border-amber-200/90 bg-amber-50/90 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300",
+  stateDanger: "border-rose-200/90 bg-rose-50/90 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300",
+  chipActive:
+    "inline-flex items-center rounded-full border border-brand-primary/30 bg-brand-soft/70 px-2.5 py-1 text-xs font-semibold text-brand-primary dark:border-brand-accent/35 dark:bg-slate-800 dark:text-slate-100",
+  chipMuted:
+    "inline-flex items-center rounded-full border border-neutral-200 bg-neutral-100 px-2.5 py-1 text-xs font-semibold text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
+  tabActive:
+    "bg-brand-soft text-brand-primary ring-2 ring-brand-primary/30 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-accent/30",
+  tabIdle: "border border-neutral-200/90 text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800",
+};
+
+function SectionHeading({ title, subtitle, trailing = null }) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 className={UI_KIT.sectionTitle}>{title}</h2>
+        {subtitle ? <p className={UI_KIT.sectionSubtitle}>{subtitle}</p> : null}
+      </div>
+      {trailing}
+    </div>
+  );
+}
+
+function FilterOptionButton({ active, onClick, icon, label }) {
+  return (
+    <button
+      type="button"
+      className={`min-h-[2.75rem] w-full rounded-xl border px-3 py-2.5 text-left text-sm font-medium leading-tight transition ${
+        active
+          ? "border-brand-primary/50 bg-white text-brand-primary shadow-sm ring-1 ring-brand-primary/15 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-primary/20"
+          : "border-transparent bg-white/80 text-neutral-700 hover:border-neutral-200 hover:bg-white dark:bg-slate-800/60 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+      }`}
+      onClick={onClick}
+    >
+      <span className="inline-flex items-center gap-1.5">
+        {icon}
+        <span>{label}</span>
+      </span>
+    </button>
+  );
+}
+
+function MarketplaceListingCard({ listing, isFavorite, onOpen, onToggleFavorite }) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className="group relative cursor-pointer rounded-2xl border border-neutral-200/90 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-primary/35 hover:shadow-md dark:border-slate-600 dark:bg-slate-900/80 dark:hover:border-slate-500"
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      <p className="pr-10 text-xs font-semibold text-brand-primary">{getVerticalById(listing.verticalId)?.label ?? listing.verticalId}</p>
+      <h3 className="mt-1 truncate text-base font-semibold text-neutral-900 dark:text-slate-100">{listing.title}</h3>
+      <p className="mt-1 text-sm font-semibold text-brand-primary">{formatPesoWhole(listing.priceCents)}</p>
+      <div className="mt-2 flex items-center justify-between">
+        <p className="text-xs text-neutral-600 dark:text-slate-400">
+          Qty <span className="font-semibold text-neutral-800 dark:text-slate-200">{Number(listing.quantity) || 0}</span>
+        </p>
+        {listing.cityLabel ? <span className={UI_KIT.chipMuted}>{listing.cityLabel}</span> : null}
+      </div>
+      <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-neutral-600 dark:text-slate-400">{listing.description}</p>
+    </div>
+  );
+}
+
+function SellerProductCard({ listing, gridMode, onSaleSelect, onEdit, onDelete }) {
+  const [saleOpen, setSaleOpen] = useState(false);
+  const normalizedStatus = String(listing.status || "").toLowerCase();
+  const statusClass =
+    normalizedStatus === "active"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+      : "border-neutral-200 bg-neutral-100 text-neutral-700 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300";
+  const imageUrl = String(listing.imageUrl || "").trim();
+  const availabilityModes = Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes : [];
+  const supportsPickup = availabilityModes.includes("pickup");
+  const supportsDelivery = availabilityModes.includes("delivery");
+  const availabilityLabel = supportsPickup && supportsDelivery ? "COD pickup + delivery" : supportsDelivery ? "COD delivery" : "COD pickup";
+  const saleMeta = parseSaleMetaFromDescription(listing.description);
+  const currentPesos = Math.floor((Number(listing.priceCents) || 0) / 100);
+  const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
+
+  return (
+    <li className={`rounded-2xl border border-neutral-200 bg-white p-3.5 shadow-sm dark:border-slate-700 dark:bg-slate-900/60 ${gridMode ? "h-full" : ""}`}>
+      <div className={`flex ${gridMode ? "flex-col gap-2.5" : "flex-row items-start gap-3"}`}>
+        <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 ${gridMode ? "h-48 w-full" : "h-32 w-32"}`}>
+          {imageUrl ? (
+            <img src={imageUrl} alt={listing.title || "Product"} className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">No image</div>
+          )}
+        </div>
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">{listing.title || "Untitled product"}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-neutral-800 dark:text-slate-200">{formatPesoWhole(listing.priceCents)}</p>
+            {originalPesos != null && originalPesos > currentPesos ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">₱{originalPesos}</span>
+                {saleMeta.percent ? (
+                  <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                    -{saleMeta.percent}%
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <p className="text-xs text-neutral-600 dark:text-slate-400">Qty: {Number(listing.quantity) || 0}</p>
+          <p className="text-xs text-neutral-600 dark:text-slate-400">Availability: {availabilityLabel}</p>
+          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${statusClass}`}>{normalizedStatus || "unknown"}</span>
+        </div>
+        <div className={`flex items-center gap-1.5 ${gridMode ? "self-start" : "shrink-0"}`}>
+          <button
+            type="button"
+            className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-50 dark:border-amber-500/50 dark:text-amber-300 dark:hover:bg-amber-950/30"
+            onClick={() => setSaleOpen((prev) => !prev)}
+          >
+            Sale
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+            onClick={onEdit}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+            onClick={onDelete}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+      {saleOpen ? (
+        <div className="mt-3 overflow-x-auto">
+          <div className="flex min-w-max items-center gap-1.5 rounded-xl border border-amber-200/80 bg-amber-50/80 p-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+            {SALE_PERCENT_OPTIONS.map((percent) => (
+              <button
+                key={percent}
+                type="button"
+                className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                onClick={() => {
+                  onSaleSelect(percent);
+                  setSaleOpen(false);
+                }}
+              >
+                {percent}%
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+function CommunityShopListingCard({
+  listing,
+  gridMode,
+  isFavorite,
+  onOpen,
+  onAdd,
+  showActions = false,
+  showFavoriteIcon = true,
+  currentUserId = "",
+  onSaleSelect,
+  onEdit,
+}) {
+  const [saleOpen, setSaleOpen] = useState(false);
+  const imageUrl = String(listing.imageUrl || "").trim();
+  const availabilityModes = Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes : [];
+  const supportsPickup = availabilityModes.includes("pickup");
+  const supportsDelivery = availabilityModes.includes("delivery");
+  const availabilityLabel = supportsPickup && supportsDelivery ? "COD pickup + delivery" : supportsDelivery ? "COD delivery" : "COD pickup";
+  const saleMeta = parseSaleMetaFromDescription(listing.description);
+  const currentPesos = Math.floor((Number(listing.priceCents) || 0) / 100);
+  const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
+  const isOwner = String(listing.sellerId || "") === String(currentUserId || "");
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className={`group relative cursor-pointer rounded-2xl border border-neutral-200 bg-white p-3.5 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-primary/35 hover:shadow-md dark:border-slate-700 dark:bg-slate-900/75 ${gridMode ? "h-full" : ""}`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      {!isOwner && showFavoriteIcon ? (
+        <button
+          type="button"
+          className="absolute right-3 top-3 z-10 rounded-full border border-neutral-200/90 bg-white/95 p-1.5 text-rose-500 shadow-sm transition hover:bg-rose-50 dark:border-slate-600 dark:bg-slate-900/95 dark:hover:bg-rose-950/30"
+          aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onAdd?.();
+          }}
+        >
+          <span className="text-base leading-none">{isFavorite ? "♥" : "♡"}</span>
+        </button>
+      ) : null}
+      <div className={`flex ${gridMode ? "flex-col gap-2.5" : "flex-row items-start gap-3"}`}>
+        <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 ${gridMode ? "h-48 w-full" : "h-32 w-32"}`}>
+          {imageUrl ? (
+            <img src={imageUrl} alt={listing.title || "Product"} className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">No image</div>
+          )}
+        </div>
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">{listing.title || "Untitled product"}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-neutral-800 dark:text-slate-200">{formatPesoWhole(listing.priceCents)}</p>
+            {originalPesos != null && originalPesos > currentPesos ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">₱{originalPesos}</span>
+                {saleMeta.percent ? (
+                  <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                    -{saleMeta.percent}%
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <p className="text-xs text-neutral-600 dark:text-slate-400">Qty: {Number(listing.quantity) || 0}</p>
+          <p className="text-xs text-neutral-600 dark:text-slate-400">Availability: {availabilityLabel}</p>
+          {listing.cityLabel ? <span className={UI_KIT.chipMuted}>{listing.cityLabel}</span> : null}
+        </div>
+      </div>
+      {showActions ? (
+        <div className="mt-3 flex items-center gap-2">
+          {isOwner ? (
+            <>
+              <button
+                type="button"
+                className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-50 dark:border-amber-500/50 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSaleOpen((prev) => !prev);
+                }}
+              >
+                Sale
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit?.();
+                }}
+              >
+                Edit
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAdd?.();
+                }}
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-brand-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpen();
+                }}
+              >
+                Buy
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
+      {showActions && isOwner && saleOpen ? (
+        <div className="mt-2 overflow-x-auto">
+          <div className="flex min-w-max items-center gap-1.5 rounded-xl border border-amber-200/80 bg-amber-50/80 p-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+            {SALE_PERCENT_OPTIONS.map((percent) => (
+              <button
+                key={percent}
+                type="button"
+                className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSaleSelect?.(percent);
+                  setSaleOpen(false);
+                }}
+              >
+                {percent}%
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function LandingIllustration() {
   return (
@@ -1074,6 +1421,7 @@ function App() {
   const [orders, setOrders] = useState([]);
   const [ordersRole, setOrdersRole] = useState("buyer");
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [orderListingsById, setOrderListingsById] = useState({});
   const [sellerSummary, setSellerSummary] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [expenseDraft, setExpenseDraft] = useState({ amountPesos: "", category: "supplies", note: "" });
@@ -1084,8 +1432,8 @@ function App() {
     quantity: "",
     categories: "",
     subId: "all",
-    pickup: true,
-    delivery: true,
+    pickup: false,
+    delivery: false,
   });
   const [listingImageFile, setListingImageFile] = useState(null);
   const [listingImagePreviewUrl, setListingImagePreviewUrl] = useState("");
@@ -1093,6 +1441,7 @@ function App() {
   const [listingImageDragActive, setListingImageDragActive] = useState(false);
   const listingImageInputRef = useRef(null);
   const [listingSaving, setListingSaving] = useState(false);
+  const [listingFieldErrors, setListingFieldErrors] = useState({});
   const [marketplaceMessage, setMarketplaceMessage] = useState("");
   const [communities, setCommunities] = useState([]);
   const [communitiesLoading, setCommunitiesLoading] = useState(false);
@@ -1226,6 +1575,8 @@ function App() {
   const [bidsForOrder, setBidsForOrder] = useState([]);
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
   const [sellerProductsView, setSellerProductsView] = useState("list");
+  const [communityProductsView, setCommunityProductsView] = useState("grid");
+  const [favoritesProductsView, setFavoritesProductsView] = useState("grid");
   /** Inline notice by “Upload product” on Profile (not the global marketplace banner). */
   const [profileUploadProductNotice, setProfileUploadProductNotice] = useState("");
   const [categories, setCategories] = useState([]);
@@ -1331,6 +1682,16 @@ function App() {
   const [editSaving, setEditSaving] = useState(false);
   const [editMessage, setEditMessage] = useState("");
   const [quizMessage, setQuizMessage] = useState("");
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    if (!mobileCommunityFiltersOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileCommunityFiltersOpen]);
+
   const [profileEditing, setProfileEditing] = useState(false);
   const [profileDraft, setProfileDraft] = useState({
     avatarUrl: "",
@@ -2223,6 +2584,42 @@ function App() {
     return listings;
   }, [browseQuickFilter, listings]);
 
+  const activeBrowseFilterSummary = useMemo(() => {
+    const items = [];
+    if (browseQuickFilter !== "all") {
+      const quick = BROWSE_QUICK_FILTERS.find((f) => f.id === browseQuickFilter);
+      items.push(`Filter: ${quick?.label || browseQuickFilter}`);
+    }
+    if (browseVerticalId) {
+      const verticalLabel = getVerticalById(browseVerticalId)?.label ?? browseVerticalId;
+      items.push(`Category: ${verticalLabel}`);
+    }
+    return items;
+  }, [browseQuickFilter, browseVerticalId]);
+
+  const listingDescriptionCount = useMemo(() => String(listingForm.description || "").length, [listingForm.description]);
+  const listingFormDirty = useMemo(() => {
+    return Boolean(
+      String(listingForm.title || "").trim() ||
+        String(listingForm.description || "").trim() ||
+        String(listingForm.pricePesos || "").trim() ||
+        String(listingForm.quantity || "").trim() ||
+        String(listingForm.categories || "").trim() ||
+        listingForm.pickup ||
+        listingForm.delivery ||
+        listingImageFile ||
+        listingImagePreviewUrl ||
+        editingListingId,
+    );
+  }, [editingListingId, listingForm, listingImageFile, listingImagePreviewUrl]);
+  const profileConnectedSocialCount = useMemo(() => {
+    let count = 0;
+    if (String(profileDraft.facebookUrl || "").trim()) count += 1;
+    if (String(profileDraft.twitterUrl || "").trim()) count += 1;
+    if (String(profileDraft.instagramUrl || "").trim()) count += 1;
+    return count;
+  }, [profileDraft.facebookUrl, profileDraft.instagramUrl, profileDraft.twitterUrl]);
+
   const refreshFavorites = useCallback(async () => {
     if (!token) return;
     try {
@@ -2411,6 +2808,40 @@ function App() {
       cancelled = true;
     };
   }, [token, activeView, ordersRole]);
+
+  useEffect(() => {
+    if (!token || activeView !== VIEWS.ORDERS || !orders.length) return undefined;
+    const missingIds = Array.from(
+      new Set(
+        orders
+          .map((o) => String(o.listingId || ""))
+          .filter((id) => id && !orderListingsById[id]),
+      ),
+    );
+    if (missingIds.length === 0) return undefined;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        missingIds.map(async (id) => {
+          try {
+            const data = await apiRequest(`/listings/${id}`, { token });
+            return [id, data?.listing || null];
+          } catch {
+            return [id, null];
+          }
+        }),
+      );
+      if (cancelled) return;
+      setOrderListingsById((prev) => {
+        const next = { ...prev };
+        for (const [id, listing] of entries) next[id] = listing;
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeView, orders, orderListingsById]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.PROFILE) return undefined;
@@ -2612,11 +3043,47 @@ function App() {
   const toggleFavorite = async (listingId, makeFavorite) => {
     if (!token) return;
     setMarketplaceMessage("");
+    const id = String(listingId || "");
+    const candidate =
+      listings.find((x) => String(x.id) === id) ||
+      favoritesList.find((x) => String(x.id) === id) ||
+      (listingDetail && String(listingDetail.id) === id ? listingDetail : null) ||
+      sellerListings.find((x) => String(x.id) === id) ||
+      null;
+
+    // Optimistic UI: favorites section updates immediately after click.
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (makeFavorite) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+    setFavoritesList((prev) => {
+      if (makeFavorite) {
+        if (!candidate) return prev;
+        if (prev.some((x) => String(x.id) === id)) return prev;
+        return [candidate, ...prev];
+      }
+      return prev.filter((x) => String(x.id) !== id);
+    });
     try {
       if (makeFavorite) await apiRequest(`/me/favorites/${listingId}`, { method: "POST", token });
       else await apiRequest(`/me/favorites/${listingId}`, { method: "DELETE", token });
       await refreshFavorites();
     } catch (e) {
+      // Revert optimistic state if server update fails.
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        if (makeFavorite) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      setFavoritesList((prev) => {
+        if (makeFavorite) return prev.filter((x) => String(x.id) !== id);
+        if (!candidate) return prev;
+        if (prev.some((x) => String(x.id) === id)) return prev;
+        return [candidate, ...prev];
+      });
       setMarketplaceMessage(e.message || "Could not update favorites.");
     }
   };
@@ -2723,9 +3190,10 @@ function App() {
           quantity: "",
           categories: "",
           subId: "all",
-          pickup: true,
-          delivery: true,
+          pickup: false,
+          delivery: false,
         });
+        setListingFieldErrors({});
         setListingImageFile(null);
         if (listingImagePreviewUrl) URL.revokeObjectURL(listingImagePreviewUrl);
         setListingImagePreviewUrl("");
@@ -2733,6 +3201,70 @@ function App() {
       setMarketplaceMessage("Listing deleted.");
     } catch (e) {
       setMarketplaceMessage(e.message || "Could not delete listing.");
+    }
+  };
+
+  const applySellerListingDiscount = async (listing, percent) => {
+    const id = String(listing?.id || "");
+    if (!id) return;
+    const pct = Number(percent);
+    if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) {
+      setMarketplaceMessage("Choose a valid discount percentage.");
+      return;
+    }
+    const currentPriceCents = Math.max(0, Number(listing?.priceCents) || 0);
+    const currentPesos = Math.floor(currentPriceCents / 100);
+    const desc = String(listing?.description || "");
+    const meta = parseSaleMetaFromDescription(desc);
+    const basePesos = Number.isFinite(Number(meta.originalPesos)) && Number(meta.originalPesos) > 0 ? Number(meta.originalPesos) : currentPesos;
+    const discountedPesos = Math.max(0, Math.floor(basePesos * (1 - pct / 100)));
+    const discountedPriceCents = discountedPesos * 100;
+    if (discountedPriceCents === currentPriceCents) {
+      setMarketplaceMessage("Discount did not change the price.");
+      return;
+    }
+    const baseDescription = removeSaleMetaLines(desc);
+    const saleTag = `Sale ${pct}% off`;
+    const originalTag = `Original ₱${basePesos}`;
+    const patchedDescription = [baseDescription, `${saleTag} | ${originalTag}`].filter(Boolean).join("\n");
+    try {
+      await apiRequest(`/me/listings/${id}`, {
+        method: "PATCH",
+        token,
+        body: {
+          priceCents: discountedPriceCents,
+          description: patchedDescription,
+        },
+      });
+      const refreshed = await apiRequest("/me/listings", { token });
+      setSellerListings(refreshed.listings || []);
+      if (shopCommunityId) {
+        const qs = new URLSearchParams({ communityId: String(shopCommunityId) });
+        const shopData = await apiRequest(`/listings?${qs.toString()}`, { token });
+        setListings(shopData.listings || []);
+      }
+      setMarketplaceMessage(`Applied ${pct}% discount.`);
+    } catch (e) {
+      setMarketplaceMessage(e.message || "Could not apply discount.");
+    }
+  };
+
+  const quickAddOrderFromListing = async (listing) => {
+    if (!token || !listing?.id) return;
+    const modes = Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes : [];
+    const fulfillmentType = modes.includes("pickup") ? "pickup" : modes.includes("delivery") ? "delivery" : "pickup";
+    try {
+      await apiRequest("/orders", {
+        method: "POST",
+        token,
+        body: { listingId: String(listing.id), fulfillmentType, quantity: 1 },
+      });
+      const data = await apiRequest("/orders?role=buyer", { token });
+      setOrders(data.orders || []);
+      setOrdersRole("buyer");
+      setMarketplaceMessage("Added to your orders.");
+    } catch (e) {
+      setMarketplaceMessage(e.message || "Could not add this product to orders.");
     }
   };
 
@@ -2749,6 +3281,7 @@ function App() {
       pickup: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("pickup") : true,
       delivery: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("delivery") : true,
     });
+    setListingFieldErrors({});
     setListingImageFile(null);
     if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) {
       URL.revokeObjectURL(listingImagePreviewUrl);
@@ -2762,6 +3295,23 @@ function App() {
   const handleCreateListing = async (ev) => {
     ev.preventDefault();
     if (!token) return;
+    const nextErrors = {};
+    if (!String(listingForm.title || "").trim()) nextErrors.title = "Product is required.";
+    if (!String(listingForm.categories || "").trim()) nextErrors.categories = "Category is required.";
+    if (String(listingForm.quantity ?? "").trim() === "") nextErrors.quantity = "Quantity is required.";
+    if (String(listingForm.pricePesos ?? "").trim() === "") nextErrors.pricePesos = "Price is required.";
+    if (!listingForm.pickup && !listingForm.delivery) nextErrors.fulfillment = "Choose at least one fulfillment method.";
+
+    const hasImage = Boolean(String(listingImagePreviewUrl || "").trim() || listingImageFile);
+    if (!hasImage) {
+      nextErrors.image = "Image is required.";
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setListingFieldErrors(nextErrors);
+      setMarketplaceMessage("");
+      return;
+    }
+    setListingFieldErrors({});
     const catMissing = !String(listingForm.categories || "").trim();
     const qtyStr = String(listingForm.quantity ?? "").trim();
     const qtyMissing = qtyStr === "";
@@ -2792,7 +3342,8 @@ function App() {
     if (listingForm.pickup) modes.push("pickup");
     if (listingForm.delivery) modes.push("delivery");
     if (modes.length === 0) {
-      setMarketplaceMessage("Choose pickup and/or delivery.");
+      setListingFieldErrors((prev) => ({ ...prev, fulfillment: "Choose at least one fulfillment method." }));
+      setMarketplaceMessage("");
       return;
     }
     setListingSaving(true);
@@ -2842,9 +3393,10 @@ function App() {
         quantity: "",
         categories: "",
         subId: "all",
-        pickup: true,
-        delivery: true,
+        pickup: false,
+        delivery: false,
       });
+      setListingFieldErrors({});
       setListingImageFile(null);
       if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
       setListingImagePreviewUrl("");
@@ -3610,10 +4162,10 @@ function App() {
         ) : null}
 
         {isBrowseLikeView && (
-          <section className="app-card space-y-4 md:space-y-6">
+          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div className="space-y-4">
               {activeView === VIEWS.COMMUNITY_SHOP ? (
-                <div className="rounded-2xl border border-neutral-200/90 bg-gradient-to-b from-white to-neutral-50/70 p-4 shadow-sm dark:border-slate-600 dark:from-slate-900 dark:to-slate-900/70 sm:p-5">
+                <div className={`${UI_KIT.surfaceRaised} p-4 sm:p-5`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <button
                       type="button"
@@ -3696,7 +4248,7 @@ function App() {
                   <div>
                     <h2 className="whitespace-nowrap text-2xl font-semibold text-neutral-900 dark:text-slate-100">Marketplace</h2>
                   </div>
-                  <div className="rounded-xl border border-neutral-200/90 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-slate-900/80">
+                  <div className={`${UI_KIT.surfaceCard} p-4`}>
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-brand-primary sm:text-base">Communities</p>
@@ -3852,14 +4404,11 @@ function App() {
                     </p>
                     <div className="grid grid-cols-1 gap-2 lg:flex lg:flex-col lg:gap-1.5">
                     {BROWSE_QUICK_FILTERS.map((filter) => (
-                      <button
+                      <FilterOptionButton
                         key={filter.id}
-                        type="button"
-                        className={`min-h-[2.75rem] w-full rounded-xl border px-3 py-2.5 text-left text-sm font-medium leading-tight transition ${
-                          browseQuickFilter === filter.id
-                            ? "border-brand-primary/50 bg-white text-brand-primary shadow-sm ring-1 ring-brand-primary/15 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-primary/20"
-                            : "border-transparent bg-white/80 text-neutral-700 hover:border-neutral-200 hover:bg-white dark:bg-slate-800/60 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-800"
-                        }`}
+                        active={browseQuickFilter === filter.id}
+                        icon={quickFilterIcon(filter.id)}
+                        label={filter.label}
                         onClick={() => {
                           if (filter.id === "all") {
                             setBrowseVerticalId(null);
@@ -3875,12 +4424,7 @@ function App() {
                           setSelectedListingId(null);
                           setMobileCommunityFiltersOpen(false);
                         }}
-                      >
-                        <span className="inline-flex items-center gap-1.5">
-                          {quickFilterIcon(filter.id)}
-                          <span>{filter.label}</span>
-                        </span>
-                      </button>
+                      />
                     ))}
                     </div>
                   </div>
@@ -3896,24 +4440,16 @@ function App() {
                       const allSub = v.subs.find((s) => s.id === "all") ?? v.subs[0];
                       const isActive = browseVerticalId === v.id;
                       return (
-                        <button
+                        <FilterOptionButton
                           key={v.id}
-                          type="button"
-                          className={`min-h-[2.625rem] w-full rounded-xl border px-3 py-2.5 text-left text-sm font-medium leading-snug transition ${
-                            isActive
-                              ? "border-brand-primary/50 bg-white text-brand-primary shadow-sm ring-1 ring-brand-primary/15 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-primary/20"
-                              : "border-transparent bg-white/80 text-neutral-800 hover:border-neutral-200 hover:bg-white dark:bg-slate-800/60 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-800"
-                          }`}
+                          active={isActive}
+                          icon={categoryIcon(v.id || v.label)}
+                          label={v.label}
                           onClick={() => {
                             pickBrowseScope(v.id, allSub?.id ?? null);
                             setMobileCommunityFiltersOpen(false);
                           }}
-                        >
-                          <span className="inline-flex items-center gap-1.5">
-                            {categoryIcon(v.id || v.label)}
-                            <span>{v.label}</span>
-                          </span>
-                        </button>
+                        />
                       );
                     })}
                     </div>
@@ -3931,6 +4467,33 @@ function App() {
                     </svg>
                     Browse & Categories
                   </button>
+                </div>
+                <div className={`${UI_KIT.surfaceMuted} flex flex-wrap items-center justify-between gap-2 px-3 py-2.5`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Active</span>
+                    {activeBrowseFilterSummary.length ? (
+                      activeBrowseFilterSummary.map((item) => (
+                        <span key={item} className={UI_KIT.chipActive}>
+                          {item}
+                        </span>
+                      ))
+                    ) : (
+                      <span className={UI_KIT.chipMuted}>No filters</span>
+                    )}
+                  </div>
+                  {(browseQuickFilter !== "all" || browseVerticalId != null || browseSubId != null) && (
+                    <button
+                      type="button"
+                      className="rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                      onClick={() => {
+                        setBrowseVerticalId(null);
+                        setBrowseSubId(null);
+                        setBrowseQuickFilter("all");
+                      }}
+                    >
+                      Reset filters
+                    </button>
+                  )}
                 </div>
                 {listingDetail && selectedListingId ? (
                   <div className="space-y-4 rounded-xl border border-brand-primary/25 bg-brand-soft/20 p-4 dark:border-slate-600 dark:bg-slate-900/50">
@@ -3979,54 +4542,60 @@ function App() {
                   </div>
                 ) : null}
                 {listingsLoading ? (
-                  <div className="flex min-h-[12rem] items-center justify-center rounded-2xl border border-neutral-200/60 bg-neutral-50/50 dark:border-slate-700 dark:bg-slate-900/40">
+                  <div className={`${UI_KIT.surfaceMuted} flex min-h-[12rem] items-center justify-center`}>
                     <p className="text-sm font-medium text-neutral-600 dark:text-slate-400">Loading listings…</p>
                   </div>
                 ) : null}
                 {listingsError ? <p className="app-alert-error text-sm">{listingsError}</p> : null}
-                {!listingsLoading && !listingsError && visibleBrowseListings.length > 0 ? (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {visibleBrowseListings.map((l) => (
-                      <div
-                        key={l.id}
-                        role="button"
-                        tabIndex={0}
-                        className="relative cursor-pointer rounded-xl border border-neutral-200/90 bg-white p-4 text-left shadow-sm transition hover:border-brand-primary/40 dark:border-slate-600 dark:bg-slate-900/80 dark:hover:border-slate-500"
-                        onClick={() => openListing(l.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            openListing(l.id);
-                          }
-                        }}
+                {!listingsLoading && !listingsError ? (
+                  <div className="flex justify-end">
+                    <div className="inline-flex items-center rounded-lg border border-neutral-200/90 bg-white p-1 dark:border-slate-600 dark:bg-slate-900">
+                      <button
+                        type="button"
+                        className={`rounded-md p-1.5 transition ${communityProductsView === "list" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
+                        aria-label="List view"
+                        onClick={() => setCommunityProductsView("list")}
                       >
-                        <button
-                          type="button"
-                          className="absolute right-3 top-3 z-10 rounded-full border border-neutral-200/90 bg-white/95 p-1.5 text-rose-500 shadow-sm hover:bg-rose-50 dark:border-slate-600 dark:bg-slate-900/95 dark:hover:bg-rose-950/30"
-                          aria-label={favoriteIds.has(l.id) ? "Remove from favorites" : "Add to favorites"}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleFavorite(l.id, !favoriteIds.has(l.id));
-                          }}
-                        >
-                          <span className="text-base leading-none">{favoriteIds.has(l.id) ? "♥" : "♡"}</span>
-                        </button>
-                        <p className="pr-10 text-xs font-semibold text-brand-primary">
-                          {getVerticalById(l.verticalId)?.label ?? l.verticalId}
-                        </p>
-                        <h3 className="mt-1 font-semibold text-neutral-900 dark:text-slate-100">{l.title}</h3>
-                        <p className="mt-1 text-sm font-medium text-brand-primary">{formatCents(l.priceCents)}</p>
-                        <p className="mt-1 text-xs text-neutral-600 dark:text-slate-400">
-                          Qty <span className="font-medium text-neutral-800 dark:text-slate-200">{Number(l.quantity) || 0}</span>
-                        </p>
-                        {l.cityLabel ? <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">{l.cityLabel}</p> : null}
-                        <p className="mt-2 line-clamp-2 text-xs text-neutral-600 dark:text-slate-400">{l.description}</p>
-                      </div>
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded-md p-1.5 transition ${communityProductsView === "grid" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
+                        aria-label="Grid view"
+                        onClick={() => setCommunityProductsView("grid")}
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                          <rect x="3" y="3" width="7" height="7" rx="1" />
+                          <rect x="14" y="3" width="7" height="7" rx="1" />
+                          <rect x="3" y="14" width="7" height="7" rx="1" />
+                          <rect x="14" y="14" width="7" height="7" rx="1" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {!listingsLoading && !listingsError && visibleBrowseListings.length > 0 ? (
+                  <div className={communityProductsView === "grid" ? "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" : "space-y-3"}>
+                    {visibleBrowseListings.map((l) => (
+                      <CommunityShopListingCard
+                        key={l.id}
+                        listing={l}
+                        gridMode={communityProductsView === "grid"}
+                        isFavorite={favoriteIds.has(l.id)}
+                        showActions
+                        currentUserId={user?.id || ""}
+                        onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
+                        onEdit={() => beginEditSellerListing(l)}
+                        onOpen={() => openListing(l.id)}
+                        onAdd={() => quickAddOrderFromListing(l)}
+                      />
                     ))}
                   </div>
                 ) : null}
                 {!listingsLoading && !listingsError && visibleBrowseListings.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-neutral-200/90 bg-gradient-to-b from-neutral-50/80 to-white px-4 py-10 text-center dark:border-slate-600 dark:from-slate-900/50 dark:to-slate-900/20 sm:px-6 sm:py-14">
+                  <div className={`${UI_KIT.surfaceRaised} flex flex-col items-center justify-center border-dashed px-4 py-10 text-center sm:px-6 sm:py-14`}>
                     <p className="text-base font-semibold text-neutral-900 dark:text-slate-100 sm:text-lg">No listings to show</p>
                     <p className="mt-2 max-w-md text-xs leading-relaxed text-neutral-600 dark:text-slate-400 sm:text-sm">
                       {shopCommunityId
@@ -4046,12 +4615,12 @@ function App() {
         )}
 
         {activeView === VIEWS.MESSAGES && (
-          <section className="app-card space-y-4 md:space-y-6">
+          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Messages</h2>
             <p className="text-sm text-neutral-600 dark:text-slate-400">
               Chat with buyers and sellers in one inbox. Threading, attachments, and read receipts will ship when messaging is connected to the backend.
             </p>
-            <div className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/50 p-8 text-center dark:border-slate-700 dark:bg-slate-900/40 md:p-10">
+            <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-center md:p-10`}>
               <p className="text-sm font-medium text-neutral-700 dark:text-slate-300">Messaging — coming soon</p>
               <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">
                 You will see conversations and new-message alerts here once the feature is live.
@@ -4061,12 +4630,12 @@ function App() {
         )}
 
         {activeView === VIEWS.NOTIFICATIONS && (
-          <section className="app-card space-y-4 md:space-y-6">
+          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Notifications</h2>
             <p className="text-sm text-neutral-600 dark:text-slate-400">
               Order updates, delivery status, and marketplace alerts will appear here once notifications are wired to the backend.
             </p>
-            <div className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/50 p-8 text-center dark:border-slate-700 dark:bg-slate-900/40 md:p-10">
+            <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-center md:p-10`}>
               <p className="text-sm font-medium text-neutral-700 dark:text-slate-300">No notifications yet</p>
               <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">You are all caught up for now.</p>
             </div>
@@ -4074,68 +4643,82 @@ function App() {
         )}
 
         {activeView === VIEWS.FAVORITES && (
-          <section className="app-card space-y-4 md:space-y-6">
+          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My Favorites</h2>
-            <p className="text-sm text-neutral-600 dark:text-slate-400">
-              Listings you heart in Browse appear here. Tap a card to open details and place a COD order. Unavailable items show as inactive.
-            </p>
             {favoritesLoading ? <p className="text-sm text-neutral-600 dark:text-slate-400">Loading…</p> : null}
             {!favoritesLoading && favoritesList.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/50 p-8 text-center dark:border-slate-700 dark:bg-slate-900/40 md:p-10">
+              <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-center md:p-10`}>
                 <p className="text-sm font-medium text-neutral-700 dark:text-slate-300">No favorites yet</p>
                 <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">Use the heart on Browse cards to save items.</p>
               </div>
             ) : null}
             {!favoritesLoading && favoritesList.length > 0 ? (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {favoritesList.map((l) => (
-                  <div
-                    key={l.id}
-                    className="relative rounded-xl border border-neutral-200/90 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-slate-900/80"
-                  >
+              <>
+                <div className="flex justify-end">
+                  <div className="inline-flex items-center rounded-lg border border-neutral-200/90 bg-white p-1 dark:border-slate-600 dark:bg-slate-900">
                     <button
                       type="button"
-                      className="absolute right-3 top-3 rounded-full border border-neutral-200/90 bg-white/95 p-1.5 text-rose-500 dark:border-slate-600 dark:bg-slate-900/95"
-                      aria-label="Remove from favorites"
-                      onClick={() => toggleFavorite(l.id, false)}
+                      className={`rounded-md p-1.5 transition ${favoritesProductsView === "list" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
+                      aria-label="List view"
+                      onClick={() => setFavoritesProductsView("list")}
                     >
-                      <span className="text-base leading-none">♥</span>
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />
+                      </svg>
                     </button>
-                    <button type="button" className="w-full text-left" onClick={() => openListing(l.id)}>
-                      <p className="pr-10 text-xs font-semibold text-brand-primary">
-                        {getVerticalById(l.verticalId)?.label ?? l.verticalId}
-                      </p>
-                      <h3 className="mt-1 font-semibold text-neutral-900 dark:text-slate-100">{l.title}</h3>
-                      <p className="mt-1 text-sm font-medium text-brand-primary">{formatCents(l.priceCents)}</p>
-                      {l.status !== "active" ? (
-                        <span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950/50 dark:text-amber-100">
-                          Unavailable
-                        </span>
-                      ) : null}
+                    <button
+                      type="button"
+                      className={`rounded-md p-1.5 transition ${favoritesProductsView === "grid" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
+                      aria-label="Grid view"
+                      onClick={() => setFavoritesProductsView("grid")}
+                    >
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                        <rect x="3" y="3" width="7" height="7" rx="1" />
+                        <rect x="14" y="3" width="7" height="7" rx="1" />
+                        <rect x="3" y="14" width="7" height="7" rx="1" />
+                        <rect x="14" y="14" width="7" height="7" rx="1" />
+                      </svg>
                     </button>
                   </div>
-                ))}
-              </div>
+                </div>
+                <div className={favoritesProductsView === "grid" ? "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4" : "space-y-3"}>
+                  {favoritesList.map((l) => (
+                    <CommunityShopListingCard
+                      key={l.id}
+                      listing={l}
+                      gridMode={favoritesProductsView === "grid"}
+                      isFavorite
+                      onOpen={() => openListing(l.id)}
+                      onAdd={() => {}}
+                    />
+                  ))}
+                </div>
+              </>
             ) : null}
           </section>
         )}
 
         {activeView === VIEWS.MY_LISTINGS && (
-          <section className="app-card space-y-6 md:space-y-8">
-            <div>
-              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My listings</h2>
-              <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
-                Sell to your local community. Buyers pay COD via pickup or delivery.
-              </p>
-            </div>
-            <form onSubmit={handleCreateListing} className="grid gap-4 rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 dark:border-slate-600 dark:bg-slate-900/40 md:grid-cols-2">
+          <section className={`${UI_KIT.viewSection} space-y-6 md:space-y-8`}>
+            <SectionHeading
+              title="My listings"
+              subtitle="Sell to your local community. Buyers pay COD via pickup or delivery."
+            />
+            <form noValidate onSubmit={handleCreateListing} className={`grid gap-4 p-4 md:grid-cols-2 ${UI_KIT.surfaceMuted}`}>
               <div className="md:col-span-2">
-                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Image (optional)</label>
+                <div className="mb-2 flex items-end justify-between gap-2">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Photos *</p>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 dark:text-slate-400">JPG/PNG/WebP up to 5MB</p>
+                </div>
                 <div
                   className={`flex min-h-[8.5rem] flex-col items-center justify-center gap-2 rounded-xl border border-dashed bg-white/80 px-3 py-3 text-sm transition dark:bg-slate-900/60 ${
                     listingImageDragActive
                       ? "border-brand-primary text-brand-primary dark:border-brand-accent dark:text-brand-accent"
-                      : "border-neutral-300 text-neutral-500 dark:border-slate-600 dark:text-slate-400"
+                      : listingFieldErrors.image
+                        ? "border-rose-400 text-neutral-500 dark:border-rose-500 dark:text-slate-400"
+                        : "border-neutral-300 text-neutral-500 dark:border-slate-600 dark:text-slate-400"
                   }`}
                   onDragOver={(e) => {
                     e.preventDefault();
@@ -4153,11 +4736,22 @@ function App() {
                     <>
                       <img src={listingImagePreviewUrl} alt="Selected listing" className="max-h-28 rounded-lg object-cover" />
                       <p className="text-xs text-neutral-600 dark:text-slate-400">{listingImageFile?.name || "Selected image"}</p>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-rose-300 px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                        onClick={() => {
+                          setListingImageFile(null);
+                          if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+                          setListingImagePreviewUrl("");
+                        }}
+                      >
+                        Remove
+                      </button>
                     </>
                   ) : (
                     <>
                       <p>Drag a photo here</p>
-                      <p className="text-xs">or</p>
+                      <p className="text-xs">Recommended ratio: 1:1 or 4:3</p>
                     </>
                   )}
                   <button
@@ -4178,89 +4772,125 @@ function App() {
                     }}
                   />
                 </div>
+                {listingFieldErrors.image ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.image}</p> : null}
               </div>
               <div className="md:col-span-2">
-                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Product</label>
+                <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Details *</p>
                 <input
-                  className="input-base w-full"
+                  className={`input-base w-full ${listingFieldErrors.title ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
                   value={listingForm.title}
-                  onChange={(e) => setListingForm((p) => ({ ...p, title: e.target.value }))}
-                  required
+                  placeholder="e.g. Preloved study table, iPhone 11 64GB, Rice cooker"
+                  onChange={(e) => {
+                    setListingForm((p) => ({ ...p, title: e.target.value }));
+                    if (listingFieldErrors.title) setListingFieldErrors((prev) => ({ ...prev, title: "" }));
+                  }}
                   minLength={2}
                 />
+                {listingFieldErrors.title ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.title}</p> : null}
               </div>
               <div className="md:col-span-2">
-                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Categories</label>
+                <label className="mb-1 block text-xs font-semibold text-neutral-700 dark:text-slate-300">Categories *</label>
                 <select
-                  className="input-base w-full"
+                  className={`input-base w-full ${listingFieldErrors.categories ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
                   value={listingForm.categories}
-                  onChange={(e) => setListingForm((p) => ({ ...p, categories: e.target.value }))}
-                  required
+                  onChange={(e) => {
+                    setListingForm((p) => ({ ...p, categories: e.target.value }));
+                    if (listingFieldErrors.categories) setListingFieldErrors((prev) => ({ ...prev, categories: "" }));
+                  }}
                 >
-                  <option value="">Select a category</option>
+                  <option value="">Select the best category for your item</option>
                   {VERTICALS.map((v) => (
                     <option key={v.id} value={v.id}>
                       {v.label}
                     </option>
                   ))}
                 </select>
+                {listingFieldErrors.categories ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.categories}</p> : null}
               </div>
               <div className="md:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Description (optional)</label>
                 <textarea
                   className="input-base min-h-[5rem] w-full"
                   value={listingForm.description}
+                  placeholder="Add key details buyers need: condition, size/specs, inclusions, issue disclosures, meetup area."
                   onChange={(e) => setListingForm((p) => ({ ...p, description: e.target.value }))}
                   rows={3}
+                  maxLength={500}
                 />
+                <p className="mt-1 text-right text-[11px] text-neutral-500 dark:text-slate-400">{listingDescriptionCount}/500</p>
               </div>
-              <div className="md:col-span-2 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="md:col-span-2 grid grid-cols-1 gap-4 rounded-xl border border-neutral-200/80 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-900/65 sm:grid-cols-2">
                 <div className="min-w-0">
-                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Price (PHP)</label>
+                  <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Pricing *</p>
                   <input
-                    className="input-base w-full"
+                    className={`input-base w-full ${listingFieldErrors.pricePesos ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
                     type="number"
                     min={0}
                     step="0.01"
+                    placeholder="e.g. 499.00"
                     value={listingForm.pricePesos}
-                    onChange={(e) => setListingForm((p) => ({ ...p, pricePesos: e.target.value }))}
-                    required
+                    onChange={(e) => {
+                      setListingForm((p) => ({ ...p, pricePesos: e.target.value }));
+                      if (listingFieldErrors.pricePesos) setListingFieldErrors((prev) => ({ ...prev, pricePesos: "" }));
+                    }}
                   />
+                  {listingFieldErrors.pricePesos ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.pricePesos}</p> : null}
                 </div>
                 <div className="min-w-0">
-                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Quantity</label>
+                  <label className="mb-1 block text-xs font-semibold text-neutral-700 dark:text-slate-300">Quantity *</label>
                   <input
-                    className="input-base w-full"
+                    className={`input-base w-full ${listingFieldErrors.quantity ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
                     type="number"
                     min={0}
                     step={1}
-                    placeholder="e.g. 1"
+                    placeholder="e.g. 1, 3, 10"
                     value={listingForm.quantity}
-                    onChange={(e) => setListingForm((p) => ({ ...p, quantity: e.target.value }))}
-                    required
+                    onChange={(e) => {
+                      setListingForm((p) => ({ ...p, quantity: e.target.value }));
+                      if (listingFieldErrors.quantity) setListingFieldErrors((prev) => ({ ...prev, quantity: "" }));
+                    }}
                   />
+                  {listingFieldErrors.quantity ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.quantity}</p> : null}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-4 md:col-span-2">
-                <span className="text-sm font-medium text-neutral-700 dark:text-slate-300">Available:</span>
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={listingForm.delivery}
-                    onChange={(e) => setListingForm((p) => ({ ...p, delivery: e.target.checked }))}
-                  />
-                  COD
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={listingForm.pickup}
-                    onChange={(e) => setListingForm((p) => ({ ...p, pickup: e.target.checked }))}
-                  />
-                  Pick-up
-                </label>
+              <div className="md:col-span-2 rounded-xl border border-neutral-200/80 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-900/65">
+                <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Fulfillment *</p>
+                <div className="mt-2 flex flex-wrap items-center gap-4">
+                  <button
+                    type="button"
+                    aria-pressed={listingForm.delivery}
+                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                      listingForm.delivery
+                        ? "border-brand-primary/45 bg-brand-soft text-brand-primary dark:border-brand-accent/45 dark:bg-slate-800 dark:text-slate-100"
+                        : "border-neutral-300 text-neutral-700 hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                    }`}
+                    onClick={() => {
+                      setListingForm((p) => ({ ...p, delivery: !p.delivery }));
+                      if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
+                    }}
+                  >
+                    COD Delivery
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={listingForm.pickup}
+                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                      listingForm.pickup
+                        ? "border-brand-primary/45 bg-brand-soft text-brand-primary dark:border-brand-accent/45 dark:bg-slate-800 dark:text-slate-100"
+                        : "border-neutral-300 text-neutral-700 hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                    }`}
+                    onClick={() => {
+                      setListingForm((p) => ({ ...p, pickup: !p.pickup }));
+                      if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
+                    }}
+                  >
+                    Pick-up
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-neutral-500 dark:text-slate-400">Choose how buyers can receive the item.</p>
+                {listingFieldErrors.fulfillment ? <p className="mt-2 text-xs font-medium text-rose-600 dark:text-rose-400">{listingFieldErrors.fulfillment}</p> : null}
               </div>
-              <div className="md:col-span-2">
+              <div className="md:col-span-2 sticky bottom-2 z-10 rounded-xl border border-neutral-200/80 bg-white/95 px-3 py-2.5 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/90">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="submit"
@@ -4274,6 +4904,10 @@ function App() {
                     className="btn-secondary"
                     disabled={listingSaving}
                     onClick={() => {
+                      if (listingFormDirty) {
+                        const ok = typeof window === "undefined" ? true : window.confirm("Discard your unsaved listing changes?");
+                        if (!ok) return;
+                      }
                       setListingForm({
                         title: "",
                         description: "",
@@ -4281,9 +4915,10 @@ function App() {
                         quantity: "",
                         categories: "",
                         subId: "all",
-                        pickup: true,
-                        delivery: true,
+                        pickup: false,
+                        delivery: false,
                       });
+                      setListingFieldErrors({});
                       setListingImageFile(null);
                       if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
                       setListingImagePreviewUrl("");
@@ -4318,16 +4953,16 @@ function App() {
         )}
 
         {activeView === VIEWS.DELIVERY && (
-          <section className="app-card space-y-4 md:space-y-6">
+          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Local delivery</h2>
-            <div className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/50 p-8 text-center dark:border-slate-700 dark:bg-slate-900/40 md:p-10">
+            <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-center md:p-10`}>
               <p className="text-sm text-neutral-600 dark:text-slate-400">Nothing here yet.</p>
             </div>
           </section>
         )}
 
         {activeView === VIEWS.ORDERS && (
-          <section className="app-card space-y-4 md:space-y-6">
+          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
                 <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Orders</h2>
@@ -4335,95 +4970,108 @@ function App() {
                   COD pickup or delivery. Goods total plus agreed delivery fee (if any) is paid in cash — LinkMart does not store balances.
                 </p>
               </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${ordersRole === "buyer" ? "bg-brand-soft text-brand-primary" : "btn-secondary"}`}
-                  onClick={() => setOrdersRole("buyer")}
-                >
-                  Buying
-                </button>
-                <button
-                  type="button"
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${ordersRole === "seller" ? "bg-brand-soft text-brand-primary" : "btn-secondary"}`}
-                  onClick={() => setOrdersRole("seller")}
-                >
-                  Selling
-                </button>
-              </div>
             </div>
             {ordersLoading ? <p className="text-sm text-neutral-600 dark:text-slate-400">Loading…</p> : null}
-            <ul className="divide-y divide-neutral-200 rounded-xl border border-neutral-200 dark:divide-slate-700 dark:border-slate-600">
-              {orders.length === 0 && !ordersLoading ? (
-                <li className="px-4 py-6 text-sm text-neutral-500 dark:text-slate-400">No orders in this tab.</li>
-              ) : null}
-              {orders.map((o) => (
-                <li key={o.id} className="space-y-2 px-4 py-4 text-sm">
-                  <div className="flex flex-wrap justify-between gap-2">
-                    <span className="font-mono text-xs text-neutral-500 dark:text-slate-400">{o.id}</span>
-                    <span className="font-medium text-neutral-800 dark:text-slate-200">{o.status.replace(/_/g, " ")}</span>
-                  </div>
-                  <p className="text-neutral-700 dark:text-slate-300">
-                    {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods {formatCents(o.codGoodsCents)}
-                    {o.codDeliveryCents > 0 ? <span> · delivery {formatCents(o.codDeliveryCents)}</span> : null}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {ordersRole === "seller" && o.status === "placed" ? (
-                      <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "seller_accept")}>
-                        Accept order
-                      </button>
-                    ) : null}
-                    {o.status === "ready_for_pickup" ? (
-                      <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_pickup_done")}>
-                        Mark pickup complete (COD)
-                      </button>
-                    ) : null}
-                    {ordersRole === "seller" && o.status === "bid_accepted" ? (
-                      <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_out_for_delivery")}>
-                        Mark out for delivery
-                      </button>
-                    ) : null}
-                    {o.status === "out_for_delivery" ? (
-                      <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_delivered")}>
-                        Mark delivered (COD)
-                      </button>
-                    ) : null}
-                    {o.status !== "completed" && o.status !== "cancelled" ? (
-                      <button type="button" className="text-xs text-rose-600 hover:underline dark:text-rose-400" onClick={() => patchOrderTransition(o.id, "cancel")}>
-                        Cancel
-                      </button>
-                    ) : null}
-                    {o.status === "bidding_open" ? (
-                      <button type="button" className="btn-secondary text-xs" onClick={() => loadBidsForOrder(o.id)}>
-                        {expandedBidOrderId === o.id ? "Reload bids" : "View bids"}
-                      </button>
-                    ) : null}
-                  </div>
-                  {expandedBidOrderId === o.id && o.status === "bidding_open" ? (
-                    <ul className="mt-2 space-y-2 rounded-lg border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-slate-600 dark:bg-slate-900/50">
-                      {bidsForOrder.length === 0 ? <li className="text-xs text-neutral-500">No bids yet.</li> : null}
-                      {bidsForOrder.map((b) => (
-                        <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                          <span>
-                            {formatCents(b.amountCents)} · {b.mode} · {b.status}
+            {!ordersLoading && orders.length === 0 ? (
+              <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-sm text-neutral-500 dark:text-slate-400`}>No orders in this tab.</div>
+            ) : null}
+            {!ordersLoading && orders.length > 0 ? (
+              <div className="space-y-3">
+                {orders.map((o) => {
+                  const listing = orderListingsById[String(o.listingId)] || null;
+                  const cardListing = listing || {
+                    id: o.listingId,
+                    title: `Order ${String(o.id).slice(0, 8)}`,
+                    priceCents: o.codGoodsCents,
+                    quantity: o.quantity,
+                    fulfillmentModes: [o.fulfillmentType],
+                    imageUrl: "",
+                    description: "",
+                    sellerId: o.sellerId,
+                  };
+                  return (
+                    <div key={o.id} className={`${UI_KIT.surfaceCard} p-3.5`}>
+                      <div className="rounded-xl border border-neutral-200/80 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/50">
+                        <CommunityShopListingCard
+                          listing={cardListing}
+                          gridMode={false}
+                          isFavorite={false}
+                          showFavoriteIcon={false}
+                          onOpen={() => openListing(o.listingId)}
+                          onAdd={() => {}}
+                        />
+                      </div>
+                      <div className="mt-3 space-y-2 border-t border-neutral-200/80 pt-2 text-sm dark:border-slate-700/80">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-mono text-[11px] text-neutral-500 dark:text-slate-400">{o.id}</span>
+                          <span className="rounded-full border border-neutral-200 bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            {o.status.replace(/_/g, " ")}
                           </span>
-                          {b.status === "pending" && (o.buyerId === user?.id || o.sellerId === user?.id) ? (
-                            <button type="button" className="text-brand-primary hover:underline" onClick={() => acceptOrderBid(o.id, b.id)}>
-                              Accept bid
+                        </div>
+                        <p className="text-xs text-neutral-600 dark:text-slate-400">
+                          {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods {formatCents(o.codGoodsCents)}
+                          {o.codDeliveryCents > 0 ? <span> · delivery {formatCents(o.codDeliveryCents)}</span> : null}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {ordersRole === "seller" && o.status === "placed" ? (
+                            <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "seller_accept")}>
+                              Accept order
                             </button>
                           ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+                          {o.status === "ready_for_pickup" ? (
+                            <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_pickup_done")}>
+                              Mark pickup complete
+                            </button>
+                          ) : null}
+                          {ordersRole === "seller" && o.status === "bid_accepted" ? (
+                            <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_out_for_delivery")}>
+                              Mark out for delivery
+                            </button>
+                          ) : null}
+                          {o.status === "out_for_delivery" ? (
+                            <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_delivered")}>
+                              Mark delivered
+                            </button>
+                          ) : null}
+                          {o.status !== "completed" && o.status !== "cancelled" ? (
+                            <button type="button" className="text-xs text-rose-600 hover:underline dark:text-rose-400" onClick={() => patchOrderTransition(o.id, "cancel")}>
+                              Cancel
+                            </button>
+                          ) : null}
+                          {o.status === "bidding_open" ? (
+                            <button type="button" className="btn-secondary text-xs" onClick={() => loadBidsForOrder(o.id)}>
+                              {expandedBidOrderId === o.id ? "Reload bids" : "View bids"}
+                            </button>
+                          ) : null}
+                        </div>
+                        {expandedBidOrderId === o.id && o.status === "bidding_open" ? (
+                          <ul className="mt-2 space-y-2 rounded-lg border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-slate-600 dark:bg-slate-900/50">
+                            {bidsForOrder.length === 0 ? <li className="text-xs text-neutral-500">No bids yet.</li> : null}
+                            {bidsForOrder.map((b) => (
+                              <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <span>
+                                  {formatCents(b.amountCents)} · {b.mode} · {b.status}
+                                </span>
+                                {b.status === "pending" && (o.buyerId === user?.id || o.sellerId === user?.id) ? (
+                                  <button type="button" className="text-brand-primary hover:underline" onClick={() => acceptOrderBid(o.id, b.id)}>
+                                    Accept bid
+                                  </button>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
           </section>
         )}
 
         {activeView === VIEWS.ABOUT && (
-          <section className="app-card max-w-3xl space-y-4 md:space-y-6">
+          <section className={`${UI_KIT.viewSection} max-w-3xl space-y-4 md:space-y-6`}>
             <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">About LinkMart</h2>
             <p className="text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
               LinkMart is a community marketplace for discovering what is available near you. Commerce is cash-on-delivery or cash at pickup — we do not operate
@@ -4437,7 +5085,7 @@ function App() {
         )}
 
         {activeView === VIEWS.TERMS && (
-          <section className="app-card max-w-3xl space-y-6 text-sm leading-relaxed text-neutral-700 dark:text-slate-300">
+          <section className={`${UI_KIT.viewSection} max-w-3xl space-y-6 text-sm leading-relaxed text-neutral-700 dark:text-slate-300`}>
             <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Terms & conditions (summary)</h2>
             <p className="text-xs text-neutral-500 dark:text-slate-400">This is a plain-language outline, not legal advice. Have counsel review before production launch.</p>
             <div>
@@ -4477,7 +5125,7 @@ function App() {
         )}
 
         {activeView === VIEWS.PROFILE && (
-          <section className="app-card space-y-4 md:space-y-6">
+          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start">
               <div className="space-y-4 rounded-2xl border border-neutral-200/90 bg-white p-4 shadow-sm md:space-y-6 dark:border-slate-600 dark:bg-slate-900/80">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -4491,9 +5139,12 @@ function App() {
                 {user ? (
               profileEditing ? (
                 <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
-                  <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.25)] dark:border-slate-600 dark:bg-slate-900">
+                  <div className={`max-h-[90vh] w-full max-w-5xl overflow-y-auto p-5 ${UI_KIT.surfaceFloating}`}>
                 <form onSubmit={handleProfileSubmit} noValidate className="space-y-3">
-                  <div className="grid grid-cols-1 items-end gap-4 rounded-2xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50 p-5 shadow-sm ring-1 ring-neutral-100/80 dark:border-slate-700/80 dark:from-slate-900 dark:to-slate-900/70 dark:ring-slate-800/80 md:grid-cols-[auto_minmax(12rem,1fr)_minmax(14rem,1fr)]">
+                  <div className="rounded-xl border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 text-xs text-neutral-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
+                    <span className="font-semibold text-neutral-800 dark:text-slate-100">*</span> Required fields. Optional fields are labeled.
+                  </div>
+                  <div className={`grid grid-cols-1 items-end gap-4 p-5 md:grid-cols-[auto_minmax(12rem,1fr)_minmax(14rem,1fr)] ${UI_KIT.surfaceRaised}`}>
                     <div className="relative h-16 w-16 shrink-0 md:row-span-2 md:self-start">
                       <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-xl font-bold text-brand-primary ring-1 ring-brand-border">
                         {profileDraft.avatarUrl ? (
@@ -4522,7 +5173,7 @@ function App() {
                     </div>
                     <div className="min-w-0 md:order-1">
                       <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-username-inline">
-                        Username
+                        Username *
                       </label>
                       <input
                         id="profile-username-inline"
@@ -4564,7 +5215,7 @@ function App() {
                     </div>
                     <div className="min-w-0 md:order-3">
                       <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-phone-inline">
-                        Phone number
+                        Phone number *
                       </label>
                       <div className="input-base flex h-9 items-center gap-2 px-3 text-sm">
                         <span className="shrink-0 text-neutral-600 dark:text-slate-300">+63</span>
@@ -4604,19 +5255,20 @@ function App() {
                       />
                     </div>
                   </div>
-                  <div className="flex flex-col gap-y-2 rounded-2xl border border-neutral-200/80 bg-white p-5 shadow-sm ring-1 ring-neutral-100/80 dark:border-slate-700/80 dark:bg-slate-900/70 dark:ring-slate-800/80">
+                  <div className={`flex flex-col gap-y-2 p-5 ${UI_KIT.surfaceCard}`}>
                     <div className="grid grid-cols-1 gap-x-3 md:grid-cols-3 md:gap-x-4">
                       <span className="block text-sm font-semibold tracking-tight text-neutral-900 dark:text-slate-100">Name</span>
                       <div className="hidden min-w-0 md:block" aria-hidden="true" />
                       <div className="hidden min-w-0 md:block" aria-hidden="true" />
                     </div>
+                    <p className="text-xs text-neutral-500 dark:text-slate-400">Used across your public profile and marketplace identity.</p>
                     <div className="grid grid-cols-1 gap-y-3 md:grid-cols-3 md:gap-x-4 md:gap-y-0">
                       <div className="min-w-0">
                         <label
                           className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400"
                           htmlFor="profile-first-name"
                         >
-                          First name
+                          First name *
                         </label>
                         <input
                           id="profile-first-name"
@@ -4641,7 +5293,7 @@ function App() {
                           className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400"
                           htmlFor="profile-middle-name"
                         >
-                          Middle name
+                          Middle name *
                         </label>
                         <input
                           id="profile-middle-name"
@@ -4664,7 +5316,7 @@ function App() {
                           className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400"
                           htmlFor="profile-last-name"
                         >
-                          Last name
+                          Last name *
                         </label>
                         <input
                           id="profile-last-name"
@@ -4686,10 +5338,11 @@ function App() {
                     </div>
                     <div className="mt-4 border-t border-neutral-200/80 pt-4 dark:border-slate-700/80">
                       <span className="block text-sm font-semibold tracking-tight text-neutral-900 dark:text-slate-100">Preferences</span>
+                      <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">Set demographic details used for profile completeness.</p>
                       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-8 md:items-end md:gap-x-3">
                         <div className="min-w-0 md:col-span-2">
                           <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-gender">
-                            Gender
+                            Gender *
                           </label>
                           <select
                             id="profile-gender"
@@ -4715,7 +5368,7 @@ function App() {
                         </div>
                         <div className="min-w-0 md:col-span-4">
                           <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-birthday">
-                            Birthday
+                            Birthday *
                           </label>
                           <div
                             className="relative mt-1"
@@ -4789,10 +5442,11 @@ function App() {
                     </div>
                     <div className="mt-4 space-y-4 border-t border-neutral-200/80 pt-4 dark:border-slate-700/80">
                       <span className="block text-sm font-semibold tracking-tight text-neutral-900 dark:text-slate-100">Address</span>
+                      <p className="text-xs text-neutral-500 dark:text-slate-400">Order: Province to City/Municipality to Barangay. Postal code auto-fills.</p>
                       <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-x-4">
                         <div className="min-w-0">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-house-street">
-                          House Number &amp; Street
+                          House Number &amp; Street *
                         </label>
                         <input
                           id="profile-address-house-street"
@@ -4813,7 +5467,7 @@ function App() {
                       </div>
                         <div className="min-w-0">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-subdivision">
-                          Subdivision
+                          Subdivision *
                         </label>
                         <input
                           id="profile-address-subdivision"
@@ -4834,7 +5488,7 @@ function App() {
                       </div>
                         <div className="min-w-0">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-province">
-                          Province
+                          Province *
                         </label>
                         <div className="relative">
                           <input
@@ -4955,7 +5609,7 @@ function App() {
                       <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-4 md:gap-x-4">
                         <div className="min-w-0">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-city">
-                          City or Municipality
+                          City or Municipality *
                         </label>
                         <div className="relative">
                           <input
@@ -5070,7 +5724,7 @@ function App() {
                       </div>
                         <div className="min-w-0">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-barangay">
-                          Barangay
+                          Barangay *
                         </label>
                         <div className="relative">
                           <input
@@ -5208,7 +5862,7 @@ function App() {
                       </div>
                       <div className="mt-4">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-url">
-                          Address link (Google Maps URL)
+                          Address link (Google Maps URL, optional)
                         </label>
                         <input
                           id="profile-address-url"
@@ -5223,7 +5877,7 @@ function App() {
                       </div>
                     </div>
                   </div>
-                  <div className="space-y-3 rounded-2xl border border-neutral-200/80 bg-white p-4 shadow-sm ring-1 ring-neutral-100/80 dark:border-slate-700/80 dark:bg-slate-900/70 dark:ring-slate-800/80">
+                  <div className={`space-y-3 p-4 ${UI_KIT.surfaceCard}`}>
                     <button
                       type="button"
                       className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition ${
@@ -5236,6 +5890,7 @@ function App() {
                       aria-controls="profile-social-fields"
                     >
                       <span className="block text-sm font-semibold tracking-tight text-neutral-900 dark:text-slate-100">Social media</span>
+                      <span className="text-xs font-medium text-neutral-500 dark:text-slate-400">{profileConnectedSocialCount}/3 connected</span>
                       <span
                         className={`inline-flex h-7 w-7 items-center justify-center rounded-lg text-neutral-500 dark:text-slate-300 ${
                           profileSocialExpanded
@@ -5303,7 +5958,7 @@ function App() {
                       {profileError}
                     </p>
                   ) : null}
-                  <div className="flex flex-wrap justify-end gap-2 border-t border-neutral-200/80 pt-5 dark:border-slate-700/80">
+                  <div className="sticky bottom-0 z-10 flex flex-wrap justify-end gap-2 border-t border-neutral-200/80 bg-white/95 pt-5 backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95">
                     <button type="submit" className="btn-primary min-w-[7rem]" disabled={profileSaving}>
                       {profileSaving ? "Saving…" : "Save changes"}
                     </button>
@@ -5316,7 +5971,7 @@ function App() {
                 </div>
               ) : (
                 <div className="space-y-6">
-                  <div className="flex flex-col items-center gap-4 rounded-2xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50 p-5 text-center shadow-sm dark:border-slate-700/80 dark:from-slate-900 dark:to-slate-900/70">
+                  <div className={`flex flex-col items-center gap-4 p-5 text-center ${UI_KIT.surfaceRaised}`}>
                     <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-2xl font-bold text-brand-primary ring-1 ring-brand-border">
                       {user.avatarUrl ? (
                         <img src={user.avatarUrl} alt="Profile avatar" className="h-full w-full object-cover" />
@@ -5400,7 +6055,7 @@ function App() {
                       </div>
                     </div>
                   </div>
-                  <div className="rounded-2xl border border-neutral-200/80 bg-white px-4 py-4 dark:border-slate-700/80 dark:bg-slate-900/70">
+                  <div className={`${UI_KIT.surfaceCard} px-4 py-4`}>
                     <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">About</h3>
                     <div className="mt-3 border-t border-neutral-200/80 dark:border-slate-700/80" />
                     <ul className="mt-3 space-y-3 text-sm text-neutral-800 dark:text-slate-200">
@@ -5458,11 +6113,7 @@ function App() {
                       type="button"
                       role="tab"
                       aria-selected={sellerTab === id}
-                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                        sellerTab === id
-                          ? "bg-brand-soft text-brand-primary ring-2 ring-brand-primary/30 dark:bg-slate-800 dark:text-slate-100"
-                          : "border border-neutral-200/90 text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
-                      }`}
+                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${sellerTab === id ? UI_KIT.tabActive : UI_KIT.tabIdle}`}
                       onClick={() => setSellerTab(id)}
                     >
                       {label}
@@ -5543,67 +6194,15 @@ function App() {
                     {sellerListings.length ? (
                       <ul className={sellerProductsView === "grid" ? "mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2" : "mt-3 space-y-3"}>
                         {sellerListings.map((l) => {
-                          const normalizedStatus = String(l.status || "").toLowerCase();
-                          const statusClass =
-                            normalizedStatus === "active"
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-                              : "border-neutral-200 bg-neutral-100 text-neutral-700 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300";
-                          const imageUrl = String(l.imageUrl || "").trim();
-                          const availabilityModes = Array.isArray(l.fulfillmentModes) ? l.fulfillmentModes : [];
-                          const supportsPickup = availabilityModes.includes("pickup");
-                          const supportsDelivery = availabilityModes.includes("delivery");
-                          const availabilityLabel =
-                            supportsPickup && supportsDelivery
-                              ? "COD pickup + delivery"
-                              : supportsDelivery
-                                ? "COD delivery"
-                                : "COD pickup";
                           return (
-                            <li
+                            <SellerProductCard
                               key={l.id}
-                              className={`rounded-xl border border-neutral-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/60 ${
-                                sellerProductsView === "grid" ? "h-full" : ""
-                              }`}
-                            >
-                              <div className={`flex ${sellerProductsView === "grid" ? "flex-col gap-2.5" : "flex-row items-start gap-3"}`}>
-                                <div className={`shrink-0 overflow-hidden rounded-lg border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 ${
-                                  sellerProductsView === "grid" ? "h-32 w-full" : "h-24 w-24"
-                                }`}>
-                                  {imageUrl ? (
-                                    <img src={imageUrl} alt={l.title || "Product"} className="h-full w-full object-cover" />
-                                  ) : (
-                                    <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-                                      No image
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="min-w-0 flex-1 space-y-1">
-                                  <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">{l.title || "Untitled product"}</p>
-                                  <p className="text-sm text-neutral-700 dark:text-slate-300">{formatCents(l.priceCents)}</p>
-                                  <p className="text-xs text-neutral-600 dark:text-slate-400">Qty: {Number(l.quantity) || 0}</p>
-                                  <p className="text-xs text-neutral-600 dark:text-slate-400">Availability: {availabilityLabel}</p>
-                                  <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${statusClass}`}>
-                                    {normalizedStatus || "unknown"}
-                                  </span>
-                                </div>
-                                <div className={`flex items-center gap-1.5 ${sellerProductsView === "grid" ? "self-start" : "shrink-0"}`}>
-                                  <button
-                                    type="button"
-                                    className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                                    onClick={() => beginEditSellerListing(l)}
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                                    onClick={() => deleteSellerListingById(l.id)}
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              </div>
-                            </li>
+                              listing={l}
+                              gridMode={sellerProductsView === "grid"}
+                              onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
+                              onEdit={() => beginEditSellerListing(l)}
+                              onDelete={() => deleteSellerListingById(l.id)}
+                            />
                           );
                         })}
                       </ul>
@@ -5641,7 +6240,7 @@ function App() {
         )}
 
         {activeView === VIEWS.USERS && (
-          <section className="app-card space-y-4 md:space-y-6">
+          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div>
               <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Users</h2>
               <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">People registered on this app (names only).</p>
@@ -5649,7 +6248,7 @@ function App() {
             {usersLoading && <p className="text-sm text-neutral-600 dark:text-slate-400">Loading users...</p>}
             {usersError && <p className="app-alert-danger-text text-sm">{usersError}</p>}
             {!usersLoading && !usersError && (
-              <ul className="divide-y divide-neutral-200 rounded-xl border border-neutral-200 dark:divide-slate-700 dark:border-slate-600">
+              <ul className="divide-y divide-neutral-200 rounded-xl border border-brand-primary/20 bg-white/85 shadow-sm dark:divide-slate-700 dark:border-slate-600 dark:bg-slate-900/70">
                 {usersList.length === 0 && <li className="px-4 py-6 text-sm text-neutral-500 dark:text-slate-400">No users yet.</li>}
                 {usersList.map((u) => (
                   <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
