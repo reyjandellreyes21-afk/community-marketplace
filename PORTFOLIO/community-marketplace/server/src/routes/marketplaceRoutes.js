@@ -17,6 +17,7 @@ import {
   listFavorites,
   getCommunityById,
   listCommunities,
+  updateCommunity,
   listListings,
   listMyBids,
   listMyListings,
@@ -40,6 +41,15 @@ const marketplaceRouter = Router();
 marketplaceRouter.get("/communities", listCommunities);
 marketplaceRouter.get("/communities/:id", [param("id").isUUID()], validate, getCommunityById);
 marketplaceRouter.post("/communities", requireAuth, writeLimiter, communityImageUpload.single("image"), createCommunity);
+marketplaceRouter.patch(
+  "/communities/:id",
+  requireAuth,
+  writeLimiter,
+  [param("id").isUUID()],
+  validate,
+  communityImageUpload.single("image"),
+  updateCommunity,
+);
 
 marketplaceRouter.get("/listings", optionalAuth, listingsValidators.list, validate, listListings);
 marketplaceRouter.get("/listings/:id", listingsValidators.idParam, validate, getListing);

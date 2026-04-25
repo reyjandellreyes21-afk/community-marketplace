@@ -25,6 +25,7 @@ import { getApiV1Base } from "./apiBase.js";
  */
 const API_URL = getApiV1Base();
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+const COMMUNITY_MEMBERSHIP_KEY_PREFIX = "community_membership_v1:";
 /** Success toast: full visible time before fade; fade length (should match CSS transition) */
 const PUBLISH_TOAST_DURATION_MS = 7500;
 const PUBLISH_TOAST_FADE_MS = 350;
@@ -35,6 +36,55 @@ const buildEmptyQuestion = () => ({
   options: ["", "", "", ""],
   correctOptionIndex: 0,
 });
+const quickFilterIcon = (id) => {
+  const cls = "h-3.5 w-3.5 shrink-0";
+  if (id === "new") {
+    return (
+      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18M3 12h18" />
+      </svg>
+    );
+  }
+  if (id === "sale") {
+    return (
+      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M17 17h.01M6 18 18 6" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h5L6 11zM18 18h-5l5-5z" />
+      </svg>
+    );
+  }
+  return (
+    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+    </svg>
+  );
+};
+const categoryIcon = (id) => {
+  const cls = "h-3.5 w-3.5 shrink-0";
+  const key = String(id || "").toLowerCase();
+  if (key.includes("grocer")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🛒</span>;
+  if (key.includes("food")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🍽️</span>;
+  if (key.includes("service")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🛠️</span>;
+  if (key.includes("property") || key.includes("home")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🏠</span>;
+  if (key.includes("electronic")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>💻</span>;
+  if (key.includes("fashion")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>👕</span>;
+  if (key.includes("vehicle")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🚗</span>;
+  if (key.includes("job")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>💼</span>;
+  if (key.includes("pet")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🐾</span>;
+  if (key.includes("health") || key.includes("beauty")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>💊</span>;
+  if (key.includes("baby") || key.includes("kids")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🧸</span>;
+  if (key.includes("sport")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🏀</span>;
+  if (key.includes("book") || key.includes("school")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>📚</span>;
+  return (
+    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 2" />
+    </svg>
+  );
+};
 /** Title-case each word: "rey jandell b reyes" → "Rey Jandell B Reyes". */
 const formatDisplayName = (name) => {
   if (!name || typeof name !== "string") return "";
@@ -78,11 +128,137 @@ const COUNTRY_OPTIONS = (() => {
   }
   return ["Philippines", "United States", "Canada", "United Kingdom", "Australia", "Japan", "Singapore"];
 })();
+const PH_PROVINCE_OPTIONS = [
+  "Abra",
+  "Agusan del Norte",
+  "Agusan del Sur",
+  "Aklan",
+  "Albay",
+  "Antique",
+  "Apayao",
+  "Aurora",
+  "Basilan",
+  "Bataan",
+  "Batanes",
+  "Batangas",
+  "Benguet",
+  "Biliran",
+  "Bohol",
+  "Bukidnon",
+  "Bulacan",
+  "Cagayan",
+  "Camarines Norte",
+  "Camarines Sur",
+  "Camiguin",
+  "Capiz",
+  "Catanduanes",
+  "Cavite",
+  "Cebu",
+  "Cotabato",
+  "Davao de Oro",
+  "Davao del Norte",
+  "Davao del Sur",
+  "Davao Occidental",
+  "Davao Oriental",
+  "Dinagat Islands",
+  "Eastern Samar",
+  "Guimaras",
+  "Ifugao",
+  "Ilocos Norte",
+  "Ilocos Sur",
+  "Iloilo",
+  "Isabela",
+  "Kalinga",
+  "La Union",
+  "Laguna",
+  "Lanao del Norte",
+  "Lanao del Sur",
+  "Leyte",
+  "Maguindanao del Norte",
+  "Maguindanao del Sur",
+  "Marinduque",
+  "Masbate",
+  "Misamis Occidental",
+  "Misamis Oriental",
+  "Mountain Province",
+  "Negros Occidental",
+  "Negros Oriental",
+  "Northern Samar",
+  "Nueva Ecija",
+  "Nueva Vizcaya",
+  "Occidental Mindoro",
+  "Oriental Mindoro",
+  "Palawan",
+  "Pampanga",
+  "Pangasinan",
+  "Quezon",
+  "Quirino",
+  "Rizal",
+  "Romblon",
+  "Samar",
+  "Sarangani",
+  "Siquijor",
+  "Sorsogon",
+  "South Cotabato",
+  "Southern Leyte",
+  "Sultan Kudarat",
+  "Sulu",
+  "Surigao del Norte",
+  "Surigao del Sur",
+  "Tarlac",
+  "Tawi-Tawi",
+  "Zambales",
+  "Zamboanga del Norte",
+  "Zamboanga del Sur",
+  "Zamboanga Sibugay",
+];
 const normalizeCountryValue = (value) => {
   const trimmed = String(value || "").trim();
   if (!trimmed) return "";
   if (trimmed.toLowerCase() === "pilipinas") return "Philippines";
   return trimmed;
+};
+const normalizePhLocalityName = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/\bcity of\b/g, "")
+    .replace(/\bmunicipality of\b/g, "")
+    .replace(/\bcity\b/g, "")
+    .replace(/\bmunicipality\b/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+const toPhilippinesLocalPhone10 = (value) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  let local = digits;
+  if (local.startsWith("63") && local.length >= 12) local = local.slice(2);
+  if (local.startsWith("0") && local.length >= 11) local = local.slice(1);
+  if (local.length > 10) local = local.slice(-10);
+  return local.slice(0, 10);
+};
+const toPhilippinesE164 = (local10) => {
+  const local = toPhilippinesLocalPhone10(local10);
+  return local ? `+63${local}` : "";
+};
+const toPhilippinesLocal11Display = (value) => {
+  const local10 = toPhilippinesLocalPhone10(value);
+  return local10 ? `0${local10}` : "";
+};
+const normalizePhPostalCode = (value) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length >= 4) return digits.slice(0, 4);
+  return "";
+};
+const normalizePhPsgcCode = (value) => String(value || "").replace(/\D/g, "").trim();
+const formatPhCityMunicipalityName = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const cityOfMatch = raw.match(/^city of\s+(.+)$/i);
+  if (cityOfMatch) return `${toTitleCase(cityOfMatch[1])} City`;
+  const municipalityOfMatch = raw.match(/^municipality of\s+(.+)$/i);
+  if (municipalityOfMatch) return `${toTitleCase(municipalityOfMatch[1])} Municipality`;
+  return raw;
 };
 
 function formatBirthdayDisplay(iso) {
@@ -94,10 +270,33 @@ function formatBirthdayDisplay(iso) {
   const d = Number(parts[2]);
   if (!y || !m || !d) return iso;
   try {
-    return new Date(y, m - 1, d).toLocaleDateString(undefined, { dateStyle: "medium" });
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    });
   } catch {
     return iso;
   }
+}
+
+function computeAgeFromBirthday(iso) {
+  if (!iso || typeof iso !== "string") return "";
+  const parts = iso.split("-");
+  if (parts.length !== 3) return "";
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
+  if (!year || !month || !day) return "";
+  const birthDate = new Date(year, month - 1, day);
+  if (Number.isNaN(birthDate.getTime())) return "";
+  const today = new Date();
+  let age = today.getFullYear() - year;
+  const hasBirthdayPassedThisYear =
+    today.getMonth() > month - 1 || (today.getMonth() === month - 1 && today.getDate() >= day);
+  if (!hasBirthdayPassedThisYear) age -= 1;
+  if (age < 0 || age > 120) return "";
+  return age;
 }
 
 function formatGenderDisplay(value) {
@@ -133,28 +332,100 @@ const stripBrgyPrefixLabel = (s) =>
     .trim()
     .replace(/\s+/g, " ");
 
-const splitAddressParts = (address) => {
-  const parts = String(address || "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (parts.length <= 5) {
-    const [addressApartment = "", addressCity = "", addressProvince = "", addressCountry = "", addressPostalCode = ""] = parts;
-    return { addressApartment, addressCity, addressProvince, addressCountry, addressPostalCode };
+const splitEscapedAddressParts = (address) => {
+  const input = String(address || "");
+  const parts = [];
+  let current = "";
+  let escaping = false;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (escaping) {
+      current += ch;
+      escaping = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (ch === ",") {
+      parts.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
   }
-  // If users include extra commas in the first line, preserve stable tail mapping:
-  // ... , city, province, country, postalCode
-  const addressPostalCode = parts.at(-1) || "";
-  const addressCountry = parts.at(-2) || "";
+  parts.push(current.trim());
+  return parts;
+};
+const escapeAddressPart = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\\/g, "\\\\")
+    .replace(/,/g, "\\,");
+
+const splitAddressParts = (address) => {
+  const parts = splitEscapedAddressParts(address);
+  if (parts.length === 7) {
+    const [addressHouseStreet = "", addressSubdivision = "", addressBarangay = "", addressCity = "", addressProvince = "", addressPostalCode = "", addressCountry = ""] = parts;
+    return {
+      addressHouseStreet,
+      addressSubdivision,
+      addressBarangay,
+      addressCity,
+      addressProvince,
+      addressCountry,
+      addressPostalCode,
+      completeAddress: addressHouseStreet,
+    };
+  }
+  if (parts.length <= 5) {
+    const [completeAddress = "", addressCity = "", addressProvince = "", addressCountry = "", addressPostalCode = ""] = parts;
+    return {
+      addressHouseStreet: completeAddress,
+      addressSubdivision: "",
+      addressBarangay: "",
+      addressCity,
+      addressProvince,
+      addressCountry,
+      addressPostalCode,
+      completeAddress,
+    };
+  }
+  // Flexible fallback: preserve stable tail mapping for city/province/postal/country.
+  const addressCountry = parts.at(-1) || "";
+  const addressPostalCode = parts.at(-2) || "";
   const addressProvince = parts.at(-3) || "";
   const addressCity = parts.at(-4) || "";
-  const addressApartment = parts.slice(0, -4).join(", ");
-  return { addressApartment, addressCity, addressProvince, addressCountry, addressPostalCode };
+  const leading = parts.slice(0, -4);
+  // Right-anchor Subdivision/Barangay so extra commas in house/street do not shift fields.
+  const addressBarangay = leading.length > 0 ? leading[leading.length - 1] || "" : "";
+  const addressSubdivision = leading.length > 1 ? leading[leading.length - 2] || "" : "";
+  const addressHouseStreet =
+    leading.length > 2 ? leading.slice(0, -2).filter(Boolean).join(", ") : leading[0] || "";
+  const completeAddress = [addressHouseStreet, addressSubdivision, addressBarangay].filter(Boolean).join(", ");
+  return {
+    addressHouseStreet,
+    addressSubdivision,
+    addressBarangay,
+    addressCity,
+    addressProvince,
+    addressCountry,
+    addressPostalCode,
+    completeAddress,
+  };
 };
 const buildAddressValue = (draft) =>
-  [draft.addressApartment, draft.addressCity, draft.addressProvince, draft.addressCountry, draft.addressPostalCode]
-    .map((part) => String(part || "").trim())
-    .filter(Boolean)
+  [
+    draft.addressHouseStreet,
+    draft.addressSubdivision,
+    draft.addressBarangay,
+    draft.addressCity,
+    draft.addressProvince,
+    draft.addressPostalCode,
+    draft.addressCountry,
+  ]
+    .map((part) => escapeAddressPart(part))
     .join(", ");
 const getQuizListId = (quiz) => quiz?.id || quiz?._id;
 const isQuizOwner = (quiz, currentUser) => {
@@ -277,6 +548,15 @@ const readApiPayload = async (response) => {
     return { error: { message: "Invalid response from server." } };
   }
 };
+
+const fileToDataUrl = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read selected image."));
+    reader.readAsDataURL(file);
+  });
+
 const apiRequest = async (path, { method = "GET", token, body, headers = {} } = {}) => {
   const requestHeaders = { ...headers };
   if (token) requestHeaders.Authorization = `Bearer ${token}`;
@@ -802,20 +1082,36 @@ function App() {
     description: "",
     pricePesos: "",
     quantity: "",
-    verticalId: "",
+    categories: "",
     subId: "all",
     pickup: true,
     delivery: true,
   });
+  const [listingImageFile, setListingImageFile] = useState(null);
+  const [listingImagePreviewUrl, setListingImagePreviewUrl] = useState("");
+  const [editingListingId, setEditingListingId] = useState(null);
+  const [listingImageDragActive, setListingImageDragActive] = useState(false);
+  const listingImageInputRef = useRef(null);
   const [listingSaving, setListingSaving] = useState(false);
   const [marketplaceMessage, setMarketplaceMessage] = useState("");
   const [communities, setCommunities] = useState([]);
   const [communitiesLoading, setCommunitiesLoading] = useState(false);
   const [communitiesError, setCommunitiesError] = useState("");
   const [communityFormOpen, setCommunityFormOpen] = useState(false);
+  const [communityEditingId, setCommunityEditingId] = useState(null);
+  const [communityForm, setCommunityForm] = useState({
+    name: "",
+    city: "",
+    province: "",
+    postalCode: "",
+  });
   const [communityImageFile, setCommunityImageFile] = useState(null);
   const communityImageInputRef = useRef(null);
   const [communitySaving, setCommunitySaving] = useState(false);
+  const [communityProvinceSuggestOpen, setCommunityProvinceSuggestOpen] = useState(false);
+  const communityProvinceSuggestBlurTimerRef = useRef(null);
+  const [communityCitySuggestOpen, setCommunityCitySuggestOpen] = useState(false);
+  const communityCitySuggestBlurTimerRef = useRef(null);
   /** Profile edit: Brgy field combobox dropdown for existing community names. */
   const [profileBrgySuggestOpen, setProfileBrgySuggestOpen] = useState(false);
   /** Community marketplace scope (same shell as global browse — not stored in the URL). */
@@ -833,23 +1129,40 @@ function App() {
     const cZip = String(ac.postalCode || "").trim();
     return [toTitleCase(cCity), toTitleCase(cProv), cZip].filter(Boolean).join(" · ");
   }, [activeCommunity]);
-  /** First segment of saved profile `address` — Brgy/Community/Subdivision (see profile form). */
-  const profileBrgyCommunitySubdivision = useMemo(() => {
-    const raw = splitAddressParts(user?.address).addressApartment;
-    return String(raw || "").trim();
-  }, [user?.address]);
-  /** City, province, postal code segments from the same comma-separated profile `address`. */
+  /** Dedicated profile community label (separate from address barangay). */
+  const profileCommunityName = useMemo(() => String(user?.community || "").trim(), [user?.community]);
+  /** Barangay, city, province, postal code segments from profile `address`. */
   const profileCityProvincePostal = useMemo(() => {
     const p = splitAddressParts(user?.address);
     return {
+      barangay: String(p.addressBarangay || "").trim(),
       city: String(p.addressCity || "").trim(),
       province: String(p.addressProvince || "").trim(),
       postalCode: String(p.addressPostalCode || "").trim(),
     };
   }, [user?.address]);
-  /** Community row whose name matches profile Brgy and city/province when set — listings + “New community” visibility. */
+  const canUploadProductFromProfile = useMemo(() => {
+    const parsedAddress = splitAddressParts(user?.address);
+    const checks = [
+      [String(user?.username || "").trim().length >= 3, "Username"],
+      [toPhilippinesLocalPhone10(user?.phone).length === 10, "Phone number"],
+      [String(user?.firstName || "").trim().length >= 2, "First name"],
+      [String(user?.middleName || "").trim().length >= 2, "Middle name"],
+      [String(user?.lastName || "").trim().length >= 2, "Last name"],
+      [String(user?.gender || "").trim().length > 0, "Gender"],
+      [String(user?.birthday || "").trim().length > 0, "Birthday"],
+      [String(parsedAddress.addressHouseStreet || "").trim().length > 0, "House Number & Street"],
+      [String(parsedAddress.addressSubdivision || "").trim().length > 0, "Subdivision"],
+      [String(parsedAddress.addressBarangay || "").trim().length > 0, "Barangay"],
+      [String(parsedAddress.addressCity || "").trim().length > 0, "City or Municipality"],
+      [String(parsedAddress.addressProvince || "").trim().length > 0, "Province"],
+    ];
+    const missing = checks.filter(([ok]) => !ok).map(([, label]) => label);
+    return { ready: missing.length === 0, missing };
+  }, [user]);
+  /** Community row whose name matches profile community and city/province when set. */
   const listingCommunityFromProfile = useMemo(() => {
-    const label = profileBrgyCommunitySubdivision.trim();
+    const label = String(profileCommunityName || "").trim();
     if (!label) return { id: null, matchedName: "" };
     const pc = profileCityProvincePostal;
     const hasLoc = Boolean(pc.city && pc.province);
@@ -888,16 +1201,31 @@ function App() {
     if (byCity.id) return byCity;
 
     return pickFromPool(communities);
-  }, [communities, profileBrgyCommunitySubdivision, profileCityProvincePostal]);
+  }, [communities, profileCityProvincePostal, profileCommunityName]);
   /** Compact header “In [community] / All areas” — only on marketplace browse screens, not Orders/Delivery/Profile. */
   const showCommunityShopHeaderStrip = useMemo(
     () => Boolean(shopCommunityId) && isBrowseLikeView && activeView !== VIEWS.COMMUNITY_SHOP,
     [shopCommunityId, isBrowseLikeView, activeView],
   );
+  const isMemberOfOpenCommunity = useMemo(() => {
+    if (!shopCommunityId) return false;
+    return String(listingCommunityFromProfile.id || "") === String(shopCommunityId);
+  }, [listingCommunityFromProfile.id, shopCommunityId]);
+  const getDisplayedMemberCount = useCallback(
+    (communityId, baseCount) => {
+      const base = Number.isFinite(Number(baseCount)) ? Number(baseCount) : 0;
+      const isJoinedHere = String(listingCommunityFromProfile.id || "") === String(communityId || "");
+      return base + (isJoinedHere ? 1 : 0);
+    },
+    [listingCommunityFromProfile.id],
+  );
   const prevShopCommunityIdRef = useRef(null);
+  const communityListingsSyncedRef = useRef(null);
+  const skipAutoCommunityBrowseRef = useRef(false);
   const [expandedBidOrderId, setExpandedBidOrderId] = useState(null);
   const [bidsForOrder, setBidsForOrder] = useState([]);
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
+  const [sellerProductsView, setSellerProductsView] = useState("list");
   /** Inline notice by “Upload product” on Profile (not the global marketplace banner). */
   const [profileUploadProductNotice, setProfileUploadProductNotice] = useState("");
   const [categories, setCategories] = useState([]);
@@ -905,6 +1233,60 @@ function App() {
   const [quizzes, setQuizzes] = useState([]);
   const [selectedQuiz, setSelectedQuiz] = useState(null);
   const [activeQuiz, setActiveQuiz] = useState(null);
+
+  const applyJoinedCommunity = useCallback((communityName) => {
+    const normalized = String(communityName || "").trim();
+    setUser((prev) => {
+      if (!prev) return prev;
+      if (prev.community === normalized) return prev;
+      return { ...prev, community: normalized };
+    });
+    setProfileDraft((prev) => ({ ...prev, community: normalized }));
+    if (typeof window !== "undefined" && user?.id) {
+      const key = `${COMMUNITY_MEMBERSHIP_KEY_PREFIX}${user.id}`;
+      if (normalized) localStorage.setItem(key, normalized);
+      else localStorage.removeItem(key);
+    }
+  }, [user?.id]);
+
+  const joinCommunityAndAttachListings = useCallback(
+    async (community) => {
+      const joinedName = toTitleCase(String(community?.name || "").trim());
+      applyJoinedCommunity(joinedName);
+      if (!token || !community?.id) return;
+      try {
+        const listData = await apiRequest("/me/listings", { token });
+        const mine = Array.isArray(listData?.listings) ? listData.listings : [];
+        const targetCommunityId = String(community.id);
+        const toAttach = mine.filter((l) => String(l.communityId || "") !== targetCommunityId);
+        for (const listing of toAttach) {
+          await apiRequest(`/me/listings/${listing.id}`, {
+            method: "PATCH",
+            token,
+            body: { communityId: targetCommunityId },
+          });
+        }
+        const refreshed = await apiRequest("/me/listings", { token });
+        setSellerListings(refreshed.listings || []);
+        if (activeView === VIEWS.COMMUNITY_SHOP && String(shopCommunityId || "") === targetCommunityId) {
+          const scoped = await apiRequest(`/listings?communityId=${encodeURIComponent(targetCommunityId)}`, { token });
+          setListings(scoped.listings || []);
+        }
+      } catch (error) {
+        setMarketplaceMessage(error?.message || "Joined, but we could not attach your listings yet. Try Join again.");
+      }
+    },
+    [activeView, applyJoinedCommunity, shopCommunityId, token],
+  );
+
+  useEffect(() => {
+    if (!user?.id || typeof window === "undefined") return;
+    const key = `${COMMUNITY_MEMBERSHIP_KEY_PREFIX}${user.id}`;
+    const savedCommunity = String(localStorage.getItem(key) || "").trim();
+    if (savedCommunity && savedCommunity !== String(user.community || "").trim()) {
+      setUser((prev) => (prev && prev.id === user.id ? { ...prev, community: savedCommunity } : prev));
+    }
+  }, [user?.community, user?.id]);
 
   const [answers, setAnswers] = useState({});
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -917,6 +1299,7 @@ function App() {
   const [browseLoading, setBrowseLoading] = useState(false);
   const [browseError, setBrowseError] = useState("");
   const [browseDeleteId, setBrowseDeleteId] = useState(null);
+  const [mobileCommunityFiltersOpen, setMobileCommunityFiltersOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [historyClearLoading, setHistoryClearLoading] = useState(false);
@@ -959,7 +1342,10 @@ function App() {
     phone: "",
     birthday: "",
     age: "",
-    addressApartment: "",
+    community: "",
+    addressHouseStreet: "",
+    addressSubdivision: "",
+    addressBarangay: "",
     addressCity: "",
     addressProvince: "",
     addressCountry: "",
@@ -968,17 +1354,18 @@ function App() {
     facebookUrl: "",
     twitterUrl: "",
     instagramUrl: "",
-    education: "",
     gender: "",
   });
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [profileAddressExpanded, setProfileAddressExpanded] = useState(false);
-  const [profilePreferencesExpanded, setProfilePreferencesExpanded] = useState(false);
+  const [profileFieldErrors, setProfileFieldErrors] = useState({});
   const [profileSocialExpanded, setProfileSocialExpanded] = useState(false);
+  const [phCityMunicipalityOptions, setPhCityMunicipalityOptions] = useState([]);
+  const [phCityPostalOptions, setPhCityPostalOptions] = useState([]);
+  const [phBarangayOptions, setPhBarangayOptions] = useState([]);
   /** Existing `communities.name` values matching the typed Brgy segment (profile edit): substring + fuzzy typos; scoped by city/province when both are set in the draft. */
   const profileBrgyCommunitySuggestions = useMemo(() => {
-    const q = String(profileDraft.addressApartment || "").trim();
+    const q = String(profileDraft.community || "").trim();
     if (q.length < 1 || !communities.length) return [];
     const draftCity = String(profileDraft.addressCity || "").trim();
     const draftProv = String(profileDraft.addressProvince || "").trim();
@@ -1029,14 +1416,174 @@ function App() {
     }));
   }, [
     communities,
-    profileDraft.addressApartment,
+    profileDraft.community,
     profileDraft.addressCity,
     profileDraft.addressProvince,
     profileDraft.addressPostalCode,
   ]);
+  const profileProvinceOptions = useMemo(() => PH_PROVINCE_OPTIONS, []);
+  const profileProvinceFilteredOptions = useMemo(() => {
+    const q = String(profileDraft.addressProvince || "").trim().toLowerCase();
+    if (!q) return profileProvinceOptions;
+    return profileProvinceOptions.filter((name) => name.toLowerCase().startsWith(q));
+  }, [profileDraft.addressProvince, profileProvinceOptions]);
+  const profileCityOptions = useMemo(() => {
+    const selectedProvince = String(profileDraft.addressProvince || "").trim().toLowerCase();
+    if (phCityMunicipalityOptions.length > 0) {
+      if (!selectedProvince) return phCityMunicipalityOptions.map((row) => row.name);
+      return Array.from(
+        new Set(
+          phCityMunicipalityOptions
+        .filter((row) => String(row.provinceName || "").trim().toLowerCase() === selectedProvince)
+            .map((row) => formatPhCityMunicipalityName(row.name)),
+        ),
+      ).sort((a, b) => a.localeCompare(b));
+    }
+    if (!selectedProvince) return [];
+    const pool = communities.filter((c) => String(c.province || "").trim().toLowerCase() === selectedProvince);
+    return Array.from(
+      new Set(
+        pool
+          .map((c) => String(c.city || "").trim())
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+  }, [communities, phCityMunicipalityOptions, profileDraft.addressProvince]);
+  const profileCityFilteredOptions = useMemo(() => {
+    const q = String(profileDraft.addressCity || "").trim().toLowerCase();
+    if (!q) return profileCityOptions;
+    return profileCityOptions.filter((name) => name.toLowerCase().startsWith(q));
+  }, [profileDraft.addressCity, profileCityOptions]);
+  const communityProvinceFilteredOptions = useMemo(() => {
+    const q = String(communityForm.province || "").trim().toLowerCase();
+    if (!q) return profileProvinceOptions;
+    return profileProvinceOptions.filter((name) => name.toLowerCase().startsWith(q));
+  }, [communityForm.province, profileProvinceOptions]);
+  const communityCityOptions = useMemo(() => {
+    const selectedProvince = String(communityForm.province || "").trim().toLowerCase();
+    if (phCityMunicipalityOptions.length > 0) {
+      if (!selectedProvince) return phCityMunicipalityOptions.map((row) => formatPhCityMunicipalityName(row.name));
+      return Array.from(
+        new Set(
+          phCityMunicipalityOptions
+            .filter((row) => String(row.provinceName || "").trim().toLowerCase() === selectedProvince)
+            .map((row) => formatPhCityMunicipalityName(row.name)),
+        ),
+      ).sort((a, b) => a.localeCompare(b));
+    }
+    if (!selectedProvince) return [];
+    const pool = communities.filter((c) => String(c.province || "").trim().toLowerCase() === selectedProvince);
+    return Array.from(new Set(pool.map((c) => String(c.city || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [communityForm.province, phCityMunicipalityOptions, communities]);
+  const communityCityFilteredOptions = useMemo(() => {
+    const q = String(communityForm.city || "").trim().toLowerCase();
+    if (!q) return communityCityOptions;
+    return communityCityOptions.filter((name) => name.toLowerCase().startsWith(q));
+  }, [communityForm.city, communityCityOptions]);
+  const communityAutoPostalCode = useMemo(() => {
+    const province = String(communityForm.province || "").trim().toLowerCase();
+    const city = String(communityForm.city || "").trim().toLowerCase();
+    const provinceNormalized = normalizePhLocalityName(communityForm.province);
+    const cityNormalized = normalizePhLocalityName(communityForm.city);
+    if (!province || !city) return "";
+    const cityMasterMatch = phCityMunicipalityOptions.find(
+      (row) =>
+        (String(row.provinceName || "").trim().toLowerCase() === province ||
+          normalizePhLocalityName(row.provinceName) === provinceNormalized) &&
+        (String(row.name || "").trim().toLowerCase() === city ||
+          String(formatPhCityMunicipalityName(row.name) || "").trim().toLowerCase() === city ||
+          normalizePhLocalityName(row.name) === cityNormalized ||
+          normalizePhLocalityName(formatPhCityMunicipalityName(row.name)) === cityNormalized),
+    );
+    return normalizePhPostalCode(cityMasterMatch?.postalCode);
+  }, [communityForm.city, communityForm.province, phCityMunicipalityOptions]);
+  const profileBarangayOptions = useMemo(() => {
+    const selectedProvince = String(profileDraft.addressProvince || "").trim().toLowerCase();
+    const selectedCity = String(profileDraft.addressCity || "").trim().toLowerCase();
+    const selectedCityNormalized = normalizePhLocalityName(profileDraft.addressCity);
+    if (phBarangayOptions.length > 0) {
+      if (!selectedCity) return [];
+      return phBarangayOptions
+        .filter((row) => {
+          const provinceOk = selectedProvince ? String(row.provinceName || "").trim().toLowerCase() === selectedProvince : true;
+          const rowCityLower = String(row.cityName || "").trim().toLowerCase();
+          const rowCityNormalized = normalizePhLocalityName(row.cityName);
+          const cityOk = rowCityLower === selectedCity || rowCityNormalized === selectedCityNormalized;
+          return provinceOk && cityOk;
+        })
+        .map((row) => row.name);
+    }
+    const pool = communities.filter((c) => {
+      const provinceOk = selectedProvince ? String(c.province || "").trim().toLowerCase() === selectedProvince : true;
+      const cityOk = selectedCity ? String(c.city || "").trim().toLowerCase() === selectedCity : true;
+      return provinceOk && cityOk;
+    });
+    return Array.from(
+      new Set(
+        pool
+          .map((c) => String(c.name || "").trim())
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+  }, [communities, phBarangayOptions, profileDraft.addressProvince, profileDraft.addressCity]);
+  const profileBarangayFilteredOptions = useMemo(() => {
+    const q = String(profileDraft.addressBarangay || "").trim().toLowerCase();
+    if (!q) return profileBarangayOptions;
+    return profileBarangayOptions.filter((name) => name.toLowerCase().startsWith(q));
+  }, [profileDraft.addressBarangay, profileBarangayOptions]);
+  const profileAutoPostalCode = useMemo(() => {
+    const province = String(profileDraft.addressProvince || "").trim().toLowerCase();
+    const city = String(profileDraft.addressCity || "").trim().toLowerCase();
+    const provinceNormalized = normalizePhLocalityName(profileDraft.addressProvince);
+    const cityNormalized = normalizePhLocalityName(profileDraft.addressCity);
+    if (!province || !city) return "";
+    const cityMasterMatch = phCityMunicipalityOptions.find(
+      (row) =>
+        (String(row.provinceName || "").trim().toLowerCase() === province ||
+          normalizePhLocalityName(row.provinceName) === provinceNormalized) &&
+        (String(row.name || "").trim().toLowerCase() === city ||
+          String(formatPhCityMunicipalityName(row.name) || "")
+            .trim()
+            .toLowerCase() === city ||
+          normalizePhLocalityName(row.name) === cityNormalized ||
+          normalizePhLocalityName(formatPhCityMunicipalityName(row.name)) === cityNormalized),
+    );
+    const fromCityMaster = normalizePhPostalCode(cityMasterMatch?.postalCode);
+    if (fromCityMaster) return fromCityMaster;
+    const cityMasterFallback = phCityMunicipalityOptions.find((row) => {
+      const sameProvince =
+        String(row.provinceName || "").trim().toLowerCase() === province ||
+        normalizePhLocalityName(row.provinceName) === provinceNormalized;
+      if (!sameProvince) return false;
+      const rowCityRaw = normalizePhLocalityName(row.name);
+      const rowCityFormatted = normalizePhLocalityName(formatPhCityMunicipalityName(row.name));
+      return rowCityRaw === cityNormalized || rowCityFormatted === cityNormalized;
+    });
+    const fallbackPostal = normalizePhPostalCode(cityMasterFallback?.postalCode);
+    if (fallbackPostal) return fallbackPostal;
+    return "";
+  }, [
+    phCityMunicipalityOptions,
+    profileDraft.addressProvince,
+    profileDraft.addressCity,
+  ]);
   const profileAvatarInputRef = useRef(null);
   /** Delay closing Brgy suggestions so mousedown on an option runs before blur. */
   const profileBrgySuggestBlurTimerRef = useRef(null);
+  const [profileProvinceSuggestOpen, setProfileProvinceSuggestOpen] = useState(false);
+  const profileProvinceSuggestBlurTimerRef = useRef(null);
+  const [profileCitySuggestOpen, setProfileCitySuggestOpen] = useState(false);
+  const profileCitySuggestBlurTimerRef = useRef(null);
+  const [profileBarangaySuggestOpen, setProfileBarangaySuggestOpen] = useState(false);
+  const profileBarangaySuggestBlurTimerRef = useRef(null);
+  const profileBirthdayInputRef = useRef(null);
+  const todayIsoDate = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }, []);
 
   const googleBtnRef = useRef(null);
 
@@ -1045,6 +1592,117 @@ function App() {
     else document.documentElement.classList.remove("dark");
     localStorage.setItem("quiz_theme_v2", theme);
   }, [theme]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPhCitiesMunicipalities = async () => {
+      try {
+        const [cityRes, provinceRes] = await Promise.all([
+          fetch("https://psgc.gitlab.io/api/cities-municipalities/"),
+          fetch("https://psgc.gitlab.io/api/provinces/"),
+        ]);
+        if (!cityRes.ok || !provinceRes.ok) return;
+        const cityRows = await cityRes.json();
+        const provinceRows = await provinceRes.json();
+        if (!Array.isArray(cityRows) || !Array.isArray(provinceRows) || cancelled) return;
+        const [cloudCitiesRes, cloudMunicipalitiesRes] = await Promise.all([
+          fetch("https://psgc.cloud/api/cities"),
+          fetch("https://psgc.cloud/api/municipalities"),
+        ]);
+        const cloudCities = cloudCitiesRes.ok ? await cloudCitiesRes.json() : [];
+        const cloudMunicipalities = cloudMunicipalitiesRes.ok ? await cloudMunicipalitiesRes.json() : [];
+        const cloudRows = Array.isArray(cloudCities) && Array.isArray(cloudMunicipalities) ? [...cloudCities, ...cloudMunicipalities] : [];
+        const cityCodeToPostal = new Map(
+          cloudRows.map((row) => [
+            normalizePhPsgcCode(row?.code || row?.city_code || row?.municipality_code || ""),
+            String(row?.zip_code || row?.postal_code || "").trim(),
+          ]),
+        );
+        const cityPostalRows = cloudRows
+          .map((row) => ({
+            name: String(row?.name || "").trim(),
+            postalCode: String(row?.zip_code || "").trim(),
+          }))
+          .filter((row) => row.name && row.postalCode);
+        const dedupedCityPostal = Array.from(
+          new Map(cityPostalRows.map((row) => [`${normalizePhLocalityName(row.name)}`, row])).values(),
+        );
+        if (!cancelled) setPhCityPostalOptions(dedupedCityPostal);
+        const provinceCodeToName = new Map(
+          provinceRows.map((row) => [String(row?.code || row?.province_code || ""), String(row?.name || "").trim()]),
+        );
+        const mapped = cityRows
+          .map((row) => ({
+            code: String(row?.code || row?.city_code || row?.municipality_code || ""),
+            name: String(row?.name || "").trim(),
+            provinceName:
+              provinceCodeToName.get(String(row?.provinceCode || row?.province_code || "")) ||
+              String(row?.provinceName || row?.province_name || "").trim(),
+            postalCode:
+              cityCodeToPostal.get(
+                normalizePhPsgcCode(
+                  row?.psgc10DigitCode || row?.psgc10digitCode || row?.code || row?.city_code || row?.municipality_code || "",
+                ),
+              ) || "",
+          }))
+          .filter((row) => row.name);
+        const deduped = Array.from(new Map(mapped.map((row) => [`${row.provinceName}::${row.name}`, row])).values()).sort((a, b) =>
+          a.name.localeCompare(b.name),
+        );
+        if (!cancelled) setPhCityMunicipalityOptions(deduped);
+
+        const barangayRes = await fetch("https://psgc.gitlab.io/api/barangays/");
+        if (!barangayRes.ok) return;
+        const barangayRows = await barangayRes.json();
+        if (!Array.isArray(barangayRows) || cancelled) return;
+        const cityCodeToRow = new Map(mapped.map((row) => [row.code, row]));
+        const mappedBarangays = barangayRows
+          .map((row) => {
+            const cityCode = String(row?.cityCode || row?.city_code || row?.municipalityCode || row?.municipality_code || "");
+            const cityInfo = cityCodeToRow.get(cityCode);
+            return {
+              name: String(row?.name || "").trim(),
+              cityName: cityInfo?.name || "",
+              provinceName: cityInfo?.provinceName || "",
+            };
+          })
+          .filter((row) => row.name && row.cityName);
+        const dedupedBarangays = Array.from(
+          new Map(mappedBarangays.map((row) => [`${row.provinceName}::${row.cityName}::${row.name}`, row])).values(),
+        ).sort((a, b) => a.name.localeCompare(b.name));
+        if (!cancelled) setPhBarangayOptions(dedupedBarangays);
+      } catch {
+        // Keep community-derived fallback options when master-list fetch fails.
+      }
+    };
+    loadPhCitiesMunicipalities();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!profileEditing) return;
+    const hasLocation = Boolean(String(profileDraft.addressProvince || "").trim() && String(profileDraft.addressCity || "").trim());
+    if (profileAutoPostalCode) {
+      setProfileDraft((prev) => (prev.addressPostalCode === profileAutoPostalCode ? prev : { ...prev, addressPostalCode: profileAutoPostalCode }));
+      return;
+    }
+    if (!hasLocation) {
+      setProfileDraft((prev) => (prev.addressPostalCode ? { ...prev, addressPostalCode: "" } : prev));
+    }
+  }, [profileAutoPostalCode, profileEditing, profileDraft.addressProvince, profileDraft.addressCity]);
+  useEffect(() => {
+    if (!communityFormOpen) return;
+    const hasLocation = Boolean(String(communityForm.province || "").trim() && String(communityForm.city || "").trim());
+    if (communityAutoPostalCode) {
+      setCommunityForm((prev) => (prev.postalCode === communityAutoPostalCode ? prev : { ...prev, postalCode: communityAutoPostalCode }));
+      return;
+    }
+    if (!hasLocation) {
+      setCommunityForm((prev) => (prev.postalCode ? { ...prev, postalCode: "" } : prev));
+    }
+  }, [communityAutoPostalCode, communityForm.city, communityForm.province, communityFormOpen]);
 
   useEffect(() => {
     if (!publishFlash) return undefined;
@@ -1332,8 +1990,14 @@ function App() {
   }, [activeView]);
 
   useEffect(() => {
-    if (profileBrgyCommunitySubdivision.trim()) setProfileUploadProductNotice("");
-  }, [profileBrgyCommunitySubdivision]);
+    if (!marketplaceMessage) return undefined;
+    const timer = window.setTimeout(() => setMarketplaceMessage(""), 10000);
+    return () => window.clearTimeout(timer);
+  }, [marketplaceMessage]);
+
+  useEffect(() => {
+    if (profileCommunityName.trim()) setProfileUploadProductNotice("");
+  }, [profileCommunityName]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.USERS) return undefined;
@@ -1354,6 +2018,13 @@ function App() {
       cancelled = true;
     };
   }, [token, activeView]);
+
+  useEffect(
+    () => () => {
+      if (listingImagePreviewUrl) URL.revokeObjectURL(listingImagePreviewUrl);
+    },
+    [listingImagePreviewUrl],
+  );
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.PROFILE || !user?.id) return undefined;
@@ -1506,6 +2177,7 @@ function App() {
   }, []);
 
   const leaveCommunityToGlobalMarketplace = useCallback(() => {
+    skipAutoCommunityBrowseRef.current = true;
     setShopCommunityId(null);
     setBrowseVerticalId(null);
     setBrowseSubId(null);
@@ -1516,14 +2188,19 @@ function App() {
   }, [navigate]);
 
   const goBrowse = useCallback(() => {
-    setShopCommunityId(null);
     setBrowseVerticalId(null);
     setBrowseSubId(null);
     setBrowseQuickFilter("all");
     setSelectedListingId(null);
     navigate("/", { replace: true });
+    if (listingCommunityFromProfile.id) {
+      setShopCommunityId(String(listingCommunityFromProfile.id));
+      setActiveView(VIEWS.COMMUNITY_SHOP);
+      return;
+    }
+    setShopCommunityId(null);
     setActiveView(VIEWS.BROWSE);
-  }, [navigate]);
+  }, [navigate, listingCommunityFromProfile.id]);
 
   const visibleBrowseListings = useMemo(() => {
     if (browseQuickFilter === "all") return listings;
@@ -1575,8 +2252,20 @@ function App() {
   }, [user, routeListingId, shopCommunityId]);
 
   useEffect(() => {
+    if (!user || activeView !== VIEWS.BROWSE || shopCommunityId || !listingCommunityFromProfile.id) return undefined;
+    if (skipAutoCommunityBrowseRef.current) {
+      skipAutoCommunityBrowseRef.current = false;
+      return undefined;
+    }
+    setShopCommunityId(String(listingCommunityFromProfile.id));
+    setActiveView(VIEWS.COMMUNITY_SHOP);
+    return undefined;
+  }, [user, activeView, shopCommunityId, listingCommunityFromProfile.id]);
+
+  useEffect(() => {
     if (!shopCommunityId) {
       prevShopCommunityIdRef.current = null;
+      communityListingsSyncedRef.current = null;
       return undefined;
     }
     if (shopCommunityId !== prevShopCommunityIdRef.current) {
@@ -1589,6 +2278,18 @@ function App() {
     }
     return undefined;
   }, [shopCommunityId]);
+  useEffect(() => {
+    if (activeView !== VIEWS.COMMUNITY_SHOP) setMobileCommunityFiltersOpen(false);
+  }, [activeView]);
+
+  useEffect(() => {
+    if (!token || activeView !== VIEWS.COMMUNITY_SHOP || !isMemberOfOpenCommunity || !activeCommunity?.id) return undefined;
+    const key = `${user?.id || "anon"}:${activeCommunity.id}`;
+    if (communityListingsSyncedRef.current === key) return undefined;
+    communityListingsSyncedRef.current = key;
+    void joinCommunityAndAttachListings(activeCommunity);
+    return undefined;
+  }, [token, activeView, isMemberOfOpenCommunity, activeCommunity, user?.id, joinCommunityAndAttachListings]);
 
   /** Old bookmarked `/c/:id` or `/c/:id/shop` URLs → same in-app state, then clean path. */
   useEffect(() => {
@@ -1637,7 +2338,20 @@ function App() {
           if (browseSubId && browseSubId !== "all") qs.set("subId", browseSubId);
         }
         const data = await apiRequest(`/listings?${qs.toString()}`, { token });
-        if (!cancelled) setListings(data.listings || []);
+        if (!cancelled) {
+          const rows = Array.isArray(data.listings) ? data.listings : [];
+          let nextRows =
+            inCommunity && !isMemberOfOpenCommunity
+              ? rows.filter((row) => String(row.sellerId || "") !== String(user?.id || ""))
+              : rows;
+          if (inCommunity && isMemberOfOpenCommunity && nextRows.length === 0 && activeCommunity?.id) {
+            await joinCommunityAndAttachListings(activeCommunity);
+            const retry = await apiRequest(`/listings?communityId=${encodeURIComponent(String(activeCommunity.id))}`, { token });
+            const retriedRows = Array.isArray(retry?.listings) ? retry.listings : [];
+            nextRows = retriedRows;
+          }
+          setListings(nextRows);
+        }
       } catch (e) {
         if (!cancelled) {
           setListingsError(e.message || "Could not load listings.");
@@ -1650,7 +2364,18 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, activeView, browseVerticalId, browseSubId, shopCommunityId, user?.address]);
+  }, [
+    token,
+    activeView,
+    browseVerticalId,
+    browseSubId,
+    shopCommunityId,
+    user?.address,
+    user?.id,
+    isMemberOfOpenCommunity,
+    activeCommunity,
+    joinCommunityAndAttachListings,
+  ]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.FAVORITES) return undefined;
@@ -1776,8 +2501,51 @@ function App() {
 
   const closeAddCommunityModal = useCallback(() => {
     setCommunityFormOpen(false);
+    setCommunityEditingId(null);
+    setCommunityImageFile(null);
+    setCommunityProvinceSuggestOpen(false);
+    setCommunityCitySuggestOpen(false);
+    if (communityProvinceSuggestBlurTimerRef.current) {
+      clearTimeout(communityProvinceSuggestBlurTimerRef.current);
+      communityProvinceSuggestBlurTimerRef.current = null;
+    }
+    if (communityCitySuggestBlurTimerRef.current) {
+      clearTimeout(communityCitySuggestBlurTimerRef.current);
+      communityCitySuggestBlurTimerRef.current = null;
+    }
+    if (communityImageInputRef.current) communityImageInputRef.current.value = "";
+  }, []);
+
+  const openAddCommunityModal = useCallback(() => {
+    const fallbackName = String(profileCommunityName || "").trim();
+    setCommunityEditingId(null);
+    setCommunityForm({
+      name: fallbackName,
+      city: String(profileCityProvincePostal.city || "").trim(),
+      province: String(profileCityProvincePostal.province || "").trim(),
+      postalCode: String(profileCityProvincePostal.postalCode || "").trim(),
+    });
+    setCommunityProvinceSuggestOpen(false);
+    setCommunityCitySuggestOpen(false);
+    setMarketplaceMessage("");
+    setCommunityFormOpen(true);
+  }, [profileCityProvincePostal.city, profileCityProvincePostal.postalCode, profileCityProvincePostal.province, profileCommunityName]);
+
+  const openEditCommunityModal = useCallback((community) => {
+    if (!community?.id) return;
+    setCommunityEditingId(String(community.id));
+    setCommunityForm({
+      name: String(community.name || "").trim(),
+      city: String(community.city || "").trim(),
+      province: String(community.province || "").trim(),
+      postalCode: String(community.postalCode || "").trim(),
+    });
+    setCommunityProvinceSuggestOpen(false);
+    setCommunityCitySuggestOpen(false);
     setCommunityImageFile(null);
     if (communityImageInputRef.current) communityImageInputRef.current.value = "";
+    setMarketplaceMessage("");
+    setCommunityFormOpen(true);
   }, []);
 
   useEffect(() => {
@@ -1788,6 +2556,19 @@ function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [communityFormOpen, closeAddCommunityModal]);
+  useEffect(
+    () => () => {
+      if (communityProvinceSuggestBlurTimerRef.current) {
+        clearTimeout(communityProvinceSuggestBlurTimerRef.current);
+        communityProvinceSuggestBlurTimerRef.current = null;
+      }
+      if (communityCitySuggestBlurTimerRef.current) {
+        clearTimeout(communityCitySuggestBlurTimerRef.current);
+        communityCitySuggestBlurTimerRef.current = null;
+      }
+    },
+    [],
+  );
 
   const handleCreateCommunity = async (ev) => {
     ev.preventDefault();
@@ -1795,33 +2576,23 @@ function App() {
       setMarketplaceMessage("Sign in again to add a community.");
       return;
     }
-    const brgyFromProfile = String(splitAddressParts(user?.address).addressApartment || "").trim();
-    if (!brgyFromProfile) {
-      setMarketplaceMessage("Save your Brgy/Community/Subdivision in Profile (Address) before adding a community.");
-      return;
-    }
-    const { city: cityFromProfile, province: provinceFromProfile, postalCode: postalFromProfile } =
-      profileCityProvincePostal;
-    if (!cityFromProfile || !provinceFromProfile || !postalFromProfile) {
-      setMarketplaceMessage(
-        "Save City, Province, and Postal code in Profile (Address) before creating a community.",
-      );
-      return;
-    }
-    if (brgyFromProfile.length < 2) {
-      setMarketplaceMessage("Brgy/Community/Subdivision in Profile must be at least 2 characters.");
-      return;
-    }
+    const nameDraft = String(communityForm.name || "").trim();
+    const communityName = nameDraft || `Community ${new Date().toISOString().slice(0, 10)}`;
+    const cityDraft = String(communityForm.city || "").trim();
+    const provinceDraft = String(communityForm.province || "").trim();
+    const postalDraft = String(communityForm.postalCode || "").trim();
     setCommunitySaving(true);
     setMarketplaceMessage("");
     try {
       const fd = new FormData();
-      fd.append("name", brgyFromProfile);
-      fd.append("city", cityFromProfile);
-      fd.append("province", provinceFromProfile);
-      fd.append("postalCode", postalFromProfile);
+      fd.append("name", communityName);
+      if (cityDraft) fd.append("city", cityDraft);
+      if (provinceDraft) fd.append("province", provinceDraft);
+      if (postalDraft) fd.append("postalCode", postalDraft);
       if (communityImageFile) fd.append("image", communityImageFile);
-      const createdRes = await apiRequest("/communities", { method: "POST", token, body: fd });
+      const endpoint = communityEditingId ? `/communities/${communityEditingId}` : "/communities";
+      const method = communityEditingId ? "PATCH" : "POST";
+      const createdRes = await apiRequest(endpoint, { method, token, body: fd });
       const createdCommunity = createdRes?.community;
       closeAddCommunityModal();
       const res = await apiRequest("/communities", { token });
@@ -1830,7 +2601,7 @@ function App() {
         nextCommunities = [createdCommunity, ...nextCommunities];
       }
       setCommunities(nextCommunities);
-      setMarketplaceMessage("Community added.");
+      setMarketplaceMessage(communityEditingId ? "Community updated." : "Community added.");
     } catch (e) {
       setMarketplaceMessage(e.message || "Could not create new community.");
     } finally {
@@ -1935,14 +2706,63 @@ function App() {
     }
   };
 
+  const deleteSellerListingById = async (id) => {
+    if (!token || !id) return;
+    const ok = typeof window === "undefined" ? true : window.confirm("Delete this listing?");
+    if (!ok) return;
+    try {
+      await apiRequest(`/me/listings/${id}`, { method: "DELETE", token });
+      const refreshed = await apiRequest("/me/listings", { token });
+      setSellerListings(refreshed.listings || []);
+      if (editingListingId && String(editingListingId) === String(id)) {
+        setEditingListingId(null);
+        setListingForm({
+          title: "",
+          description: "",
+          pricePesos: "",
+          quantity: "",
+          categories: "",
+          subId: "all",
+          pickup: true,
+          delivery: true,
+        });
+        setListingImageFile(null);
+        if (listingImagePreviewUrl) URL.revokeObjectURL(listingImagePreviewUrl);
+        setListingImagePreviewUrl("");
+      }
+      setMarketplaceMessage("Listing deleted.");
+    } catch (e) {
+      setMarketplaceMessage(e.message || "Could not delete listing.");
+    }
+  };
+
+  const beginEditSellerListing = (listing) => {
+    if (!listing?.id) return;
+    setEditingListingId(String(listing.id));
+    setListingForm({
+      title: String(listing.title || ""),
+      description: String(listing.description || ""),
+      pricePesos: Number.isFinite(Number(listing.priceCents)) ? String(Number(listing.priceCents) / 100) : "",
+      quantity: Number.isFinite(Number(listing.quantity)) ? String(Number(listing.quantity)) : "",
+      categories: String(listing.categories || listing.verticalId || ""),
+      subId: String(listing.subId || "all"),
+      pickup: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("pickup") : true,
+      delivery: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("delivery") : true,
+    });
+    setListingImageFile(null);
+    if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(listingImagePreviewUrl);
+    }
+    setListingImagePreviewUrl(String(listing.imageUrl || "").trim());
+    setMarketplaceMessage("");
+    setActiveView(VIEWS.MY_LISTINGS);
+    navigate("/", { replace: true });
+  };
+
   const handleCreateListing = async (ev) => {
     ev.preventDefault();
     if (!token) return;
-    if (!profileBrgyCommunitySubdivision.trim()) {
-      setMarketplaceMessage("Save your Brgy/Community/Subdivision in Profile (Address) before publishing a listing.");
-      return;
-    }
-    const catMissing = !String(listingForm.verticalId || "").trim();
+    const catMissing = !String(listingForm.categories || "").trim();
     const qtyStr = String(listingForm.quantity ?? "").trim();
     const qtyMissing = qtyStr === "";
     if (catMissing && qtyMissing) {
@@ -1975,51 +2795,62 @@ function App() {
       setMarketplaceMessage("Choose pickup and/or delivery.");
       return;
     }
-    const effectiveCommunityId =
-      shopCommunityId || String(listingCommunityFromProfile.id || "").trim();
-    if (!effectiveCommunityId) {
-      setMarketplaceMessage(
-        profileBrgyCommunitySubdivision.trim()
-          ? "No community matches your profile Brgy/Community/Subdivision. Add one from the marketplace with the same name."
-          : "Save your Brgy/Community/Subdivision in Profile (Address), then add a community that uses that name.",
-      );
-      return;
-    }
     setListingSaving(true);
     setMarketplaceMessage("");
     try {
-      await apiRequest("/me/listings", {
-        method: "POST",
-        token,
-        body: {
-          title: listingForm.title.trim(),
-          description: listingForm.description.trim(),
-          priceCents: Math.round(pesos * 100),
-          quantity: qtyNum,
-          verticalId: String(listingForm.verticalId).trim(),
-          ...(listingForm.subId && listingForm.subId !== "all" ? { subId: listingForm.subId } : {}),
-          fulfillmentModes: modes,
-          cityLabel: "",
-          communityId: effectiveCommunityId,
-        },
-      });
+      let imageUrl = "";
+      if (listingImageFile) {
+        imageUrl = await fileToDataUrl(listingImageFile);
+      } else if (listingImagePreviewUrl) {
+        imageUrl = String(listingImagePreviewUrl).trim();
+      }
+      const payload = {
+        title: listingForm.title.trim(),
+        description: listingForm.description.trim(),
+        priceCents: Math.round(pesos * 100),
+        quantity: qtyNum,
+        categories: String(listingForm.categories).trim(),
+        verticalId: String(listingForm.categories).trim(),
+        ...(listingForm.subId && listingForm.subId !== "all" ? { subId: listingForm.subId } : {}),
+        fulfillmentModes: modes,
+        cityLabel: "",
+        imageUrl,
+        ...(shopCommunityId && isMemberOfOpenCommunity ? { communityId: String(shopCommunityId) } : {}),
+      };
+      const createRes = editingListingId
+        ? await apiRequest(`/me/listings/${editingListingId}`, {
+            method: "PATCH",
+            token,
+            body: payload,
+          })
+        : await apiRequest("/me/listings", {
+            method: "POST",
+            token,
+            body: payload,
+          });
       const [listRes, sumRes] = await Promise.all([
         apiRequest("/me/listings", { token }),
         apiRequest("/me/seller/summary", { token }),
       ]);
-      setSellerListings(listRes.listings || []);
+      const latestListings = listRes.listings || [];
+      setSellerListings(latestListings.length ? latestListings : createRes?.listing ? [createRes.listing] : []);
       setSellerSummary(sumRes);
       setListingForm({
         title: "",
         description: "",
         pricePesos: "",
         quantity: "",
-        verticalId: "",
+        categories: "",
         subId: "all",
         pickup: true,
         delivery: true,
       });
-      setMarketplaceMessage("Listing published.");
+      setListingImageFile(null);
+      if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+      setListingImagePreviewUrl("");
+      setEditingListingId(null);
+      setMarketplaceMessage("");
+      setPublishFlash("");
       setSellerTab(SELLER_TABS.PRODUCTS);
       setActiveView(VIEWS.PROFILE);
       navigate("/", { replace: true });
@@ -2030,9 +2861,28 @@ function App() {
     }
   };
 
+  const setListingImage = (file) => {
+    if (!file) return;
+    if (!String(file.type || "").startsWith("image/")) {
+      setMarketplaceMessage("Please choose an image file.");
+      return;
+    }
+    const MAX_LISTING_IMAGE_BYTES = 5 * 1024 * 1024;
+    if (file.size > MAX_LISTING_IMAGE_BYTES) {
+      setMarketplaceMessage("Image is too large. Please choose one smaller than 5MB.");
+      return;
+    }
+    if (listingImagePreviewUrl) URL.revokeObjectURL(listingImagePreviewUrl);
+    setListingImageFile(file);
+    setListingImagePreviewUrl(URL.createObjectURL(file));
+    setMarketplaceMessage("");
+  };
+
   const openProfileEdit = () => {
     if (!user) return;
     const parsedAddress = splitAddressParts(user.address);
+    const draftBirthday = user.birthday ?? "";
+    const computedAge = computeAgeFromBirthday(draftBirthday);
     setProfileDraft({
       avatarUrl: user.avatarUrl || "",
       username: user.username || user.name || "",
@@ -2040,24 +2890,25 @@ function App() {
       middleName: user.middleName ?? "",
       lastName: user.lastName ?? "",
       email: user.email || "",
-      phone: user.phone ?? "",
-      birthday: user.birthday ?? "",
-      age: user.age ? String(user.age) : "",
-      addressApartment: parsedAddress.addressApartment,
+      phone: toPhilippinesLocalPhone10(user.phone),
+      birthday: draftBirthday,
+      age: computedAge === "" ? (user.age ? String(user.age) : "") : String(computedAge),
+      community: String(user.community || "").trim(),
+      addressHouseStreet: String(user.addressHouseStreet || "").trim() || parsedAddress.addressHouseStreet,
+      addressSubdivision: parsedAddress.addressSubdivision,
+      addressBarangay: parsedAddress.addressBarangay,
       addressCity: parsedAddress.addressCity,
       addressProvince: parsedAddress.addressProvince,
-      addressCountry: normalizeCountryValue(parsedAddress.addressCountry),
+      addressCountry: "Philippines",
       addressPostalCode: parsedAddress.addressPostalCode,
       addressUrl: user.addressUrl ?? "",
       facebookUrl: user.facebookUrl ?? (user.socialPlatform === "facebook" ? user.socialUrl ?? user.url ?? "" : ""),
       twitterUrl: user.twitterUrl ?? (user.socialPlatform === "x_twitter" ? user.socialUrl ?? user.url ?? "" : ""),
       instagramUrl: user.instagramUrl ?? (user.socialPlatform === "instagram" ? user.socialUrl ?? user.url ?? "" : ""),
-      education: user.education ?? "",
       gender: user.gender ?? "",
     });
     setProfileError("");
-    setProfileAddressExpanded(false);
-    setProfilePreferencesExpanded(false);
+    setProfileFieldErrors({});
     setProfileSocialExpanded(false);
     setProfileEditing(true);
   };
@@ -2065,13 +2916,27 @@ function App() {
   const cancelProfileEdit = () => {
     setProfileEditing(false);
     setProfileError("");
-    setProfileAddressExpanded(false);
-    setProfilePreferencesExpanded(false);
+    setProfileFieldErrors({});
     setProfileSocialExpanded(false);
     setProfileBrgySuggestOpen(false);
+    setProfileProvinceSuggestOpen(false);
+    setProfileCitySuggestOpen(false);
+    setProfileBarangaySuggestOpen(false);
     if (profileBrgySuggestBlurTimerRef.current) {
       clearTimeout(profileBrgySuggestBlurTimerRef.current);
       profileBrgySuggestBlurTimerRef.current = null;
+    }
+    if (profileProvinceSuggestBlurTimerRef.current) {
+      clearTimeout(profileProvinceSuggestBlurTimerRef.current);
+      profileProvinceSuggestBlurTimerRef.current = null;
+    }
+    if (profileCitySuggestBlurTimerRef.current) {
+      clearTimeout(profileCitySuggestBlurTimerRef.current);
+      profileCitySuggestBlurTimerRef.current = null;
+    }
+    if (profileBarangaySuggestBlurTimerRef.current) {
+      clearTimeout(profileBarangaySuggestBlurTimerRef.current);
+      profileBarangaySuggestBlurTimerRef.current = null;
     }
   };
 
@@ -2100,22 +2965,93 @@ function App() {
     event.preventDefault();
     const normalizedUsername = String(profileDraft.username || "").trim();
     const normalizedFirstName = String(profileDraft.firstName || "").trim();
-    if (normalizedUsername.length < 3) {
-      setProfileError("Username must be at least 3 characters.");
-      return;
+    const normalizedMiddleName = String(profileDraft.middleName || "").trim();
+    const normalizedLastName = String(profileDraft.lastName || "").trim();
+    const normalizedGender = String(profileDraft.gender || "").trim();
+    const normalizedBirthday = String(profileDraft.birthday || "").trim();
+    const computedAge = computeAgeFromBirthday(normalizedBirthday);
+    const normalizedHouseStreet = String(profileDraft.addressHouseStreet || "").trim();
+    const normalizedSubdivision = String(profileDraft.addressSubdivision || "").trim();
+    const normalizedBarangay = String(profileDraft.addressBarangay || "").trim();
+    const normalizedCity = String(profileDraft.addressCity || "").trim();
+    const normalizedProvince = String(profileDraft.addressProvince || "").trim();
+    const normalizedPostalCode = String(profileDraft.addressPostalCode || "").trim();
+    const normalizedCountry = String(profileDraft.addressCountry || "").trim();
+    const nextFieldErrors = {};
+    if (!normalizedUsername) {
+      nextFieldErrors.username = "Username is required.";
+    } else if (normalizedUsername.length < 3) {
+      nextFieldErrors.username = "Username must be at least 3 characters.";
     }
     if (normalizedFirstName.length < 2) {
-      setProfileError("First name must be at least 2 characters.");
+      nextFieldErrors.firstName = "First name must be at least 2 characters.";
+    }
+    if (normalizedMiddleName.length < 2) {
+      nextFieldErrors.middleName = "Middle name is required.";
+    }
+    if (normalizedLastName.length < 2) {
+      nextFieldErrors.lastName = "Last name is required.";
+    }
+    if (!normalizedGender) {
+      nextFieldErrors.gender = "Gender is required.";
+    }
+    if (!normalizedBirthday) {
+      nextFieldErrors.birthday = "Birthday is required.";
+    } else if (normalizedBirthday > todayIsoDate) {
+      nextFieldErrors.birthday = "Birthday cannot be in the future.";
+    }
+    if (!normalizedHouseStreet) nextFieldErrors.addressHouseStreet = "House Number & Street is required.";
+    if (!normalizedSubdivision) nextFieldErrors.addressSubdivision = "Subdivision is required.";
+    if (!normalizedProvince) nextFieldErrors.addressProvince = "Province is required.";
+    if (!normalizedCity) nextFieldErrors.addressCity = "City or Municipality is required.";
+    if (!normalizedBarangay) nextFieldErrors.addressBarangay = "Barangay is required.";
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setProfileFieldErrors(nextFieldErrors);
+      setProfileError("");
       return;
     }
+    setProfileFieldErrors({});
     const effectiveToken = token || localStorage.getItem("quiz_token") || "";
     if (!effectiveToken) {
       setProfileError("Your session expired. Please log in again.");
       return;
     }
+    const localPhone10 = toPhilippinesLocalPhone10(profileDraft.phone);
+    if (!localPhone10) {
+      setProfileFieldErrors((prev) => ({ ...prev, phone: "Phone number is required." }));
+      setProfileError("");
+      return;
+    }
+    if (localPhone10.length !== 10) {
+      setProfileFieldErrors((prev) => ({ ...prev, phone: "Enter exactly 10 digits for mobile number." }));
+      setProfileError("");
+      return;
+    }
+    const resolvedPhone = toPhilippinesE164(profileDraft.phone);
+    if (resolvedPhone) {
+      try {
+        const usersData = usersList.length > 0 ? { users: usersList } : await apiRequest("/users", { token: effectiveToken });
+        const normalizedTarget = toPhilippinesE164(resolvedPhone);
+        const myId = String(user?.id || user?._id || "");
+        const duplicate = (usersData.users || []).some((u) => {
+          const uid = String(u?.id || u?._id || "");
+          if (myId && uid && uid === myId) return false;
+          const existing = toPhilippinesE164(u?.phone || u?.mobileNumber || u?.mobile || "");
+          return Boolean(existing) && existing === normalizedTarget;
+        });
+        if (duplicate) {
+          setProfileFieldErrors((prev) => ({ ...prev, phone: "This mobile number is already in use." }));
+          setProfileError("");
+          return;
+        }
+      } catch {
+        // If users lookup fails, proceed and let backend validation handle duplicates.
+      }
+    }
     setProfileSaving(true);
     setProfileError("");
     try {
+      const resolvedAge = computedAge === "" ? (profileDraft.age ? Number(profileDraft.age) : undefined) : computedAge;
       const primarySocial = profileDraft.facebookUrl.trim()
         ? { socialPlatform: "facebook", socialUrl: profileDraft.facebookUrl.trim() }
         : profileDraft.twitterUrl.trim()
@@ -2134,18 +3070,17 @@ function App() {
           middleName: profileDraft.middleName.trim(),
           lastName: profileDraft.lastName.trim(),
           email: (user?.email || "").trim(),
-          phone: profileDraft.phone.trim(),
+          phone: resolvedPhone,
           birthday: profileDraft.birthday.trim() || null,
+          community: profileDraft.community.trim(),
           address: buildAddressValue(profileDraft),
           addressUrl: profileDraft.addressUrl.trim(),
-          country: normalizeCountryValue(profileDraft.addressCountry),
           facebookUrl: profileDraft.facebookUrl.trim(),
           twitterUrl: profileDraft.twitterUrl.trim(),
           instagramUrl: profileDraft.instagramUrl.trim(),
           socialPlatform: primarySocial.socialPlatform,
           socialUrl: primarySocial.socialUrl,
-          age: profileDraft.age ? Number(profileDraft.age) : undefined,
-          education: profileDraft.education.trim(),
+          age: resolvedAge,
           gender: profileDraft.gender.trim(),
         },
       });
@@ -2157,11 +3092,11 @@ function App() {
         firstName: normalizedFirstName,
         middleName: profileDraft.middleName.trim(),
         lastName: profileDraft.lastName.trim(),
-        phone: profileDraft.phone.trim(),
+        phone: resolvedPhone,
         birthday: profileDraft.birthday.trim() || null,
+        community: profileDraft.community.trim(),
         address: buildAddressValue(profileDraft),
         addressUrl: profileDraft.addressUrl.trim(),
-        country: normalizeCountryValue(profileDraft.addressCountry),
         facebookUrl: profileDraft.facebookUrl.trim(),
         twitterUrl: profileDraft.twitterUrl.trim(),
         instagramUrl: profileDraft.instagramUrl.trim(),
@@ -2662,7 +3597,7 @@ function App() {
       />
 
       <main className="app-container space-y-4 py-5 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] max-sm:pt-4 md:space-y-6 md:py-8 md:pb-24 lg:pb-12">
-        {marketplaceMessage ? (
+        {marketplaceMessage && activeView !== VIEWS.MY_LISTINGS ? (
           <div
             className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200/90 bg-amber-50/90 px-3 py-2 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100"
             role="status"
@@ -2678,26 +3613,82 @@ function App() {
           <section className="app-card space-y-4 md:space-y-6">
             <div className="space-y-4">
               {activeView === VIEWS.COMMUNITY_SHOP ? (
-                <div className="space-y-3 border-b border-neutral-200/80 pb-4 dark:border-slate-700 sm:pb-6">
-                  <button
-                    type="button"
-                    className="btn-secondary w-full text-sm sm:w-auto"
-                    onClick={() => leaveCommunityToGlobalMarketplace()}
-                  >
-                    ← All communities
-                  </button>
-                  <div className="min-w-0">
-                    <h2 className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100 sm:text-2xl md:text-3xl">
+                <div className="rounded-2xl border border-neutral-200/90 bg-gradient-to-b from-white to-neutral-50/70 p-4 shadow-sm dark:border-slate-600 dark:from-slate-900 dark:to-slate-900/70 sm:p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      className="inline-flex items-center rounded-full border border-neutral-300/80 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                      onClick={() => leaveCommunityToGlobalMarketplace()}
+                    >
+                      ← All communities
+                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "") ? (
+                        <button
+                          type="button"
+                          className="inline-flex items-center rounded-full border border-neutral-300/80 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                          onClick={() => openEditCommunityModal(activeCommunity)}
+                        >
+                          Edit community
+                        </button>
+                      ) : null}
+                      {!isMemberOfOpenCommunity ? (
+                        <button
+                          type="button"
+                          className="inline-flex items-center rounded-full bg-brand-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
+                          onClick={async () => {
+                            await joinCommunityAndAttachListings(activeCommunity);
+                            setMarketplaceMessage("");
+                            setShopCommunityId(activeCommunity?.id || null);
+                            setActiveView(VIEWS.COMMUNITY_SHOP);
+                            navigate("/", { replace: true });
+                          }}
+                        >
+                          Join community
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="inline-flex items-center rounded-full border border-rose-300/80 bg-white px-4 py-2 text-sm font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
+                          onClick={() => {
+                            applyJoinedCommunity("");
+                            setMarketplaceMessage("");
+                            leaveCommunityToGlobalMarketplace();
+                          }}
+                        >
+                          Leave
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-4 min-w-0">
+                    <h2 className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100 sm:text-2xl">
                       {toTitleCase(activeCommunity?.name?.trim()) || "Community"}
                     </h2>
                     {activeCommunityLocaleLine ? (
-                      <p className="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-slate-400 sm:text-sm">
+                      <p className="mt-1.5 text-sm text-neutral-600 dark:text-slate-400">
                         {activeCommunityLocaleLine}
                       </p>
                     ) : null}
-                    <p className="mt-3 max-w-prose text-xs leading-relaxed text-neutral-600 dark:text-slate-400 sm:text-sm">
+                    <div className="mt-3">
+                      {isMemberOfOpenCommunity ? (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/80 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300">
+                          ● Joined member
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-neutral-300/80 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                          ○ Not a member yet
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-3 max-w-prose text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
                       Listings in this shop are visible to this community only. Use the top navigation for orders, profile, and the rest of the app.
                     </p>
+                    {!isMemberOfOpenCommunity ? (
+                      <p className="mt-3 max-w-prose rounded-xl border border-sky-200/90 bg-sky-50/80 px-3.5 py-2.5 text-sm text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
+                        Since you are not a member yet, your products will not appear in this community yet.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ) : (
@@ -2708,33 +3699,21 @@ function App() {
                   <div className="rounded-xl border border-neutral-200/90 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-slate-900/80">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold text-brand-primary">Communities</p>
-                    <p className="mt-1 max-w-prose text-sm text-neutral-600 dark:text-slate-400">
-                      Local groups (CPR, CPP, barangays, sitios, phases) are saved in the database table <span className="font-mono text-neutral-800 dark:text-slate-200">communities</span> — not on your profile. Add one so neighbors can anchor listings to a place.
+                    <p className="text-sm font-semibold text-brand-primary sm:text-base">Communities</p>
+                    <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400 sm:text-base">
+                      LinkMart is a neighborhood marketplace where members can discover local products, join community shops, and buy with COD pickup or delivery.
                     </p>
                   </div>
-                  {!listingCommunityFromProfile.id ? (
-                    <button
-                      type="button"
-                      className="btn-secondary shrink-0 text-sm"
-                      onClick={() => {
-                      setMarketplaceMessage("");
-                      setCommunityFormOpen(true);
-                      }}
-                    >
-                      New community
-                    </button>
-                  ) : null}
                 </div>
                 {communitiesError ? <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{communitiesError}</p> : null}
                 {communitiesLoading ? <p className="mt-3 text-sm text-neutral-600 dark:text-slate-400">Loading communities…</p> : null}
                 <ul
-                  className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4"
+                  className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-2"
                   aria-label="Communities"
                 >
                   {!communitiesLoading && communities.length === 0 ? (
                     <li className="col-span-full min-w-0 text-sm text-neutral-600 dark:text-slate-400">
-                      No communities yet. Use New community to create the first one.
+                      No communities available right now.
                     </li>
                   ) : null}
                   {communities.map((c) => {
@@ -2742,7 +3721,7 @@ function App() {
                     const initials = initialsFromName(c.name);
                     return (
                       <li key={c.id} className="min-w-0">
-                        <div className="flex h-full flex-col gap-2 rounded-xl border border-neutral-200/90 bg-neutral-50/40 p-2.5 dark:border-slate-600 dark:bg-slate-800/50">
+                        <div className="flex h-full flex-col gap-2 rounded-xl border border-neutral-200/90 bg-neutral-50/40 p-2.5 dark:border-slate-600 dark:bg-slate-800/50 sm:p-3">
                           <button
                             type="button"
                             className="group flex w-full flex-col gap-2 text-left transition hover:opacity-95"
@@ -2752,7 +3731,7 @@ function App() {
                               navigate("/", { replace: true });
                             }}
                           >
-                            <div className="relative aspect-[4/3] overflow-hidden rounded-lg shadow-inner ring-1 ring-black/5 transition group-hover:ring-brand-primary/30 dark:ring-white/10">
+                            <div className="relative aspect-[4/3] overflow-hidden rounded-lg shadow-inner ring-1 ring-black/5 transition group-hover:ring-brand-primary/30 dark:ring-white/10 sm:aspect-[16/9]">
                               {c.imageUrl ? (
                                 <img src={c.imageUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
                               ) : (
@@ -2766,20 +3745,52 @@ function App() {
                               )}
                             </div>
                             <div className="min-w-0 px-0.5">
-                              <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">
+                              <p className="truncate text-base font-semibold text-neutral-900 dark:text-slate-100 sm:text-lg">
                                 {toTitleCase(String(c.name || "").trim())}
                               </p>
-                              <p className="mt-0.5 line-clamp-2 text-xs text-neutral-600 dark:text-slate-400">
+                              <p className="mt-0.5 line-clamp-2 text-sm text-neutral-600 dark:text-slate-400">
                                 {formatCommunityMarketplaceSubtitle(c)}
                               </p>
-                              <p className="mt-0.5 text-xs text-neutral-600 dark:text-slate-400">
+                              <p className="mt-0.5 text-sm text-neutral-600 dark:text-slate-400">
                                 Members:{" "}
                                 <span className="font-medium text-neutral-800 dark:text-slate-200">
-                                  {Number.isFinite(Number(c.memberCount)) ? Number(c.memberCount) : 0}
+                                  {getDisplayedMemberCount(c.id, c.memberCount)}
                                 </span>
                               </p>
                             </div>
                           </button>
+                          <div className="mt-1 flex items-center gap-2 px-0.5">
+                            {String(listingCommunityFromProfile.id || "") === String(c.id) ? (
+                              <span className="inline-flex items-center rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300">
+                                Joined
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                                onClick={async () => {
+                                  await joinCommunityAndAttachListings(c);
+                                  setMarketplaceMessage("");
+                                  setShopCommunityId(c.id);
+                                  setActiveView(VIEWS.COMMUNITY_SHOP);
+                                  navigate("/", { replace: true });
+                                }}
+                              >
+                                Join
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="rounded-md bg-brand-primary px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
+                              onClick={() => {
+                                setShopCommunityId(c.id);
+                                setActiveView(VIEWS.COMMUNITY_SHOP);
+                                navigate("/", { replace: true });
+                              }}
+                            >
+                              View
+                            </button>
+                          </div>
                           {c.googleUrl ? (
                             <a
                               href={c.googleUrl}
@@ -2801,15 +3812,50 @@ function App() {
             </div>
             {activeView === VIEWS.COMMUNITY_SHOP ? (
             <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,17.5rem)_minmax(0,1fr)] lg:items-start lg:gap-6">
-              <aside className="order-1 space-y-3 rounded-2xl border border-neutral-200/80 bg-neutral-50/40 p-3 shadow-sm dark:border-slate-600 dark:bg-slate-900/50 sm:space-y-4 sm:p-4 lg:sticky lg:top-24 lg:order-none lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto">
+              {mobileCommunityFiltersOpen ? (
+                <button
+                  type="button"
+                  className="fixed inset-0 z-[90] bg-neutral-900/45 backdrop-blur-[1px] lg:hidden"
+                  aria-label="Close filters"
+                  onClick={() => setMobileCommunityFiltersOpen(false)}
+                />
+              ) : null}
+              <aside
+                className={`order-1 space-y-3 p-3 shadow-sm transition-transform duration-300 ease-out sm:space-y-4 sm:p-4 lg:order-none lg:sticky lg:top-24 lg:rounded-2xl lg:border lg:border-neutral-200/80 lg:bg-neutral-50/40 dark:lg:border-slate-600 dark:lg:bg-slate-900/50 ${
+                  mobileCommunityFiltersOpen
+                    ? "fixed inset-y-0 left-0 z-[95] w-[88vw] max-w-[21rem] overflow-y-auto rounded-r-2xl border-r border-neutral-200 bg-white/98 pt-[max(0.6rem,env(safe-area-inset-top))] shadow-[0_20px_60px_rgba(15,23,42,0.28)] translate-x-0 dark:border-slate-700 dark:bg-slate-900/98"
+                    : "fixed inset-y-0 left-0 z-[95] w-[88vw] max-w-[21rem] overflow-y-auto rounded-r-2xl border-r border-neutral-200 bg-white/98 pt-[max(0.6rem,env(safe-area-inset-top))] shadow-[0_20px_60px_rgba(15,23,42,0.28)] -translate-x-full dark:border-slate-700 dark:bg-slate-900/98"
+                } lg:static lg:z-auto lg:w-auto lg:max-w-none lg:translate-x-0 lg:overflow-visible`}
+              >
+                  <div className="sticky top-0 z-10 mb-2 flex items-center justify-between rounded-xl border border-neutral-200/80 bg-white/95 px-3 py-2 backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95 lg:hidden">
+                    <div>
+                      <p className="text-sm font-semibold text-neutral-900 dark:text-slate-100">Filters</p>
+                      <p className="text-[11px] text-neutral-500 dark:text-slate-400">Browse and categories</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-300 text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                      aria-label="Close filters drawer"
+                      onClick={() => setMobileCommunityFiltersOpen(false)}
+                    >
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M18 6 6 18M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
                   <div>
-                    <p className="mb-1.5 px-0.5 text-xs font-semibold text-neutral-500 dark:text-slate-400 sm:mb-2">Browse</p>
-                    <div className="grid grid-cols-3 gap-2 lg:flex lg:flex-col lg:gap-1.5">
+                    <p className="mb-1.5 flex items-center gap-1.5 px-0.5 text-xs font-semibold text-neutral-500 dark:text-slate-400 sm:mb-2">
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 5h7v6H3zM14 5h7v6h-7zM14 14h7v6h-7zM3 14h7v6H3z" />
+                      </svg>
+                      Browse
+                    </p>
+                    <div className="grid grid-cols-1 gap-2 lg:flex lg:flex-col lg:gap-1.5">
                     {BROWSE_QUICK_FILTERS.map((filter) => (
                       <button
                         key={filter.id}
                         type="button"
-                        className={`min-h-[2.75rem] w-full rounded-xl border px-2 py-2 text-center text-xs font-medium leading-tight transition sm:px-3 sm:py-2.5 sm:text-left sm:text-sm ${
+                        className={`min-h-[2.75rem] w-full rounded-xl border px-3 py-2.5 text-left text-sm font-medium leading-tight transition ${
                           browseQuickFilter === filter.id
                             ? "border-brand-primary/50 bg-white text-brand-primary shadow-sm ring-1 ring-brand-primary/15 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-primary/20"
                             : "border-transparent bg-white/80 text-neutral-700 hover:border-neutral-200 hover:bg-white dark:bg-slate-800/60 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-800"
@@ -2822,20 +3868,30 @@ function App() {
                             setSelectedListingId(null);
                             navigate("/", { replace: true });
                             setActiveView(VIEWS.COMMUNITY_SHOP);
+                            setMobileCommunityFiltersOpen(false);
                             return;
                           }
                           setBrowseQuickFilter(filter.id);
                           setSelectedListingId(null);
+                          setMobileCommunityFiltersOpen(false);
                         }}
                       >
-                        {filter.label}
+                        <span className="inline-flex items-center gap-1.5">
+                          {quickFilterIcon(filter.id)}
+                          <span>{filter.label}</span>
+                        </span>
                       </button>
                     ))}
                     </div>
                   </div>
                   <div className="border-t border-neutral-200/80 pt-3 dark:border-slate-700 sm:pt-4">
-                    <p className="mb-1.5 px-0.5 text-xs font-semibold text-neutral-500 dark:text-slate-400 sm:mb-2">Categories</p>
-                    <div className="flex max-h-[min(36vh,13rem)] flex-col gap-1 overflow-y-auto overscroll-contain pr-0.5 [-webkit-overflow-scrolling:touch] sm:max-h-[min(42vh,17rem)] lg:max-h-[min(52vh,22rem)]">
+                    <p className="mb-1.5 flex items-center gap-1.5 px-0.5 text-xs font-semibold text-neutral-500 dark:text-slate-400 sm:mb-2">
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                      </svg>
+                      Categories
+                    </p>
+                    <div className="flex flex-col gap-1 pr-0.5">
                     {VERTICALS.map((v) => {
                       const allSub = v.subs.find((s) => s.id === "all") ?? v.subs[0];
                       const isActive = browseVerticalId === v.id;
@@ -2843,48 +3899,39 @@ function App() {
                         <button
                           key={v.id}
                           type="button"
-                          className={`min-h-[2.625rem] w-full rounded-xl border px-2.5 py-2 text-left text-xs font-medium leading-snug transition sm:px-3 sm:py-2.5 sm:text-sm ${
+                          className={`min-h-[2.625rem] w-full rounded-xl border px-3 py-2.5 text-left text-sm font-medium leading-snug transition ${
                             isActive
                               ? "border-brand-primary/50 bg-white text-brand-primary shadow-sm ring-1 ring-brand-primary/15 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-primary/20"
                               : "border-transparent bg-white/80 text-neutral-800 hover:border-neutral-200 hover:bg-white dark:bg-slate-800/60 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-800"
                           }`}
-                          onClick={() => pickBrowseScope(v.id, allSub?.id ?? null)}
+                          onClick={() => {
+                            pickBrowseScope(v.id, allSub?.id ?? null);
+                            setMobileCommunityFiltersOpen(false);
+                          }}
                         >
-                          {v.label}
+                          <span className="inline-flex items-center gap-1.5">
+                            {categoryIcon(v.id || v.label)}
+                            <span>{v.label}</span>
+                          </span>
                         </button>
                       );
                     })}
                     </div>
                   </div>
-                  <div className="border-t border-neutral-200/80 pt-3 dark:border-slate-700 sm:pt-4">
-                    <p className="mb-1.5 px-0.5 text-xs font-semibold text-neutral-500 dark:text-slate-400 sm:mb-2">Location</p>
-                    <div className="rounded-xl border border-neutral-200/70 bg-white px-2.5 py-2 text-left text-xs font-medium leading-snug text-neutral-800 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100 sm:px-3 sm:py-2.5 sm:text-sm">
-                      {activeCommunity?.id
-                        ? formatCommunityMarketplaceSubtitle(activeCommunity)
-                        : toTitleCase(String(user?.city || "").trim()) || "Calamba, Laguna"}
-                    </div>
-                    {activeCommunity?.id ? (
-                      <p className="mt-1.5 px-0.5 text-xs text-neutral-600 dark:text-slate-400">
-                        Members:{" "}
-                        <span className="font-medium text-neutral-800 dark:text-slate-200">
-                          {Number.isFinite(Number(activeCommunity.memberCount))
-                            ? Number(activeCommunity.memberCount)
-                            : 0}
-                        </span>
-                      </p>
-                    ) : null}
-                  </div>
                 </aside>
               <div className="order-2 min-w-0 space-y-3 sm:space-y-4 lg:order-none">
-                {shopCommunityId && browseVerticalId == null ? (
-                  <div className="rounded-xl border border-neutral-200/80 bg-white/90 px-3 py-2.5 text-xs leading-relaxed text-neutral-700 shadow-sm dark:border-slate-600 dark:bg-slate-800/50 dark:text-slate-200 sm:px-4 sm:py-3 sm:text-sm">
-                    <span className="font-medium text-neutral-900 dark:text-slate-100">All categories</span>
-                    <span className="text-neutral-600 dark:text-slate-400">
-                      {" "}
-                      — every listing in this community. Tap a category above to filter.
-                    </span>
-                  </div>
-                ) : null}
+                <div className="lg:hidden">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-xl border border-neutral-300/90 bg-white px-3.5 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                    onClick={() => setMobileCommunityFiltersOpen(true)}
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M7 12h10M10 18h4" />
+                    </svg>
+                    Browse & Categories
+                  </button>
+                </div>
                 {listingDetail && selectedListingId ? (
                   <div className="space-y-4 rounded-xl border border-brand-primary/25 bg-brand-soft/20 p-4 dark:border-slate-600 dark:bg-slate-900/50">
                     <div className="flex flex-wrap items-start justify-between gap-2">
@@ -2984,7 +4031,7 @@ function App() {
                     <p className="mt-2 max-w-md text-xs leading-relaxed text-neutral-600 dark:text-slate-400 sm:text-sm">
                       {shopCommunityId
                         ? browseVerticalId == null
-                          ? "Nothing has been posted in this community shop yet. Publish from Profile → My listings (with this community open in Marketplace, or your profile address matching this place)."
+                          ? "Nothing has been posted in this community shop yet. Publish while this community is open, or match your profile address to this community."
                           : "No active listings in this category here yet. Try another category, or add a listing under My listings for this community."
                         : browseVerticalId == null
                           ? "No active listings yet."
@@ -3078,10 +4125,60 @@ function App() {
             <div>
               <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My listings</h2>
               <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
-                Publish items for your neighborhood. Prices are in PHP; buyers pay COD at pickup or delivery. No wallet in the app.
+                Sell to your local community. Buyers pay COD via pickup or delivery.
               </p>
             </div>
             <form onSubmit={handleCreateListing} className="grid gap-4 rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 dark:border-slate-600 dark:bg-slate-900/40 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Image (optional)</label>
+                <div
+                  className={`flex min-h-[8.5rem] flex-col items-center justify-center gap-2 rounded-xl border border-dashed bg-white/80 px-3 py-3 text-sm transition dark:bg-slate-900/60 ${
+                    listingImageDragActive
+                      ? "border-brand-primary text-brand-primary dark:border-brand-accent dark:text-brand-accent"
+                      : "border-neutral-300 text-neutral-500 dark:border-slate-600 dark:text-slate-400"
+                  }`}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setListingImageDragActive(true);
+                  }}
+                  onDragLeave={() => setListingImageDragActive(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setListingImageDragActive(false);
+                    const file = e.dataTransfer?.files?.[0];
+                    if (file) setListingImage(file);
+                  }}
+                >
+                  {listingImagePreviewUrl ? (
+                    <>
+                      <img src={listingImagePreviewUrl} alt="Selected listing" className="max-h-28 rounded-lg object-cover" />
+                      <p className="text-xs text-neutral-600 dark:text-slate-400">{listingImageFile?.name || "Selected image"}</p>
+                    </>
+                  ) : (
+                    <>
+                      <p>Drag a photo here</p>
+                      <p className="text-xs">or</p>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    onClick={() => listingImageInputRef.current?.click()}
+                  >
+                    Browse
+                  </button>
+                  <input
+                    ref={listingImageInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) setListingImage(file);
+                    }}
+                  />
+                </div>
+              </div>
               <div className="md:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Product</label>
                 <input
@@ -3093,6 +4190,22 @@ function App() {
                 />
               </div>
               <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Categories</label>
+                <select
+                  className="input-base w-full"
+                  value={listingForm.categories}
+                  onChange={(e) => setListingForm((p) => ({ ...p, categories: e.target.value }))}
+                  required
+                >
+                  <option value="">Select a category</option>
+                  {VERTICALS.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Description (optional)</label>
                 <textarea
                   className="input-base min-h-[5rem] w-full"
@@ -3101,7 +4214,7 @@ function App() {
                   rows={3}
                 />
               </div>
-              <div className="md:col-span-2 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="md:col-span-2 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="min-w-0">
                   <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Price (PHP)</label>
                   <input
@@ -3124,112 +4237,83 @@ function App() {
                     placeholder="e.g. 1"
                     value={listingForm.quantity}
                     onChange={(e) => setListingForm((p) => ({ ...p, quantity: e.target.value }))}
+                    required
                   />
                 </div>
-                <div className="min-w-0">
-                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Categories</label>
-                  <select
-                    className="input-base w-full"
-                    value={listingForm.verticalId}
-                    onChange={(e) => setListingForm((p) => ({ ...p, verticalId: e.target.value }))}
-                  >
-                    <option value="">Select a category</option>
-                    {VERTICALS.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="md:col-span-2">
-                {shopCommunityId ? (
-                  <p className="text-sm text-neutral-700 dark:text-slate-300">
-                    <span className="font-medium text-neutral-900 dark:text-slate-100">Community:</span>{" "}
-                    {toTitleCase(activeCommunity?.name?.trim()) || "This community"} — listing will only show in this community shop.
-                  </p>
-                ) : (
-                  <>
-                    <p className="text-sm text-neutral-700 dark:text-slate-300">
-                      <span className="font-medium text-neutral-900 dark:text-slate-100">Brgy/Community/Subdivision:</span>{" "}
-                      {profileBrgyCommunitySubdivision.trim() || "—"}
-                      {listingCommunityFromProfile.id ? (
-                        <>
-                          {" "}
-                          — listings publish to{" "}
-                          <span className="font-medium text-neutral-900 dark:text-slate-100">
-                            {listingCommunityFromProfile.matchedName || "Community"}
-                          </span>
-                          .
-                        </>
-                      ) : profileBrgyCommunitySubdivision.trim() ? (
-                        <span className="text-amber-900 dark:text-amber-100/90">
-                          {" "}
-                          — no community with this name yet. Add it from the marketplace, then publish.
-                        </span>
-                      ) : (
-                        <span className="text-neutral-600 dark:text-slate-400">
-                          {" "}
-                          — set this under Profile → Address to link listings to your community shop.
-                        </span>
-                      )}
-                    </p>
-                    {!communitiesLoading && communities.length === 0 ? (
-                      <p className="mt-2 text-sm text-amber-800 dark:text-amber-200/90">
-                        No communities yet. Create one from the marketplace browse screen, then publish here.
-                      </p>
-                    ) : null}
-                  </>
-                )}
               </div>
               <div className="flex flex-wrap items-center gap-4 md:col-span-2">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={listingForm.pickup}
-                    onChange={(e) => setListingForm((p) => ({ ...p, pickup: e.target.checked }))}
-                  />
-                  Pickup
-                </label>
+                <span className="text-sm font-medium text-neutral-700 dark:text-slate-300">Available:</span>
                 <label className="inline-flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     checked={listingForm.delivery}
                     onChange={(e) => setListingForm((p) => ({ ...p, delivery: e.target.checked }))}
                   />
-                  Delivery (COD bids)
+                  COD
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={listingForm.pickup}
+                    onChange={(e) => setListingForm((p) => ({ ...p, pickup: e.target.checked }))}
+                  />
+                  Pick-up
                 </label>
               </div>
               <div className="md:col-span-2">
-                <button
-                  type="submit"
-                  className="btn-primary"
-                  disabled={
-                    listingSaving ||
-                    !profileBrgyCommunitySubdivision.trim() ||
-                    (!shopCommunityId && (communitiesLoading || !listingCommunityFromProfile.id))
-                  }
-                >
-                  {listingSaving ? "Publishing…" : "Publish listing"}
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={listingSaving}
+                  >
+                    {listingSaving ? (editingListingId ? "Saving…" : "Publishing…") : editingListingId ? "Save changes" : "Publish listing"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={listingSaving}
+                    onClick={() => {
+                      setListingForm({
+                        title: "",
+                        description: "",
+                        pricePesos: "",
+                        quantity: "",
+                        categories: "",
+                        subId: "all",
+                        pickup: true,
+                        delivery: true,
+                      });
+                      setListingImageFile(null);
+                      if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+                      setListingImagePreviewUrl("");
+                      setEditingListingId(null);
+                      setMarketplaceMessage("");
+                      setSellerTab(SELLER_TABS.PRODUCTS);
+                      setActiveView(VIEWS.PROFILE);
+                      navigate("/", { replace: true });
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {marketplaceMessage ? (
+                  <div
+                    className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200/90 bg-amber-50/90 px-3 py-2 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100"
+                    role="status"
+                  >
+                    <span>{marketplaceMessage}</span>
+                    <button
+                      type="button"
+                      className="text-xs font-semibold text-amber-800 underline dark:text-amber-200"
+                      onClick={() => setMarketplaceMessage("")}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </form>
-            <div>
-              <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">Your listings</h3>
-              <ul className="mt-3 divide-y divide-neutral-200 rounded-xl border border-neutral-200 dark:divide-slate-700 dark:border-slate-600">
-                {sellerListings.length === 0 ? (
-                  <li className="px-4 py-6 text-sm text-neutral-500 dark:text-slate-400">No listings yet.</li>
-                ) : null}
-                {sellerListings.map((l) => (
-                  <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
-                    <span className="font-medium text-neutral-900 dark:text-slate-100">{l.title}</span>
-                    <span className="text-neutral-600 dark:text-slate-400">
-                      {formatCents(l.priceCents)} · {l.status}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
           </section>
         )}
 
@@ -3408,10 +4492,10 @@ function App() {
               profileEditing ? (
                 <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
                   <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.25)] dark:border-slate-600 dark:bg-slate-900">
-                <form onSubmit={handleProfileSubmit} noValidate className="space-y-6">
-                  <div className="grid grid-cols-1 items-end gap-4 rounded-2xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50 p-5 shadow-sm ring-1 ring-neutral-100/80 dark:border-slate-700/80 dark:from-slate-900 dark:to-slate-900/70 dark:ring-slate-800/80 md:grid-cols-[auto_minmax(13rem,1fr)_minmax(16rem,1fr)]">
-                    <div className="flex flex-col items-start gap-2">
-                      <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-xl font-bold text-brand-primary ring-1 ring-brand-border">
+                <form onSubmit={handleProfileSubmit} noValidate className="space-y-3">
+                  <div className="grid grid-cols-1 items-end gap-4 rounded-2xl border border-neutral-200/80 bg-gradient-to-br from-white to-neutral-50 p-5 shadow-sm ring-1 ring-neutral-100/80 dark:border-slate-700/80 dark:from-slate-900 dark:to-slate-900/70 dark:ring-slate-800/80 md:grid-cols-[auto_minmax(12rem,1fr)_minmax(14rem,1fr)]">
+                    <div className="relative h-16 w-16 shrink-0 md:row-span-2 md:self-start">
+                      <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-xl font-bold text-brand-primary ring-1 ring-brand-border">
                         {profileDraft.avatarUrl ? (
                           <img src={profileDraft.avatarUrl} alt="Profile avatar preview" className="h-full w-full object-cover" />
                         ) : (
@@ -3427,13 +4511,16 @@ function App() {
                       />
                       <button
                         type="button"
-                        className="btn-secondary !px-3 !py-1.5 text-xs"
+                        aria-label="Change photo"
+                        className="absolute -bottom-1 -right-1 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white bg-neutral-900 text-white shadow-md transition hover:bg-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary dark:border-slate-900 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
                         onClick={() => profileAvatarInputRef.current?.click()}
                       >
-                        Change photo
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m-7-7h14" />
+                        </svg>
                       </button>
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 md:order-1">
                       <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-username-inline">
                         Username
                       </label>
@@ -3443,12 +4530,65 @@ function App() {
                         type="text"
                         className="input-base h-9 min-w-[13rem] text-sm font-semibold"
                         value={profileDraft.username}
-                        onChange={(e) => setProfileDraft((prev) => ({ ...prev, username: e.target.value }))}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setProfileDraft((prev) => ({ ...prev, username: value }));
+                          setProfileFieldErrors((prev) => ({ ...prev, username: "" }));
+                        }}
                         required
                         minLength={3}
                       />
+                      {profileFieldErrors.username ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.username}</p> : null}
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 md:order-4">
+                      <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-community-inline">
+                        Community
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="profile-community-inline"
+                          name="community"
+                          type="text"
+                          autoComplete="address-line1"
+                          role="combobox"
+                          aria-autocomplete="list"
+                          aria-expanded={profileBrgySuggestOpen && profileBrgyCommunitySuggestions.length > 0}
+                          aria-controls="profile-brgy-suggestions-list"
+                          className="input-base h-9 w-full cursor-default border-0 text-sm read-only:border-0 read-only:bg-neutral-50 read-only:text-neutral-700 dark:read-only:bg-slate-900/50 dark:read-only:text-slate-300"
+                          value={profileDraft.community}
+                          placeholder="No community yet. Join one from Communities."
+                          readOnly
+                          aria-readonly="true"
+                        />
+                      </div>
+                    </div>
+                    <div className="min-w-0 md:order-3">
+                      <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-phone-inline">
+                        Phone number
+                      </label>
+                      <div className="input-base flex h-9 items-center gap-2 px-3 text-sm">
+                        <span className="shrink-0 text-neutral-600 dark:text-slate-300">+63</span>
+                        <input
+                          id="profile-phone-inline"
+                          name="phone"
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="tel-national"
+                          className="w-full border-0 bg-transparent p-0 text-sm outline-none placeholder:text-neutral-400 dark:placeholder:text-slate-500"
+                          value={profileDraft.phone}
+                          placeholder="9XXXXXXXXX"
+                          maxLength={10}
+                          required
+                          onChange={(e) => {
+                            const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
+                            setProfileDraft((prev) => ({ ...prev, phone: digits }));
+                            setProfileFieldErrors((prev) => ({ ...prev, phone: "" }));
+                          }}
+                        />
+                      </div>
+                      {profileFieldErrors.phone ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.phone}</p> : null}
+                    </div>
+                    <div className="min-w-0 md:order-2">
                       <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-email-inline">
                         Email
                       </label>
@@ -3484,17 +4624,24 @@ function App() {
                           className="input-base mt-1"
                           autoComplete="given-name"
                           value={profileDraft.firstName}
-                          onChange={(e) => setProfileDraft((prev) => ({ ...prev, firstName: e.target.value }))}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setProfileDraft((prev) => ({ ...prev, firstName: value }));
+                            setProfileFieldErrors((prev) => ({ ...prev, firstName: "" }));
+                          }}
                           required
                           minLength={2}
                         />
+                        {profileFieldErrors.firstName ? (
+                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.firstName}</p>
+                        ) : null}
                       </div>
                       <div className="min-w-0">
                         <label
                           className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400"
                           htmlFor="profile-middle-name"
                         >
-                          Middle <span className="font-normal text-neutral-500 dark:text-slate-500">(optional)</span>
+                          Middle name
                         </label>
                         <input
                           id="profile-middle-name"
@@ -3502,8 +4649,15 @@ function App() {
                           className="input-base mt-1"
                           autoComplete="additional-name"
                           value={profileDraft.middleName}
-                          onChange={(e) => setProfileDraft((prev) => ({ ...prev, middleName: e.target.value }))}
+                          onChange={(e) => {
+                            setProfileDraft((prev) => ({ ...prev, middleName: e.target.value }));
+                            setProfileFieldErrors((prev) => ({ ...prev, middleName: "" }));
+                          }}
+                          required
                         />
+                        {profileFieldErrors.middleName ? (
+                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.middleName}</p>
+                        ) : null}
                       </div>
                       <div className="min-w-0">
                         <label
@@ -3518,39 +4672,100 @@ function App() {
                           className="input-base mt-1"
                           autoComplete="family-name"
                           value={profileDraft.lastName}
-                          onChange={(e) => setProfileDraft((prev) => ({ ...prev, lastName: e.target.value }))}
+                          onChange={(e) => {
+                            setProfileDraft((prev) => ({ ...prev, lastName: e.target.value }));
+                            setProfileFieldErrors((prev) => ({ ...prev, lastName: "" }));
+                          }}
+                          required
                           minLength={0}
                         />
+                        {profileFieldErrors.lastName ? (
+                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.lastName}</p>
+                        ) : null}
                       </div>
                     </div>
-                  </div>
-                  <div className="space-y-3 rounded-2xl border border-neutral-200/80 bg-white p-4 shadow-sm ring-1 ring-neutral-100/80 dark:border-slate-700/80 dark:bg-slate-900/70 dark:ring-slate-800/80">
-                    <button
-                      type="button"
-                      className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition ${
-                        profilePreferencesExpanded
-                          ? "bg-transparent shadow-none"
-                          : "bg-neutral-50 shadow-sm hover:bg-neutral-100 dark:bg-slate-800/60 dark:hover:bg-slate-800"
-                      }`}
-                      onClick={() => setProfilePreferencesExpanded((prev) => !prev)}
-                      aria-expanded={profilePreferencesExpanded}
-                      aria-controls="profile-preferences-fields"
-                    >
+                    <div className="mt-4 border-t border-neutral-200/80 pt-4 dark:border-slate-700/80">
                       <span className="block text-sm font-semibold tracking-tight text-neutral-900 dark:text-slate-100">Preferences</span>
-                      <span
-                        className={`inline-flex h-7 w-7 items-center justify-center rounded-lg text-neutral-500 dark:text-slate-300 ${
-                          profilePreferencesExpanded
-                            ? "border border-neutral-200 bg-transparent dark:border-slate-600"
-                            : "border border-transparent bg-neutral-50 dark:bg-slate-800/60"
-                        }`}
-                      >
-                        <ChevronDownIcon className={`h-4 w-4 transition-transform ${profilePreferencesExpanded ? "rotate-180" : ""}`} />
-                      </span>
-                    </button>
-                    {profilePreferencesExpanded ? (
-                      <div id="profile-preferences-fields" className="space-y-4 border-t border-neutral-200/80 pt-3 dark:border-slate-700/80">
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-x-4">
-                        <div className="min-w-0">
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-8 md:items-end md:gap-x-3">
+                        <div className="min-w-0 md:col-span-2">
+                          <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-gender">
+                            Gender
+                          </label>
+                          <select
+                            id="profile-gender"
+                            name="gender"
+                            className="input-base mt-1 w-full"
+                            value={profileDraft.gender}
+                            onChange={(e) => {
+                              setProfileDraft((prev) => ({ ...prev, gender: e.target.value }));
+                              setProfileFieldErrors((prev) => ({ ...prev, gender: "" }));
+                            }}
+                            required
+                          >
+                            <option value="">Select gender</option>
+                            {PROFILE_GENDER_OPTIONS.map(([value, label]) => (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            ))}
+                          </select>
+                          {profileFieldErrors.gender ? (
+                            <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.gender}</p>
+                          ) : null}
+                        </div>
+                        <div className="min-w-0 md:col-span-4">
+                          <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-birthday">
+                            Birthday
+                          </label>
+                          <div
+                            className="relative mt-1"
+                            onClick={() => {
+                              const input = profileBirthdayInputRef.current;
+                              if (!input) return;
+                              if (typeof input.showPicker === "function") input.showPicker();
+                              else input.focus();
+                            }}
+                          >
+                            <input
+                              id="profile-birthday-display"
+                              type="text"
+                              className="input-base pointer-events-none w-full cursor-pointer pr-11"
+                              value={profileDraft.birthday ? formatBirthdayDisplay(profileDraft.birthday) : ""}
+                              placeholder="Select birthday"
+                              readOnly
+                              aria-readonly="true"
+                            />
+                            <span className="pointer-events-none absolute inset-y-0 right-3 inline-flex items-center text-neutral-500 dark:text-slate-400">
+                              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                                <line x1="16" y1="2" x2="16" y2="6" />
+                                <line x1="8" y1="2" x2="8" y2="6" />
+                                <line x1="3" y1="10" x2="21" y2="10" />
+                              </svg>
+                            </span>
+                            <input
+                              ref={profileBirthdayInputRef}
+                              id="profile-birthday"
+                              name="birthday"
+                              type="date"
+                              className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+                              max={todayIsoDate}
+                              value={profileDraft.birthday}
+                              onChange={(e) => {
+                                const birthday = e.target.value;
+                                const computed = computeAgeFromBirthday(birthday);
+                                setProfileDraft((prev) => ({ ...prev, birthday, age: computed === "" ? "" : String(computed) }));
+                                setProfileFieldErrors((prev) => ({ ...prev, birthday: "", age: "" }));
+                              }}
+                              aria-label="Birthday date picker"
+                              required
+                            />
+                          </div>
+                          {profileFieldErrors.birthday ? (
+                            <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.birthday}</p>
+                          ) : null}
+                        </div>
+                        <div className="min-w-0 md:col-span-2">
                           <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-age">
                             Age
                           </label>
@@ -3560,252 +4775,400 @@ function App() {
                             type="number"
                             min={13}
                             max={120}
-                            className="input-base mt-1"
+                            className="input-base mt-1 w-full cursor-default bg-neutral-100/90 dark:bg-slate-800/80"
                             value={profileDraft.age}
-                            onChange={(e) => setProfileDraft((prev) => ({ ...prev, age: e.target.value }))}
+                            placeholder="Auto-computed from birthday"
+                            readOnly
+                            aria-readonly="true"
                           />
+                          {profileFieldErrors.age ? (
+                            <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.age}</p>
+                          ) : null}
                         </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 space-y-4 border-t border-neutral-200/80 pt-4 dark:border-slate-700/80">
+                      <span className="block text-sm font-semibold tracking-tight text-neutral-900 dark:text-slate-100">Address</span>
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-x-4">
                         <div className="min-w-0">
-                          <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-education">
-                            Education
-                          </label>
+                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-house-street">
+                          House Number &amp; Street
+                        </label>
+                        <input
+                          id="profile-address-house-street"
+                          name="addressHouseStreet"
+                          type="text"
+                          autoComplete="address-line1"
+                          className="input-base mt-1"
+                          value={profileDraft.addressHouseStreet}
+                          onChange={(e) => {
+                            setProfileDraft((prev) => ({ ...prev, addressHouseStreet: e.target.value }));
+                            setProfileFieldErrors((prev) => ({ ...prev, addressHouseStreet: "" }));
+                          }}
+                          required
+                        />
+                        {profileFieldErrors.addressHouseStreet ? (
+                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressHouseStreet}</p>
+                        ) : null}
+                      </div>
+                        <div className="min-w-0">
+                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-subdivision">
+                          Subdivision
+                        </label>
+                        <input
+                          id="profile-address-subdivision"
+                          name="addressSubdivision"
+                          type="text"
+                          autoComplete="off"
+                          className="input-base mt-1"
+                          value={profileDraft.addressSubdivision}
+                          onChange={(e) => {
+                            setProfileDraft((prev) => ({ ...prev, addressSubdivision: e.target.value }));
+                            setProfileFieldErrors((prev) => ({ ...prev, addressSubdivision: "" }));
+                          }}
+                          required
+                        />
+                        {profileFieldErrors.addressSubdivision ? (
+                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressSubdivision}</p>
+                        ) : null}
+                      </div>
+                        <div className="min-w-0">
+                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-province">
+                          Province
+                        </label>
+                        <div className="relative">
                           <input
-                            id="profile-education"
-                            name="education"
+                            id="profile-address-province"
+                            name="addressProvince"
                             type="text"
                             autoComplete="off"
                             className="input-base mt-1"
-                            placeholder="e.g. BS Computer Science"
-                            value={profileDraft.education}
-                            onChange={(e) => setProfileDraft((prev) => ({ ...prev, education: e.target.value }))}
-                          />
-                        </div>
-                        </div>
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-8 md:gap-x-4">
-                    <div className="min-w-0 md:col-span-2">
-                      <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-gender">
-                        Gender
-                      </label>
-                      <select
-                        id="profile-gender"
-                        name="gender"
-                        className="input-base mt-1"
-                        value={profileDraft.gender}
-                        onChange={(e) => setProfileDraft((prev) => ({ ...prev, gender: e.target.value }))}
-                      >
-                        <option value="">Not specified</option>
-                        {PROFILE_GENDER_OPTIONS.map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="min-w-0 md:col-span-2">
-                      <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-birthday">
-                        Birthday
-                      </label>
-                      <input
-                        id="profile-birthday"
-                        name="birthday"
-                        type="date"
-                        className="input-base mt-1"
-                        value={profileDraft.birthday}
-                        onChange={(e) => setProfileDraft((prev) => ({ ...prev, birthday: e.target.value }))}
-                      />
-                    </div>
-                    <div className="min-w-0 md:col-span-4">
-                      <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-phone">
-                        Phone number
-                      </label>
-                      <input
-                        id="profile-phone"
-                        name="phone"
-                        type="tel"
-                        inputMode="tel"
-                        autoComplete="tel"
-                        className="input-base mt-1"
-                        value={profileDraft.phone}
-                        onChange={(e) => setProfileDraft((prev) => ({ ...prev, phone: e.target.value }))}
-                      />
-                    </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="space-y-3 rounded-2xl border border-neutral-200/80 bg-white p-4 shadow-sm ring-1 ring-neutral-100/80 dark:border-slate-700/80 dark:bg-slate-900/70 dark:ring-slate-800/80">
-                    <button
-                      type="button"
-                      className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition ${
-                        profileAddressExpanded
-                          ? "bg-transparent shadow-none"
-                          : "bg-neutral-50 shadow-sm hover:bg-neutral-100 dark:bg-slate-800/60 dark:hover:bg-slate-800"
-                      }`}
-                      onClick={() => setProfileAddressExpanded((prev) => !prev)}
-                      aria-expanded={profileAddressExpanded}
-                      aria-controls="profile-address-fields"
-                    >
-                      <span className="block text-sm font-semibold tracking-tight text-neutral-900 dark:text-slate-100">Address</span>
-                      <span
-                        className={`inline-flex h-7 w-7 items-center justify-center rounded-lg text-neutral-500 dark:text-slate-300 ${
-                          profileAddressExpanded
-                            ? "border border-neutral-200 bg-transparent dark:border-slate-600"
-                            : "border border-transparent bg-neutral-50 dark:bg-slate-800/60"
-                        }`}
-                      >
-                        <ChevronDownIcon className={`h-4 w-4 transition-transform ${profileAddressExpanded ? "rotate-180" : ""}`} />
-                      </span>
-                    </button>
-                    {profileAddressExpanded ? (
-                      <div id="profile-address-fields" className="mt-2 space-y-4 border-t border-neutral-200/80 pt-3 dark:border-slate-700/80">
-                      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-x-4">
-                        <div className="min-w-0">
-                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-apartment">
-                          Brgy/Community/Subdivision
-                        </label>
-                        <div className="relative mt-1">
-                          <input
-                            id="profile-address-apartment"
-                            name="addressApartment"
-                            type="text"
-                            autoComplete="address-line1"
-                            role="combobox"
-                            aria-autocomplete="list"
-                            aria-expanded={profileBrgySuggestOpen && profileBrgyCommunitySuggestions.length > 0}
-                            aria-controls="profile-brgy-suggestions-list"
-                            className="input-base w-full"
-                            value={profileDraft.addressApartment}
+                            value={profileDraft.addressProvince}
                             onChange={(e) => {
-                              if (profileBrgySuggestBlurTimerRef.current) {
-                                clearTimeout(profileBrgySuggestBlurTimerRef.current);
-                                profileBrgySuggestBlurTimerRef.current = null;
-                              }
-                              setProfileDraft((prev) => ({ ...prev, addressApartment: e.target.value }));
-                              setProfileBrgySuggestOpen(true);
+                              const typedProvince = e.target.value;
+                              const normalized = typedProvince.trim().toLowerCase();
+                              const exact = profileProvinceOptions.find(
+                                (provinceName) => provinceName.toLowerCase() === normalized,
+                              );
+                              const province = exact || typedProvince;
+                              setProfileDraft((prev) => ({
+                                ...prev,
+                                addressProvince: province,
+                                addressCity: "",
+                                addressBarangay: "",
+                                addressPostalCode: "",
+                              }));
+                              setProfileFieldErrors((prev) => ({ ...prev, addressProvince: "", addressCity: "", addressBarangay: "", addressPostalCode: "" }));
+                              setProfileProvinceSuggestOpen(true);
                             }}
                             onFocus={() => {
-                              if (profileBrgySuggestBlurTimerRef.current) {
-                                clearTimeout(profileBrgySuggestBlurTimerRef.current);
-                                profileBrgySuggestBlurTimerRef.current = null;
+                              if (profileProvinceSuggestBlurTimerRef.current) {
+                                clearTimeout(profileProvinceSuggestBlurTimerRef.current);
+                                profileProvinceSuggestBlurTimerRef.current = null;
                               }
-                              if (profileBrgyCommunitySuggestions.length > 0) setProfileBrgySuggestOpen(true);
+                              setProfileProvinceSuggestOpen(true);
                             }}
-                            onBlur={() => {
-                              profileBrgySuggestBlurTimerRef.current = window.setTimeout(() => {
-                                setProfileBrgySuggestOpen(false);
-                                profileBrgySuggestBlurTimerRef.current = null;
-                              }, 180);
+                            onBlur={(e) => {
+                              profileProvinceSuggestBlurTimerRef.current = window.setTimeout(() => {
+                                const raw = String(e.target.value || "").trim();
+                                if (!raw) {
+                                  setProfileProvinceSuggestOpen(false);
+                                  return;
+                                }
+                                const lower = raw.toLowerCase();
+                                const exact = PH_PROVINCE_OPTIONS.find((name) => name.toLowerCase() === lower);
+                                const startsWithMatch = PH_PROVINCE_OPTIONS.find((name) =>
+                                  name.toLowerCase().startsWith(lower),
+                                );
+                                const containsMatch = PH_PROVINCE_OPTIONS.find((name) =>
+                                  name.toLowerCase().includes(lower),
+                                );
+                                const nearest =
+                                  exact ||
+                                  startsWithMatch ||
+                                  containsMatch ||
+                                  PH_PROVINCE_OPTIONS.reduce(
+                                    (best, candidate) => {
+                                      const dist = levenshteinDistance(lower, candidate.toLowerCase());
+                                      if (!best || dist < best.dist) return { name: candidate, dist };
+                                      return best;
+                                    },
+                                    null,
+                                  )?.name ||
+                                  "";
+                                setProfileDraft((prev) => ({
+                                  ...prev,
+                                  addressProvince: nearest,
+                                  addressCity: nearest ? prev.addressCity : "",
+                                  addressBarangay: nearest ? prev.addressBarangay : "",
+                                  addressPostalCode: nearest ? prev.addressPostalCode : "",
+                                }));
+                                setProfileProvinceSuggestOpen(false);
+                                profileProvinceSuggestBlurTimerRef.current = null;
+                              }, 150);
                             }}
                             onKeyDown={(e) => {
                               if (e.key === "Escape") {
                                 e.stopPropagation();
-                                if (profileBrgySuggestBlurTimerRef.current) {
-                                  clearTimeout(profileBrgySuggestBlurTimerRef.current);
-                                  profileBrgySuggestBlurTimerRef.current = null;
+                                if (profileProvinceSuggestBlurTimerRef.current) {
+                                  clearTimeout(profileProvinceSuggestBlurTimerRef.current);
+                                  profileProvinceSuggestBlurTimerRef.current = null;
                                 }
-                                setProfileBrgySuggestOpen(false);
+                                setProfileProvinceSuggestOpen(false);
                               }
                             }}
+                            placeholder="Type or select province"
+                            required
                           />
-                          {profileBrgySuggestOpen && profileBrgyCommunitySuggestions.length > 0 ? (
-                            <ul
-                              id="profile-brgy-suggestions-list"
-                              role="listbox"
-                              className="absolute left-0 right-0 z-[100] mt-1 max-h-48 overflow-auto rounded-lg border border-neutral-200/95 bg-white py-1 text-sm shadow-lg dark:border-slate-600 dark:bg-slate-900"
-                            >
-                              {profileBrgyCommunitySuggestions.map((row) => (
-                                <li key={row.name} role="presentation">
+                          {profileProvinceSuggestOpen && profileProvinceFilteredOptions.length > 0 ? (
+                            <ul className="absolute left-0 right-0 z-[100] mt-1 max-h-56 overflow-auto rounded-lg border border-neutral-200/95 bg-white py-1 text-sm shadow-lg dark:border-slate-600 dark:bg-slate-900">
+                              {profileProvinceFilteredOptions.map((provinceName) => (
+                                <li key={provinceName} role="presentation">
                                   <button
                                     type="button"
-                                    role="option"
                                     className="w-full px-3 py-2 text-left hover:bg-brand-soft/50 dark:hover:bg-slate-800"
                                     onMouseDown={(ev) => {
                                       ev.preventDefault();
-                                      if (profileBrgySuggestBlurTimerRef.current) {
-                                        clearTimeout(profileBrgySuggestBlurTimerRef.current);
-                                        profileBrgySuggestBlurTimerRef.current = null;
+                                      if (profileProvinceSuggestBlurTimerRef.current) {
+                                        clearTimeout(profileProvinceSuggestBlurTimerRef.current);
+                                        profileProvinceSuggestBlurTimerRef.current = null;
                                       }
                                       setProfileDraft((prev) => ({
                                         ...prev,
-                                        addressApartment: row.name,
-                                        addressCity: prev.addressCity.trim()
-                                          ? prev.addressCity
-                                          : row.city || prev.addressCity,
-                                        addressProvince: prev.addressProvince.trim()
-                                          ? prev.addressProvince
-                                          : row.province || prev.addressProvince,
-                                        addressPostalCode: prev.addressPostalCode.trim()
-                                          ? prev.addressPostalCode
-                                          : row.postalCode || prev.addressPostalCode,
+                                        addressProvince: provinceName,
                                       }));
-                                      setProfileBrgySuggestOpen(false);
+                                      setProfileProvinceSuggestOpen(false);
                                     }}
                                   >
-                                    <span className="font-medium text-neutral-900 dark:text-slate-100">{row.name}</span>
-                                    {row.city || row.province ? (
-                                      <span className="mt-0.5 block text-xs text-neutral-500 dark:text-slate-400">
-                                        {[row.city, row.province].filter(Boolean).join(" · ")}
-                                      </span>
-                                    ) : null}
+                                    {provinceName}
                                   </button>
                                 </li>
                               ))}
                             </ul>
                           ) : null}
                         </div>
+                        {profileFieldErrors.addressProvince ? (
+                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressProvince}</p>
+                        ) : null}
                       </div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-4 md:gap-x-4">
                         <div className="min-w-0">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-city">
-                          City
+                          City or Municipality
                         </label>
-                        <input
-                          id="profile-address-city"
-                          name="addressCity"
-                          type="text"
-                          autoComplete="address-level2"
-                          className="input-base mt-1"
-                          value={profileDraft.addressCity}
-                          onChange={(e) => setProfileDraft((prev) => ({ ...prev, addressCity: e.target.value }))}
-                        />
-                      </div>
-                        <div className="min-w-0">
-                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-province">
-                          Province
-                        </label>
-                        <input
-                          id="profile-address-province"
-                          name="addressProvince"
-                          type="text"
-                          autoComplete="address-level1"
-                          className="input-base mt-1"
-                          value={profileDraft.addressProvince}
-                          onChange={(e) => setProfileDraft((prev) => ({ ...prev, addressProvince: e.target.value }))}
-                        />
-                        </div>
-                      </div>
-                      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-x-4">
-                        <div className="min-w-0">
-                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-country">
-                          Country
-                        </label>
-                        <select
-                          id="profile-address-country"
-                          name="addressCountry"
-                          className="input-base mt-1"
-                          value={profileDraft.addressCountry}
-                          onChange={(e) => setProfileDraft((prev) => ({ ...prev, addressCountry: e.target.value }))}
-                        >
-                          {profileDraft.addressCountry && !COUNTRY_OPTIONS.includes(profileDraft.addressCountry) ? (
-                            <option value={profileDraft.addressCountry}>{profileDraft.addressCountry}</option>
+                        <div className="relative">
+                          <input
+                            id="profile-address-city"
+                            name="addressCity"
+                            type="text"
+                            autoComplete="off"
+                            className="input-base mt-1"
+                            value={profileDraft.addressCity}
+                            onChange={(e) => {
+                              const typedCity = e.target.value;
+                              const normalized = typedCity.trim().toLowerCase();
+                              const exact = profileCityOptions.find((cityName) => cityName.toLowerCase() === normalized);
+                              const city = exact || typedCity;
+                              setProfileDraft((prev) => ({
+                                ...prev,
+                                addressCity: city,
+                                addressBarangay: "",
+                                addressPostalCode: "",
+                              }));
+                              setProfileFieldErrors((prev) => ({ ...prev, addressCity: "", addressBarangay: "", addressPostalCode: "" }));
+                              setProfileCitySuggestOpen(true);
+                            }}
+                            onFocus={() => {
+                              if (profileCitySuggestBlurTimerRef.current) {
+                                clearTimeout(profileCitySuggestBlurTimerRef.current);
+                                profileCitySuggestBlurTimerRef.current = null;
+                              }
+                              setProfileCitySuggestOpen(true);
+                            }}
+                            onBlur={(e) => {
+                              profileCitySuggestBlurTimerRef.current = window.setTimeout(() => {
+                                const raw = String(e.target.value || "").trim();
+                                if (!raw) {
+                                  setProfileCitySuggestOpen(false);
+                                  return;
+                                }
+                                const lower = raw.toLowerCase();
+                                const exact = profileCityOptions.find((name) => name.toLowerCase() === lower);
+                                const startsWithMatch = profileCityOptions.find((name) =>
+                                  name.toLowerCase().startsWith(lower),
+                                );
+                                const containsMatch = profileCityOptions.find((name) =>
+                                  name.toLowerCase().includes(lower),
+                                );
+                                const nearest =
+                                  exact ||
+                                  startsWithMatch ||
+                                  containsMatch ||
+                                  profileCityOptions.reduce(
+                                    (best, candidate) => {
+                                      const dist = levenshteinDistance(lower, candidate.toLowerCase());
+                                      if (!best || dist < best.dist) return { name: candidate, dist };
+                                      return best;
+                                    },
+                                    null,
+                                  )?.name ||
+                                  "";
+                                setProfileDraft((prev) => ({
+                                  ...prev,
+                                  addressCity: nearest,
+                                  addressBarangay: nearest ? prev.addressBarangay : "",
+                                  addressPostalCode: nearest ? prev.addressPostalCode : "",
+                                }));
+                                setProfileCitySuggestOpen(false);
+                                profileCitySuggestBlurTimerRef.current = null;
+                              }, 150);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") {
+                                e.stopPropagation();
+                                if (profileCitySuggestBlurTimerRef.current) {
+                                  clearTimeout(profileCitySuggestBlurTimerRef.current);
+                                  profileCitySuggestBlurTimerRef.current = null;
+                                }
+                                setProfileCitySuggestOpen(false);
+                              }
+                            }}
+                            placeholder="Type or select city/municipality"
+                            required
+                          />
+                          {profileCitySuggestOpen && profileCityFilteredOptions.length > 0 ? (
+                            <ul className="absolute left-0 right-0 z-[100] mt-1 max-h-56 overflow-auto rounded-lg border border-neutral-200/95 bg-white py-1 text-sm shadow-lg dark:border-slate-600 dark:bg-slate-900">
+                              {profileCityFilteredOptions.map((cityName) => (
+                                <li key={cityName} role="presentation">
+                                  <button
+                                    type="button"
+                                    className="w-full px-3 py-2 text-left hover:bg-brand-soft/50 dark:hover:bg-slate-800"
+                                    onMouseDown={(ev) => {
+                                      ev.preventDefault();
+                                      if (profileCitySuggestBlurTimerRef.current) {
+                                        clearTimeout(profileCitySuggestBlurTimerRef.current);
+                                        profileCitySuggestBlurTimerRef.current = null;
+                                      }
+                                      setProfileDraft((prev) => ({
+                                        ...prev,
+                                        addressCity: cityName,
+                                      }));
+                                      setProfileCitySuggestOpen(false);
+                                    }}
+                                  >
+                                    {cityName}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
                           ) : null}
-                          <option value="">Select country</option>
-                          {COUNTRY_OPTIONS.map((countryName) => (
-                            <option key={countryName} value={countryName}>
-                              {countryName}
-                            </option>
-                          ))}
-                        </select>
+                        </div>
+                        {profileFieldErrors.addressCity ? (
+                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressCity}</p>
+                        ) : null}
                       </div>
+                        <div className="min-w-0">
+                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-barangay">
+                          Barangay
+                        </label>
+                        <div className="relative">
+                          <input
+                            id="profile-address-barangay"
+                            name="addressBarangay"
+                            type="text"
+                            autoComplete="off"
+                            className="input-base mt-1"
+                            value={profileDraft.addressBarangay}
+                            onChange={(e) => {
+                              const typedBarangay = e.target.value;
+                              const normalized = typedBarangay.trim().toLowerCase();
+                              const exact = profileBarangayOptions.find((name) => name.toLowerCase() === normalized);
+                              setProfileDraft((prev) => ({ ...prev, addressBarangay: exact || typedBarangay }));
+                              setProfileFieldErrors((prev) => ({ ...prev, addressBarangay: "" }));
+                              setProfileBarangaySuggestOpen(true);
+                            }}
+                            onFocus={() => {
+                              if (profileBarangaySuggestBlurTimerRef.current) {
+                                clearTimeout(profileBarangaySuggestBlurTimerRef.current);
+                                profileBarangaySuggestBlurTimerRef.current = null;
+                              }
+                              setProfileBarangaySuggestOpen(true);
+                            }}
+                            onBlur={(e) => {
+                              profileBarangaySuggestBlurTimerRef.current = window.setTimeout(() => {
+                                const raw = String(e.target.value || "").trim();
+                                if (!raw) {
+                                  setProfileBarangaySuggestOpen(false);
+                                  return;
+                                }
+                                const lower = raw.toLowerCase();
+                                const exact = profileBarangayOptions.find((name) => name.toLowerCase() === lower);
+                                const startsWithMatch = profileBarangayOptions.find((name) =>
+                                  name.toLowerCase().startsWith(lower),
+                                );
+                                const containsMatch = profileBarangayOptions.find((name) =>
+                                  name.toLowerCase().includes(lower),
+                                );
+                                const nearest =
+                                  exact ||
+                                  startsWithMatch ||
+                                  containsMatch ||
+                                  profileBarangayOptions.reduce(
+                                    (best, candidate) => {
+                                      const dist = levenshteinDistance(lower, candidate.toLowerCase());
+                                      if (!best || dist < best.dist) return { name: candidate, dist };
+                                      return best;
+                                    },
+                                    null,
+                                  )?.name ||
+                                  "";
+                                setProfileDraft((prev) => ({ ...prev, addressBarangay: nearest }));
+                                setProfileBarangaySuggestOpen(false);
+                                profileBarangaySuggestBlurTimerRef.current = null;
+                              }, 150);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") {
+                                e.stopPropagation();
+                                if (profileBarangaySuggestBlurTimerRef.current) {
+                                  clearTimeout(profileBarangaySuggestBlurTimerRef.current);
+                                  profileBarangaySuggestBlurTimerRef.current = null;
+                                }
+                                setProfileBarangaySuggestOpen(false);
+                              }
+                            }}
+                            placeholder="Type or select barangay"
+                            required
+                          />
+                          {profileBarangaySuggestOpen && profileBarangayFilteredOptions.length > 0 ? (
+                            <ul className="absolute left-0 right-0 z-[100] mt-1 max-h-56 overflow-auto rounded-lg border border-neutral-200/95 bg-white py-1 text-sm shadow-lg dark:border-slate-600 dark:bg-slate-900">
+                              {profileBarangayFilteredOptions.map((barangayName) => (
+                                <li key={barangayName} role="presentation">
+                                  <button
+                                    type="button"
+                                    className="w-full px-3 py-2 text-left hover:bg-brand-soft/50 dark:hover:bg-slate-800"
+                                    onMouseDown={(ev) => {
+                                      ev.preventDefault();
+                                      if (profileBarangaySuggestBlurTimerRef.current) {
+                                        clearTimeout(profileBarangaySuggestBlurTimerRef.current);
+                                        profileBarangaySuggestBlurTimerRef.current = null;
+                                      }
+                                      setProfileDraft((prev) => ({ ...prev, addressBarangay: barangayName }));
+                                      setProfileBarangaySuggestOpen(false);
+                                    }}
+                                  >
+                                    {barangayName}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
+                        {profileFieldErrors.addressBarangay ? (
+                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressBarangay}</p>
+                        ) : null}
+                        </div>
                         <div className="min-w-0">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-postal-code">
                           Postal Code
@@ -3815,10 +5178,32 @@ function App() {
                           name="addressPostalCode"
                           type="text"
                           autoComplete="postal-code"
-                          className="input-base mt-1"
+                          className="input-base mt-1 cursor-default border-0 read-only:border-0 read-only:bg-neutral-50 read-only:text-neutral-700 dark:read-only:bg-slate-900/50 dark:read-only:text-slate-300"
                           value={profileDraft.addressPostalCode}
-                          onChange={(e) => setProfileDraft((prev) => ({ ...prev, addressPostalCode: e.target.value }))}
+                          placeholder="Auto-generated"
+                          readOnly
+                          aria-readonly="true"
                         />
+                        {profileFieldErrors.addressPostalCode ? (
+                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressPostalCode}</p>
+                        ) : null}
+                      </div>
+                        <div className="min-w-0">
+                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-country">
+                          Country
+                        </label>
+                        <input
+                          id="profile-address-country"
+                          name="addressCountry"
+                          type="text"
+                          className="input-base mt-1 cursor-default border-0 read-only:border-0 read-only:bg-neutral-50 read-only:text-neutral-700 dark:read-only:bg-slate-900/50 dark:read-only:text-slate-300"
+                          value={profileDraft.addressCountry}
+                          readOnly
+                          aria-readonly="true"
+                        />
+                        {profileFieldErrors.addressCountry ? (
+                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressCountry}</p>
+                        ) : null}
                         </div>
                       </div>
                       <div className="mt-4">
@@ -3836,8 +5221,7 @@ function App() {
                           onChange={(e) => setProfileDraft((prev) => ({ ...prev, addressUrl: e.target.value }))}
                         />
                       </div>
-                      </div>
-                    ) : null}
+                    </div>
                   </div>
                   <div className="space-y-3 rounded-2xl border border-neutral-200/80 bg-white p-4 shadow-sm ring-1 ring-neutral-100/80 dark:border-slate-700/80 dark:bg-slate-900/70 dark:ring-slate-800/80">
                     <button
@@ -4042,38 +5426,17 @@ function App() {
                             <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.62 2.62a2 2 0 0 1-.45 2.11L8 9.71a16 16 0 0 0 6.29 6.29l1.26-1.28a2 2 0 0 1 2.11-.45c.84.29 1.72.5 2.62.62A2 2 0 0 1 22 16.92z" />
                           </svg>
                           <span>Phone: </span>
-                          <span className="font-semibold">{user.phone}</span>
+                          <span className="font-semibold">{toPhilippinesLocal11Display(user.phone)}</span>
                         </li>
                       ) : null}
-                      {user.country ? (
+                      {profileCommunityName ? (
                         <li className="flex items-center gap-2">
                           <svg className="h-4 w-4 text-neutral-500 dark:text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                            <circle cx="12" cy="12" r="10" />
-                            <path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" />
-                          </svg>
-                          <span>Country: </span>
-                          <span className="font-semibold">{user.country}</span>
-                        </li>
-                      ) : null}
-                      {user.address ? (
-                        <li className="flex items-start gap-2">
-                          <svg className="mt-0.5 h-4 w-4 text-neutral-500 dark:text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                             <path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z" />
                             <circle cx="12" cy="10" r="3" />
                           </svg>
-                          <span>Address: </span>
-                          {user.addressUrl ? (
-                            <a
-                              href={user.addressUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="font-semibold text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:text-brand-primary/80"
-                            >
-                              {user.address}
-                            </a>
-                          ) : (
-                            <span className="font-semibold">{user.address}</span>
-                          )}
+                          <span>Community: </span>
+                          <span className="font-semibold">{profileCommunityName}</span>
                         </li>
                       ) : null}
                     </ul>
@@ -4110,20 +5473,57 @@ function App() {
                   <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 dark:border-slate-700 dark:bg-slate-900/40">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">Listings & quantity</p>
-                      <button
-                        type="button"
-                        className="btn-primary shrink-0 text-sm"
-                        onClick={() => {
-                          if (!profileBrgyCommunitySubdivision.trim()) {
-                            setProfileUploadProductNotice("Add Brgy/Community/Subdivision under Edit profile → Address, then try again.");
-                            return;
-                          }
-                          setProfileUploadProductNotice("");
-                          setActiveView(VIEWS.MY_LISTINGS);
-                        }}
-                      >
-                        Upload product
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <div className="inline-flex items-center rounded-lg border border-neutral-200/90 bg-white p-1 dark:border-slate-600 dark:bg-slate-900">
+                          <button
+                            type="button"
+                            className={`rounded-md p-1.5 transition ${
+                              sellerProductsView === "list"
+                                ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100"
+                                : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                            }`}
+                            aria-label="List view"
+                            onClick={() => setSellerProductsView("list")}
+                          >
+                            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            className={`rounded-md p-1.5 transition ${
+                              sellerProductsView === "grid"
+                                ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100"
+                                : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                            }`}
+                            aria-label="Grid view"
+                            onClick={() => setSellerProductsView("grid")}
+                          >
+                            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                              <rect x="3" y="3" width="7" height="7" rx="1" />
+                              <rect x="14" y="3" width="7" height="7" rx="1" />
+                              <rect x="3" y="14" width="7" height="7" rx="1" />
+                              <rect x="14" y="14" width="7" height="7" rx="1" />
+                            </svg>
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-primary shrink-0 text-sm"
+                          onClick={() => {
+                            if (!canUploadProductFromProfile.ready) {
+                              setProfileUploadProductNotice(
+                                `Complete required Edit Profile fields first: ${canUploadProductFromProfile.missing.join(", ")}.`,
+                              );
+                              return;
+                            }
+                            setProfileUploadProductNotice("");
+                            setActiveView(VIEWS.MY_LISTINGS);
+                          }}
+                        >
+                          Upload product
+                        </button>
+                      </div>
                     </div>
                     {profileUploadProductNotice ? (
                       <div
@@ -4141,15 +5541,71 @@ function App() {
                       </div>
                     ) : null}
                     {sellerListings.length ? (
-                      <ul className="mt-3 divide-y divide-neutral-200 dark:divide-slate-700">
-                        {sellerListings.map((l) => (
-                          <li key={l.id} className="flex flex-col gap-0.5 py-2 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-2">
-                            <span className="font-medium text-neutral-800 dark:text-slate-200">{l.title}</span>
-                            <span className="shrink-0 text-neutral-600 dark:text-slate-400">
-                              {formatCents(l.priceCents)} · Qty {l.quantity} · {l.status}
-                            </span>
-                          </li>
-                        ))}
+                      <ul className={sellerProductsView === "grid" ? "mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2" : "mt-3 space-y-3"}>
+                        {sellerListings.map((l) => {
+                          const normalizedStatus = String(l.status || "").toLowerCase();
+                          const statusClass =
+                            normalizedStatus === "active"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+                              : "border-neutral-200 bg-neutral-100 text-neutral-700 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300";
+                          const imageUrl = String(l.imageUrl || "").trim();
+                          const availabilityModes = Array.isArray(l.fulfillmentModes) ? l.fulfillmentModes : [];
+                          const supportsPickup = availabilityModes.includes("pickup");
+                          const supportsDelivery = availabilityModes.includes("delivery");
+                          const availabilityLabel =
+                            supportsPickup && supportsDelivery
+                              ? "COD pickup + delivery"
+                              : supportsDelivery
+                                ? "COD delivery"
+                                : "COD pickup";
+                          return (
+                            <li
+                              key={l.id}
+                              className={`rounded-xl border border-neutral-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/60 ${
+                                sellerProductsView === "grid" ? "h-full" : ""
+                              }`}
+                            >
+                              <div className={`flex ${sellerProductsView === "grid" ? "flex-col gap-2.5" : "flex-row items-start gap-3"}`}>
+                                <div className={`shrink-0 overflow-hidden rounded-lg border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 ${
+                                  sellerProductsView === "grid" ? "h-32 w-full" : "h-24 w-24"
+                                }`}>
+                                  {imageUrl ? (
+                                    <img src={imageUrl} alt={l.title || "Product"} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                                      No image
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1 space-y-1">
+                                  <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">{l.title || "Untitled product"}</p>
+                                  <p className="text-sm text-neutral-700 dark:text-slate-300">{formatCents(l.priceCents)}</p>
+                                  <p className="text-xs text-neutral-600 dark:text-slate-400">Qty: {Number(l.quantity) || 0}</p>
+                                  <p className="text-xs text-neutral-600 dark:text-slate-400">Availability: {availabilityLabel}</p>
+                                  <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${statusClass}`}>
+                                    {normalizedStatus || "unknown"}
+                                  </span>
+                                </div>
+                                <div className={`flex items-center gap-1.5 ${sellerProductsView === "grid" ? "self-start" : "shrink-0"}`}>
+                                  <button
+                                    type="button"
+                                    className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                                    onClick={() => beginEditSellerListing(l)}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                                    onClick={() => deleteSellerListingById(l.id)}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </div>
+                            </li>
+                          );
+                        })}
                       </ul>
                     ) : (
                       <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">Publish listings to see them here.</p>
@@ -4230,10 +5686,12 @@ function App() {
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 id="add-community-modal-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
-                  New community
+                  {communityEditingId ? "Edit community" : "New community"}
                 </h2>
                 <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
-                  Anchor listings to your profile address: Brgy/Community/Subdivision, city, province, and postal code.
+                  {communityEditingId
+                    ? "Update your community details. Name is required."
+                    : "Create a community anytime. Fields are optional except name."}
                 </p>
               </div>
               <button
@@ -4262,48 +5720,18 @@ function App() {
                   <p className="mt-1 text-xs text-neutral-600 dark:text-slate-400">Selected: {communityImageFile.name}</p>
                 ) : null}
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="add-community-brgy">
-                  Brgy/Community/Subdivision
-                </label>
-                <input
-                  id="add-community-brgy"
-                  type="text"
-                  readOnly
-                  aria-readonly="true"
-                  className="input-base w-full cursor-default bg-neutral-100/90 dark:bg-slate-800/80"
-                  value={toTitleCase(profileBrgyCommunitySubdivision)}
-                  placeholder="— Not set in profile —"
-                />
-                {!profileBrgyCommunitySubdivision ? (
-                  <p className="mt-1.5 text-xs text-neutral-600 dark:text-slate-400">
-                    Add it under{" "}
-                    <button
-                      type="button"
-                      className="font-medium text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:decoration-brand-primary dark:text-brand-accent dark:decoration-brand-accent/40 dark:hover:decoration-brand-accent"
-                      onClick={() => {
-                        closeAddCommunityModal();
-                        setActiveView(VIEWS.PROFILE);
-                      }}
-                    >
-                      Profile
-                    </button>{" "}
-                    → Address → Brgy/Community/Subdivision, then open this form again.
-                  </p>
-                ) : null}
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="sm:col-span-1">
-                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="add-community-city">
-                    City
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="add-community-name">
+                    Community name
                   </label>
                   <input
-                    id="add-community-city"
+                    id="add-community-name"
                     type="text"
-                    readOnly
-                    className="input-base w-full cursor-default bg-neutral-100/90 dark:bg-slate-800/80"
-                    value={toTitleCase(profileCityProvincePostal.city)}
-                    placeholder="—"
+                    className="input-base w-full"
+                    value={communityForm.name}
+                    onChange={(e) => setCommunityForm((prev) => ({ ...prev, name: e.target.value }))}
+                    placeholder="Enter community name"
                   />
                 </div>
                 <div className="sm:col-span-1">
@@ -4313,14 +5741,188 @@ function App() {
                   >
                     Province
                   </label>
-                  <input
-                    id="add-community-province"
-                    type="text"
-                    readOnly
-                    className="input-base w-full cursor-default bg-neutral-100/90 dark:bg-slate-800/80"
-                    value={toTitleCase(profileCityProvincePostal.province)}
-                    placeholder="—"
-                  />
+                  <div className="relative">
+                    <input
+                      id="add-community-province"
+                      type="text"
+                      autoComplete="off"
+                      className="input-base w-full"
+                      value={communityForm.province}
+                      onChange={(e) => {
+                        const typedProvince = e.target.value;
+                        const normalized = typedProvince.trim().toLowerCase();
+                        const exact = profileProvinceOptions.find((provinceName) => provinceName.toLowerCase() === normalized);
+                        const province = exact || typedProvince;
+                        setCommunityForm((prev) => ({ ...prev, province, city: "", postalCode: "" }));
+                        setCommunityProvinceSuggestOpen(true);
+                      }}
+                      onFocus={() => {
+                        if (communityProvinceSuggestBlurTimerRef.current) {
+                          clearTimeout(communityProvinceSuggestBlurTimerRef.current);
+                          communityProvinceSuggestBlurTimerRef.current = null;
+                        }
+                        setCommunityProvinceSuggestOpen(true);
+                      }}
+                      onBlur={(e) => {
+                        communityProvinceSuggestBlurTimerRef.current = window.setTimeout(() => {
+                          const raw = String(e.target.value || "").trim();
+                          if (!raw) {
+                            setCommunityProvinceSuggestOpen(false);
+                            return;
+                          }
+                          const lower = raw.toLowerCase();
+                          const exact = PH_PROVINCE_OPTIONS.find((name) => name.toLowerCase() === lower);
+                          const startsWithMatch = PH_PROVINCE_OPTIONS.find((name) => name.toLowerCase().startsWith(lower));
+                          const containsMatch = PH_PROVINCE_OPTIONS.find((name) => name.toLowerCase().includes(lower));
+                          const nearest =
+                            exact ||
+                            startsWithMatch ||
+                            containsMatch ||
+                            PH_PROVINCE_OPTIONS.reduce((best, candidate) => {
+                              const dist = levenshteinDistance(lower, candidate.toLowerCase());
+                              if (!best || dist < best.dist) return { name: candidate, dist };
+                              return best;
+                            }, null)?.name ||
+                            "";
+                          setCommunityForm((prev) => ({
+                            ...prev,
+                            province: nearest,
+                            city: nearest ? prev.city : "",
+                            postalCode: nearest ? prev.postalCode : "",
+                          }));
+                          setCommunityProvinceSuggestOpen(false);
+                          communityProvinceSuggestBlurTimerRef.current = null;
+                        }, 150);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          e.stopPropagation();
+                          if (communityProvinceSuggestBlurTimerRef.current) {
+                            clearTimeout(communityProvinceSuggestBlurTimerRef.current);
+                            communityProvinceSuggestBlurTimerRef.current = null;
+                          }
+                          setCommunityProvinceSuggestOpen(false);
+                        }
+                      }}
+                      placeholder="Type or select province"
+                    />
+                    {communityProvinceSuggestOpen && communityProvinceFilteredOptions.length > 0 ? (
+                      <ul className="absolute left-0 right-0 z-[100] mt-1 max-h-56 overflow-auto rounded-lg border border-neutral-200/95 bg-white py-1 text-sm shadow-lg dark:border-slate-600 dark:bg-slate-900">
+                        {communityProvinceFilteredOptions.map((provinceName) => (
+                          <li key={provinceName} role="presentation">
+                            <button
+                              type="button"
+                              className="w-full px-3 py-2 text-left hover:bg-brand-soft/50 dark:hover:bg-slate-800"
+                              onMouseDown={(ev) => {
+                                ev.preventDefault();
+                                if (communityProvinceSuggestBlurTimerRef.current) {
+                                  clearTimeout(communityProvinceSuggestBlurTimerRef.current);
+                                  communityProvinceSuggestBlurTimerRef.current = null;
+                                }
+                                setCommunityForm((prev) => ({ ...prev, province: provinceName }));
+                                setCommunityProvinceSuggestOpen(false);
+                              }}
+                            >
+                              {provinceName}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="sm:col-span-1">
+                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="add-community-city">
+                    City or Municipality
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="add-community-city"
+                      type="text"
+                      autoComplete="off"
+                      className="input-base w-full"
+                      value={communityForm.city}
+                      onChange={(e) => {
+                        const typedCity = e.target.value;
+                        const normalized = typedCity.trim().toLowerCase();
+                        const exact = communityCityOptions.find((cityName) => cityName.toLowerCase() === normalized);
+                        const city = exact || typedCity;
+                        setCommunityForm((prev) => ({ ...prev, city, postalCode: "" }));
+                        setCommunityCitySuggestOpen(true);
+                      }}
+                      onFocus={() => {
+                        if (communityCitySuggestBlurTimerRef.current) {
+                          clearTimeout(communityCitySuggestBlurTimerRef.current);
+                          communityCitySuggestBlurTimerRef.current = null;
+                        }
+                        setCommunityCitySuggestOpen(true);
+                      }}
+                      onBlur={(e) => {
+                        communityCitySuggestBlurTimerRef.current = window.setTimeout(() => {
+                          const raw = String(e.target.value || "").trim();
+                          if (!raw) {
+                            setCommunityCitySuggestOpen(false);
+                            return;
+                          }
+                          const lower = raw.toLowerCase();
+                          const exact = communityCityOptions.find((name) => name.toLowerCase() === lower);
+                          const startsWithMatch = communityCityOptions.find((name) => name.toLowerCase().startsWith(lower));
+                          const containsMatch = communityCityOptions.find((name) => name.toLowerCase().includes(lower));
+                          const nearest =
+                            exact ||
+                            startsWithMatch ||
+                            containsMatch ||
+                            communityCityOptions.reduce((best, candidate) => {
+                              const dist = levenshteinDistance(lower, candidate.toLowerCase());
+                              if (!best || dist < best.dist) return { name: candidate, dist };
+                              return best;
+                            }, null)?.name ||
+                            "";
+                          setCommunityForm((prev) => ({
+                            ...prev,
+                            city: nearest,
+                            postalCode: nearest ? prev.postalCode : "",
+                          }));
+                          setCommunityCitySuggestOpen(false);
+                          communityCitySuggestBlurTimerRef.current = null;
+                        }, 150);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          e.stopPropagation();
+                          if (communityCitySuggestBlurTimerRef.current) {
+                            clearTimeout(communityCitySuggestBlurTimerRef.current);
+                            communityCitySuggestBlurTimerRef.current = null;
+                          }
+                          setCommunityCitySuggestOpen(false);
+                        }
+                      }}
+                      placeholder="Type or select city"
+                    />
+                    {communityCitySuggestOpen && communityCityFilteredOptions.length > 0 ? (
+                      <ul className="absolute left-0 right-0 z-[100] mt-1 max-h-56 overflow-auto rounded-lg border border-neutral-200/95 bg-white py-1 text-sm shadow-lg dark:border-slate-600 dark:bg-slate-900">
+                        {communityCityFilteredOptions.map((cityName) => (
+                          <li key={cityName} role="presentation">
+                            <button
+                              type="button"
+                              className="w-full px-3 py-2 text-left hover:bg-brand-soft/50 dark:hover:bg-slate-800"
+                              onMouseDown={(ev) => {
+                                ev.preventDefault();
+                                if (communityCitySuggestBlurTimerRef.current) {
+                                  clearTimeout(communityCitySuggestBlurTimerRef.current);
+                                  communityCitySuggestBlurTimerRef.current = null;
+                                }
+                                setCommunityForm((prev) => ({ ...prev, city: cityName }));
+                                setCommunityCitySuggestOpen(false);
+                              }}
+                            >
+                              {cityName}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="sm:col-span-1">
                   <label
@@ -4332,45 +5934,21 @@ function App() {
                   <input
                     id="add-community-postal"
                     type="text"
-                    readOnly
                     className="input-base w-full cursor-default bg-neutral-100/90 dark:bg-slate-800/80"
-                    value={toTitleCase(profileCityProvincePostal.postalCode)}
+                    value={communityForm.postalCode}
+                    readOnly
+                    aria-readonly="true"
                     placeholder="—"
                   />
                 </div>
               </div>
-              {!profileBrgyCommunitySubdivision ? null : !profileCityProvincePostal.city ||
-                !profileCityProvincePostal.province ||
-                !profileCityProvincePostal.postalCode ? (
-                <p className="text-xs text-neutral-600 dark:text-slate-400">
-                  City, province, and postal code come from your saved address. Add them under{" "}
-                  <button
-                    type="button"
-                    className="font-medium text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:decoration-brand-primary dark:text-brand-accent dark:decoration-brand-accent/40 dark:hover:decoration-brand-accent"
-                    onClick={() => {
-                      closeAddCommunityModal();
-                      setActiveView(VIEWS.PROFILE);
-                    }}
-                  >
-                    Profile
-                  </button>{" "}
-                  → Address (City, Province, Postal code), then open this form again.
-                </p>
-              ) : null}
               <div className="flex flex-wrap gap-2">
                 <button
                   type="submit"
                   className="btn-primary text-sm"
-                  disabled={
-                    communitySaving ||
-                    !profileBrgyCommunitySubdivision ||
-                    !profileCityProvincePostal.city ||
-                    !profileCityProvincePostal.province ||
-                    !profileCityProvincePostal.postalCode ||
-                    profileBrgyCommunitySubdivision.trim().length < 2
-                  }
+                  disabled={communitySaving}
                 >
-                  {communitySaving ? "Saving…" : "Save community"}
+                  {communitySaving ? "Saving…" : communityEditingId ? "Save changes" : "Save community"}
                 </button>
                 <button type="button" className="btn-secondary text-sm" disabled={communitySaving} onClick={closeAddCommunityModal}>
                   Cancel

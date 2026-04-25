@@ -3,12 +3,14 @@ import { AppError } from "../errors/AppError.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { uploadCommunityCoverImage } from "../lib/communityImageStorage.js";
 import { findConflictingCommunity } from "../lib/communityNameSimilarity.js";
-import { doesProfileAddressMatchCommunity, syncSellerListingsCommunityId } from "../lib/profileListingCommunity.js";
+import { doesProfileAddressMatchCommunity } from "../lib/profileListingCommunity.js";
 
 /** PostgREST: table missing from API schema (migrations not applied or `NOTIFY pgrst, 'reload schema';` needed). */
 const isSchemaMissingError = (error) =>
   Boolean(error) &&
   (error.code === "PGRST205" || /schema cache/i.test(String(error.message || "")));
+
+const ALLOWED_LISTING_STATUSES = new Set(["active", "paused", "sold"]);
 
 /** Last three comma-separated segments of `address`: city, province, postal (Express create format). */
 function localeTailFromAddress(address) {
@@ -32,17 +34,6 @@ function effectiveCommunityLocale(row) {
   return localeTailFromAddress(row.address ?? row.area_description ?? "");
 }
 
-/** First comma-separated segment of stored profile address — Brgy/Community/Subdivision (aligned with client `splitAddressParts`). */
-function brgyCommunitySubdivisionFromAddress(address) {
-  const parts = String(address || "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const first =
-    parts.length <= 5 ? parts[0] || "" : parts.slice(0, -4).join(", ");
-  return String(first || "").trim();
-}
-
 const listingRowToApi = (row) => ({
   id: row.id,
   sellerId: row.seller_id,
@@ -50,6 +41,7 @@ const listingRowToApi = (row) => ({
   description: row.description,
   priceCents: row.price_cents,
   quantity: row.quantity,
+  categories: row.categories ?? row.vertical_id,
   verticalId: row.vertical_id,
   subId: row.sub_id,
   fulfillmentModes: row.fulfillment_modes,
@@ -161,6 +153,7 @@ function distanceKm(lat1, lng1, lat2, lng2) {
 
 export const listingsValidators = {
   list: [
+    query("categories").optional().isString(),
     query("verticalId").optional().isString(),
     query("subId").optional().isString(),
     query("communityId").optional().isUUID(),
@@ -173,34 +166,30 @@ export const listingsValidators = {
     body("description").optional().isString().isLength({ max: 8000 }),
     body("priceCents").isInt({ min: 0 }),
     body("quantity").isInt({ min: 0 }),
-    body("verticalId").isString().trim().notEmpty().isLength({ min: 1, max: 32 }),
+    body("categories").optional().isString().trim().notEmpty().isLength({ min: 1, max: 32 }),
+    body("verticalId").optional().isString().trim().notEmpty().isLength({ min: 1, max: 32 }),
+    body().custom((_, { req }) => {
+      const categories = String(req.body?.categories ?? "").trim();
+      const verticalId = String(req.body?.verticalId ?? "").trim();
+      if (!categories && !verticalId) throw new Error("Categories is required.");
+      return true;
+    }),
     body("subId").optional({ values: "null" }).isString().trim(),
     body("fulfillmentModes").optional().isArray(),
     body("cityLabel").optional().isString().trim(),
     body("lat").optional().isFloat(),
     body("lng").optional().isFloat(),
     body("imageUrl").optional().isString(),
-    body("communityId").isUUID(),
   ],
   idParam: [param("id").isUUID()],
 };
 
 export const listListings = async (req, res, next) => {
   try {
-    const { verticalId, subId, communityId, lat, lng, radiusKm } = req.query;
-    /** Opening a community shop only hits this route — sync so `community_id` matches profile before filter. */
-    if (communityId && req.user?.id) {
-      const { data: prof, error: perr } = await supabaseAdmin
-        .from("profiles")
-        .select("address")
-        .eq("id", req.user.id)
-        .maybeSingle();
-      if (!perr && prof?.address != null && String(prof.address).trim()) {
-        await syncSellerListingsCommunityId(supabaseAdmin, req.user.id, String(prof.address));
-      }
-    }
+    const { categories, verticalId, subId, communityId, lat, lng, radiusKm } = req.query;
     let q = supabaseAdmin.from("listings").select("*").eq("status", "active").order("created_at", { ascending: false });
-    if (verticalId) q = q.eq("vertical_id", String(verticalId));
+    const categoryFilter = String(categories || verticalId || "").trim();
+    if (categoryFilter) q = q.eq("vertical_id", categoryFilter);
     if (subId && subId !== "all") q = q.eq("sub_id", String(subId));
     if (communityId) q = q.eq("community_id", String(communityId));
     const { data, error } = await q;
@@ -238,19 +227,8 @@ export const getListing = async (req, res, next) => {
 
 export const createListing = async (req, res, next) => {
   try {
-    const { data: sellerProfile, error: profileErr } = await supabaseAdmin
-      .from("profiles")
-      .select("address")
-      .eq("id", req.user.id)
-      .maybeSingle();
-    if (profileErr) throw new AppError(500, profileErr.message);
-    const brgy = brgyCommunitySubdivisionFromAddress(sellerProfile?.address ?? "");
-    if (!brgy) {
-      throw new AppError(
-        400,
-        "Save your Brgy/Community/Subdivision in Profile (Address) before publishing a listing.",
-      );
-    }
+    const categoryId = String(req.body.categories || req.body.verticalId || "").trim();
+    if (!categoryId) throw new AppError(400, "Categories is required.");
     const modes = Array.isArray(req.body.fulfillmentModes) && req.body.fulfillmentModes.length
       ? req.body.fulfillmentModes.map(String)
       : ["pickup", "delivery"];
@@ -260,20 +238,23 @@ export const createListing = async (req, res, next) => {
       description: String(req.body.description ?? "").trim(),
       price_cents: Number(req.body.priceCents),
       quantity: Math.max(0, Number(req.body.quantity)),
-      vertical_id: String(req.body.verticalId).trim().slice(0, 32),
+      vertical_id: categoryId.slice(0, 32),
       sub_id: req.body.subId != null ? String(req.body.subId).slice(0, 64) : null,
       fulfillment_modes: modes,
       city_label: String(req.body.cityLabel ?? "").trim(),
       lat: req.body.lat != null ? Number(req.body.lat) : null,
       lng: req.body.lng != null ? Number(req.body.lng) : null,
       image_url: String(req.body.imageUrl ?? "").trim(),
+      // Keep insert compatible with DB constraint: active|paused|sold.
       status: "active",
     };
-    const cid = String(req.body.communityId);
-    const { data: comm, error: cErr } = await supabaseAdmin.from("communities").select("id").eq("id", cid).maybeSingle();
-    if (cErr) throw new AppError(500, cErr.message);
-    if (!comm) throw new AppError(400, "Unknown community.");
-    row.community_id = cid;
+    const cid = String(req.body.communityId || "").trim();
+    if (cid) {
+      const { data: comm, error: cErr } = await supabaseAdmin.from("communities").select("id").eq("id", cid).maybeSingle();
+      if (cErr) throw new AppError(500, cErr.message);
+      if (!comm) throw new AppError(400, "Unknown community.");
+      row.community_id = cid;
+    }
     const { data, error } = await supabaseAdmin.from("listings").insert(row).select("*").single();
     if (error?.code === "PGRST205") {
       throw new AppError(
@@ -299,7 +280,8 @@ export const updateListing = async (req, res, next) => {
     if (req.body.description != null) patch.description = String(req.body.description).trim();
     if (req.body.priceCents != null) patch.price_cents = Number(req.body.priceCents);
     if (req.body.quantity != null) patch.quantity = Number(req.body.quantity);
-    if (req.body.verticalId != null) patch.vertical_id = String(req.body.verticalId).slice(0, 32);
+    if (req.body.categories != null) patch.vertical_id = String(req.body.categories).slice(0, 32);
+    else if (req.body.verticalId != null) patch.vertical_id = String(req.body.verticalId).slice(0, 32);
     if (req.body.subId !== undefined) patch.sub_id = req.body.subId == null ? null : String(req.body.subId).slice(0, 64);
     if (req.body.fulfillmentModes != null) patch.fulfillment_modes = req.body.fulfillmentModes;
     if (req.body.cityLabel != null) patch.city_label = String(req.body.cityLabel).trim();
@@ -317,7 +299,13 @@ export const updateListing = async (req, res, next) => {
         patch.community_id = cid;
       }
     }
-    if (req.body.status != null) patch.status = String(req.body.status);
+    if (req.body.status != null) {
+      const nextStatus = String(req.body.status).trim().toLowerCase();
+      if (!ALLOWED_LISTING_STATUSES.has(nextStatus)) {
+        throw new AppError(400, "Invalid listing status.");
+      }
+      patch.status = nextStatus;
+    }
     patch.updated_at = new Date().toISOString();
     const { data, error } = await supabaseAdmin.from("listings").update(patch).eq("id", id).select("*").single();
     if (error) throw new AppError(400, error.message);
@@ -342,10 +330,6 @@ export const deleteListing = async (req, res, next) => {
 
 export const listMyListings = async (req, res, next) => {
   try {
-    const { data: prof } = await supabaseAdmin.from("profiles").select("address").eq("id", req.user.id).maybeSingle();
-    if (prof?.address != null && String(prof.address).trim()) {
-      await syncSellerListingsCommunityId(supabaseAdmin, req.user.id, String(prof.address));
-    }
     const { data, error } = await supabaseAdmin
       .from("listings")
       .select("*")
@@ -823,10 +807,7 @@ export const createCommunity = async (req, res, next) => {
       .trim()
       .slice(0, 32);
     if (name.length < 2 || name.length > 120) throw new AppError(400, "Community name must be 2–120 characters.");
-    if (!city) throw new AppError(400, "City is required.");
-    if (!province) throw new AppError(400, "Province is required.");
-    if (!postalCode) throw new AppError(400, "Postal code is required.");
-    const address = [city, province, postalCode].join(", ").slice(0, 500);
+    const address = [city, province, postalCode].filter(Boolean).join(", ").slice(0, 500);
     const googleUrl = req.body.googleUrl != null ? String(req.body.googleUrl).trim() : "";
     if (googleUrl.length > 2048) throw new AppError(400, "Google URL is too long.");
 
@@ -837,7 +818,10 @@ export const createCommunity = async (req, res, next) => {
         const loc = effectiveCommunityLocale(r);
         return { name: r.name, city: loc.city, province: loc.province, postal_code: loc.postalCode };
       });
-      const conflict = findConflictingCommunity({ name, city, province, postalCode }, existing);
+      const conflict =
+        city && province && postalCode
+          ? findConflictingCommunity({ name, city, province, postalCode }, existing)
+          : null;
       if (conflict) {
         throw new AppError(
           400,
@@ -859,7 +843,7 @@ export const createCommunity = async (req, res, next) => {
       created_by: req.user.id,
     };
     let { data, error } = await supabaseAdmin.from("communities").insert(row).select("*").single();
-    if (!error && data?.id) {
+    if (!error && data?.id && city && province && postalCode) {
       const { error: localeUpdateErr } = await supabaseAdmin
         .from("communities")
         .update({ city, province, postal_code: postalCode })
@@ -879,6 +863,54 @@ export const createCommunity = async (req, res, next) => {
     const { data: profileRows, error: perr } = await supabaseAdmin.from("profiles").select("address");
     const profiles = !perr && profileRows ? profileRows : [];
     res.status(201).json({ community: communityRowToApi(data, countProfilesMatchingCommunity(data, profiles)) });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const updateCommunity = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { data: existing, error: findErr } = await supabaseAdmin.from("communities").select("*").eq("id", id).maybeSingle();
+    if (findErr?.code === "PGRST205") throw new AppError(404, "Community not found.");
+    if (findErr) throw new AppError(500, findErr.message);
+    if (!existing) throw new AppError(404, "Community not found.");
+    if (existing.created_by && existing.created_by !== req.user.id) {
+      throw new AppError(403, "Only the creator can edit this community.");
+    }
+
+    const patch = {};
+    if (req.body.name != null) {
+      const name = String(req.body.name).trim();
+      if (name.length < 2 || name.length > 120) throw new AppError(400, "Community name must be 2–120 characters.");
+      patch.name = name;
+    }
+    if (req.body.city != null) patch.city = String(req.body.city).trim().slice(0, 120);
+    if (req.body.province != null) patch.province = String(req.body.province).trim().slice(0, 120);
+    if (req.body.postalCode != null || req.body.postal_code != null) {
+      patch.postal_code = String(req.body.postalCode ?? req.body.postal_code).trim().slice(0, 32);
+    }
+    if (req.body.googleUrl != null) {
+      const googleUrl = String(req.body.googleUrl).trim();
+      if (googleUrl.length > 2048) throw new AppError(400, "Google URL is too long.");
+      patch.google_url = googleUrl;
+    }
+
+    if (req.file?.buffer) {
+      patch.image_url = await uploadCommunityCoverImage(req.file.buffer, req.file.mimetype, req.user.id);
+    }
+
+    const city = String(patch.city ?? existing.city ?? "").trim();
+    const province = String(patch.province ?? existing.province ?? "").trim();
+    const postalCode = String(patch.postal_code ?? existing.postal_code ?? "").trim();
+    patch.address = [city, province, postalCode].filter(Boolean).join(", ").slice(0, 500);
+    patch.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabaseAdmin.from("communities").update(patch).eq("id", id).select("*").single();
+    if (error) throw new AppError(400, error.message);
+    const { data: profileRows, error: perr } = await supabaseAdmin.from("profiles").select("address");
+    const profiles = !perr && profileRows ? profileRows : [];
+    res.json({ community: communityRowToApi(data, countProfilesMatchingCommunity(data, profiles)) });
   } catch (e) {
     next(e);
   }
