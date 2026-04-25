@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import navLogo from "./assets/LM-LIGHT.png";
 import tabLogo from "./assets/logo-png.png";
@@ -103,6 +103,22 @@ const getDisplayNameFromUser = (user) => {
   if (!user || typeof user !== "object") return "";
   const parts = [user.firstName, user.middleName, user.lastName].map((s) => String(s ?? "").trim()).filter(Boolean);
   if (parts.length > 0) return formatDisplayName(parts.join(" "));
+  return formatDisplayName(user.name || "");
+};
+
+/** Read-only profile card: first + middle initial + last; edit form still uses full middle name. */
+const getProfileCardDisplayNameFromUser = (user) => {
+  if (!user || typeof user !== "object") return "";
+  const first = String(user.firstName ?? "").trim();
+  const middle = String(user.middleName ?? "").trim();
+  const last = String(user.lastName ?? "").trim();
+  if (first || middle || last) {
+    const segments = [];
+    if (first) segments.push(formatDisplayName(first));
+    if (middle) segments.push(`${middle.charAt(0).toUpperCase()}.`);
+    if (last) segments.push(formatDisplayName(last));
+    return segments.join(" ");
+  }
   return formatDisplayName(user.name || "");
 };
 
@@ -676,6 +692,89 @@ const removeSaleMetaLines = (description) =>
     .join("\n")
     .trim();
 
+/** COD fulfillment label for listing cards (pickup / delivery / both). */
+const listingCodAvailabilityLabel = (fulfillmentModes) => {
+  const modes = Array.isArray(fulfillmentModes) ? fulfillmentModes : [];
+  const supportsPickup = modes.includes("pickup");
+  const supportsDelivery = modes.includes("delivery");
+  return supportsPickup && supportsDelivery ? "COD pickup + delivery" : supportsDelivery ? "COD delivery" : "COD pickup";
+};
+
+/**
+ * Same stack as community product cards: title, price (+ sale), quantity row, availability, description.
+ * When `quantityAfterDescription` is true (cart / add modal), quantity renders after the description.
+ * `quantityRow` is usually listing stock (browse) or an adjustable qty control (cart / add modal).
+ */
+function MarketplaceProductDetailStack({
+  title,
+  priceCents,
+  description,
+  fulfillmentModes,
+  quantityRow,
+  quantityAfterDescription = false,
+  hideDescription = false,
+}) {
+  const saleMeta = parseSaleMetaFromDescription(description);
+  const currentPesos = Math.floor((Number(priceCents) || 0) / 100);
+  const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
+  const descriptionPreview = removeSaleMetaLines(description);
+  const availabilityLabel = listingCodAvailabilityLabel(fulfillmentModes);
+
+  const qtyBlock = quantityRow ? <div className="pt-0.5">{quantityRow}</div> : null;
+  const availabilityBlock = <p className="text-xs text-neutral-600 dark:text-slate-400">Availability: {availabilityLabel}</p>;
+  const descriptionBlock = !hideDescription && descriptionPreview ? (
+    <p className="line-clamp-3 text-pretty text-xs leading-relaxed text-neutral-600 dark:text-slate-400">{descriptionPreview}</p>
+  ) : null;
+
+  return (
+    <div className="min-w-0 flex-1 space-y-1">
+      {title ? <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">{title}</p> : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-sm font-semibold text-neutral-800 dark:text-slate-200">{formatPesoWhole(priceCents)}</p>
+        {originalPesos != null && originalPesos > currentPesos ? (
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">₱{originalPesos}</span>
+            {saleMeta.percent ? (
+              <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                -{saleMeta.percent}%
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      {quantityAfterDescription ? (
+        <>
+          {availabilityBlock}
+          {descriptionBlock}
+          {qtyBlock}
+        </>
+      ) : (
+        <>
+          {qtyBlock}
+          {availabilityBlock}
+          {descriptionBlock}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Maps API `order.status` to Orders view tabs (Pending / Processing / Completed / Cancelled). */
+const ORDERS_STATUS_TABS = [
+  { id: "pending", label: "Pending" },
+  { id: "processing", label: "Processing" },
+  { id: "completed", label: "Completed" },
+  { id: "cancelled", label: "Cancelled" },
+];
+const orderMatchesOrdersStatusTab = (status, tabId) => {
+  const s = String(status || "").toLowerCase();
+  if (tabId === "pending") return s === "placed";
+  if (tabId === "completed") return s === "completed";
+  if (tabId === "cancelled") return s === "cancelled";
+  if (tabId === "processing") return Boolean(s) && !["placed", "completed", "cancelled"].includes(s);
+  return false;
+};
+
 const UI_KIT = {
   viewSection:
     "app-card rounded-2xl border border-brand-primary/15 bg-gradient-to-b from-white to-violet-50/30 shadow-sm ring-1 ring-brand-primary/5 dark:border-slate-700 dark:from-slate-900 dark:to-slate-900/70 dark:ring-slate-800/80",
@@ -735,6 +834,10 @@ function FilterOptionButton({ active, onClick, icon, label }) {
 }
 
 function MarketplaceListingCard({ listing, isFavorite, onOpen, onToggleFavorite }) {
+  const saleMeta = parseSaleMetaFromDescription(listing.description);
+  const currentPesos = Math.floor((Number(listing.priceCents) || 0) / 100);
+  const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
+  const descriptionPreview = removeSaleMetaLines(listing.description);
   return (
     <div
       role="button"
@@ -750,14 +853,26 @@ function MarketplaceListingCard({ listing, isFavorite, onOpen, onToggleFavorite 
     >
       <p className="pr-10 text-xs font-semibold text-brand-primary">{getVerticalById(listing.verticalId)?.label ?? listing.verticalId}</p>
       <h3 className="mt-1 truncate text-base font-semibold text-neutral-900 dark:text-slate-100">{listing.title}</h3>
-      <p className="mt-1 text-sm font-semibold text-brand-primary">{formatPesoWhole(listing.priceCents)}</p>
+      <div className="mt-1 flex items-center gap-2">
+        <p className="text-sm font-semibold text-neutral-800 dark:text-slate-200">{formatPesoWhole(listing.priceCents)}</p>
+        {originalPesos != null && originalPesos > currentPesos ? (
+          <>
+            <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">₱{originalPesos}</span>
+            {saleMeta.percent ? (
+              <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                -{saleMeta.percent}%
+              </span>
+            ) : null}
+          </>
+        ) : null}
+      </div>
       <div className="mt-2 flex items-center justify-between">
         <p className="text-xs text-neutral-600 dark:text-slate-400">
           Qty <span className="font-semibold text-neutral-800 dark:text-slate-200">{Number(listing.quantity) || 0}</span>
         </p>
         {listing.cityLabel ? <span className={UI_KIT.chipMuted}>{listing.cityLabel}</span> : null}
       </div>
-      <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-neutral-600 dark:text-slate-400">{listing.description}</p>
+      <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-neutral-600 dark:text-slate-400">{descriptionPreview}</p>
     </div>
   );
 }
@@ -770,13 +885,11 @@ function SellerProductCard({ listing, gridMode, onSaleSelect, onEdit, onDelete }
       ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
       : "border-neutral-200 bg-neutral-100 text-neutral-700 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300";
   const imageUrl = String(listing.imageUrl || "").trim();
-  const availabilityModes = Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes : [];
-  const supportsPickup = availabilityModes.includes("pickup");
-  const supportsDelivery = availabilityModes.includes("delivery");
-  const availabilityLabel = supportsPickup && supportsDelivery ? "COD pickup + delivery" : supportsDelivery ? "COD delivery" : "COD pickup";
+  const availabilityLabel = listingCodAvailabilityLabel(listing.fulfillmentModes);
   const saleMeta = parseSaleMetaFromDescription(listing.description);
   const currentPesos = Math.floor((Number(listing.priceCents) || 0) / 100);
   const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
+  const descriptionPreview = removeSaleMetaLines(listing.description);
 
   return (
     <li className={`rounded-2xl border border-neutral-200 bg-white p-3.5 shadow-sm dark:border-slate-700 dark:bg-slate-900/60 ${gridMode ? "h-full" : ""}`}>
@@ -803,8 +916,13 @@ function SellerProductCard({ listing, gridMode, onSaleSelect, onEdit, onDelete }
               </div>
             ) : null}
           </div>
-          <p className="text-xs text-neutral-600 dark:text-slate-400">Qty: {Number(listing.quantity) || 0}</p>
+          <p className="text-xs text-neutral-600 dark:text-slate-400">
+            Quantity: {Number(listing.quantity) || 0}
+          </p>
           <p className="text-xs text-neutral-600 dark:text-slate-400">Availability: {availabilityLabel}</p>
+          {descriptionPreview ? (
+            <p className="line-clamp-3 text-pretty text-xs leading-relaxed text-neutral-600 dark:text-slate-400">{descriptionPreview}</p>
+          ) : null}
           <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${statusClass}`}>{normalizedStatus || "unknown"}</span>
         </div>
         <div className={`flex items-center gap-1.5 ${gridMode ? "self-start" : "shrink-0"}`}>
@@ -858,8 +976,9 @@ function CommunityShopListingCard({
   listing,
   gridMode,
   isFavorite,
-  onOpen,
   onAdd,
+  onBuy,
+  onToggleFavorite,
   showActions = false,
   showFavoriteIcon = true,
   currentUserId = "",
@@ -868,27 +987,11 @@ function CommunityShopListingCard({
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
   const imageUrl = String(listing.imageUrl || "").trim();
-  const availabilityModes = Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes : [];
-  const supportsPickup = availabilityModes.includes("pickup");
-  const supportsDelivery = availabilityModes.includes("delivery");
-  const availabilityLabel = supportsPickup && supportsDelivery ? "COD pickup + delivery" : supportsDelivery ? "COD delivery" : "COD pickup";
-  const saleMeta = parseSaleMetaFromDescription(listing.description);
-  const currentPesos = Math.floor((Number(listing.priceCents) || 0) / 100);
-  const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
   const isOwner = String(listing.sellerId || "") === String(currentUserId || "");
 
   return (
     <div
-      role="button"
-      tabIndex={0}
-      className={`group relative cursor-pointer rounded-2xl border border-neutral-200 bg-white p-3.5 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-primary/35 hover:shadow-md dark:border-slate-700 dark:bg-slate-900/75 ${gridMode ? "h-full" : ""}`}
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onOpen();
-        }
-      }}
+      className={`group relative rounded-2xl border border-neutral-200 bg-white p-3.5 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-primary/35 hover:shadow-md dark:border-slate-700 dark:bg-slate-900/75 ${gridMode ? "h-full" : ""}`}
     >
       {!isOwner && showFavoriteIcon ? (
         <button
@@ -897,7 +1000,7 @@ function CommunityShopListingCard({
           aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
           onClick={(e) => {
             e.stopPropagation();
-            onAdd?.();
+            onToggleFavorite?.();
           }}
         >
           <span className="text-base leading-none">{isFavorite ? "♥" : "♡"}</span>
@@ -912,22 +1015,15 @@ function CommunityShopListingCard({
           )}
         </div>
         <div className="min-w-0 flex-1 space-y-1">
-          <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">{listing.title || "Untitled product"}</p>
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-semibold text-neutral-800 dark:text-slate-200">{formatPesoWhole(listing.priceCents)}</p>
-            {originalPesos != null && originalPesos > currentPesos ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">₱{originalPesos}</span>
-                {saleMeta.percent ? (
-                  <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-                    -{saleMeta.percent}%
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-          <p className="text-xs text-neutral-600 dark:text-slate-400">Qty: {Number(listing.quantity) || 0}</p>
-          <p className="text-xs text-neutral-600 dark:text-slate-400">Availability: {availabilityLabel}</p>
+          <MarketplaceProductDetailStack
+            title={listing.title || "Untitled product"}
+            priceCents={listing.priceCents}
+            description={listing.description}
+            fulfillmentModes={listing.fulfillmentModes}
+            quantityRow={
+              <p className="text-xs text-neutral-600 dark:text-slate-400">Quantity: {Number(listing.quantity) || 0}</p>
+            }
+          />
           {listing.cityLabel ? <span className={UI_KIT.chipMuted}>{listing.cityLabel}</span> : null}
         </div>
       </div>
@@ -966,14 +1062,14 @@ function CommunityShopListingCard({
                   onAdd?.();
                 }}
               >
-                Add
+                Add to cart
               </button>
               <button
                 type="button"
                 className="rounded-lg bg-brand-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onOpen();
+                  onBuy?.();
                 }}
               >
                 Buy
@@ -1340,6 +1436,23 @@ function CategoryDropdown({ value, onChange, categories, placeholder = "Pick or 
   );
 }
 
+function CartSellerSelectAllCheckbox({ allChecked, someSelected, onChange, ariaLabel }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    if (ref.current) ref.current.indeterminate = Boolean(someSelected && !allChecked);
+  }, [someSelected, allChecked]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
+      checked={allChecked}
+      onChange={onChange}
+      aria-label={ariaLabel}
+    />
+  );
+}
+
 function App() {
   const [authMode, setAuthMode] = useState("login");
   const [authPanelVisible, setAuthPanelVisible] = useState(false);
@@ -1395,6 +1508,8 @@ function App() {
   });
   const [landingExamSlide, setLandingExamSlide] = useState(0);
   const [usersList, setUsersList] = useState([]);
+  const usersListRef = useRef([]);
+  usersListRef.current = usersList;
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState("");
   const [profileJoinedAt, setProfileJoinedAt] = useState("");
@@ -1402,7 +1517,7 @@ function App() {
 
   const [activeView, setActiveView] = useState(VIEWS.BROWSE);
   const isBrowseLikeView = useMemo(
-    () => activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP,
+    () => activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP || activeView === VIEWS.FAVORITES,
     [activeView],
   );
   /** @type {[string | null, import('react').Dispatch<import('react').SetStateAction<string | null>>]} */
@@ -1413,14 +1528,25 @@ function App() {
   const [listingDetail, setListingDetail] = useState(null);
   const [listings, setListings] = useState([]);
   const [sellerListings, setSellerListings] = useState([]);
+  const sellerListingsRef = useRef([]);
+  sellerListingsRef.current = sellerListings;
+  const [sellerListingsLoading, setSellerListingsLoading] = useState(false);
   const [listingsLoading, setListingsLoading] = useState(false);
   const [listingsError, setListingsError] = useState("");
   const [favoriteIds, setFavoriteIds] = useState(() => new Set());
   const [favoritesLoading, setFavoritesLoading] = useState(false);
   const [favoritesList, setFavoritesList] = useState([]);
+  const favoritesListRef = useRef([]);
+  favoritesListRef.current = favoritesList;
   const [orders, setOrders] = useState([]);
+  const ordersRef = useRef([]);
+  ordersRef.current = orders;
   const [ordersRole, setOrdersRole] = useState("buyer");
+  const [ordersStatusTab, setOrdersStatusTab] = useState("pending");
   const [ordersLoading, setOrdersLoading] = useState(false);
+  /** `orderId` -> selected (orders screen only). */
+  const [orderSelection, setOrderSelection] = useState({});
+  const [ordersBulkActionSubmitting, setOrdersBulkActionSubmitting] = useState(false);
   const [orderListingsById, setOrderListingsById] = useState({});
   const [sellerSummary, setSellerSummary] = useState(null);
   const [expenses, setExpenses] = useState([]);
@@ -1444,6 +1570,8 @@ function App() {
   const [listingFieldErrors, setListingFieldErrors] = useState({});
   const [marketplaceMessage, setMarketplaceMessage] = useState("");
   const [communities, setCommunities] = useState([]);
+  const communitiesRef = useRef([]);
+  communitiesRef.current = communities;
   const [communitiesLoading, setCommunitiesLoading] = useState(false);
   const [communitiesError, setCommunitiesError] = useState("");
   const [communityFormOpen, setCommunityFormOpen] = useState(false);
@@ -1551,9 +1679,13 @@ function App() {
 
     return pickFromPool(communities);
   }, [communities, profileCityProvincePostal, profileCommunityName]);
-  /** Compact header “In [community] / All areas” — only on marketplace browse screens, not Orders/Delivery/Profile. */
+  /** Compact header “In [community] / All areas” — only on marketplace browse screens, not Orders/Cart/Profile. */
   const showCommunityShopHeaderStrip = useMemo(
-    () => Boolean(shopCommunityId) && isBrowseLikeView && activeView !== VIEWS.COMMUNITY_SHOP,
+    () =>
+      Boolean(shopCommunityId) &&
+      isBrowseLikeView &&
+      activeView !== VIEWS.COMMUNITY_SHOP &&
+      activeView !== VIEWS.FAVORITES,
     [shopCommunityId, isBrowseLikeView, activeView],
   );
   const isMemberOfOpenCommunity = useMemo(() => {
@@ -1569,14 +1701,57 @@ function App() {
     [listingCommunityFromProfile.id],
   );
   const prevShopCommunityIdRef = useRef(null);
+  /** Avoid clearing listings + duplicate fetch when only `communities` hydration updates `activeCommunity`. */
+  const communityShopListingsQueryKeyRef = useRef(null);
+  /** Clear orders when `ordersRole` changes; keep rows when re-entering Orders with the same role. */
+  const ordersDataQueryKeyRef = useRef(null);
   const communityListingsSyncedRef = useRef(null);
   const skipAutoCommunityBrowseRef = useRef(false);
   const [expandedBidOrderId, setExpandedBidOrderId] = useState(null);
   const [bidsForOrder, setBidsForOrder] = useState([]);
+  const [quickAddModalOpen, setQuickAddModalOpen] = useState(false);
+  const [quickAddListing, setQuickAddListing] = useState(null);
+  const [quickAddQuantity, setQuickAddQuantity] = useState("1");
+  const [quickAddComment, setQuickAddComment] = useState("");
+  const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
+  const [cartItems, setCartItems] = useState([]);
+  /** `listingId` → selected (cart screen only). */
+  const [cartItemSelection, setCartItemSelection] = useState({});
+  /** Cart row whose quantity PATCH is in flight (logged-in only). */
+  const [cartQtySavingId, setCartQtySavingId] = useState(null);
+  /** Inline qty field: `listingId` being edited and its draft string (commit on blur). */
+  const [cartQtyEdit, setCartQtyEdit] = useState({ id: null, str: "" });
+  const [cartCheckoutSubmitting, setCartCheckoutSubmitting] = useState(false);
+  /** Per-line debounce timers so typed qty applies without requiring blur. */
+  const cartQtyCommitTimersRef = useRef({});
+  const mergeCartItemsPreservingOrder = useCallback((prevItems, nextItems) => {
+    if (!Array.isArray(nextItems)) return [];
+    const nextById = new Map(nextItems.map((item) => [String(item?.listingId), item]));
+    const merged = [];
+    for (const prevItem of Array.isArray(prevItems) ? prevItems : []) {
+      const key = String(prevItem?.listingId);
+      if (!nextById.has(key)) continue;
+      merged.push(nextById.get(key));
+      nextById.delete(key);
+    }
+    for (const remaining of nextById.values()) merged.push(remaining);
+    return merged;
+  }, []);
+  const moveSellerGroupToTop = useCallback((items, sellerId) => {
+    const targetSellerId = String(sellerId || "");
+    if (!targetSellerId) return Array.isArray(items) ? items : [];
+    const sameSeller = [];
+    const others = [];
+    for (const item of Array.isArray(items) ? items : []) {
+      if (String(item?.sellerId || "") === targetSellerId) sameSeller.push(item);
+      else others.push(item);
+    }
+    if (sameSeller.length === 0) return Array.isArray(items) ? items : [];
+    return [...sameSeller, ...others];
+  }, []);
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
   const [sellerProductsView, setSellerProductsView] = useState("list");
   const [communityProductsView, setCommunityProductsView] = useState("grid");
-  const [favoritesProductsView, setFavoritesProductsView] = useState("grid");
   /** Inline notice by “Upload product” on Profile (not the global marketplace banner). */
   const [profileUploadProductNotice, setProfileUploadProductNotice] = useState("");
   const [categories, setCategories] = useState([]);
@@ -1606,16 +1781,25 @@ function App() {
       applyJoinedCommunity(joinedName);
       if (!token || !community?.id) return;
       try {
+        await apiRequest("/auth/me", {
+          method: "PATCH",
+          token,
+          body: { community: joinedName },
+        });
         const listData = await apiRequest("/me/listings", { token });
         const mine = Array.isArray(listData?.listings) ? listData.listings : [];
         const targetCommunityId = String(community.id);
         const toAttach = mine.filter((l) => String(l.communityId || "") !== targetCommunityId);
-        for (const listing of toAttach) {
-          await apiRequest(`/me/listings/${listing.id}`, {
-            method: "PATCH",
-            token,
-            body: { communityId: targetCommunityId },
-          });
+        if (toAttach.length) {
+          await Promise.all(
+            toAttach.map((listing) =>
+              apiRequest(`/me/listings/${listing.id}`, {
+                method: "PATCH",
+                token,
+                body: { communityId: targetCommunityId },
+              }),
+            ),
+          );
         }
         const refreshed = await apiRequest("/me/listings", { token });
         setSellerListings(refreshed.listings || []);
@@ -1638,6 +1822,33 @@ function App() {
       setUser((prev) => (prev && prev.id === user.id ? { ...prev, community: savedCommunity } : prev));
     }
   }, [user?.community, user?.id]);
+
+  // Backfill persisted profile community from local membership cache.
+  useEffect(() => {
+    if (!token || !user?.id || typeof window === "undefined") return;
+    const key = `${COMMUNITY_MEMBERSHIP_KEY_PREFIX}${user.id}`;
+    const savedCommunity = String(localStorage.getItem(key) || "").trim();
+    const currentCommunity = String(user?.community || "").trim();
+    if (!savedCommunity || savedCommunity === currentCommunity) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await apiRequest("/auth/me", {
+          method: "PATCH",
+          token,
+          body: { community: savedCommunity },
+        });
+        if (!cancelled) {
+          setUser((prev) => (prev && prev.id === user.id ? { ...prev, community: savedCommunity } : prev));
+        }
+      } catch {
+        // Non-blocking sync; keep local value even if server sync fails.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, user?.id, user?.community]);
 
   const [answers, setAnswers] = useState({});
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -2362,8 +2573,9 @@ function App() {
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.USERS) return undefined;
+    const hadUsers = usersListRef.current.length > 0;
     let cancelled = false;
-    setUsersLoading(true);
+    if (!hadUsers) setUsersLoading(true);
     setUsersError("");
     (async () => {
       try {
@@ -2524,17 +2736,28 @@ function App() {
       setBrowseQuickFilter("all");
       setSelectedListingId(null);
       navigate("/", { replace: true });
-      setActiveView(shopCommunityId ? VIEWS.COMMUNITY_SHOP : VIEWS.BROWSE);
+      setActiveView((prev) => {
+        if (prev === VIEWS.FAVORITES) return VIEWS.FAVORITES;
+        return shopCommunityId ? VIEWS.COMMUNITY_SHOP : VIEWS.BROWSE;
+      });
     },
     [navigate, shopCommunityId],
   );
 
   const goOrders = useCallback(() => {
+    setOrdersRole("seller");
+    setOrdersStatusTab("pending");
     setActiveView(VIEWS.ORDERS);
   }, []);
 
-  const goDelivery = useCallback(() => {
-    setActiveView(VIEWS.DELIVERY);
+  const goMyPurchases = useCallback(() => {
+    setOrdersRole("buyer");
+    setOrdersStatusTab("pending");
+    setActiveView(VIEWS.MY_PURCHASES);
+  }, []);
+
+  const goCart = useCallback(() => {
+    setActiveView(VIEWS.CART);
   }, []);
 
   const leaveCommunityToGlobalMarketplace = useCallback(() => {
@@ -2584,6 +2807,39 @@ function App() {
     return listings;
   }, [browseQuickFilter, listings]);
 
+  const strictFavoritesList = useMemo(() => {
+    const favoriteIdStrings = new Set(Array.from(favoriteIds).map((id) => String(id)));
+    return favoritesList.filter((listing) => favoriteIdStrings.has(String(listing?.id ?? "")));
+  }, [favoriteIds, favoritesList]);
+
+  const visibleFavoritesListings = useMemo(() => {
+    let rows = strictFavoritesList;
+    if (browseVerticalId) {
+      rows = rows.filter((l) => String(l.verticalId || l.categories || "") === String(browseVerticalId));
+      if (browseSubId && browseSubId !== "all") {
+        rows = rows.filter((l) => String(l.subId || "") === String(browseSubId));
+      }
+    }
+    if (browseQuickFilter === "all") return rows;
+    if (browseQuickFilter === "new") {
+      return rows.filter((l) => {
+        if (l?.createdAt) {
+          const ageMs = Date.now() - new Date(l.createdAt).getTime();
+          return Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 1000 * 60 * 60 * 24 * 14;
+        }
+        const text = `${l?.title || ""} ${l?.description || ""}`.toLowerCase();
+        return /\bnew\b|brand new|sealed|unused/.test(text);
+      });
+    }
+    if (browseQuickFilter === "sale") {
+      return rows.filter((l) => {
+        const text = `${l?.title || ""} ${l?.description || ""}`.toLowerCase();
+        return /\bsale\b|discount|promo|markdown|clearance/.test(text);
+      });
+    }
+    return rows;
+  }, [strictFavoritesList, browseQuickFilter, browseVerticalId, browseSubId]);
+
   const activeBrowseFilterSummary = useMemo(() => {
     const items = [];
     if (browseQuickFilter !== "all") {
@@ -2596,6 +2852,11 @@ function App() {
     }
     return items;
   }, [browseQuickFilter, browseVerticalId]);
+
+  const ordersForStatusTab = useMemo(
+    () => orders.filter((o) => orderMatchesOrdersStatusTab(o.status, ordersStatusTab)),
+    [orders, ordersStatusTab],
+  );
 
   const listingDescriptionCount = useMemo(() => String(listingForm.description || "").length, [listingForm.description]);
   const listingFormDirty = useMemo(() => {
@@ -2631,6 +2892,295 @@ function App() {
     }
   }, [token]);
 
+  const refreshCart = useCallback(async () => {
+    if (!token) return;
+    try {
+      const d = await apiRequest("/me/cart", { token });
+      const incoming = Array.isArray(d.items) ? d.items : [];
+      setCartItems((prev) => mergeCartItemsPreservingOrder(prev, incoming));
+    } catch {
+      setCartItems([]);
+    }
+  }, [token, mergeCartItemsPreservingOrder]);
+
+  const setCartLineQuantity = useCallback(
+    async (listingId, rawTarget) => {
+      const id = String(listingId);
+      const item = cartItems.find((i) => String(i.listingId) === id);
+      if (!item) return;
+      const maxStock = Number(item.listingQuantity);
+      const maxQ =
+        Number.isFinite(maxStock) && maxStock >= 1 ? maxStock : Math.max(1, Number(item.quantity) || 1);
+      const n = Math.floor(Number(rawTarget));
+      if (!Number.isFinite(n) || n < 0) return;
+      if (n === 0) {
+        if (token) {
+          setCartQtySavingId(id);
+          try {
+            const d = await apiRequest(`/me/cart/items/${id}`, {
+              method: "DELETE",
+              token,
+            });
+            const incoming = Array.isArray(d.items) ? d.items : [];
+            setCartItems((prev) => mergeCartItemsPreservingOrder(prev, incoming));
+            setMarketplaceMessage("");
+          } catch (e) {
+            setMarketplaceMessage(e.message || "Could not remove item from cart.");
+          } finally {
+            setCartQtySavingId(null);
+          }
+        } else {
+          setCartItems((prev) => prev.filter((it) => String(it.listingId) !== id));
+        }
+        return;
+      }
+      const clamped = Math.min(maxQ, Math.max(1, n));
+
+      if (token) {
+        setCartQtySavingId(id);
+        try {
+          const d = await apiRequest(`/me/cart/items/${id}`, {
+            method: "PATCH",
+            token,
+            body: { quantity: clamped },
+          });
+          const incoming = Array.isArray(d.items) ? d.items : [];
+          setCartItems((prev) => mergeCartItemsPreservingOrder(prev, incoming));
+          setMarketplaceMessage("");
+        } catch (e) {
+          setMarketplaceMessage(e.message || "Could not update quantity.");
+        } finally {
+          setCartQtySavingId(null);
+        }
+      } else {
+        setCartItems((prev) => prev.map((it) => (String(it.listingId) === id ? { ...it, quantity: clamped } : it)));
+      }
+    },
+    [cartItems, token, mergeCartItemsPreservingOrder],
+  );
+
+  useEffect(() => {
+    return () => {
+      Object.values(cartQtyCommitTimersRef.current).forEach((timerId) => {
+        clearTimeout(timerId);
+      });
+      cartQtyCommitTimersRef.current = {};
+    };
+  }, []);
+
+  const toggleCartListingSelected = useCallback((listingId) => {
+    const id = String(listingId);
+    setCartItemSelection((prev) => {
+      const next = { ...prev };
+      if (next[id]) delete next[id];
+      else next[id] = true;
+      return next;
+    });
+  }, []);
+
+  const toggleCartSellerSelectAll = useCallback((items) => {
+    const ids = items.map((i) => String(i.listingId));
+    setCartItemSelection((prev) => {
+      const allOn = ids.length > 0 && ids.every((id) => prev[id]);
+      const next = { ...prev };
+      for (const id of ids) {
+        if (allOn) delete next[id];
+        else next[id] = true;
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleOrderSelected = useCallback((orderId) => {
+    const id = String(orderId || "");
+    if (!id) return;
+    setOrderSelection((prev) => {
+      const next = { ...prev };
+      if (next[id]) delete next[id];
+      else next[id] = true;
+      return next;
+    });
+  }, []);
+
+  const toggleOrderSellerSelectAll = useCallback((sellerOrders) => {
+    const ids = sellerOrders.map((o) => String(o.id || "")).filter(Boolean);
+    setOrderSelection((prev) => {
+      const allOn = ids.length > 0 && ids.every((id) => prev[id]);
+      const next = { ...prev };
+      for (const id of ids) {
+        if (allOn) delete next[id];
+        else next[id] = true;
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const valid = new Set(cartItems.map((i) => String(i.listingId)));
+    setCartItemSelection((prev) => {
+      const next = {};
+      for (const id of valid) {
+        if (prev[id]) next[id] = true;
+      }
+      if (Object.keys(prev).length === Object.keys(next).length) {
+        const unchanged = Object.keys(prev).every((k) => Boolean(prev[k]) === Boolean(next[k]));
+        if (unchanged) return prev;
+      }
+      return next;
+    });
+  }, [cartItems]);
+
+  useEffect(() => {
+    const valid = new Set(ordersForStatusTab.map((o) => String(o.id || "")));
+    setOrderSelection((prev) => {
+      const next = {};
+      for (const id of valid) {
+        if (prev[id]) next[id] = true;
+      }
+      if (Object.keys(prev).length === Object.keys(next).length) {
+        const unchanged = Object.keys(prev).every((k) => Boolean(prev[k]) === Boolean(next[k]));
+        if (unchanged) return prev;
+      }
+      return next;
+    });
+  }, [ordersForStatusTab]);
+
+  const selectedCartItems = useMemo(
+    () => cartItems.filter((item) => cartItemSelection[String(item.listingId)]),
+    [cartItems, cartItemSelection],
+  );
+  const selectedOrders = useMemo(
+    () => ordersForStatusTab.filter((order) => orderSelection[String(order.id || "")]),
+    [ordersForStatusTab, orderSelection],
+  );
+  const ordersAcceptEnabled = useMemo(() => {
+    if (!selectedOrders.length) return false;
+    if (ordersRole !== "seller") return false;
+    if (ordersStatusTab !== "pending") return false;
+    return selectedOrders.every((o) => String(o.status || "").toLowerCase() === "placed");
+  }, [selectedOrders, ordersRole, ordersStatusTab]);
+  const ordersDeclineEnabled = useMemo(() => {
+    if (!selectedOrders.length) return false;
+    if (ordersStatusTab !== "pending") return false;
+    return selectedOrders.every((o) => String(o.status || "").toLowerCase() === "placed");
+  }, [selectedOrders, ordersStatusTab]);
+  const selectedCartTotals = useMemo(() => {
+    let currentTotalCents = 0;
+    let originalTotalCents = 0;
+    for (const item of selectedCartItems) {
+      const qty = Math.max(1, Math.floor(Number(item?.quantity) || 1));
+      const currentLineCents = Math.max(0, Number(item?.unitPriceCents) || 0) * qty;
+      const meta = parseSaleMetaFromDescription(item?.description || "");
+      const originalPesos = Number.isFinite(Number(meta?.originalPesos)) ? Number(meta.originalPesos) : null;
+      const originalUnitCents = originalPesos != null && originalPesos > 0 ? Math.round(originalPesos * 100) : Math.max(0, Number(item?.unitPriceCents) || 0);
+      const originalLineCents = originalUnitCents * qty;
+      currentTotalCents += currentLineCents;
+      originalTotalCents += Math.max(currentLineCents, originalLineCents);
+    }
+    const discountCents = Math.max(0, originalTotalCents - currentTotalCents);
+    const discountPercent = originalTotalCents > 0 ? Math.round((discountCents / originalTotalCents) * 100) : 0;
+    return { currentTotalCents, originalTotalCents, discountCents, discountPercent };
+  }, [selectedCartItems]);
+
+  const checkoutSelectedCartItems = useCallback(async () => {
+    if (!selectedCartItems.length) {
+      setMarketplaceMessage("Select at least one product to check out.");
+      return;
+    }
+    if (!token) {
+      setMarketplaceMessage("Please sign in to check out.");
+      return;
+    }
+    setCartCheckoutSubmitting(true);
+    let successCount = 0;
+    let failedCount = 0;
+    for (const item of selectedCartItems) {
+      const listingId = String(item?.listingId || "");
+      if (!listingId) continue;
+      const qty = Math.max(1, Math.floor(Number(item?.quantity) || 1));
+      const modes = Array.isArray(item?.fulfillmentModes) ? item.fulfillmentModes : [];
+      const fulfillmentType = modes.includes("pickup") ? "pickup" : modes.includes("delivery") ? "delivery" : "pickup";
+      try {
+        await apiRequest("/orders", {
+          method: "POST",
+          token,
+          body: { listingId, fulfillmentType, quantity: qty },
+        });
+        successCount += 1;
+        try {
+          const d = await apiRequest(`/me/cart/items/${listingId}`, {
+            method: "DELETE",
+            token,
+          });
+          const incoming = Array.isArray(d.items) ? d.items : [];
+          setCartItems((prev) => mergeCartItemsPreservingOrder(prev, incoming));
+        } catch {
+          // Keep checkout success even if cart row deletion returns an error.
+        }
+      } catch {
+        failedCount += 1;
+      }
+    }
+    setCartCheckoutSubmitting(false);
+    setCartItemSelection({});
+    if (successCount > 0) {
+      setMarketplaceMessage(
+        failedCount === 0
+          ? `Checked out ${successCount} item${successCount > 1 ? "s" : ""}.`
+          : `Checked out ${successCount} item${successCount > 1 ? "s" : ""}. ${failedCount} failed.`,
+      );
+      setOrdersRole("buyer");
+      setOrdersStatusTab("pending");
+      goMyPurchases();
+      return;
+    }
+    setMarketplaceMessage("Could not check out selected items.");
+  }, [selectedCartItems, token, mergeCartItemsPreservingOrder, goMyPurchases]);
+
+  const applyTransitionToSelectedOrders = useCallback(
+    async (transition, label) => {
+      if (!selectedOrders.length) {
+        setMarketplaceMessage("Select at least one order first.");
+        return;
+      }
+      if (!token) {
+        setMarketplaceMessage("Please sign in to update orders.");
+        return;
+      }
+      setMarketplaceMessage("");
+      setOrdersBulkActionSubmitting(true);
+      let successCount = 0;
+      let failedCount = 0;
+      for (const order of selectedOrders) {
+        try {
+          await apiRequest(`/orders/${order.id}`, { method: "PATCH", token, body: { transition } });
+          successCount += 1;
+        } catch {
+          failedCount += 1;
+        }
+      }
+      try {
+        const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+        setOrders(data.orders || []);
+      } catch {
+        // Keep prior rows if refresh fails; result banner still informs user.
+      }
+      setOrdersBulkActionSubmitting(false);
+      setOrderSelection({});
+      if (successCount > 0) {
+        if (transition === "cancel") setOrdersStatusTab("cancelled");
+        setMarketplaceMessage(
+          failedCount === 0
+            ? `${label} ${successCount} order${successCount > 1 ? "s" : ""}.`
+            : `${label} ${successCount} order${successCount > 1 ? "s" : ""}. ${failedCount} failed.`,
+        );
+      } else {
+        setMarketplaceMessage(`Could not ${label.toLowerCase()} selected orders.`);
+      }
+    },
+    [selectedOrders, token, ordersRole],
+  );
+
   useEffect(() => {
     if (!token) {
       setFavoriteIds(new Set());
@@ -2640,6 +3190,15 @@ function App() {
     refreshFavorites();
     return undefined;
   }, [token, refreshFavorites]);
+
+  useEffect(() => {
+    if (!token) {
+      setCartItems([]);
+      return undefined;
+    }
+    refreshCart();
+    return undefined;
+  }, [token, refreshCart]);
 
   useEffect(() => {
     if (!user || !routeListingId) return undefined;
@@ -2676,7 +3235,7 @@ function App() {
     return undefined;
   }, [shopCommunityId]);
   useEffect(() => {
-    if (activeView !== VIEWS.COMMUNITY_SHOP) setMobileCommunityFiltersOpen(false);
+    if (activeView !== VIEWS.COMMUNITY_SHOP && activeView !== VIEWS.FAVORITES) setMobileCommunityFiltersOpen(false);
   }, [activeView]);
 
   useEffect(() => {
@@ -2721,7 +3280,11 @@ function App() {
     if (!token || activeView !== VIEWS.COMMUNITY_SHOP) return undefined;
     const inCommunity = !!shopCommunityId;
     const hasVertical = browseVerticalId != null;
-    setListings([]);
+    const queryKey = `${inCommunity ? shopCommunityId : "global"}|${browseVerticalId ?? ""}|${browseSubId ?? ""}|${isMemberOfOpenCommunity ? "m" : "v"}`;
+    if (communityShopListingsQueryKeyRef.current !== queryKey) {
+      communityShopListingsQueryKeyRef.current = queryKey;
+      setListings([]);
+    }
     setListingsError("");
     let cancelled = false;
     (async () => {
@@ -2741,9 +3304,13 @@ function App() {
             inCommunity && !isMemberOfOpenCommunity
               ? rows.filter((row) => String(row.sellerId || "") !== String(user?.id || ""))
               : rows;
-          if (inCommunity && isMemberOfOpenCommunity && nextRows.length === 0 && activeCommunity?.id) {
-            await joinCommunityAndAttachListings(activeCommunity);
-            const retry = await apiRequest(`/listings?communityId=${encodeURIComponent(String(activeCommunity.id))}`, { token });
+          const communityRow =
+            inCommunity && shopCommunityId
+              ? communitiesRef.current.find((x) => String(x.id) === String(shopCommunityId))
+              : null;
+          if (inCommunity && isMemberOfOpenCommunity && nextRows.length === 0 && communityRow?.id) {
+            await joinCommunityAndAttachListings(communityRow);
+            const retry = await apiRequest(`/listings?communityId=${encodeURIComponent(String(shopCommunityId))}`, { token });
             const retriedRows = Array.isArray(retry?.listings) ? retry.listings : [];
             nextRows = retriedRows;
           }
@@ -2767,18 +3334,17 @@ function App() {
     browseVerticalId,
     browseSubId,
     shopCommunityId,
-    user?.address,
     user?.id,
     isMemberOfOpenCommunity,
-    activeCommunity,
     joinCommunityAndAttachListings,
   ]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.FAVORITES) return undefined;
+    const hadFavorites = favoritesListRef.current.length > 0;
     let cancelled = false;
     (async () => {
-      setFavoritesLoading(true);
+      if (!hadFavorites) setFavoritesLoading(true);
       try {
         await refreshFavorites();
       } finally {
@@ -2791,10 +3357,16 @@ function App() {
   }, [token, activeView, refreshFavorites]);
 
   useEffect(() => {
-    if (!token || activeView !== VIEWS.ORDERS) return undefined;
+    if (!token || (activeView !== VIEWS.ORDERS && activeView !== VIEWS.MY_PURCHASES)) return undefined;
+    const roleKey = String(ordersRole);
+    const roleScopeChanged = ordersDataQueryKeyRef.current !== roleKey;
+    if (roleScopeChanged) {
+      ordersDataQueryKeyRef.current = roleKey;
+      setOrders([]);
+    }
     let cancelled = false;
     (async () => {
-      setOrdersLoading(true);
+      if (roleScopeChanged || ordersRef.current.length === 0) setOrdersLoading(true);
       try {
         const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
         if (!cancelled) setOrders(data.orders || []);
@@ -2810,7 +3382,7 @@ function App() {
   }, [token, activeView, ordersRole]);
 
   useEffect(() => {
-    if (!token || activeView !== VIEWS.ORDERS || !orders.length) return undefined;
+    if (!token || (activeView !== VIEWS.ORDERS && activeView !== VIEWS.MY_PURCHASES) || !orders.length) return undefined;
     const missingIds = Array.from(
       new Set(
         orders
@@ -2844,6 +3416,22 @@ function App() {
   }, [token, activeView, orders, orderListingsById]);
 
   useEffect(() => {
+    if (!token || (activeView !== VIEWS.ORDERS && activeView !== VIEWS.MY_PURCHASES) || usersList.length > 0) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiRequest("/users", { token });
+        if (!cancelled) setUsersList(Array.isArray(data?.users) ? data.users : []);
+      } catch {
+        // Keep orders usable even if users lookup fails.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeView, usersList.length]);
+
+  useEffect(() => {
     if (!token || activeView !== VIEWS.PROFILE) return undefined;
     let cancelled = false;
     (async () => {
@@ -2874,13 +3462,17 @@ function App() {
       activeView === VIEWS.MY_LISTINGS ||
       (activeView === VIEWS.PROFILE && sellerTab === SELLER_TABS.PRODUCTS);
     if (!loadMyListings) return undefined;
+    const hadSellerListings = sellerListingsRef.current.length > 0;
     let cancelled = false;
     (async () => {
+      if (!hadSellerListings) setSellerListingsLoading(true);
       try {
         const data = await apiRequest("/me/listings", { token });
         if (!cancelled) setSellerListings(data.listings || []);
       } catch {
         if (!cancelled) setSellerListings([]);
+      } finally {
+        if (!cancelled) setSellerListingsLoading(false);
       }
     })();
     return () => {
@@ -2889,10 +3481,17 @@ function App() {
   }, [token, activeView, sellerTab]);
 
   useEffect(() => {
+    if (!token || activeView !== VIEWS.CART) return undefined;
+    void refreshCart();
+    return undefined;
+  }, [token, activeView, refreshCart]);
+
+  useEffect(() => {
     if (!token || (!isBrowseLikeView && activeView !== VIEWS.MY_LISTINGS && activeView !== VIEWS.PROFILE)) return undefined;
+    const hadCommunities = communitiesRef.current.length > 0;
     let cancelled = false;
     (async () => {
-      setCommunitiesLoading(true);
+      if (!hadCommunities) setCommunitiesLoading(true);
       setCommunitiesError("");
       try {
         const res = await apiRequest("/communities", { token });
@@ -3088,11 +3687,6 @@ function App() {
     }
   };
 
-  const openListing = (id) => {
-    setSelectedListingId(id);
-    setActiveView(VIEWS.BROWSE);
-  };
-
   const closeListingDetail = () => {
     setSelectedListingId(null);
     navigate("/", { replace: true });
@@ -3249,22 +3843,110 @@ function App() {
     }
   };
 
-  const quickAddOrderFromListing = async (listing) => {
-    if (!token || !listing?.id) return;
-    const modes = Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes : [];
-    const fulfillmentType = modes.includes("pickup") ? "pickup" : modes.includes("delivery") ? "delivery" : "pickup";
+  const openQuickAddModal = (listing) => {
+    if (!listing?.id) return;
+    const stock = Math.max(1, Number(listing.quantity) || 1);
+    setQuickAddListing(listing);
+    setQuickAddQuantity(String(stock >= 1 ? 1 : stock));
+    setQuickAddComment("");
+    setQuickAddModalOpen(true);
+  };
+
+  const closeQuickAddModal = () => {
+    if (quickAddSubmitting) return;
+    setQuickAddModalOpen(false);
+    setQuickAddListing(null);
+    setQuickAddQuantity("1");
+    setQuickAddComment("");
+  };
+
+  const submitQuickAddOrder = async () => {
+    if (!quickAddListing?.id || quickAddSubmitting) return;
+    const parsedQty = Number(quickAddQuantity);
+    const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
+    if (!Number.isFinite(parsedQty) || parsedQty < 1 || parsedQty > maxQty) {
+      setMarketplaceMessage(`Quantity must be between 1 and ${maxQty}.`);
+      return;
+    }
+    setQuickAddSubmitting(true);
     try {
-      await apiRequest("/orders", {
-        method: "POST",
-        token,
-        body: { listingId: String(listing.id), fulfillmentType, quantity: 1 },
-      });
-      const data = await apiRequest("/orders?role=buyer", { token });
-      setOrders(data.orders || []);
-      setOrdersRole("buyer");
-      setMarketplaceMessage("Added to your orders.");
-    } catch (e) {
-      setMarketplaceMessage(e.message || "Could not add this product to orders.");
+      if (token) {
+        try {
+          const cartData = await apiRequest("/me/cart/items", {
+            method: "POST",
+            token,
+            body: {
+              listingId: String(quickAddListing.id),
+              quantity: parsedQty,
+              comment: String(quickAddComment || "").trim(),
+            },
+          });
+          const incoming = Array.isArray(cartData?.items) ? cartData.items : [];
+          setCartItems((prev) => {
+            const merged = mergeCartItemsPreservingOrder(prev, incoming);
+            return moveSellerGroupToTop(merged, quickAddListing?.sellerId);
+          });
+          setMarketplaceMessage("Added to your cart.");
+        } catch (e) {
+          setMarketplaceMessage(e.message || "Could not save to cart.");
+          return;
+        }
+      } else {
+        let sellerUsername = "";
+        const sellerId = String(quickAddListing.sellerId || "unknown");
+        const cachedSeller = usersList.find((u) => String(u.id || "") === sellerId);
+        if (cachedSeller?.username) {
+          sellerUsername = String(cachedSeller.username || "").trim();
+        }
+        setCartItems((prev) => {
+          const listingId = String(quickAddListing.id);
+          const idx = prev.findIndex((item) => String(item.listingId) === listingId);
+          if (idx === -1) {
+            const sellerLabel = sellerUsername
+              ? `@${sellerUsername}`
+              : sellerId && sellerId !== "unknown"
+                ? `Seller ${sellerId.slice(0, 8)}`
+                : "Unknown seller";
+            return [
+              ...prev,
+              {
+                listingId,
+                sellerId,
+                sellerLabel,
+                title: String(quickAddListing.title || "Product"),
+                description: String(quickAddListing.description || "").trim(),
+                imageUrl: String(quickAddListing.imageUrl || "").trim(),
+                unitPriceCents: Number(quickAddListing.priceCents) || 0,
+                quantity: parsedQty,
+                listingQuantity: maxQty,
+                fulfillmentModes: Array.isArray(quickAddListing.fulfillmentModes) ? quickAddListing.fulfillmentModes : ["pickup"],
+                comment: String(quickAddComment || "").trim(),
+              },
+            ];
+          }
+          const next = [...prev];
+          const existing = next[idx];
+          const desc = String(quickAddListing.description || "").trim() || String(existing.description || "").trim();
+          const mergedQty = Math.min(maxQty, Number(existing.quantity || 0) + parsedQty);
+          next[idx] = {
+            ...existing,
+            quantity: mergedQty,
+            listingQuantity: maxQty,
+            fulfillmentModes: Array.isArray(quickAddListing.fulfillmentModes) ? quickAddListing.fulfillmentModes : ["pickup"],
+            comment: String(quickAddComment || "").trim() || existing.comment || "",
+            ...(desc ? { description: desc } : {}),
+          };
+          return next;
+        });
+        setMarketplaceMessage("Added to your cart.");
+      }
+      setActiveView(VIEWS.CART);
+      setQuickAddModalOpen(false);
+      setQuickAddListing(null);
+      setQuickAddQuantity("1");
+      setQuickAddComment("");
+    } finally {
+      setQuickAddSubmitting(false);
     }
   };
 
@@ -4134,7 +4816,8 @@ function App() {
         setActiveView={setActiveView}
         goBrowse={goBrowse}
         goOrders={goOrders}
-        goDelivery={goDelivery}
+        goMyPurchases={goMyPurchases}
+        goCart={goCart}
         theme={theme}
         setTheme={setTheme}
         onLogout={logout}
@@ -4161,7 +4844,7 @@ function App() {
           </div>
         ) : null}
 
-        {isBrowseLikeView && (
+        {isBrowseLikeView && activeView !== VIEWS.FAVORITES && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div className="space-y-4">
               {activeView === VIEWS.COMMUNITY_SHOP ? (
@@ -4243,7 +4926,7 @@ function App() {
                     ) : null}
                   </div>
                 </div>
-              ) : (
+              ) : activeView === VIEWS.FAVORITES ? null : (
                 <>
                   <div>
                     <h2 className="whitespace-nowrap text-2xl font-semibold text-neutral-900 dark:text-slate-100">Marketplace</h2>
@@ -4258,12 +4941,14 @@ function App() {
                   </div>
                 </div>
                 {communitiesError ? <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{communitiesError}</p> : null}
-                {communitiesLoading ? <p className="mt-3 text-sm text-neutral-600 dark:text-slate-400">Loading communities…</p> : null}
+                {communitiesLoading && communities.length === 0 ? (
+                  <p className="mt-3 text-sm text-neutral-600 dark:text-slate-400">Loading communities…</p>
+                ) : null}
                 <ul
                   className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-2"
                   aria-label="Communities"
                 >
-                  {!communitiesLoading && communities.length === 0 ? (
+                  {!(communitiesLoading && communities.length === 0) && communities.length === 0 ? (
                     <li className="col-span-full min-w-0 text-sm text-neutral-600 dark:text-slate-400">
                       No communities available right now.
                     </li>
@@ -4362,7 +5047,7 @@ function App() {
                 </>
               )}
             </div>
-            {activeView === VIEWS.COMMUNITY_SHOP ? (
+            {(activeView === VIEWS.COMMUNITY_SHOP || activeView === VIEWS.FAVORITES) ? (
             <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,17.5rem)_minmax(0,1fr)] lg:items-start lg:gap-6">
               {mobileCommunityFiltersOpen ? (
                 <button
@@ -4416,7 +5101,7 @@ function App() {
                             setBrowseQuickFilter("all");
                             setSelectedListingId(null);
                             navigate("/", { replace: true });
-                            setActiveView(VIEWS.COMMUNITY_SHOP);
+                            setActiveView((prev) => (prev === VIEWS.FAVORITES ? VIEWS.FAVORITES : VIEWS.COMMUNITY_SHOP));
                             setMobileCommunityFiltersOpen(false);
                             return;
                           }
@@ -4456,6 +5141,9 @@ function App() {
                   </div>
                 </aside>
               <div className="order-2 min-w-0 space-y-3 sm:space-y-4 lg:order-none">
+                {activeView === VIEWS.FAVORITES ? (
+                  <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My Favorites</h2>
+                ) : null}
                 <div className="lg:hidden">
                   <button
                     type="button"
@@ -4504,19 +5192,20 @@ function App() {
                       </button>
                     </div>
                     <p className="text-xl font-bold text-brand-primary">{formatCents(listingDetail.priceCents)}</p>
-                    <p className="text-sm text-neutral-600 dark:text-slate-400">
-                      Qty available: <span className="font-medium text-neutral-800 dark:text-slate-200">{Number(listingDetail.quantity) || 0}</span>
-                    </p>
+                    <div className="text-sm text-neutral-600 dark:text-slate-400">
+                      <p>Quantity: {Number(listingDetail.quantity) || 0}</p>
+                      <p className="mt-0.5">Availability: {listingCodAvailabilityLabel(listingDetail.fulfillmentModes)}</p>
+                    </div>
                     {listingDetail.cityLabel ? (
                       <p className="text-sm text-neutral-600 dark:text-slate-400">{listingDetail.cityLabel}</p>
                     ) : null}
-                    <p className="whitespace-pre-wrap text-sm text-neutral-700 dark:text-slate-300">{listingDetail.description}</p>
                     <p className="min-w-0 break-words text-xs text-neutral-500 dark:text-slate-400">
-                      Fulfillment: {(listingDetail.fulfillmentModes || []).join(" · ") || "pickup"}. Share this listing:{" "}
+                      Share this listing:{" "}
                       <span className="inline-block max-w-full break-all font-mono text-[11px]">
                         {typeof window !== "undefined" ? `${window.location.origin}/l/${listingDetail.id}` : ""}
                       </span>
                     </p>
+                    <p className="whitespace-pre-wrap text-sm text-neutral-700 dark:text-slate-300">{listingDetail.description}</p>
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
@@ -4532,7 +5221,7 @@ function App() {
                         token={token}
                         onDone={(msg) => {
                           setMarketplaceMessage(msg);
-                          goOrders();
+                          goMyPurchases();
                         }}
                         onError={(m) => setMarketplaceMessage(m)}
                       />
@@ -4541,13 +5230,21 @@ function App() {
                     )}
                   </div>
                 ) : null}
-                {listingsLoading ? (
+                {activeView === VIEWS.FAVORITES ? (
+                  favoritesLoading && strictFavoritesList.length === 0 ? (
+                    <div className={`${UI_KIT.surfaceMuted} flex min-h-[12rem] items-center justify-center`}>
+                      <p className="text-sm font-medium text-neutral-600 dark:text-slate-400">Loading…</p>
+                    </div>
+                  ) : null
+                ) : listingsLoading && listings.length === 0 ? (
                   <div className={`${UI_KIT.surfaceMuted} flex min-h-[12rem] items-center justify-center`}>
                     <p className="text-sm font-medium text-neutral-600 dark:text-slate-400">Loading listings…</p>
                   </div>
                 ) : null}
-                {listingsError ? <p className="app-alert-error text-sm">{listingsError}</p> : null}
-                {!listingsLoading && !listingsError ? (
+                {activeView === VIEWS.FAVORITES ? null : listingsError ? <p className="app-alert-error text-sm">{listingsError}</p> : null}
+                {(activeView === VIEWS.FAVORITES
+                  ? !(favoritesLoading && strictFavoritesList.length === 0)
+                  : !listingsError && !(listingsLoading && listings.length === 0)) ? (
                   <div className="flex justify-end">
                     <div className="inline-flex items-center rounded-lg border border-neutral-200/90 bg-white p-1 dark:border-slate-600 dark:bg-slate-900">
                       <button
@@ -4576,9 +5273,11 @@ function App() {
                     </div>
                   </div>
                 ) : null}
-                {!listingsLoading && !listingsError && visibleBrowseListings.length > 0 ? (
+                {(activeView === VIEWS.FAVORITES
+                  ? !(favoritesLoading && strictFavoritesList.length === 0) && visibleFavoritesListings.length > 0
+                  : !listingsError && visibleBrowseListings.length > 0) ? (
                   <div className={communityProductsView === "grid" ? "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" : "space-y-3"}>
-                    {visibleBrowseListings.map((l) => (
+                    {(activeView === VIEWS.FAVORITES ? visibleFavoritesListings : visibleBrowseListings).map((l) => (
                       <CommunityShopListingCard
                         key={l.id}
                         listing={l}
@@ -4588,23 +5287,32 @@ function App() {
                         currentUserId={user?.id || ""}
                         onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
                         onEdit={() => beginEditSellerListing(l)}
-                        onOpen={() => openListing(l.id)}
-                        onAdd={() => quickAddOrderFromListing(l)}
+                        onBuy={() => setSelectedListingId(l.id)}
+                        onAdd={() => openQuickAddModal(l)}
+                        onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
                       />
                     ))}
                   </div>
                 ) : null}
-                {!listingsLoading && !listingsError && visibleBrowseListings.length === 0 ? (
+                {(activeView === VIEWS.FAVORITES
+                  ? !(favoritesLoading && strictFavoritesList.length === 0) && visibleFavoritesListings.length === 0
+                  : !listingsError && !(listingsLoading && listings.length === 0) && visibleBrowseListings.length === 0) ? (
                   <div className={`${UI_KIT.surfaceRaised} flex flex-col items-center justify-center border-dashed px-4 py-10 text-center sm:px-6 sm:py-14`}>
                     <p className="text-base font-semibold text-neutral-900 dark:text-slate-100 sm:text-lg">No listings to show</p>
                     <p className="mt-2 max-w-md text-xs leading-relaxed text-neutral-600 dark:text-slate-400 sm:text-sm">
-                      {shopCommunityId
-                        ? browseVerticalId == null
-                          ? "Nothing has been posted in this community shop yet. Publish while this community is open, or match your profile address to this community."
-                          : "No active listings in this category here yet. Try another category, or add a listing under My listings for this community."
-                        : browseVerticalId == null
-                          ? "No active listings yet."
-                          : "No active listings in this category yet."}
+                      {activeView === VIEWS.FAVORITES
+                        ? strictFavoritesList.length === 0
+                          ? "No favorites yet. Use the heart on product cards to save items."
+                          : browseVerticalId == null
+                            ? "No saved items match this browse filter. Try All or another filter."
+                            : "No favorites in this category yet. Try another category or reset filters."
+                        : shopCommunityId
+                          ? browseVerticalId == null
+                            ? "Nothing has been posted in this community shop yet. Publish while this community is open, or match your profile address to this community."
+                            : "No active listings in this category here yet. Try another category, or add a listing under My listings for this community."
+                          : browseVerticalId == null
+                            ? "No active listings yet."
+                            : "No active listings in this category yet."}
                     </p>
                   </div>
                 ) : null}
@@ -4645,22 +5353,24 @@ function App() {
         {activeView === VIEWS.FAVORITES && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My Favorites</h2>
-            {favoritesLoading ? <p className="text-sm text-neutral-600 dark:text-slate-400">Loading…</p> : null}
-            {!favoritesLoading && favoritesList.length === 0 ? (
+            {favoritesLoading && strictFavoritesList.length === 0 ? (
+              <p className="text-sm text-neutral-600 dark:text-slate-400">Loading…</p>
+            ) : null}
+            {!(favoritesLoading && strictFavoritesList.length === 0) && strictFavoritesList.length === 0 ? (
               <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-center md:p-10`}>
                 <p className="text-sm font-medium text-neutral-700 dark:text-slate-300">No favorites yet</p>
                 <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">Use the heart on Browse cards to save items.</p>
               </div>
             ) : null}
-            {!favoritesLoading && favoritesList.length > 0 ? (
+            {strictFavoritesList.length > 0 ? (
               <>
                 <div className="flex justify-end">
                   <div className="inline-flex items-center rounded-lg border border-neutral-200/90 bg-white p-1 dark:border-slate-600 dark:bg-slate-900">
                     <button
                       type="button"
-                      className={`rounded-md p-1.5 transition ${favoritesProductsView === "list" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
+                      className={`rounded-md p-1.5 transition ${communityProductsView === "list" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
                       aria-label="List view"
-                      onClick={() => setFavoritesProductsView("list")}
+                      onClick={() => setCommunityProductsView("list")}
                     >
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />
@@ -4668,9 +5378,9 @@ function App() {
                     </button>
                     <button
                       type="button"
-                      className={`rounded-md p-1.5 transition ${favoritesProductsView === "grid" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
+                      className={`rounded-md p-1.5 transition ${communityProductsView === "grid" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
                       aria-label="Grid view"
-                      onClick={() => setFavoritesProductsView("grid")}
+                      onClick={() => setCommunityProductsView("grid")}
                     >
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                         <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -4681,15 +5391,20 @@ function App() {
                     </button>
                   </div>
                 </div>
-                <div className={favoritesProductsView === "grid" ? "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4" : "space-y-3"}>
-                  {favoritesList.map((l) => (
+                <div className={communityProductsView === "grid" ? "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" : "space-y-3"}>
+                  {strictFavoritesList.map((l) => (
                     <CommunityShopListingCard
                       key={l.id}
                       listing={l}
-                      gridMode={favoritesProductsView === "grid"}
-                      isFavorite
-                      onOpen={() => openListing(l.id)}
-                      onAdd={() => {}}
+                      gridMode={communityProductsView === "grid"}
+                      isFavorite={favoriteIds.has(l.id)}
+                      showActions
+                      currentUserId={user?.id || ""}
+                      onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
+                      onEdit={() => beginEditSellerListing(l)}
+                      onBuy={() => setSelectedListingId(l.id)}
+                      onAdd={() => openQuickAddModal(l)}
+                      onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
                     />
                   ))}
                 </div>
@@ -4952,115 +5667,480 @@ function App() {
           </section>
         )}
 
-        {activeView === VIEWS.DELIVERY && (
+        {activeView === VIEWS.CART && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Local delivery</h2>
-            <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-center md:p-10`}>
-              <p className="text-sm text-neutral-600 dark:text-slate-400">Nothing here yet.</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Add to cart</h2>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {selectedCartItems.length > 0 ? (
+                  <div className="inline-flex items-center gap-2 rounded-xl border border-neutral-200/80 bg-white px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900">
+                    <span className="font-semibold text-neutral-800 dark:text-slate-200">
+                      {formatCents(selectedCartTotals.currentTotalCents)}
+                    </span>
+                    {selectedCartTotals.originalTotalCents > selectedCartTotals.currentTotalCents ? (
+                      <>
+                        <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">
+                          {formatCents(selectedCartTotals.originalTotalCents)}
+                        </span>
+                        {selectedCartTotals.discountPercent > 0 ? (
+                          <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                            -{selectedCartTotals.discountPercent}%
+                          </span>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={cartCheckoutSubmitting || selectedCartItems.length === 0}
+                  onClick={() => {
+                    void checkoutSelectedCartItems();
+                  }}
+                >
+                  {cartCheckoutSubmitting
+                    ? "Checking out…"
+                    : `Check out${selectedCartItems.length > 0 ? ` (${selectedCartItems.length})` : ""}`}
+                </button>
+              </div>
             </div>
+            {cartItems.length === 0 ? (
+              <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-center md:p-10`}>
+                <p className="text-sm text-neutral-600 dark:text-slate-400">Nothing here yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {Object.entries(
+                  cartItems.reduce((acc, item) => {
+                    const key = String(item.sellerId || "unknown");
+                    if (!acc[key]) acc[key] = [];
+                    acc[key].push(item);
+                    return acc;
+                  }, {}),
+                ).map(([sellerId, items]) => {
+                  const rowIds = items.map((i) => String(i.listingId));
+                  const selectedCount = rowIds.filter((id) => cartItemSelection[id]).length;
+                  const allSelected = rowIds.length > 0 && selectedCount === rowIds.length;
+                  const someSelected = selectedCount > 0 && !allSelected;
+                  const sellerLabel = items[0]?.sellerLabel || "Unknown seller";
+                  return (
+                    <div key={sellerId} className={`${UI_KIT.surfaceCard} p-3.5`}>
+                      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-neutral-200/80 pb-2 dark:border-slate-700/80">
+                        <label className="inline-flex shrink-0 cursor-pointer items-center">
+                          <CartSellerSelectAllCheckbox
+                            allChecked={allSelected}
+                            someSelected={someSelected}
+                            onChange={() => toggleCartSellerSelectAll(items)}
+                            ariaLabel={`Select all from ${sellerLabel}`}
+                          />
+                        </label>
+                        <p className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-slate-300">{sellerLabel}</p>
+                      </div>
+                      <div className="divide-y divide-neutral-200/80 dark:divide-slate-700/80">
+                        {items.map((item) => {
+                          const lid = String(item.listingId);
+                          return (
+                            <div key={item.listingId} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
+                                checked={Boolean(cartItemSelection[lid])}
+                                onChange={() => toggleCartListingSelected(item.listingId)}
+                                aria-label={`Select ${item.title || "product"}`}
+                              />
+                              <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800">
+                                {item.imageUrl ? (
+                                  <img src={item.imageUrl} alt={item.title || "Cart item"} className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-[10px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                                    No image
+                                  </div>
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <MarketplaceProductDetailStack
+                                  title={item.title || "Product"}
+                                  priceCents={item.unitPriceCents}
+                                  description={item.description}
+                                  hideDescription
+                                  fulfillmentModes={item.fulfillmentModes}
+                                />
+                                <div className="mt-1 space-y-0.5 text-xs text-neutral-600 dark:text-slate-400">
+                                  <p className="line-clamp-2 text-pretty">
+                                    Description: {removeSaleMetaLines(item.description) || "No description"}
+                                  </p>
+                                  <p className="line-clamp-2 text-pretty">
+                                    Comment: {String(item.comment || "").trim() || "N/a"}
+                                  </p>
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center gap-2">
+                                  <span className="text-xs text-neutral-600 dark:text-slate-400">Qty</span>
+                                  <div className="inline-flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                      aria-label="Decrease quantity"
+                                      disabled={cartQtySavingId === lid || (Number(item.quantity) || 0) <= 0}
+                                      onClick={() => {
+                                        setCartQtyEdit({ id: null, str: "" });
+                                        void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1);
+                                      }}
+                                    >
+                                      −
+                                    </button>
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      pattern="[0-9]*"
+                                      className="input-base h-8 w-14 px-1 text-center text-xs"
+                                      value={cartQtyEdit.id === lid ? cartQtyEdit.str : String(Number(item.quantity) || 1)}
+                                      disabled={cartQtySavingId === lid}
+                                      aria-label={`Quantity for ${item.title || "product"}`}
+                                      onFocus={() => {
+                                        setCartQtyEdit({
+                                          id: lid,
+                                          str: String(Number(item.quantity) || 1),
+                                        });
+                                      }}
+                                      onChange={(e) => {
+                                        const raw = String(e.target.value || "").replace(/\D/g, "");
+                                        setCartQtyEdit({ id: lid, str: raw === "" ? "" : raw });
+                                        if (!raw) return;
+                                        const parsed = Number(raw);
+                                        if (!Number.isFinite(parsed) || parsed < 0) return;
+                                        const maxCap = Math.max(
+                                          1,
+                                          Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : Number(item.quantity) || 1,
+                                        );
+                                        if (cartQtyCommitTimersRef.current[lid]) {
+                                          clearTimeout(cartQtyCommitTimersRef.current[lid]);
+                                        }
+                                        cartQtyCommitTimersRef.current[lid] = setTimeout(() => {
+                                          void setCartLineQuantity(item.listingId, Math.min(maxCap, parsed));
+                                        }, 250);
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key !== "Enter") return;
+                                        e.preventDefault();
+                                        const maxCap = Math.max(
+                                          1,
+                                          Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : Number(item.quantity) || 1,
+                                        );
+                                        const str = cartQtyEdit.id === lid ? cartQtyEdit.str : String(Number(item.quantity) || 1);
+                                        const parsed = Number(str);
+                                        if (cartQtyCommitTimersRef.current[lid]) {
+                                          clearTimeout(cartQtyCommitTimersRef.current[lid]);
+                                          delete cartQtyCommitTimersRef.current[lid];
+                                        }
+                                        setCartQtyEdit({ id: null, str: "" });
+                                        if (!Number.isFinite(parsed) || parsed < 0) {
+                                          void setCartLineQuantity(item.listingId, Number(item.quantity) || 1);
+                                          return;
+                                        }
+                                        void setCartLineQuantity(item.listingId, Math.min(maxCap, parsed));
+                                      }}
+                                      onBlur={() => {
+                                        const maxCap = Math.max(
+                                          1,
+                                          Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : Number(item.quantity) || 1,
+                                        );
+                                        const str = cartQtyEdit.id === lid ? cartQtyEdit.str : String(Number(item.quantity) || 1);
+                                        const parsed = Number(str);
+                                        if (cartQtyCommitTimersRef.current[lid]) {
+                                          clearTimeout(cartQtyCommitTimersRef.current[lid]);
+                                          delete cartQtyCommitTimersRef.current[lid];
+                                        }
+                                        setCartQtyEdit({ id: null, str: "" });
+                                        if (!Number.isFinite(parsed) || parsed < 0) {
+                                          void setCartLineQuantity(item.listingId, Number(item.quantity) || 1);
+                                          return;
+                                        }
+                                        void setCartLineQuantity(item.listingId, Math.min(maxCap, parsed));
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                      aria-label="Increase quantity"
+                                      disabled={
+                                        cartQtySavingId === lid ||
+                                        (Number(item.quantity) || 0) >=
+                                          Math.max(
+                                            1,
+                                            Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : Number(item.quantity) || 1,
+                                          )
+                                      }
+                                      onClick={() => {
+                                        setCartQtyEdit({ id: null, str: "" });
+                                        void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1);
+                                      }}
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                  <span className="text-[11px] text-neutral-500 dark:text-slate-500">
+                                    In stock: {Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : "—"}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
         )}
 
-        {activeView === VIEWS.ORDERS && (
+        {(activeView === VIEWS.ORDERS || activeView === VIEWS.MY_PURCHASES) && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Orders</h2>
-                <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
-                  COD pickup or delivery. Goods total plus agreed delivery fee (if any) is paid in cash — LinkMart does not store balances.
-                </p>
-              </div>
+            <div>
+              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">
+                {activeView === VIEWS.MY_PURCHASES ? "My purchases" : "Orders"}
+              </h2>
+              <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
+                {activeView === VIEWS.MY_PURCHASES
+                  ? "COD only — LinkMart never holds your money. No refunds; cancel in Pending before the seller accepts, otherwise contact the seller."
+                  : "Incoming buyer orders — COD at pickup or delivery. You collect payment; LinkMart never holds balances."}
+              </p>
             </div>
-            {ordersLoading ? <p className="text-sm text-neutral-600 dark:text-slate-400">Loading…</p> : null}
-            {!ordersLoading && orders.length === 0 ? (
-              <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-sm text-neutral-500 dark:text-slate-400`}>No orders in this tab.</div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-3 sm:gap-y-2">
+              <div className="flex min-w-0 flex-wrap gap-2" role="tablist" aria-label="Order status">
+                {ORDERS_STATUS_TABS.map(({ id, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={ordersStatusTab === id}
+                    className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${ordersStatusTab === id ? UI_KIT.tabActive : UI_KIT.tabIdle}`}
+                    onClick={() => setOrdersStatusTab(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {ordersStatusTab === "pending" ? (
+                <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:w-auto">
+                  <span className="inline-flex items-center rounded-lg border border-neutral-200/90 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                    Selected: {selectedOrders.length}
+                  </span>
+                  {ordersRole === "seller" ? (
+                    <button
+                      type="button"
+                      className="btn-secondary shrink-0 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={ordersBulkActionSubmitting || !ordersAcceptEnabled}
+                      onClick={() => {
+                        void applyTransitionToSelectedOrders("seller_accept", "Accepted");
+                      }}
+                    >
+                      {ordersBulkActionSubmitting ? "Working…" : "Accept"}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-lg border border-rose-300 px-3 py-1.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                    disabled={ordersBulkActionSubmitting || !ordersDeclineEnabled}
+                    onClick={() => {
+                      void applyTransitionToSelectedOrders("cancel", "Declined");
+                    }}
+                  >
+                    {ordersBulkActionSubmitting ? "Working…" : "Decline"}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            {ordersLoading && orders.length === 0 ? (
+              <p className="text-sm text-neutral-600 dark:text-slate-400">Loading…</p>
             ) : null}
-            {!ordersLoading && orders.length > 0 ? (
+            {!(ordersLoading && orders.length === 0) && orders.length === 0 ? (
+              <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-sm text-neutral-500 dark:text-slate-400`}>You have no orders yet.</div>
+            ) : null}
+            {!(ordersLoading && orders.length === 0) && orders.length > 0 && ordersForStatusTab.length === 0 ? (
+              <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-sm text-neutral-500 dark:text-slate-400`}>
+                No {ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label?.toLowerCase() || ""} orders.
+              </div>
+            ) : null}
+            {ordersForStatusTab.length > 0 ? (
               <div className="space-y-3">
-                {orders.map((o) => {
-                  const listing = orderListingsById[String(o.listingId)] || null;
-                  const cardListing = listing || {
-                    id: o.listingId,
-                    title: `Order ${String(o.id).slice(0, 8)}`,
-                    priceCents: o.codGoodsCents,
-                    quantity: o.quantity,
-                    fulfillmentModes: [o.fulfillmentType],
-                    imageUrl: "",
-                    description: "",
-                    sellerId: o.sellerId,
-                  };
+                {Object.entries(
+                  ordersForStatusTab.reduce((acc, order) => {
+                    const sellerKey = String(order.sellerId || "unknown");
+                    if (!acc[sellerKey]) acc[sellerKey] = [];
+                    acc[sellerKey].push(order);
+                    return acc;
+                  }, {}),
+                ).map(([sellerId, sellerOrders]) => {
+                  const sellerUser = usersList.find((u) => String(u?.id || "") === String(sellerId || ""));
+                  const usernameLabel = String(sellerUser?.username || "").trim()
+                    ? `@${String(sellerUser.username).trim()}`
+                    : "";
+                  const orderUsernameLabel =
+                    sellerOrders
+                      .map((order) => {
+                        const raw =
+                          order?.sellerUsername ||
+                          order?.seller?.username ||
+                          order?.sellerName ||
+                          "";
+                        const normalized = String(raw || "").trim();
+                        if (!normalized) return "";
+                        return normalized.startsWith("@") ? normalized : `@${normalized}`;
+                      })
+                      .find((label) => String(label || "").trim().length > 0) || "";
+                  const isCurrentUserSeller = String(sellerId || "") === String(user?.id || "");
+                  const currentUserUsernameLabel = String(user?.username || "").trim()
+                    ? `@${String(user.username).trim()}`
+                    : "";
+                  const listingSellerLabel =
+                    sellerOrders
+                      .map((order) => orderListingsById[String(order.listingId)]?.sellerLabel)
+                      .find((label) => String(label || "").trim().length > 0) || "";
+                  const looksLikeFallbackIdLabel = /^seller\s+[a-f0-9]{6,}$/i.test(String(listingSellerLabel || "").trim());
+                  const sellerLabel = usernameLabel
+                    ? usernameLabel
+                    : orderUsernameLabel
+                      ? orderUsernameLabel
+                    : isCurrentUserSeller && currentUserUsernameLabel
+                      ? currentUserUsernameLabel
+                    : listingSellerLabel && !looksLikeFallbackIdLabel
+                      ? listingSellerLabel
+                      : sellerId && sellerId !== "unknown"
+                        ? `Seller ${sellerId.slice(0, 8)}`
+                        : "Unknown seller";
+                  const sellerOrderIds = sellerOrders.map((order) => String(order.id || "")).filter(Boolean);
+                  const sellerSelectedCount = sellerOrderIds.filter((id) => orderSelection[id]).length;
+                  const sellerAllSelected = sellerOrderIds.length > 0 && sellerSelectedCount === sellerOrderIds.length;
+                  const sellerSomeSelected = sellerSelectedCount > 0 && !sellerAllSelected;
                   return (
-                    <div key={o.id} className={`${UI_KIT.surfaceCard} p-3.5`}>
-                      <div className="rounded-xl border border-neutral-200/80 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/50">
-                        <CommunityShopListingCard
-                          listing={cardListing}
-                          gridMode={false}
-                          isFavorite={false}
-                          showFavoriteIcon={false}
-                          onOpen={() => openListing(o.listingId)}
-                          onAdd={() => {}}
-                        />
-                      </div>
-                      <div className="mt-3 space-y-2 border-t border-neutral-200/80 pt-2 text-sm dark:border-slate-700/80">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="font-mono text-[11px] text-neutral-500 dark:text-slate-400">{o.id}</span>
-                          <span className="rounded-full border border-neutral-200 bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                            {o.status.replace(/_/g, " ")}
-                          </span>
-                        </div>
-                        <p className="text-xs text-neutral-600 dark:text-slate-400">
-                          {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods {formatCents(o.codGoodsCents)}
-                          {o.codDeliveryCents > 0 ? <span> · delivery {formatCents(o.codDeliveryCents)}</span> : null}
-                        </p>
-                        <div className="flex flex-wrap items-center gap-2">
-                          {ordersRole === "seller" && o.status === "placed" ? (
-                            <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "seller_accept")}>
-                              Accept order
-                            </button>
-                          ) : null}
-                          {o.status === "ready_for_pickup" ? (
-                            <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_pickup_done")}>
-                              Mark pickup complete
-                            </button>
-                          ) : null}
-                          {ordersRole === "seller" && o.status === "bid_accepted" ? (
-                            <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_out_for_delivery")}>
-                              Mark out for delivery
-                            </button>
-                          ) : null}
-                          {o.status === "out_for_delivery" ? (
-                            <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_delivered")}>
-                              Mark delivered
-                            </button>
-                          ) : null}
-                          {o.status !== "completed" && o.status !== "cancelled" ? (
-                            <button type="button" className="text-xs text-rose-600 hover:underline dark:text-rose-400" onClick={() => patchOrderTransition(o.id, "cancel")}>
-                              Cancel
-                            </button>
-                          ) : null}
-                          {o.status === "bidding_open" ? (
-                            <button type="button" className="btn-secondary text-xs" onClick={() => loadBidsForOrder(o.id)}>
-                              {expandedBidOrderId === o.id ? "Reload bids" : "View bids"}
-                            </button>
-                          ) : null}
-                        </div>
-                        {expandedBidOrderId === o.id && o.status === "bidding_open" ? (
-                          <ul className="mt-2 space-y-2 rounded-lg border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-slate-600 dark:bg-slate-900/50">
-                            {bidsForOrder.length === 0 ? <li className="text-xs text-neutral-500">No bids yet.</li> : null}
-                            {bidsForOrder.map((b) => (
-                              <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                                <span>
-                                  {formatCents(b.amountCents)} · {b.mode} · {b.status}
-                                </span>
-                                {b.status === "pending" && (o.buyerId === user?.id || o.sellerId === user?.id) ? (
-                                  <button type="button" className="text-brand-primary hover:underline" onClick={() => acceptOrderBid(o.id, b.id)}>
-                                    Accept bid
-                                  </button>
-                                ) : null}
-                              </li>
-                            ))}
-                          </ul>
+                    <div key={sellerId} className={`${UI_KIT.surfaceCard} p-3.5`}>
+                      <div className="mb-2 flex items-center gap-2 border-b border-neutral-200/80 pb-2 dark:border-slate-700/80">
+                        {ordersStatusTab === "pending" ? (
+                          <CartSellerSelectAllCheckbox
+                            allChecked={sellerAllSelected}
+                            someSelected={sellerSomeSelected}
+                            onChange={() => toggleOrderSellerSelectAll(sellerOrders)}
+                            ariaLabel={`Select all orders from ${sellerLabel}`}
+                          />
                         ) : null}
+                        <p className="text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-slate-300">{sellerLabel}</p>
+                      </div>
+                      <div className="space-y-3">
+                        {sellerOrders.map((o) => {
+                          const listing = orderListingsById[String(o.listingId)] || null;
+                          const cardListing = listing || {
+                            id: o.listingId,
+                            title: `Order ${String(o.id).slice(0, 8)}`,
+                            priceCents: o.codGoodsCents,
+                            quantity: o.quantity,
+                            fulfillmentModes: [o.fulfillmentType],
+                            imageUrl: "",
+                            description: "",
+                            sellerId: o.sellerId,
+                          };
+                          const orderId = String(o.id || "");
+                          return (
+                            <div key={o.id} className="rounded-xl border border-neutral-200/80 bg-white/80 p-2.5 dark:border-slate-700 dark:bg-slate-900/50">
+                              <div className="flex items-center gap-3">
+                                {ordersStatusTab === "pending" ? (
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
+                                    checked={Boolean(orderSelection[orderId])}
+                                    onChange={() => toggleOrderSelected(orderId)}
+                                    aria-label={`Select order ${orderId}`}
+                                  />
+                                ) : null}
+                                <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800">
+                                  {String(cardListing.imageUrl || "").trim() ? (
+                                    <img src={cardListing.imageUrl} alt={cardListing.title || "Order item"} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <div className="flex h-full w-full items-center justify-center text-[10px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                                      No image
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <MarketplaceProductDetailStack
+                                    title={cardListing.title || "Product"}
+                                    priceCents={cardListing.priceCents}
+                                    description={cardListing.description}
+                                    hideDescription
+                                    fulfillmentModes={cardListing.fulfillmentModes}
+                                  />
+                                  <div className="mt-1 space-y-0.5 text-xs text-neutral-600 dark:text-slate-400">
+                                    <p className="line-clamp-2 text-pretty">
+                                      Description: {removeSaleMetaLines(cardListing.description) || "No description"}
+                                    </p>
+                                    <p className="line-clamp-2 text-pretty">Comment: N/a</p>
+                                  </div>
+                                  <p className="mt-1 text-xs text-neutral-600 dark:text-slate-400">
+                                    Qty: <span className="font-semibold">{Number(cardListing.quantity) || 1}</span>
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="mt-3 space-y-2 border-t border-neutral-200/80 pt-2 text-sm dark:border-slate-700/80">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-[11px] text-neutral-500 dark:text-slate-400">
+                                    <span className="mr-1.5 font-medium text-neutral-600 dark:text-slate-300">Order ID</span>
+                                    <span className="font-mono">{o.id}</span>
+                                  </span>
+                                </div>
+                                <p className="text-xs text-neutral-600 dark:text-slate-400">
+                                  {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods {formatCents(o.codGoodsCents)}
+                                  {o.codDeliveryCents > 0 ? <span> · delivery {formatCents(o.codDeliveryCents)}</span> : null}
+                                </p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {ordersRole === "seller" && o.status === "placed" ? (
+                                    <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "seller_accept")}>
+                                      Accept order
+                                    </button>
+                                  ) : null}
+                                  {o.status === "ready_for_pickup" ? (
+                                    <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_pickup_done")}>
+                                      Mark pickup complete
+                                    </button>
+                                  ) : null}
+                                  {ordersRole === "seller" && o.status === "bid_accepted" ? (
+                                    <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_out_for_delivery")}>
+                                      Mark out for delivery
+                                    </button>
+                                  ) : null}
+                                  {o.status === "out_for_delivery" ? (
+                                    <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_delivered")}>
+                                      Mark delivered
+                                    </button>
+                                  ) : null}
+                                  {o.status === "bidding_open" ? (
+                                    <button type="button" className="btn-secondary text-xs" onClick={() => loadBidsForOrder(o.id)}>
+                                      {expandedBidOrderId === o.id ? "Reload bids" : "View bids"}
+                                    </button>
+                                  ) : null}
+                                </div>
+                                {expandedBidOrderId === o.id && o.status === "bidding_open" ? (
+                                  <ul className="mt-2 space-y-2 rounded-lg border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-slate-600 dark:bg-slate-900/50">
+                                    {bidsForOrder.length === 0 ? <li className="text-xs text-neutral-500">No bids yet.</li> : null}
+                                    {bidsForOrder.map((b) => (
+                                      <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                        <span>
+                                          {formatCents(b.amountCents)} · {b.mode} · {b.status}
+                                        </span>
+                                        {b.status === "pending" && (o.buyerId === user?.id || o.sellerId === user?.id) ? (
+                                          <button type="button" className="text-brand-primary hover:underline" onClick={() => acceptOrderBid(o.id, b.id)}>
+                                            Accept bid
+                                          </button>
+                                        ) : null}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   );
@@ -5980,7 +7060,7 @@ function App() {
                       )}
                     </div>
                     <div className="w-full">
-                      <p className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">{getDisplayNameFromUser(user)}</p>
+                      <p className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">{getProfileCardDisplayNameFromUser(user)}</p>
                       <div className="mt-2 flex items-center justify-center gap-3">
                         {(() => {
                           const facebookHref = user.facebookUrl || (user.socialPlatform === "facebook" ? user.socialUrl || user.url : "");
@@ -6191,6 +7271,9 @@ function App() {
                         </button>
                       </div>
                     ) : null}
+                    {sellerListingsLoading && sellerListings.length === 0 ? (
+                      <p className="mt-3 text-sm text-neutral-600 dark:text-slate-400">Loading your listings…</p>
+                    ) : null}
                     {sellerListings.length ? (
                       <ul className={sellerProductsView === "grid" ? "mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2" : "mt-3 space-y-3"}>
                         {sellerListings.map((l) => {
@@ -6206,9 +7289,9 @@ function App() {
                           );
                         })}
                       </ul>
-                    ) : (
+                    ) : !(sellerListingsLoading && sellerListings.length === 0) ? (
                       <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">Publish listings to see them here.</p>
-                    )}
+                    ) : null}
                   </div>
                 )}
                 {sellerTab === SELLER_TABS.REVIEW && (
@@ -6245,11 +7328,15 @@ function App() {
               <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Users</h2>
               <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">People registered on this app (names only).</p>
             </div>
-            {usersLoading && <p className="text-sm text-neutral-600 dark:text-slate-400">Loading users...</p>}
-            {usersError && <p className="app-alert-danger-text text-sm">{usersError}</p>}
-            {!usersLoading && !usersError && (
+            {usersLoading && usersList.length === 0 ? (
+              <p className="text-sm text-neutral-600 dark:text-slate-400">Loading users…</p>
+            ) : null}
+            {usersError ? <p className="app-alert-danger-text text-sm">{usersError}</p> : null}
+            {!usersError ? (
               <ul className="divide-y divide-neutral-200 rounded-xl border border-brand-primary/20 bg-white/85 shadow-sm dark:divide-slate-700 dark:border-slate-600 dark:bg-slate-900/70">
-                {usersList.length === 0 && <li className="px-4 py-6 text-sm text-neutral-500 dark:text-slate-400">No users yet.</li>}
+                {!(usersLoading && usersList.length === 0) && usersList.length === 0 ? (
+                  <li className="px-4 py-6 text-sm text-neutral-500 dark:text-slate-400">No users yet.</li>
+                ) : null}
                 {usersList.map((u) => (
                   <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
                     <span className="font-medium text-neutral-900 dark:text-slate-100">{formatDisplayName(u.name)}</span>
@@ -6259,11 +7346,154 @@ function App() {
                   </li>
                 ))}
               </ul>
-            )}
+            ) : null}
           </section>
         )}
 
       </main>
+
+      {quickAddModalOpen && quickAddListing ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="quick-add-modal-title">
+          <button
+            type="button"
+            className="absolute inset-0 bg-neutral-900/45 backdrop-blur-[2px] dark:bg-black/55"
+            aria-label="Close add to cart dialog"
+            onClick={closeQuickAddModal}
+          />
+          <div
+            className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 id="quick-add-modal-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
+                  Add to cart
+                </h2>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-neutral-200/90 text-lg leading-none text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                aria-label="Close"
+                onClick={closeQuickAddModal}
+              >
+                <span aria-hidden>×</span>
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                  <div className="h-36 w-full shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-white sm:h-32 sm:w-32 dark:border-slate-600 dark:bg-slate-900">
+                    {String(quickAddListing.imageUrl || "").trim() ? (
+                      <img src={quickAddListing.imageUrl} alt={quickAddListing.title || "Product"} className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                        No image
+                      </div>
+                    )}
+                  </div>
+                  <MarketplaceProductDetailStack
+                    title={quickAddListing.title || "Product"}
+                    priceCents={quickAddListing.priceCents}
+                    description={quickAddListing.description}
+                    fulfillmentModes={quickAddListing.fulfillmentModes}
+                    quantityAfterDescription
+                    quantityRow={
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-neutral-600 dark:text-slate-400">Qty</span>
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                            aria-label="Decrease quantity"
+                            disabled={Number(quickAddQuantity) <= 1 || quickAddSubmitting}
+                            onClick={() =>
+                              setQuickAddQuantity((prev) => {
+                                const current = Number(prev);
+                                const safeCurrent = Number.isFinite(current) && current > 0 ? current : 1;
+                                return String(Math.max(1, safeCurrent - 1));
+                              })
+                            }
+                          >
+                            −
+                          </button>
+                          <input
+                            id="quick-add-qty"
+                            type="number"
+                            min={1}
+                            max={Math.max(1, Number(quickAddListing.quantity) || 1)}
+                            className="input-base h-8 w-14 px-1 text-center text-xs"
+                            value={quickAddQuantity}
+                            disabled={quickAddSubmitting}
+                            onChange={(e) => {
+                              const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
+                              const digitsOnly = String(e.target.value || "").replace(/\D/g, "");
+                              if (!digitsOnly) {
+                                setQuickAddQuantity("1");
+                                return;
+                              }
+                              const next = Math.min(maxQty, Math.max(1, Number(digitsOnly)));
+                              setQuickAddQuantity(String(next));
+                            }}
+                            onBlur={() => {
+                              const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
+                              const parsed = Number(quickAddQuantity);
+                              if (!Number.isFinite(parsed) || parsed < 1) {
+                                setQuickAddQuantity("1");
+                                return;
+                              }
+                              if (parsed > maxQty) {
+                                setQuickAddQuantity(String(maxQty));
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                            aria-label="Increase quantity"
+                            disabled={
+                              Number(quickAddQuantity) >= Math.max(1, Number(quickAddListing.quantity) || 1) || quickAddSubmitting
+                            }
+                            onClick={() =>
+                              setQuickAddQuantity((prev) => {
+                                const current = Number(prev);
+                                const safeCurrent = Number.isFinite(current) && current > 0 ? current : 1;
+                                const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
+                                return String(Math.min(maxQty, safeCurrent + 1));
+                              })
+                            }
+                          >
+                            +
+                          </button>
+                        </div>
+                        <span className="text-[11px] text-neutral-500 dark:text-slate-500">
+                          In stock: {Math.max(1, Number(quickAddListing.quantity) || 1)}
+                        </span>
+                      </div>
+                    }
+                  />
+                </div>
+              </div>
+              <div className="border-t border-neutral-200/90 pt-3 dark:border-slate-600/90">
+                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="quick-add-comment">
+                  Comment
+                </label>
+                <textarea
+                  id="quick-add-comment"
+                  rows={3}
+                  maxLength={250}
+                  className="input-base w-full resize-none"
+                  placeholder="Optional note for your order"
+                  value={quickAddComment}
+                  onChange={(e) => setQuickAddComment(e.target.value)}
+                />
+              </div>
+              <button type="button" className="btn-primary w-full" disabled={quickAddSubmitting} onClick={submitQuickAddOrder}>
+                {quickAddSubmitting ? "Confirming…" : "Confirm action"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {communityFormOpen ? (
         <div

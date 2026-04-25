@@ -2,7 +2,7 @@ import { body, param, query } from "express-validator";
 import { AppError } from "../errors/AppError.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { uploadCommunityCoverImage } from "../lib/communityImageStorage.js";
-import { findConflictingCommunity } from "../lib/communityNameSimilarity.js";
+import { findConflictingCommunity, isLikelySameCommunityName } from "../lib/communityNameSimilarity.js";
 import { doesProfileAddressMatchCommunity } from "../lib/profileListingCommunity.js";
 
 /** PostgREST: table missing from API schema (migrations not applied or `NOTIFY pgrst, 'reload schema';` needed). */
@@ -11,6 +11,7 @@ const isSchemaMissingError = (error) =>
   (error.code === "PGRST205" || /schema cache/i.test(String(error.message || "")));
 
 const ALLOWED_LISTING_STATUSES = new Set(["active", "paused", "sold"]);
+const firstRow = (data) => (Array.isArray(data) && data.length > 0 ? data[0] : null);
 
 /** Last three comma-separated segments of `address`: city, province, postal (Express create format). */
 function localeTailFromAddress(address) {
@@ -105,7 +106,17 @@ const communityRowToApi = (row, memberCount) => {
 
 function countProfilesMatchingCommunity(communityRow, profileRows) {
   let n = 0;
+  const communityName = String(communityRow?.name || "").trim().toLowerCase();
   for (const p of profileRows || []) {
+    const profileCommunity = String(p?.community || "").trim().toLowerCase();
+    if (
+      communityName &&
+      profileCommunity &&
+      (profileCommunity === communityName || isLikelySameCommunityName(profileCommunity, communityName))
+    ) {
+      n += 1;
+      continue;
+    }
     if (p?.address != null && doesProfileAddressMatchCommunity(communityRow, p.address)) n += 1;
   }
   return n;
@@ -116,6 +127,64 @@ function computeCommunityMemberCountsByProfileAddress(communities, profileRows) 
   const counts = new Map();
   for (const c of communities) {
     counts.set(String(c.id), countProfilesMatchingCommunity(c, profileRows));
+  }
+  return counts;
+}
+
+/** Try `community` + `address`; gracefully fallback if `community` column is unavailable. */
+async function loadProfilesForCommunityCounts() {
+  const withCommunity = await supabaseAdmin.from("profiles").select("id, address, community");
+  const profileRows = withCommunity.error ? [] : withCommunity.data || [];
+
+  // Include auth users metadata as a fallback source so counts stay accurate
+  // even when some users don't have populated profile rows yet.
+  const merged = new Map();
+  for (const row of profileRows) {
+    const id = String(row?.id || "");
+    if (!id) continue;
+    merged.set(id, {
+      id,
+      address: String(row?.address || ""),
+      community: String(row?.community || ""),
+    });
+  }
+
+  try {
+    const authList = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    const users = authList?.data?.users || [];
+    for (const user of users) {
+      const id = String(user?.id || "");
+      if (!id) continue;
+      const meta = user?.user_metadata || {};
+      const existing = merged.get(id);
+      merged.set(id, {
+        id,
+        address: String(existing?.address || meta.address || ""),
+        community: String(existing?.community || meta.community || ""),
+      });
+    }
+  } catch {
+    // Fallback to profile rows only when auth listing is unavailable.
+  }
+
+  return Array.from(merged.values());
+}
+
+/** Count distinct active listing sellers per community. */
+async function loadActiveSellerCountsByCommunity() {
+  const { data, error } = await supabaseAdmin.from("listings").select("community_id, seller_id").eq("status", "active");
+  if (error) return new Map();
+  const buckets = new Map();
+  for (const row of data || []) {
+    const communityId = String(row?.community_id || "");
+    const sellerId = String(row?.seller_id || "");
+    if (!communityId || !sellerId) continue;
+    if (!buckets.has(communityId)) buckets.set(communityId, new Set());
+    buckets.get(communityId).add(sellerId);
+  }
+  const counts = new Map();
+  for (const [communityId, sellers] of buckets.entries()) {
+    counts.set(communityId, sellers.size);
   }
   return counts;
 }
@@ -214,7 +283,8 @@ export const listListings = async (req, res, next) => {
 export const getListing = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { data, error } = await supabaseAdmin.from("listings").select("*").eq("id", id).maybeSingle();
+    const { data: rows, error } = await supabaseAdmin.from("listings").select("*").eq("id", id).limit(1);
+    const data = firstRow(rows);
     if (error?.code === "PGRST205") throw new AppError(404, "Listing not found.");
     if (error) throw new AppError(500, error.message);
     if (!data) throw new AppError(404, "Listing not found.");
@@ -250,7 +320,8 @@ export const createListing = async (req, res, next) => {
     };
     const cid = String(req.body.communityId || "").trim();
     if (cid) {
-      const { data: comm, error: cErr } = await supabaseAdmin.from("communities").select("id").eq("id", cid).maybeSingle();
+      const { data: commRows, error: cErr } = await supabaseAdmin.from("communities").select("id").eq("id", cid).limit(1);
+      const comm = firstRow(commRows);
       if (cErr) throw new AppError(500, cErr.message);
       if (!comm) throw new AppError(400, "Unknown community.");
       row.community_id = cid;
@@ -272,7 +343,8 @@ export const createListing = async (req, res, next) => {
 export const updateListing = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { data: existing, error: exErr } = await supabaseAdmin.from("listings").select("*").eq("id", id).maybeSingle();
+    const { data: existingRows, error: exErr } = await supabaseAdmin.from("listings").select("*").eq("id", id).limit(1);
+    const existing = firstRow(existingRows);
     if (exErr) throw new AppError(500, exErr.message);
     if (!existing || existing.seller_id !== req.user.id) throw new AppError(404, "Listing not found.");
     const patch = {};
@@ -293,7 +365,8 @@ export const updateListing = async (req, res, next) => {
         patch.community_id = null;
       } else {
         const cid = String(req.body.communityId);
-        const { data: comm, error: cErr } = await supabaseAdmin.from("communities").select("id").eq("id", cid).maybeSingle();
+        const { data: commRows, error: cErr } = await supabaseAdmin.from("communities").select("id").eq("id", cid).limit(1);
+        const comm = firstRow(commRows);
         if (cErr) throw new AppError(500, cErr.message);
         if (!comm) throw new AppError(400, "Unknown community.");
         patch.community_id = cid;
@@ -391,6 +464,164 @@ export const removeFavorite = async (req, res, next) => {
       .eq("listing_id", listingId);
     if (error) throw new AppError(500, error.message);
     res.status(204).send();
+  } catch (e) {
+    next(e);
+  }
+};
+
+async function enrichCartRowsForApi(rows) {
+  if (!rows?.length) return [];
+  const listingIds = [...new Set(rows.map((r) => String(r.listing_id)))];
+  const { data: listings, error: lerr } = await supabaseAdmin
+    .from("listings")
+    .select("id,seller_id,title,description,image_url,price_cents,quantity,status,fulfillment_modes")
+    .in("id", listingIds);
+  if (lerr) throw new AppError(500, lerr.message);
+  const listingById = new Map((listings || []).map((l) => [String(l.id), l]));
+  const sellerIds = [...new Set((listings || []).map((l) => String(l.seller_id)).filter(Boolean))];
+  let usernameById = new Map();
+  if (sellerIds.length > 0) {
+    const { data: profiles } = await supabaseAdmin.from("profiles").select("id,username").in("id", sellerIds);
+    usernameById = new Map((profiles || []).map((p) => [String(p.id), String(p.username || "").trim()]));
+  }
+  const out = [];
+  for (const row of rows) {
+    const listing = listingById.get(String(row.listing_id));
+    if (!listing) continue;
+    const sid = String(listing.seller_id);
+    const un = usernameById.get(sid);
+    const sellerLabel = un ? `@${un}` : sid ? `Seller ${sid.slice(0, 8)}` : "Unknown seller";
+    out.push({
+      listingId: String(row.listing_id),
+      sellerId: sid,
+      sellerLabel,
+      title: String(listing.title || "Product"),
+      description: String(listing.description || "").trim(),
+      imageUrl: String(listing.image_url || "").trim(),
+      unitPriceCents: Number(listing.price_cents) || 0,
+      quantity: row.quantity,
+      listingQuantity: Math.max(0, Number(listing.quantity) || 0),
+      fulfillmentModes: Array.isArray(listing.fulfillment_modes) ? listing.fulfillment_modes.map(String) : [],
+      comment: String(row.comment || "").trim(),
+    });
+  }
+  return out;
+}
+
+export const listCartItems = async (req, res, next) => {
+  try {
+    const { data: rows, error } = await supabaseAdmin
+      .from("cart_items")
+      .select("*")
+      .eq("user_id", req.user.id)
+      .order("updated_at", { ascending: false });
+    if (error?.code === "PGRST205") return res.json({ items: [] });
+    if (error) throw new AppError(500, error.message);
+    const items = await enrichCartRowsForApi(rows || []);
+    res.json({ items });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const addCartItem = async (req, res, next) => {
+  try {
+    const listingId = String(req.body.listingId);
+    const addQty = req.body.quantity != null ? Number(req.body.quantity) : 1;
+    const comment = String(req.body.comment || "").trim().slice(0, 2000);
+    if (!Number.isFinite(addQty) || addQty < 1) throw new AppError(400, "Invalid quantity.");
+    const { data: listing, error: lerr } = await supabaseAdmin.from("listings").select("*").eq("id", listingId).maybeSingle();
+    if (lerr) throw new AppError(500, lerr.message);
+    if (!listing || listing.status !== "active") throw new AppError(404, "Listing not available.");
+    if (listing.seller_id === req.user.id) throw new AppError(400, "You cannot add your own listing to the cart.");
+    const maxStock = Math.max(0, Number(listing.quantity) || 0);
+    if (maxStock < 1) throw new AppError(400, "Not enough stock.");
+    const { data: existing, error: cErr } = await supabaseAdmin
+      .from("cart_items")
+      .select("quantity,comment")
+      .eq("user_id", req.user.id)
+      .eq("listing_id", listingId)
+      .maybeSingle();
+    if (cErr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
+    if (cErr) throw new AppError(500, cErr.message);
+    const prevQty = Number(existing?.quantity) || 0;
+    const mergedQty = prevQty ? prevQty + addQty : addQty;
+    const newQty = Math.min(mergedQty, maxStock);
+    if (newQty < 1) throw new AppError(400, "Not enough stock.");
+    const mergedComment = comment || String(existing?.comment || "").trim();
+    const now = new Date().toISOString();
+    const { error: uerr } = await supabaseAdmin.from("cart_items").upsert(
+      {
+        user_id: req.user.id,
+        listing_id: listingId,
+        quantity: newQty,
+        comment: mergedComment,
+        updated_at: now,
+      },
+      { onConflict: "user_id,listing_id" },
+    );
+    if (uerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
+    if (uerr) throw new AppError(400, uerr.message);
+    const { data: rows } = await supabaseAdmin.from("cart_items").select("*").eq("user_id", req.user.id);
+    const items = await enrichCartRowsForApi(rows || []);
+    res.status(201).json({ items });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const removeCartItem = async (req, res, next) => {
+  try {
+    const listingId = String(req.params.listingId);
+    const { error } = await supabaseAdmin.from("cart_items").delete().eq("user_id", req.user.id).eq("listing_id", listingId);
+    if (error?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
+    if (error) throw new AppError(500, error.message);
+    res.status(204).send();
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const patchCartItem = async (req, res, next) => {
+  try {
+    const listingId = String(req.params.listingId);
+    const newQty = req.body.quantity != null ? Number(req.body.quantity) : NaN;
+    if (!Number.isFinite(newQty) || newQty < 1 || !Number.isInteger(newQty)) throw new AppError(400, "Invalid quantity.");
+
+    const { data: row, error: rerr } = await supabaseAdmin
+      .from("cart_items")
+      .select("listing_id")
+      .eq("user_id", req.user.id)
+      .eq("listing_id", listingId)
+      .maybeSingle();
+    if (rerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
+    if (rerr) throw new AppError(500, rerr.message);
+    if (!row) throw new AppError(404, "Not in cart.");
+
+    const { data: listing, error: lerr } = await supabaseAdmin
+      .from("listings")
+      .select("quantity,status,seller_id")
+      .eq("id", listingId)
+      .maybeSingle();
+    if (lerr) throw new AppError(500, lerr.message);
+    if (!listing || listing.status !== "active") throw new AppError(400, "Listing no longer available.");
+    if (listing.seller_id === req.user.id) throw new AppError(400, "Invalid cart item.");
+    const maxStock = Math.max(0, Number(listing.quantity) || 0);
+    if (maxStock < 1) throw new AppError(400, "Not enough stock.");
+    const capped = Math.min(newQty, maxStock);
+    if (capped < 1) throw new AppError(400, "Invalid quantity.");
+
+    const { error: uerr } = await supabaseAdmin
+      .from("cart_items")
+      .update({ quantity: capped, updated_at: new Date().toISOString() })
+      .eq("user_id", req.user.id)
+      .eq("listing_id", listingId);
+    if (uerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
+    if (uerr) throw new AppError(400, uerr.message);
+
+    const { data: rows } = await supabaseAdmin.from("cart_items").select("*").eq("user_id", req.user.id);
+    const items = await enrichCartRowsForApi(rows || []);
+    res.json({ items });
   } catch (e) {
     next(e);
   }
@@ -753,6 +984,7 @@ export const listUsersDirectory = async (req, res, next) => {
     if (error) throw new AppError(500, error.message);
     const rows = (data || []).map((p) => ({
       id: p.id,
+      username: p.username || "",
       name: [p.first_name, p.middle_name, p.last_name].filter(Boolean).join(" ").trim() || p.username || "Member",
       joinedAt: p.created_at || null,
     }));
@@ -768,11 +1000,16 @@ export const listCommunities = async (req, res, next) => {
     if (error?.code === "PGRST205") return res.json({ communities: [] });
     if (error) throw new AppError(500, error.message);
     const communities = data || [];
-    const { data: profileRows, error: perr } = await supabaseAdmin.from("profiles").select("address");
-    const profiles = !perr && profileRows ? profileRows : [];
+    const profiles = await loadProfilesForCommunityCounts();
     const counts = computeCommunityMemberCountsByProfileAddress(communities, profiles);
+    const sellerCounts = await loadActiveSellerCountsByCommunity();
     res.json({
-      communities: communities.map((row) => communityRowToApi(row, counts.get(String(row.id)) ?? 0)),
+      communities: communities.map((row) => {
+        const communityId = String(row.id);
+        const profileCount = counts.get(communityId) ?? 0;
+        const sellerCount = sellerCounts.get(communityId) ?? 0;
+        return communityRowToApi(row, Math.max(profileCount, sellerCount));
+      }),
     });
   } catch (e) {
     next(e);
@@ -782,13 +1019,16 @@ export const listCommunities = async (req, res, next) => {
 export const getCommunityById = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { data, error } = await supabaseAdmin.from("communities").select("*").eq("id", id).maybeSingle();
+    const { data: rows, error } = await supabaseAdmin.from("communities").select("*").eq("id", id).limit(1);
+    const data = firstRow(rows);
     if (error?.code === "PGRST205") throw new AppError(404, "Community not found.");
     if (error) throw new AppError(500, error.message);
     if (!data) throw new AppError(404, "Community not found.");
-    const { data: profileRows, error: perr } = await supabaseAdmin.from("profiles").select("address");
-    const profiles = !perr && profileRows ? profileRows : [];
-    res.json({ community: communityPublicToApi(data, countProfilesMatchingCommunity(data, profiles)) });
+    const profiles = await loadProfilesForCommunityCounts();
+    const sellerCounts = await loadActiveSellerCountsByCommunity();
+    const profileCount = countProfilesMatchingCommunity(data, profiles);
+    const sellerCount = sellerCounts.get(String(data.id)) ?? 0;
+    res.json({ community: communityPublicToApi(data, Math.max(profileCount, sellerCount)) });
   } catch (e) {
     next(e);
   }
@@ -849,7 +1089,8 @@ export const createCommunity = async (req, res, next) => {
         .update({ city, province, postal_code: postalCode })
         .eq("id", data.id);
       if (!localeUpdateErr) {
-        const { data: refreshed } = await supabaseAdmin.from("communities").select("*").eq("id", data.id).maybeSingle();
+        const { data: refreshedRows } = await supabaseAdmin.from("communities").select("*").eq("id", data.id).limit(1);
+        const refreshed = firstRow(refreshedRows);
         if (refreshed) data = refreshed;
       }
     }
@@ -860,9 +1101,11 @@ export const createCommunity = async (req, res, next) => {
       );
     }
     if (error) throw new AppError(400, error.message);
-    const { data: profileRows, error: perr } = await supabaseAdmin.from("profiles").select("address");
-    const profiles = !perr && profileRows ? profileRows : [];
-    res.status(201).json({ community: communityRowToApi(data, countProfilesMatchingCommunity(data, profiles)) });
+    const profiles = await loadProfilesForCommunityCounts();
+    const sellerCounts = await loadActiveSellerCountsByCommunity();
+    const profileCount = countProfilesMatchingCommunity(data, profiles);
+    const sellerCount = sellerCounts.get(String(data.id)) ?? 0;
+    res.status(201).json({ community: communityRowToApi(data, Math.max(profileCount, sellerCount)) });
   } catch (e) {
     next(e);
   }
@@ -871,7 +1114,8 @@ export const createCommunity = async (req, res, next) => {
 export const updateCommunity = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { data: existing, error: findErr } = await supabaseAdmin.from("communities").select("*").eq("id", id).maybeSingle();
+    const { data: existingRows, error: findErr } = await supabaseAdmin.from("communities").select("*").eq("id", id).limit(1);
+    const existing = firstRow(existingRows);
     if (findErr?.code === "PGRST205") throw new AppError(404, "Community not found.");
     if (findErr) throw new AppError(500, findErr.message);
     if (!existing) throw new AppError(404, "Community not found.");
@@ -908,9 +1152,11 @@ export const updateCommunity = async (req, res, next) => {
 
     const { data, error } = await supabaseAdmin.from("communities").update(patch).eq("id", id).select("*").single();
     if (error) throw new AppError(400, error.message);
-    const { data: profileRows, error: perr } = await supabaseAdmin.from("profiles").select("address");
-    const profiles = !perr && profileRows ? profileRows : [];
-    res.json({ community: communityRowToApi(data, countProfilesMatchingCommunity(data, profiles)) });
+    const profiles = await loadProfilesForCommunityCounts();
+    const sellerCounts = await loadActiveSellerCountsByCommunity();
+    const profileCount = countProfilesMatchingCommunity(data, profiles);
+    const sellerCount = sellerCounts.get(String(data.id)) ?? 0;
+    res.json({ community: communityRowToApi(data, Math.max(profileCount, sellerCount)) });
   } catch (e) {
     next(e);
   }

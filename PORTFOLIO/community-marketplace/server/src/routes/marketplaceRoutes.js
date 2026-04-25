@@ -3,6 +3,7 @@ import { body, param } from "express-validator";
 import {
   acceptBid,
   addFavorite,
+  addCartItem,
   createBid,
   createCommunity,
   createExpense,
@@ -13,6 +14,8 @@ import {
   getCourierModes,
   getListing,
   listBidsForOrder,
+  listCartItems,
+  patchCartItem,
   listExpenses,
   listFavorites,
   getCommunityById,
@@ -28,6 +31,7 @@ import {
   patchCourierModes,
   patchOrder,
   removeFavorite,
+  removeCartItem,
   sellerSummary,
   updateListing,
 } from "../controllers/marketplaceController.js";
@@ -78,6 +82,25 @@ marketplaceRouter.delete("/me/listings/:id", requireAuth, writeLimiter, listings
 marketplaceRouter.get("/me/favorites", requireAuth, listFavorites);
 marketplaceRouter.post("/me/favorites/:listingId", requireAuth, writeLimiter, [param("listingId").isUUID()], validate, addFavorite);
 marketplaceRouter.delete("/me/favorites/:listingId", requireAuth, writeLimiter, [param("listingId").isUUID()], validate, removeFavorite);
+
+marketplaceRouter.get("/me/cart", requireAuth, listCartItems);
+marketplaceRouter.post(
+  "/me/cart/items",
+  requireAuth,
+  writeLimiter,
+  [body("listingId").isUUID(), body("quantity").optional().isInt({ min: 1 }), body("comment").optional().isString().isLength({ max: 2000 })],
+  validate,
+  addCartItem,
+);
+marketplaceRouter.patch(
+  "/me/cart/items/:listingId",
+  requireAuth,
+  writeLimiter,
+  [param("listingId").isUUID(), body("quantity").isInt({ min: 1 })],
+  validate,
+  patchCartItem,
+);
+marketplaceRouter.delete("/me/cart/items/:listingId", requireAuth, writeLimiter, [param("listingId").isUUID()], validate, removeCartItem);
 
 marketplaceRouter.post(
   "/orders",

@@ -9,7 +9,12 @@
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS default_lat double precision,
   ADD COLUMN IF NOT EXISTS default_lng double precision,
-  ADD COLUMN IF NOT EXISTS courier_modes text[] NOT NULL DEFAULT ARRAY[]::text[];
+  ADD COLUMN IF NOT EXISTS courier_modes text[] NOT NULL DEFAULT ARRAY[]::text[],
+  ADD COLUMN IF NOT EXISTS community text;
+
+CREATE INDEX IF NOT EXISTS profiles_community_lower_idx
+  ON public.profiles ((lower(community)))
+  WHERE community IS NOT NULL AND btrim(community) <> '';
 
 -- --- Marketplace tables ---
 CREATE TABLE IF NOT EXISTS public.listings (
@@ -44,6 +49,19 @@ CREATE TABLE IF NOT EXISTS public.user_listing_favorites (
 );
 
 CREATE INDEX IF NOT EXISTS user_listing_favorites_user_idx ON public.user_listing_favorites (user_id);
+
+CREATE TABLE IF NOT EXISTS public.cart_items (
+  user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  listing_id uuid NOT NULL REFERENCES public.listings (id) ON DELETE CASCADE,
+  quantity integer NOT NULL DEFAULT 1 CHECK (quantity >= 1),
+  comment text NOT NULL DEFAULT '' CHECK (char_length(comment) <= 2000),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, listing_id)
+);
+
+CREATE INDEX IF NOT EXISTS cart_items_user_idx ON public.cart_items (user_id);
+CREATE INDEX IF NOT EXISTS cart_items_listing_idx ON public.cart_items (listing_id);
 
 CREATE TABLE IF NOT EXISTS public.orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -109,6 +127,7 @@ ALTER TABLE public.user_listing_favorites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.delivery_bids ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.seller_expenses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cart_items ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS listings_select_active ON public.listings;
 CREATE POLICY listings_select_active ON public.listings FOR SELECT TO authenticated USING (status = 'active' OR seller_id = auth.uid());
@@ -124,6 +143,9 @@ CREATE POLICY listings_delete_own ON public.listings FOR DELETE TO authenticated
 
 DROP POLICY IF EXISTS favorites_all_own ON public.user_listing_favorites;
 CREATE POLICY favorites_all_own ON public.user_listing_favorites FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS cart_items_all_own ON public.cart_items;
+CREATE POLICY cart_items_all_own ON public.cart_items FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 
 DROP POLICY IF EXISTS orders_select_parties ON public.orders;
 CREATE POLICY orders_select_parties ON public.orders FOR SELECT TO authenticated USING (buyer_id = auth.uid() OR seller_id = auth.uid());

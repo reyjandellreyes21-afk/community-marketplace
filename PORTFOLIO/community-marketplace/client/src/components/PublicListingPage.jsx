@@ -16,7 +16,7 @@ export function PublicListingPage({ listingId, onBack, onOpenLogin }) {
         const res = await fetch(`${API_URL}/listings/${listingId}`);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data?.error?.message || "Could not load listing.");
-        if (!cancelled) setListing(data.listing);
+        if (!cancelled && data.listing && String(data.listing.id) === String(listingId)) setListing(data.listing);
       } catch (e) {
         if (!cancelled) setError(e.message || "Could not load listing.");
       }
@@ -33,7 +33,7 @@ export function PublicListingPage({ listingId, onBack, onOpenLogin }) {
           ← Back
         </button>
         {error ? <p className="app-alert-error text-sm">{error}</p> : null}
-        {listing ? (
+        {listing && String(listing.id) === String(listingId) ? (
           <div className="app-card space-y-4">
             <h1 className="text-xl font-semibold text-neutral-900 dark:text-slate-100">{listing.title}</h1>
             <p className="text-2xl font-bold text-brand-primary">{formatCents(listing.priceCents)}</p>
