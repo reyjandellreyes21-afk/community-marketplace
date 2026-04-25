@@ -15,8 +15,10 @@ export const VIEWS = {
   USERS: "users",
   /** Seller hub: products and review. */
   SELLER: "seller",
-  /** Local delivery (nav placeholder). */
-  DELIVERY: "delivery",
+  /** Add-to-cart screen (nav placeholder). */
+  CART: "cart",
+  /** Buyer purchases (orders with `role=buyer`). */
+  MY_PURCHASES: "my_purchases",
 };
 
 /** Sub-navigation for `VIEWS.SELLER` (stored in App state `sellerTab`). */

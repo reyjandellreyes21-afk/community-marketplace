@@ -170,7 +170,7 @@ function MenuOrdersIcon(props) {
   );
 }
 
-function MenuDeliveryIcon(props) {
+function MenuCartIcon(props) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
       <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
@@ -255,7 +255,8 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {(v: string) => void} props.setActiveView
  * @param {() => void} props.goBrowse
  * @param {() => void} props.goOrders
- * @param {() => void} props.goDelivery
+ * @param {() => void} props.goMyPurchases
+ * @param {() => void} props.goCart
  * @param {"light"|"dark"} props.theme
  * @param {(t: "light"|"dark") => void} props.setTheme
  * @param {() => void} props.onLogout
@@ -270,7 +271,8 @@ export function LoggedInHeader({
   setActiveView,
   goBrowse = () => {},
   goOrders = () => {},
-  goDelivery = () => {},
+  goMyPurchases = () => {},
+  goCart = () => {},
   theme,
   setTheme,
   onLogout,
@@ -455,6 +457,28 @@ export function LoggedInHeader({
             </button>
             <button
               type="button"
+              className={`inline-flex shrink-0 items-center gap-1.5 ${navPill(activeView === VIEWS.CART)}`}
+              onClick={() => {
+                goCart();
+                closeAllMenus();
+              }}
+            >
+              <MenuCartIcon className="h-[18px] w-[18px] shrink-0" />
+              Add to cart
+            </button>
+            <button
+              type="button"
+              className={`inline-flex shrink-0 items-center gap-1.5 ${navPill(activeView === VIEWS.MY_PURCHASES)}`}
+              onClick={() => {
+                goMyPurchases();
+                closeAllMenus();
+              }}
+            >
+              <MenuFileIcon className="h-[18px] w-[18px] shrink-0" />
+              My purchases
+            </button>
+            <button
+              type="button"
               className={`inline-flex shrink-0 items-center gap-1.5 ${navPill(activeView === VIEWS.ORDERS)}`}
               onClick={() => {
                 goOrders();
@@ -463,17 +487,6 @@ export function LoggedInHeader({
             >
               <MenuOrdersIcon className="h-[18px] w-[18px] shrink-0" />
               Orders
-            </button>
-            <button
-              type="button"
-              className={`inline-flex shrink-0 items-center gap-1.5 ${navPill(activeView === VIEWS.DELIVERY)}`}
-              onClick={() => {
-                goDelivery();
-                closeAllMenus();
-              }}
-            >
-              <MenuDeliveryIcon className="h-[18px] w-[18px] shrink-0" />
-              Delivery
             </button>
           </nav>
         </div>
@@ -874,6 +887,28 @@ export function LoggedInHeader({
         </button>
         <button
           type="button"
+          className={bottomNavItemClass(activeView === VIEWS.CART)}
+          onClick={() => {
+            goCart();
+            closeAllMenus();
+          }}
+        >
+          <MenuCartIcon className="shrink-0" />
+          <span className="max-w-[3.25rem] truncate sm:max-w-none">Add to cart</span>
+        </button>
+        <button
+          type="button"
+          className={bottomNavItemClass(activeView === VIEWS.MY_PURCHASES)}
+          onClick={() => {
+            goMyPurchases();
+            closeAllMenus();
+          }}
+        >
+          <MenuFileIcon className="shrink-0" />
+          <span className="max-w-[3.25rem] truncate sm:max-w-none">Purchases</span>
+        </button>
+        <button
+          type="button"
           className={bottomNavItemClass(activeView === VIEWS.ORDERS)}
           onClick={() => {
             goOrders();
@@ -882,17 +917,6 @@ export function LoggedInHeader({
         >
           <MenuOrdersIcon className="shrink-0" />
           <span className="max-w-[3.25rem] truncate sm:max-w-none">Orders</span>
-        </button>
-        <button
-          type="button"
-          className={bottomNavItemClass(activeView === VIEWS.DELIVERY)}
-          onClick={() => {
-            goDelivery();
-            closeAllMenus();
-          }}
-        >
-          <MenuDeliveryIcon className="shrink-0" />
-          <span className="max-w-[3.25rem] truncate sm:max-w-none">Delivery</span>
         </button>
       </div>
     </nav>

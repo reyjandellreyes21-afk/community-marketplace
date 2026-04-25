@@ -6,6 +6,8 @@ import { supabaseAdmin, supabaseAuth } from "../lib/supabase.js";
 import { splitGoogleDisplayName, userToClient } from "../utils/displayName.js";
 
 const googleClient = new OAuth2Client(config.googleClientId || undefined);
+const isMissingProfilesCommunityColumn = (error) =>
+  /community/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
 
 const profileToClient = (profile) =>
   userToClient({
@@ -21,6 +23,7 @@ const profileToClient = (profile) =>
     avatarUrl: profile.avatar_url || "",
     phone: profile.phone || "",
     birthday: profile.birthday,
+    community: profile.community || "",
     address: profile.address || "",
     addressUrl: profile.address_url || "",
     gender: profile.gender || "",
@@ -45,6 +48,7 @@ const authUserToClient = (authUser) =>
       avatarUrl: meta.avatar_url || "",
       phone: meta.phone || "",
       birthday: meta.birthday || null,
+      community: meta.community || "",
       address: meta.address || "",
       addressUrl: meta.address_url || "",
       gender: meta.gender || "",
@@ -55,10 +59,10 @@ const authUserToClient = (authUser) =>
   };
 
 const getProfileById = async (id) => {
-  const { data, error } = await supabaseAdmin.from("profiles").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await supabaseAdmin.from("profiles").select("*").eq("id", id).limit(1);
   if (error?.code === "PGRST205") return null;
   if (error) throw new AppError(500, "Failed to load user profile.");
-  return data;
+  return Array.isArray(data) && data.length > 0 ? data[0] : null;
 };
 
 const ensureProfile = async (user, partial = {}) => {
@@ -75,6 +79,7 @@ const ensureProfile = async (user, partial = {}) => {
     avatar_url: partial.avatar_url || "",
     phone: partial.phone || "",
     birthday: partial.birthday || null,
+    community: partial.community || "",
     address: partial.address || "",
     address_url: partial.address_url || "",
     gender: partial.gender || "",
@@ -82,10 +87,18 @@ const ensureProfile = async (user, partial = {}) => {
     twitter_url: partial.twitter_url || "",
     instagram_url: partial.instagram_url || "",
   };
-  const { data, error } = await supabaseAdmin.from("profiles").upsert(payload).select("*").single();
+  const { error } = await supabaseAdmin.from("profiles").upsert(payload);
   if (error?.code === "PGRST205") return null;
-  if (error) throw new AppError(500, error.message || "Failed to save profile.");
-  return data;
+  if (error && isMissingProfilesCommunityColumn(error)) {
+    const { community, ...payloadWithoutCommunity } = payload;
+    const retry = await supabaseAdmin.from("profiles").upsert(payloadWithoutCommunity);
+    if (retry.error?.code === "PGRST205") return null;
+    if (retry.error) throw new AppError(500, retry.error.message || "Failed to save profile.");
+  } else if (error) {
+    throw new AppError(500, error.message || "Failed to save profile.");
+  }
+  const refreshed = await getProfileById(user.id);
+  return refreshed;
 };
 
 export const register = async (req, res, next) => {
@@ -95,11 +108,12 @@ export const register = async (req, res, next) => {
     const normalizedEmail = String(email || "").trim().toLowerCase();
     let chosenUsername = normalizedUsername;
     if (chosenUsername) {
-      const { data: existingUsername, error: usernameError } = await supabaseAdmin
+      const { data: existingUsernameRows, error: usernameError } = await supabaseAdmin
         .from("profiles")
         .select("id")
         .eq("username", chosenUsername)
-        .maybeSingle();
+        .limit(1);
+      const existingUsername = Array.isArray(existingUsernameRows) && existingUsernameRows.length > 0 ? existingUsernameRows[0] : null;
       if (usernameError && usernameError.code !== "PGRST205") {
         throw new AppError(500, "Failed to verify username uniqueness.");
       }
@@ -214,7 +228,7 @@ export const updateMe = async (req, res, next) => {
   try {
     const existingProfile = await getProfileById(req.user.id);
     const {
-      firstName, middleName, lastName, username, avatarUrl, email, phone, birthday, address, addressUrl, age, gender, facebookUrl, twitterUrl, instagramUrl,
+      firstName, middleName, lastName, username, avatarUrl, email, phone, birthday, community, address, addressUrl, age, gender, facebookUrl, twitterUrl, instagramUrl,
     } = req.body || {};
 
     const updates = {};
@@ -224,6 +238,7 @@ export const updateMe = async (req, res, next) => {
     if (username !== undefined) updates.username = String(username).trim();
     if (avatarUrl !== undefined) updates.avatar_url = String(avatarUrl).trim();
     if (phone !== undefined) updates.phone = String(phone).trim();
+    if (community !== undefined) updates.community = String(community).trim();
     if (address !== undefined) updates.address = String(address).trim();
     if (addressUrl !== undefined) updates.address_url = String(addressUrl).trim();
     if (gender !== undefined) updates.gender = String(gender).trim();
@@ -247,19 +262,28 @@ export const updateMe = async (req, res, next) => {
     }
 
     if (existingProfile && updates.username) {
-      const { data: existingUsername, error: usernameError } = await supabaseAdmin
+      const { data: existingUsernameRows, error: usernameError } = await supabaseAdmin
         .from("profiles")
         .select("id")
         .eq("username", updates.username)
         .neq("id", req.user.id)
-        .maybeSingle();
+        .limit(1);
+      const existingUsername = Array.isArray(existingUsernameRows) && existingUsernameRows.length > 0 ? existingUsernameRows[0] : null;
       if (usernameError) throw new AppError(500, "Failed to verify username uniqueness.");
       if (existingUsername) throw new AppError(409, "Username already taken.");
     }
 
     if (existingProfile) {
-      const { data, error } = await supabaseAdmin.from("profiles").update(updates).eq("id", req.user.id).select("*").single();
-      if (error) throw new AppError(500, error.message || "Failed to update profile.");
+      const { error } = await supabaseAdmin.from("profiles").update(updates).eq("id", req.user.id);
+      if (error && isMissingProfilesCommunityColumn(error)) {
+        const { community, ...updatesWithoutCommunity } = updates;
+        const retry = await supabaseAdmin.from("profiles").update(updatesWithoutCommunity).eq("id", req.user.id);
+        if (retry.error) throw new AppError(500, retry.error.message || "Failed to update profile.");
+      } else if (error) {
+        throw new AppError(500, error.message || "Failed to update profile.");
+      }
+      const data = await getProfileById(req.user.id);
+      if (!data) throw new AppError(500, "Failed to load updated profile.");
       if (updates.address !== undefined) {
         await syncSellerListingsCommunityId(supabaseAdmin, req.user.id, String(data?.address ?? ""));
       }
@@ -273,6 +297,7 @@ export const updateMe = async (req, res, next) => {
     if (updates.username !== undefined) userMetadata.username = updates.username;
     if (updates.avatar_url !== undefined) userMetadata.avatar_url = updates.avatar_url;
     if (updates.phone !== undefined) userMetadata.phone = updates.phone;
+    if (updates.community !== undefined) userMetadata.community = updates.community;
     if (updates.birthday !== undefined) userMetadata.birthday = updates.birthday;
     if (updates.address !== undefined) userMetadata.address = updates.address;
     if (updates.address_url !== undefined) userMetadata.address_url = updates.address_url;

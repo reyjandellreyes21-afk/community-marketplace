@@ -4,12 +4,54 @@ import {
   isSameCommunityLocale,
 } from "./communityNameSimilarity.js";
 
+/** Split comma-separated address while respecting escaped commas (`\,`). */
+function splitEscapedAddressParts(address) {
+  const input = String(address || "");
+  const parts = [];
+  let current = "";
+  let escaping = false;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (escaping) {
+      current += ch;
+      escaping = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (ch === ",") {
+      parts.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current.trim());
+  return parts;
+}
+
 /** Same comma-separated profile address model as the client `splitAddressParts`. */
 export function parseCommaProfileAddress(address) {
-  const parts = String(address || "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const parts = splitEscapedAddressParts(address);
+  if (parts.length === 7) {
+    const [
+      _addressHouseStreet = "",
+      _addressSubdivision = "",
+      addressBarangay = "",
+      addressCity = "",
+      addressProvince = "",
+      addressPostalCode = "",
+      _addressCountry = "",
+    ] = parts;
+    return {
+      brgy: addressBarangay,
+      city: addressCity,
+      province: addressProvince,
+      postalCode: addressPostalCode,
+    };
+  }
   if (parts.length <= 5) {
     const [addressApartment = "", addressCity = "", addressProvince = "", _country = "", addressPostalCode = ""] = parts;
     return {
@@ -19,12 +61,15 @@ export function parseCommaProfileAddress(address) {
       postalCode: addressPostalCode,
     };
   }
-  const addressPostalCode = parts.at(-1) || "";
+  // Flexible fallback aligned with client splitAddressParts():
+  // preserve stable tail mapping and right-anchor barangay.
+  const addressPostalCode = parts.at(-2) || "";
   const addressProvince = parts.at(-3) || "";
   const addressCity = parts.at(-4) || "";
-  const addressApartment = parts.slice(0, -4).join(", ");
+  const leading = parts.slice(0, -4);
+  const addressBarangay = leading.length > 0 ? leading[leading.length - 1] || "" : "";
   return {
-    brgy: addressApartment,
+    brgy: addressBarangay,
     city: addressCity,
     province: addressProvince,
     postalCode: addressPostalCode,
