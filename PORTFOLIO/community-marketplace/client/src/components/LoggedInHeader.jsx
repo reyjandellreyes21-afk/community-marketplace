@@ -201,8 +201,8 @@ function bottomNavItemClass(active) {
   }`;
 }
 
-function QuizAppLogo({ className = "h-7 w-auto max-w-[11rem] shrink-0 object-contain sm:h-8 sm:max-w-[13rem]" }) {
-  return <img src={navLogo} alt="LinkMark logo" className={className} />;
+function LinkMartLogo({ className = "h-7 w-auto max-w-[11rem] shrink-0 object-contain sm:h-8 sm:max-w-[13rem]" }) {
+  return <img src={navLogo} alt="LinkMart logo" className={className} />;
 }
 
 function navPill(active) {
@@ -422,7 +422,7 @@ export function LoggedInHeader({
     <header className="sticky top-0 z-50 border-b border-neutral-200/80 bg-white/90 shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/95">
       <div className="app-container flex h-[4.25rem] items-center justify-between gap-2 sm:gap-3">
         <button type="button" className="rounded-xl px-1 py-1 focus:outline-none" onClick={goMarketplaceRoot} aria-label="Go to marketplace">
-          <QuizAppLogo className="h-7 w-auto max-w-[9rem] shrink-0 object-contain sm:h-8 sm:max-w-[11rem]" />
+          <LinkMartLogo className="h-7 w-auto max-w-[9rem] shrink-0 object-contain sm:h-8 sm:max-w-[11rem]" />
         </button>
 
         {communityShopName && onLeaveCommunityShop ? (
