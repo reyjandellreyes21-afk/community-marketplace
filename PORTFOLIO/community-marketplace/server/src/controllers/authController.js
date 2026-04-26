@@ -8,6 +8,114 @@ import { splitGoogleDisplayName, userToClient } from "../utils/displayName.js";
 const googleClient = new OAuth2Client(config.googleClientId || undefined);
 const isMissingProfilesCommunityColumn = (error) =>
   /community/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
+const USERNAME_RULE = /^[a-z][a-z0-9._]{2,19}$/;
+const USERNAME_DUPLICATE_SEPARATOR_RULE = /(\.\.|__)/;
+
+const isValidUsername = (value) => USERNAME_RULE.test(value) && !USERNAME_DUPLICATE_SEPARATOR_RULE.test(value);
+
+const sanitizeUsernameSeed = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._]/g, "")
+    .replace(/[._]{2,}/g, (match) => match[0])
+    .replace(/^[^a-z]+/, "")
+    .replace(/[._]+$/g, "");
+
+const usernameExists = async (username) => {
+  const { data: existingUsernameRows, error: usernameError } = await supabaseAdmin
+    .from("profiles")
+    .select("id")
+    .eq("username", username)
+    .limit(1);
+  if (usernameError && usernameError.code !== "PGRST205") {
+    throw new AppError(500, "Failed to verify username uniqueness.");
+  }
+  return Array.isArray(existingUsernameRows) && existingUsernameRows.length > 0;
+};
+
+const normalizePhilippinesPhone = (value) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  // Canonicalize by the mobile local part (9XXXXXXXXX), regardless of input formatting.
+  if (digits.length >= 10) {
+    const local10 = digits.slice(-10);
+    if (local10.startsWith("9")) return `+63${local10}`;
+  }
+  if (digits.startsWith("63") && digits.length === 12) return `+${digits}`;
+  if (digits.startsWith("0") && digits.length === 11) return `+63${digits.slice(1)}`;
+  if (digits.length === 10 && digits.startsWith("9")) return `+63${digits}`;
+  return String(value || "").trim();
+};
+
+const phoneVariants = (value) => {
+  const normalized = normalizePhilippinesPhone(value);
+  if (!normalized) return [];
+  const digits = normalized.replace(/\D/g, "");
+  if (digits.length !== 12 || !digits.startsWith("63")) return [normalized];
+  const local10 = digits.slice(2);
+  return Array.from(new Set([`+${digits}`, `0${local10}`, local10]));
+};
+
+const phoneExistsForOtherUser = async (phone, userId) => {
+  const normalizedPhone = normalizePhilippinesPhone(phone);
+  if (!normalizedPhone) return false;
+  const variants = phoneVariants(normalizedPhone);
+  for (const variant of variants) {
+    const { data: exactRows, error: exactError } = await supabaseAdmin
+      .from("profiles")
+      .select("id")
+      .eq("phone", variant)
+      .neq("id", userId)
+      .limit(1);
+    if (exactError && exactError.code !== "PGRST205") {
+      throw new AppError(500, "Failed to verify phone uniqueness.");
+    }
+    if (Array.isArray(exactRows) && exactRows.length > 0) return true;
+  }
+  const { data: existingPhoneRows, error: phoneError } = await supabaseAdmin
+    .from("profiles")
+    .select("id, phone")
+    .neq("id", userId)
+    .not("phone", "is", null)
+    .neq("phone", "")
+    .limit(20000);
+  if (phoneError && phoneError.code !== "PGRST205") {
+    throw new AppError(500, "Failed to verify phone uniqueness.");
+  }
+  const duplicate = (existingPhoneRows || []).some((row) => normalizePhilippinesPhone(row?.phone) === normalizedPhone);
+  return duplicate;
+};
+
+const ensureUniquePhoneOnWrite = async (phone, userId) => {
+  const normalizedPhone = normalizePhilippinesPhone(phone);
+  if (!normalizedPhone) return "";
+  if (await phoneExistsForOtherUser(normalizedPhone, userId)) {
+    throw new AppError(409, "Phone number already in use.");
+  }
+  return normalizedPhone;
+};
+
+const normalizeProfilePayloadPhone = (payload) => {
+  const normalizedPhone = normalizePhilippinesPhone(payload.phone);
+  return { ...payload, phone: normalizedPhone };
+};
+
+const generateUsernameFromEmail = async (email) => {
+  const suffixLength = 6;
+  const separator = "_";
+  const maxBaseLength = 10;
+  const baseSeed = sanitizeUsernameSeed(String(email || "").split("@")[0]);
+  const safeBase = (baseSeed || "user").slice(0, maxBaseLength) || "user";
+  for (let i = 0; i < 8; i += 1) {
+    const suffix = Math.random().toString(36).slice(2, 2 + suffixLength);
+    const candidate = `${safeBase}${separator}${suffix}`;
+    if (isValidUsername(candidate) && !(await usernameExists(candidate))) return candidate;
+  }
+  const fallbackSuffix = Date.now().toString(36).slice(-suffixLength);
+  const fallback = `${safeBase}${separator}${fallbackSuffix}`;
+  return fallback.slice(0, 20);
+};
 
 const profileToClient = (profile) =>
   userToClient({
@@ -66,7 +174,7 @@ const getProfileById = async (id) => {
 };
 
 const ensureProfile = async (user, partial = {}) => {
-  const payload = {
+  const payload = normalizeProfilePayloadPhone({
     id: user.id,
     email: user.email || partial.email || "",
     first_name: partial.first_name || "",
@@ -86,7 +194,7 @@ const ensureProfile = async (user, partial = {}) => {
     facebook_url: partial.facebook_url || "",
     twitter_url: partial.twitter_url || "",
     instagram_url: partial.instagram_url || "",
-  };
+  });
   const { error } = await supabaseAdmin.from("profiles").upsert(payload);
   if (error?.code === "PGRST205") return null;
   if (error && isMissingProfilesCommunityColumn(error)) {
@@ -104,23 +212,19 @@ const ensureProfile = async (user, partial = {}) => {
 export const register = async (req, res, next) => {
   try {
     const { username, age, acceptedTerms, email, password } = req.body;
-    const normalizedUsername = String(username || "").trim();
+    const normalizedUsername = String(username || "").trim().toLowerCase();
     const normalizedEmail = String(email || "").trim().toLowerCase();
     let chosenUsername = normalizedUsername;
     if (chosenUsername) {
-      const { data: existingUsernameRows, error: usernameError } = await supabaseAdmin
-        .from("profiles")
-        .select("id")
-        .eq("username", chosenUsername)
-        .limit(1);
-      const existingUsername = Array.isArray(existingUsernameRows) && existingUsernameRows.length > 0 ? existingUsernameRows[0] : null;
-      if (usernameError && usernameError.code !== "PGRST205") {
-        throw new AppError(500, "Failed to verify username uniqueness.");
+      if (!isValidUsername(chosenUsername)) {
+        throw new AppError(
+          400,
+          "Username must be 3-20 characters, start with a letter, use lowercase a-z, 0-9, . or _, and not contain duplicate dots/underscores.",
+        );
       }
-      if (existingUsername) throw new AppError(409, "Username already taken.");
+      if (await usernameExists(chosenUsername)) throw new AppError(409, "Username already taken.");
     } else {
-      const emailPrefix = normalizedEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "").slice(0, 20) || "user";
-      chosenUsername = `${emailPrefix}_${Math.random().toString(36).slice(2, 8)}`;
+      chosenUsername = await generateUsernameFromEmail(normalizedEmail);
     }
 
     const { data: createdData, error: createError } = await supabaseAdmin.auth.admin.createUser({
@@ -237,7 +341,7 @@ export const updateMe = async (req, res, next) => {
     if (lastName !== undefined) updates.last_name = String(lastName).trim();
     if (username !== undefined) updates.username = String(username).trim();
     if (avatarUrl !== undefined) updates.avatar_url = String(avatarUrl).trim();
-    if (phone !== undefined) updates.phone = String(phone).trim();
+    if (phone !== undefined) updates.phone = normalizePhilippinesPhone(phone);
     if (community !== undefined) updates.community = String(community).trim();
     if (address !== undefined) updates.address = String(address).trim();
     if (addressUrl !== undefined) updates.address_url = String(addressUrl).trim();
@@ -271,6 +375,9 @@ export const updateMe = async (req, res, next) => {
       const existingUsername = Array.isArray(existingUsernameRows) && existingUsernameRows.length > 0 ? existingUsernameRows[0] : null;
       if (usernameError) throw new AppError(500, "Failed to verify username uniqueness.");
       if (existingUsername) throw new AppError(409, "Username already taken.");
+    }
+    if (updates.phone !== undefined) {
+      updates.phone = await ensureUniquePhoneOnWrite(updates.phone, req.user.id);
     }
 
     if (existingProfile) {

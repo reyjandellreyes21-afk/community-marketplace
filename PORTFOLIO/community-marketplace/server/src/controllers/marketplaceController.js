@@ -639,9 +639,53 @@ export const createOrder = async (req, res, next) => {
     if (!listing || listing.status !== "active") throw new AppError(404, "Listing not available.");
     if (listing.seller_id === req.user.id) throw new AppError(400, "You cannot order your own listing.");
     if (!listing.fulfillment_modes?.includes(fulfillmentType)) throw new AppError(400, "This listing does not support that fulfillment option.");
-    if (listing.quantity < quantity) throw new AppError(400, "Not enough stock.");
+    const { data: placedRows, error: perr } = await supabaseAdmin
+      .from("orders")
+      .select("quantity")
+      .eq("listing_id", listingId)
+      .eq("status", "placed");
+    if (perr && perr?.code !== "PGRST205") throw new AppError(500, perr.message);
+    const pendingReservedQty = (placedRows || []).reduce((sum, row) => sum + Math.max(0, Number(row?.quantity) || 0), 0);
+    const availableQty = Math.max(0, (Number(listing.quantity) || 0) - pendingReservedQty);
+    if (availableQty < quantity) throw new AppError(400, "Not enough stock.");
     const codGoodsCents = listing.price_cents * quantity;
     const initialStatus = "placed";
+    const { data: existingPlacedOrders, error: existingErr } = await supabaseAdmin
+      .from("orders")
+      .select("*")
+      .eq("listing_id", listingId)
+      .eq("buyer_id", req.user.id)
+      .eq("status", initialStatus);
+    if (existingErr) throw new AppError(500, existingErr.message);
+    if ((existingPlacedOrders || []).length > 0) {
+      const ordered = [...existingPlacedOrders].sort((a, b) => {
+        const at = String(a?.created_at || "");
+        const bt = String(b?.created_at || "");
+        return at.localeCompare(bt);
+      });
+      const primary = ordered[0];
+      const existingQtyTotal = ordered.reduce((sum, row) => sum + Math.max(0, Number(row?.quantity) || 0), 0);
+      const mergedQty = existingQtyTotal + quantity;
+      const patch = {
+        quantity: mergedQty,
+        cod_goods_cents: listing.price_cents * mergedQty,
+        // Keep latest selected fulfillment option for the merged pending order.
+        fulfillment_type: fulfillmentType,
+      };
+      const { data: updated, error: uerr } = await supabaseAdmin
+        .from("orders")
+        .update(patch)
+        .eq("id", primary.id)
+        .select("*")
+        .single();
+      if (uerr) throw new AppError(400, uerr.message);
+      const duplicateIds = ordered.slice(1).map((row) => row?.id).filter(Boolean);
+      if (duplicateIds.length > 0) {
+        const { error: derr } = await supabaseAdmin.from("orders").delete().in("id", duplicateIds);
+        if (derr) throw new AppError(500, derr.message);
+      }
+      return res.status(201).json({ order: orderRowToApi(updated) });
+    }
     const row = {
       listing_id: listingId,
       buyer_id: req.user.id,
@@ -659,6 +703,44 @@ export const createOrder = async (req, res, next) => {
   } catch (e) {
     next(e);
   }
+};
+
+const consolidateBuyerListingStatusOrders = async ({ buyerId, listingId, status, fulfillmentType, preferredId = null }) => {
+  let q = supabaseAdmin
+    .from("orders")
+    .select("*")
+    .eq("buyer_id", buyerId)
+    .eq("listing_id", listingId)
+    .eq("status", status);
+  if (fulfillmentType) q = q.eq("fulfillment_type", fulfillmentType);
+  const { data: rows, error } = await q;
+  if (error) throw new AppError(500, error.message);
+  const items = Array.isArray(rows) ? rows : [];
+  if (items.length === 0) return null;
+  if (items.length === 1) return items[0];
+
+  const preferred = preferredId ? items.find((r) => String(r.id) === String(preferredId)) : null;
+  const sorted = [...items].sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
+  const primary = preferred || sorted[0];
+  const others = sorted.filter((r) => String(r.id) !== String(primary.id));
+  const totalQty = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.quantity) || 0), 0);
+  const totalGoods = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.cod_goods_cents) || 0), 0);
+  const totalDelivery = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.cod_delivery_cents) || 0), 0);
+
+  const patch = {
+    quantity: totalQty,
+    cod_goods_cents: totalGoods,
+    cod_delivery_cents: totalDelivery,
+  };
+  const { data: updated, error: uerr } = await supabaseAdmin.from("orders").update(patch).eq("id", primary.id).select("*").single();
+  if (uerr) throw new AppError(500, uerr.message);
+
+  const duplicateIds = others.map((r) => r?.id).filter(Boolean);
+  if (duplicateIds.length > 0) {
+    const { error: derr } = await supabaseAdmin.from("orders").delete().in("id", duplicateIds);
+    if (derr) throw new AppError(500, derr.message);
+  }
+  return updated;
 };
 
 export const listOrders = async (req, res, next) => {
@@ -726,7 +808,17 @@ export const patchOrder = async (req, res, next) => {
         await supabaseAdmin.from("listings").update(listingPatch).eq("id", order.listing_id);
       }
     }
-    res.json({ order: orderRowToApi(updated) });
+    const consolidated =
+      updated?.buyer_id && updated?.listing_id && updated?.status
+        ? await consolidateBuyerListingStatusOrders({
+            buyerId: updated.buyer_id,
+            listingId: updated.listing_id,
+            status: updated.status,
+            fulfillmentType: updated.fulfillment_type,
+            preferredId: updated.id,
+          })
+        : updated;
+    res.json({ order: orderRowToApi(consolidated || updated) });
   } catch (e) {
     next(e);
   }

@@ -774,6 +774,13 @@ const orderMatchesOrdersStatusTab = (status, tabId) => {
   if (tabId === "processing") return Boolean(s) && !["placed", "completed", "cancelled"].includes(s);
   return false;
 };
+const orderStatusToTabId = (status) => {
+  const s = String(status || "").toLowerCase();
+  if (s === "placed") return "pending";
+  if (s === "completed") return "completed";
+  if (s === "cancelled") return "cancelled";
+  return s ? "processing" : "";
+};
 
 const UI_KIT = {
   viewSection:
@@ -800,6 +807,46 @@ const UI_KIT = {
   tabActive:
     "bg-brand-soft text-brand-primary ring-2 ring-brand-primary/30 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-accent/30",
   tabIdle: "border border-neutral-200/90 text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800",
+};
+
+const PURCHASES_PENDING_BADGE_STORAGE_KEY = "lm_recent_pending_purchase_ids_v1";
+const PURCHASES_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY = "lm_recent_status_highlight_ids_by_tab_v1";
+const PURCHASES_RECENT_STATUS_BADGE_STORAGE_KEY = "lm_recent_status_badge_ids_by_tab_v1";
+const SELLER_PENDING_BADGE_STORAGE_KEY = "lm_recent_pending_seller_order_ids_v1";
+const SELLER_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY = "lm_seller_recent_status_highlight_ids_by_tab_v1";
+const SELLER_RECENT_STATUS_BADGE_STORAGE_KEY = "lm_seller_recent_status_badge_ids_by_tab_v1";
+const CART_RECENT_BADGE_STORAGE_KEY = "lm_recent_cart_listing_ids_v1";
+
+const readStoredStringArray = (key) => {
+  try {
+    if (typeof window === "undefined") return [];
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map((x) => String(x || "")).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+};
+
+const RECENT_ORDER_TAB_KEYS = ["pending", "processing", "completed", "cancelled"];
+
+const readStoredRecentIdsByTab = (key) => {
+  const empty = { pending: [], processing: [], completed: [], cancelled: [] };
+  try {
+    if (typeof window === "undefined") return empty;
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return empty;
+    const parsed = JSON.parse(raw);
+    return {
+      pending: Array.isArray(parsed?.pending) ? parsed.pending.map((x) => String(x || "")).filter(Boolean) : [],
+      processing: Array.isArray(parsed?.processing) ? parsed.processing.map((x) => String(x || "")).filter(Boolean) : [],
+      completed: Array.isArray(parsed?.completed) ? parsed.completed.map((x) => String(x || "")).filter(Boolean) : [],
+      cancelled: Array.isArray(parsed?.cancelled) ? parsed.cancelled.map((x) => String(x || "")).filter(Boolean) : [],
+    };
+  } catch {
+    return empty;
+  }
 };
 
 function SectionHeading({ title, subtitle, trailing = null }) {
@@ -877,8 +924,18 @@ function MarketplaceListingCard({ listing, isFavorite, onOpen, onToggleFavorite 
   );
 }
 
-function SellerProductCard({ listing, gridMode, onSaleSelect, onEdit, onDelete }) {
+function SellerProductCard({
+  listing,
+  gridMode,
+  onSaleSelect,
+  onEdit,
+  onDelete,
+  onAdjustQuantity,
+  onSetQuantity,
+  quantityUpdating = false,
+}) {
   const [saleOpen, setSaleOpen] = useState(false);
+  const [qtyDraft, setQtyDraft] = useState(String(Math.max(0, Number(listing?.quantity) || 0)));
   const normalizedStatus = String(listing.status || "").toLowerCase();
   const statusClass =
     normalizedStatus === "active"
@@ -890,6 +947,10 @@ function SellerProductCard({ listing, gridMode, onSaleSelect, onEdit, onDelete }
   const currentPesos = Math.floor((Number(listing.priceCents) || 0) / 100);
   const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
   const descriptionPreview = removeSaleMetaLines(listing.description);
+
+  useEffect(() => {
+    setQtyDraft(String(Math.max(0, Number(listing?.quantity) || 0)));
+  }, [listing?.quantity, listing?.id]);
 
   return (
     <li className={`rounded-2xl border border-neutral-200 bg-white p-3.5 shadow-sm dark:border-slate-700 dark:bg-slate-900/60 ${gridMode ? "h-full" : ""}`}>
@@ -916,9 +977,71 @@ function SellerProductCard({ listing, gridMode, onSaleSelect, onEdit, onDelete }
               </div>
             ) : null}
           </div>
-          <p className="text-xs text-neutral-600 dark:text-slate-400">
-            Quantity: {Number(listing.quantity) || 0}
-          </p>
+          <div className="flex items-center gap-2 text-xs text-neutral-600 dark:text-slate-400">
+            <span>
+              Quantity: <span className="font-semibold">{Number(listing.quantity) || 0}</span>
+            </span>
+            <div className="inline-flex items-center gap-1">
+              <button
+                type="button"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-neutral-300 bg-white text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                disabled={quantityUpdating || (Number(listing.quantity) || 0) <= 0}
+                onClick={() => onAdjustQuantity?.(-1)}
+                aria-label="Decrease product quantity"
+              >
+                -
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-neutral-300 bg-white text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                disabled={quantityUpdating}
+                onClick={() => onAdjustQuantity?.(1)}
+                aria-label="Increase product quantity"
+              >
+                +
+              </button>
+            </div>
+            <div className="inline-flex items-center gap-1">
+              <input
+                type="number"
+                min={0}
+                step={1}
+                inputMode="numeric"
+                className="h-6 w-16 rounded-md border border-neutral-300 bg-white px-1.5 text-[11px] text-neutral-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                value={qtyDraft}
+                disabled={quantityUpdating}
+                onChange={(e) => {
+                  const digits = String(e.target.value || "").replace(/[^\d]/g, "");
+                  setQtyDraft(digits);
+                }}
+                onBlur={() => {
+                  if (qtyDraft === "") setQtyDraft("0");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  const parsed = Number(qtyDraft);
+                  if (!Number.isFinite(parsed) || parsed < 0) return;
+                  onSetQuantity?.(Math.floor(parsed));
+                }}
+                aria-label="Set product quantity"
+              />
+              <button
+                type="button"
+                className="inline-flex h-6 items-center justify-center rounded-md border border-neutral-300 bg-white px-1.5 text-[10px] font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                disabled={quantityUpdating}
+                onClick={() => {
+                  const parsed = Number(qtyDraft);
+                  if (!Number.isFinite(parsed) || parsed < 0) return;
+                  onSetQuantity?.(Math.floor(parsed));
+                }}
+                aria-label="Apply quantity"
+              >
+                Set
+              </button>
+            </div>
+            {quantityUpdating ? <span className="text-[10px] font-medium text-neutral-500 dark:text-slate-400">Saving…</span> : null}
+          </div>
           <p className="text-xs text-neutral-600 dark:text-slate-400">Availability: {availabilityLabel}</p>
           {descriptionPreview ? (
             <p className="line-clamp-3 text-pretty text-xs leading-relaxed text-neutral-600 dark:text-slate-400">{descriptionPreview}</p>
@@ -988,6 +1111,8 @@ function CommunityShopListingCard({
   const [saleOpen, setSaleOpen] = useState(false);
   const imageUrl = String(listing.imageUrl || "").trim();
   const isOwner = String(listing.sellerId || "") === String(currentUserId || "");
+  const stockQty = Math.max(0, Number(listing.quantity) || 0);
+  const isOutOfStock = stockQty <= 0;
 
   return (
     <div
@@ -1021,7 +1146,14 @@ function CommunityShopListingCard({
             description={listing.description}
             fulfillmentModes={listing.fulfillmentModes}
             quantityRow={
-              <p className="text-xs text-neutral-600 dark:text-slate-400">Quantity: {Number(listing.quantity) || 0}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-neutral-600 dark:text-slate-400">Quantity: {stockQty}</p>
+                {isOutOfStock ? (
+                  <span className="rounded-full border border-rose-300 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
+                    Out of stock
+                  </span>
+                ) : null}
+              </div>
             }
           />
           {listing.cityLabel ? <span className={UI_KIT.chipMuted}>{listing.cityLabel}</span> : null}
@@ -1056,23 +1188,25 @@ function CommunityShopListingCard({
             <>
               <button
                 type="button"
-                className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                disabled={isOutOfStock}
                 onClick={(e) => {
                   e.stopPropagation();
                   onAdd?.();
                 }}
               >
-                Add to cart
+                {isOutOfStock ? "Unavailable" : "Add to cart"}
               </button>
               <button
                 type="button"
-                className="rounded-lg bg-brand-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
+                className="rounded-lg bg-brand-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary/90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
+                disabled={isOutOfStock}
                 onClick={(e) => {
                   e.stopPropagation();
                   onBuy?.();
                 }}
               >
-                Buy
+                {isOutOfStock ? "Out of stock" : "Buy"}
               </button>
             </>
           )}
@@ -1341,6 +1475,7 @@ function OrderPlacementForm({ listing, token, onDone, onError }) {
   const modes = listing?.fulfillmentModes?.length ? listing.fulfillmentModes : ["pickup"];
   const [fulfillmentType, setFulfillmentType] = useState(() => (modes.includes("pickup") ? "pickup" : modes[0]));
   const [submitting, setSubmitting] = useState(false);
+  const isOutOfStock = Math.max(0, Number(listing?.quantity) || 0) <= 0;
 
   useEffect(() => {
     const m = listing?.fulfillmentModes?.length ? listing.fulfillmentModes : ["pickup"];
@@ -1349,12 +1484,27 @@ function OrderPlacementForm({ listing, token, onDone, onError }) {
 
   const place = async () => {
     if (!token) return;
+    if (isOutOfStock) {
+      onError("This listing is currently out of stock.");
+      return;
+    }
     setSubmitting(true);
     try {
+      const desiredQty = 1;
+      const listingMaxQty = Math.max(0, Number(listing?.quantity) || 0);
+      const currentOrders = await apiRequest("/orders?role=buyer", { token });
+      const pendingQtyForListing = (Array.isArray(currentOrders?.orders) ? currentOrders.orders : [])
+        .filter((o) => String(o?.listingId || "") === String(listing?.id || "") && String(o?.status || "").toLowerCase() === "placed")
+        .reduce((sum, o) => sum + Math.max(0, Number(o?.quantity) || 0), 0);
+      const availableQty = Math.max(0, listingMaxQty - pendingQtyForListing);
+      if (availableQty < desiredQty) {
+        onError("Maximum available quantity is already in pending orders.");
+        return;
+      }
       await apiRequest("/orders", {
         method: "POST",
         token,
-        body: { listingId: listing.id, fulfillmentType, quantity: 1 },
+        body: { listingId: listing.id, fulfillmentType, quantity: desiredQty },
       });
       onDone("Order placed. Pay COD at pickup or when delivery is completed.");
     } catch (e) {
@@ -1367,6 +1517,11 @@ function OrderPlacementForm({ listing, token, onDone, onError }) {
   return (
     <div className="mt-4 space-y-3 rounded-xl border border-neutral-200/90 bg-white/80 p-4 dark:border-slate-600 dark:bg-slate-900/60">
       <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">Place order (COD)</p>
+      {isOutOfStock ? (
+        <p className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-2 text-xs font-medium text-rose-700 dark:border-rose-500/40 dark:bg-rose-950/20 dark:text-rose-300">
+          Out of stock. You can still view this item, but ordering is disabled.
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-3 text-sm">
         {modes.includes("pickup") ? (
           <label className="inline-flex cursor-pointer items-center gap-2">
@@ -1381,7 +1536,7 @@ function OrderPlacementForm({ listing, token, onDone, onError }) {
           </label>
         ) : null}
       </div>
-      <button type="button" className="btn-primary" disabled={submitting} onClick={place}>
+      <button type="button" className="btn-primary" disabled={submitting || isOutOfStock} onClick={place}>
         {submitting ? "Placing…" : "Confirm order"}
       </button>
     </div>
@@ -1531,6 +1686,7 @@ function App() {
   const sellerListingsRef = useRef([]);
   sellerListingsRef.current = sellerListings;
   const [sellerListingsLoading, setSellerListingsLoading] = useState(false);
+  const [sellerListingQtySavingId, setSellerListingQtySavingId] = useState(null);
   const [listingsLoading, setListingsLoading] = useState(false);
   const [listingsError, setListingsError] = useState("");
   const [favoriteIds, setFavoriteIds] = useState(() => new Set());
@@ -1547,6 +1703,27 @@ function App() {
   /** `orderId` -> selected (orders screen only). */
   const [orderSelection, setOrderSelection] = useState({});
   const [ordersBulkActionSubmitting, setOrdersBulkActionSubmitting] = useState(false);
+  const [recentOrderIdsByTab, setRecentOrderIdsByTab] = useState(() => readStoredRecentIdsByTab(PURCHASES_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY));
+  const [recentOrderBadgeIdsByTab, setRecentOrderBadgeIdsByTab] = useState(() => readStoredRecentIdsByTab(PURCHASES_RECENT_STATUS_BADGE_STORAGE_KEY));
+  const knownBuyerOrderStatusByIdRef = useRef({});
+  const [recentSellerOrderIdsByTab, setRecentSellerOrderIdsByTab] = useState(() =>
+    readStoredRecentIdsByTab(SELLER_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY),
+  );
+  const [recentSellerOrderBadgeIdsByTab, setRecentSellerOrderBadgeIdsByTab] = useState(() =>
+    readStoredRecentIdsByTab(SELLER_RECENT_STATUS_BADGE_STORAGE_KEY),
+  );
+  const knownSellerOrderStatusByIdRef = useRef({});
+  const lastSellerOrderIdSetRef = useRef(new Set());
+  const [recentlyAddedSellerOrderIds, setRecentlyAddedSellerOrderIds] = useState(() =>
+    readStoredStringArray(SELLER_PENDING_BADGE_STORAGE_KEY),
+  );
+  /** Seller orders from `/orders?role=seller` while not on the seller Orders screen — drives nav badges for owners on Marketplace etc. */
+  const [polledSellerOrders, setPolledSellerOrders] = useState(null);
+  const sellerOrdersForBadges = useMemo(() => {
+    if (ordersRole === "seller" && activeView === VIEWS.ORDERS) return orders;
+    if (polledSellerOrders === null) return null;
+    return polledSellerOrders;
+  }, [ordersRole, activeView, orders, polledSellerOrders]);
   const [orderListingsById, setOrderListingsById] = useState({});
   const [sellerSummary, setSellerSummary] = useState(null);
   const [expenses, setExpenses] = useState([]);
@@ -1569,6 +1746,48 @@ function App() {
   const [listingSaving, setListingSaving] = useState(false);
   const [listingFieldErrors, setListingFieldErrors] = useState({});
   const [marketplaceMessage, setMarketplaceMessage] = useState("");
+  const marketplaceFeedback = useMemo(() => {
+    const text = String(marketplaceMessage || "").trim();
+    const lowered = text.toLowerCase();
+    const isError =
+      /(^|[\s])(error|failed|could not|cannot|can't|invalid|required|already|expired|unable|denied|not found)\b/i.test(text);
+    const isSuccess =
+      !isError && /(success|successfully|added|updated|deleted|accepted|applied|joined|saved|published|completed)/i.test(text);
+    const tone = isError ? "error" : isSuccess ? "success" : "info";
+    if (tone === "success") {
+      return {
+        text,
+        tone,
+        icon: "✓",
+        role: "status",
+        live: "polite",
+        className:
+          "border-emerald-200/90 bg-emerald-50/90 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200",
+        dismissClass: "text-emerald-800 hover:text-emerald-900 dark:text-emerald-200 dark:hover:text-emerald-100",
+      };
+    }
+    if (tone === "error") {
+      return {
+        text,
+        tone,
+        icon: "!",
+        role: "alert",
+        live: "assertive",
+        className:
+          "border-rose-200/90 bg-rose-50/90 text-rose-950 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200",
+        dismissClass: "text-rose-800 hover:text-rose-900 dark:text-rose-200 dark:hover:text-rose-100",
+      };
+    }
+    return {
+      text,
+      tone,
+      icon: "i",
+      role: "status",
+      live: "polite",
+      className: "border-sky-200/90 bg-sky-50/90 text-sky-950 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200",
+      dismissClass: "text-sky-800 hover:text-sky-900 dark:text-sky-200 dark:hover:text-sky-100",
+    };
+  }, [marketplaceMessage]);
   const [communities, setCommunities] = useState([]);
   const communitiesRef = useRef([]);
   communitiesRef.current = communities;
@@ -1711,9 +1930,16 @@ function App() {
   const [bidsForOrder, setBidsForOrder] = useState([]);
   const [quickAddModalOpen, setQuickAddModalOpen] = useState(false);
   const [quickAddListing, setQuickAddListing] = useState(null);
+  const [quickActionType, setQuickActionType] = useState("cart");
   const [quickAddQuantity, setQuickAddQuantity] = useState("1");
   const [quickAddComment, setQuickAddComment] = useState("");
+  const [quickOrderFulfillmentType, setQuickOrderFulfillmentType] = useState("pickup");
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
+  const [recentlyAddedCartListingIds, setRecentlyAddedCartListingIds] = useState(() => readStoredStringArray(CART_RECENT_BADGE_STORAGE_KEY));
+  const [recentlyAddedPurchaseOrderIds, setRecentlyAddedPurchaseOrderIds] = useState(() =>
+    readStoredStringArray(PURCHASES_PENDING_BADGE_STORAGE_KEY),
+  );
+  const hasViewedRecentPurchasesRef = useRef(false);
   const [cartItems, setCartItems] = useState([]);
   /** `listingId` → selected (cart screen only). */
   const [cartItemSelection, setCartItemSelection] = useState({});
@@ -1724,6 +1950,10 @@ function App() {
   const [cartCheckoutSubmitting, setCartCheckoutSubmitting] = useState(false);
   /** Per-line debounce timers so typed qty applies without requiring blur. */
   const cartQtyCommitTimersRef = useRef({});
+  /** Listing ids currently fading out before removal from cart UI. */
+  const cartRemovingListingIdsRef = useRef({});
+  const [cartRemovingListingIds, setCartRemovingListingIds] = useState([]);
+  const hasViewedRecentCartAddsRef = useRef(false);
   const mergeCartItemsPreservingOrder = useCallback((prevItems, nextItems) => {
     if (!Array.isArray(nextItems)) return [];
     const nextById = new Map(nextItems.map((item) => [String(item?.listingId), item]));
@@ -1749,6 +1979,438 @@ function App() {
     if (sameSeller.length === 0) return Array.isArray(items) ? items : [];
     return [...sameSeller, ...others];
   }, []);
+  const startCartItemFadeOut = useCallback((listingId) => {
+    const id = String(listingId || "");
+    if (!id) return;
+    setCartRemovingListingIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    if (cartRemovingListingIdsRef.current[id]) {
+      clearTimeout(cartRemovingListingIdsRef.current[id]);
+    }
+    cartRemovingListingIdsRef.current[id] = window.setTimeout(() => {
+      setCartItems((prev) => prev.filter((it) => String(it.listingId) !== id));
+      setCartRemovingListingIds((prev) => prev.filter((x) => x !== id));
+      setRecentlyAddedCartListingIds((prev) => prev.filter((x) => x !== id));
+      delete cartRemovingListingIdsRef.current[id];
+    }, 2000);
+  }, []);
+  const cancelCartItemFadeOut = useCallback((listingId) => {
+    const id = String(listingId || "");
+    if (!id) return;
+    if (cartRemovingListingIdsRef.current[id]) {
+      clearTimeout(cartRemovingListingIdsRef.current[id]);
+      delete cartRemovingListingIdsRef.current[id];
+    }
+    setCartRemovingListingIds((prev) => prev.filter((x) => x !== id));
+  }, []);
+  useEffect(() => {
+    if (activeView === VIEWS.CART && recentlyAddedCartListingIds.length > 0) {
+      hasViewedRecentCartAddsRef.current = true;
+      return;
+    }
+    if (activeView !== VIEWS.CART && hasViewedRecentCartAddsRef.current && recentlyAddedCartListingIds.length > 0) {
+      setRecentlyAddedCartListingIds([]);
+      hasViewedRecentCartAddsRef.current = false;
+      return;
+    }
+    if (activeView !== VIEWS.CART && recentlyAddedCartListingIds.length === 0) {
+      hasViewedRecentCartAddsRef.current = false;
+    }
+  }, [activeView, recentlyAddedCartListingIds]);
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      window.localStorage.setItem(CART_RECENT_BADGE_STORAGE_KEY, JSON.stringify(recentlyAddedCartListingIds));
+    } catch {
+      // ignore storage failures
+    }
+  }, [recentlyAddedCartListingIds]);
+  useEffect(() => {
+    if (activeView === VIEWS.MY_PURCHASES && recentlyAddedPurchaseOrderIds.length > 0) {
+      hasViewedRecentPurchasesRef.current = true;
+      return;
+    }
+    if (activeView !== VIEWS.MY_PURCHASES && hasViewedRecentPurchasesRef.current && recentlyAddedPurchaseOrderIds.length > 0) {
+      setRecentlyAddedPurchaseOrderIds([]);
+      hasViewedRecentPurchasesRef.current = false;
+      return;
+    }
+    if (activeView !== VIEWS.MY_PURCHASES && recentlyAddedPurchaseOrderIds.length === 0) {
+      hasViewedRecentPurchasesRef.current = false;
+    }
+  }, [activeView, recentlyAddedPurchaseOrderIds]);
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      window.localStorage.setItem(PURCHASES_PENDING_BADGE_STORAGE_KEY, JSON.stringify(recentlyAddedPurchaseOrderIds));
+    } catch {
+      // ignore storage failures
+    }
+  }, [recentlyAddedPurchaseOrderIds]);
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      window.localStorage.setItem(PURCHASES_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY, JSON.stringify(recentOrderIdsByTab));
+    } catch {
+      // ignore storage failures
+    }
+  }, [recentOrderIdsByTab]);
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      window.localStorage.setItem(PURCHASES_RECENT_STATUS_BADGE_STORAGE_KEY, JSON.stringify(recentOrderBadgeIdsByTab));
+    } catch {
+      // ignore storage failures
+    }
+  }, [recentOrderBadgeIdsByTab]);
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      window.localStorage.setItem(SELLER_PENDING_BADGE_STORAGE_KEY, JSON.stringify(recentlyAddedSellerOrderIds));
+    } catch {
+      // ignore storage failures
+    }
+  }, [recentlyAddedSellerOrderIds]);
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      window.localStorage.setItem(SELLER_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY, JSON.stringify(recentSellerOrderIdsByTab));
+    } catch {
+      // ignore storage failures
+    }
+  }, [recentSellerOrderIdsByTab]);
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      window.localStorage.setItem(SELLER_RECENT_STATUS_BADGE_STORAGE_KEY, JSON.stringify(recentSellerOrderBadgeIdsByTab));
+    } catch {
+      // ignore storage failures
+    }
+  }, [recentSellerOrderBadgeIdsByTab]);
+  useEffect(() => {
+    if (activeView !== VIEWS.MY_PURCHASES) return;
+    if (ordersStatusTab === "pending") return;
+    if (
+      recentlyAddedPurchaseOrderIds.length === 0 &&
+      !(recentOrderBadgeIdsByTab.pending?.length) &&
+      !(recentOrderIdsByTab.pending?.length)
+    ) {
+      return;
+    }
+    setRecentlyAddedPurchaseOrderIds([]);
+    setRecentOrderBadgeIdsByTab((p) => ({ ...p, pending: [] }));
+    setRecentOrderIdsByTab((p) => ({ ...p, pending: [] }));
+    hasViewedRecentPurchasesRef.current = false;
+  }, [
+    activeView,
+    ordersStatusTab,
+    recentlyAddedPurchaseOrderIds,
+    recentOrderBadgeIdsByTab.pending,
+    recentOrderIdsByTab.pending,
+  ]);
+  useEffect(() => {
+    if (activeView !== VIEWS.ORDERS) return;
+    if (ordersRole !== "seller") return;
+    if (ordersStatusTab === "pending") return;
+    if (
+      recentlyAddedSellerOrderIds.length === 0 &&
+      !(recentSellerOrderBadgeIdsByTab.pending?.length) &&
+      !(recentSellerOrderIdsByTab.pending?.length)
+    ) {
+      return;
+    }
+    setRecentlyAddedSellerOrderIds([]);
+    setRecentSellerOrderBadgeIdsByTab((p) => ({ ...p, pending: [] }));
+    setRecentSellerOrderIdsByTab((p) => ({ ...p, pending: [] }));
+  }, [
+    activeView,
+    ordersRole,
+    ordersStatusTab,
+    recentlyAddedSellerOrderIds,
+    recentSellerOrderBadgeIdsByTab.pending,
+    recentSellerOrderIdsByTab.pending,
+  ]);
+  useEffect(() => {
+    if (ordersRole !== "buyer") return;
+    if (orders.length === 0) {
+      if (ordersLoading) return;
+      knownBuyerOrderStatusByIdRef.current = {};
+      setRecentOrderIdsByTab((prev) => {
+        if (
+          !(prev.pending?.length) &&
+          !prev.processing.length &&
+          !prev.completed.length &&
+          !prev.cancelled.length
+        ) {
+          return prev;
+        }
+        return { pending: [], processing: [], completed: [], cancelled: [] };
+      });
+      setRecentOrderBadgeIdsByTab((prev) => {
+        if (
+          !(prev.pending?.length) &&
+          !prev.processing.length &&
+          !prev.completed.length &&
+          !prev.cancelled.length
+        ) {
+          return prev;
+        }
+        return { pending: [], processing: [], completed: [], cancelled: [] };
+      });
+      return;
+    }
+    const previous = knownBuyerOrderStatusByIdRef.current || {};
+    const next = {};
+    const updates = { pending: [], processing: [], completed: [], cancelled: [] };
+    const existingIds = new Set();
+    for (const order of orders) {
+      const id = String(order?.id || "");
+      if (!id) continue;
+      existingIds.add(id);
+      const newStatus = String(order?.status || "").toLowerCase();
+      const prevStatus = String(previous[id] || "").toLowerCase();
+      next[id] = newStatus;
+      if (prevStatus && prevStatus !== newStatus) {
+        const targetTab = orderStatusToTabId(newStatus);
+        if (targetTab === "pending" || targetTab === "processing" || targetTab === "completed" || targetTab === "cancelled") {
+          updates[targetTab].push(id);
+        }
+      }
+    }
+    knownBuyerOrderStatusByIdRef.current = next;
+    setRecentOrderIdsByTab((prev) => {
+      const merged = {
+        pending: (prev.pending ?? []).filter((id) => existingIds.has(id)),
+        processing: prev.processing.filter((id) => existingIds.has(id)),
+        completed: prev.completed.filter((id) => existingIds.has(id)),
+        cancelled: prev.cancelled.filter((id) => existingIds.has(id)),
+      };
+      let changed = false;
+      for (const tab of RECENT_ORDER_TAB_KEYS) {
+        if (!updates[tab].length) continue;
+        const set = new Set(merged[tab]);
+        const before = set.size;
+        updates[tab].forEach((id) => set.add(id));
+        if (set.size !== before) {
+          merged[tab] = Array.from(set);
+          changed = true;
+        }
+      }
+      if (!changed) {
+        const sameLengths =
+          merged.pending.length === (prev.pending ?? []).length &&
+          merged.processing.length === prev.processing.length &&
+          merged.completed.length === prev.completed.length &&
+          merged.cancelled.length === prev.cancelled.length;
+        if (sameLengths) return prev;
+      }
+      return merged;
+    });
+    setRecentOrderBadgeIdsByTab((prev) => {
+      const merged = {
+        pending: (prev.pending ?? []).filter((id) => existingIds.has(id)),
+        processing: prev.processing.filter((id) => existingIds.has(id)),
+        completed: prev.completed.filter((id) => existingIds.has(id)),
+        cancelled: prev.cancelled.filter((id) => existingIds.has(id)),
+      };
+      let changed = false;
+      for (const tab of RECENT_ORDER_TAB_KEYS) {
+        if (!updates[tab].length) continue;
+        const set = new Set(merged[tab]);
+        const before = set.size;
+        updates[tab].forEach((id) => set.add(id));
+        if (set.size !== before) {
+          merged[tab] = Array.from(set);
+          changed = true;
+        }
+      }
+      if (!changed) {
+        const sameLengths =
+          merged.pending.length === (prev.pending ?? []).length &&
+          merged.processing.length === prev.processing.length &&
+          merged.completed.length === prev.completed.length &&
+          merged.cancelled.length === prev.cancelled.length;
+        if (sameLengths) return prev;
+      }
+      return merged;
+    });
+  }, [orders, ordersRole, ordersLoading]);
+  useEffect(() => {
+    const list = sellerOrdersForBadges;
+    if (list === null) return;
+    const onSellerOrdersScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
+    if (list.length === 0) {
+      if (onSellerOrdersScreen && ordersLoading) return;
+      knownSellerOrderStatusByIdRef.current = {};
+      lastSellerOrderIdSetRef.current = new Set();
+      setRecentSellerOrderIdsByTab((prev) => {
+        if (
+          !(prev.pending?.length) &&
+          !prev.processing.length &&
+          !prev.completed.length &&
+          !prev.cancelled.length
+        ) {
+          return prev;
+        }
+        return { pending: [], processing: [], completed: [], cancelled: [] };
+      });
+      setRecentSellerOrderBadgeIdsByTab((prev) => {
+        if (
+          !(prev.pending?.length) &&
+          !prev.processing.length &&
+          !prev.completed.length &&
+          !prev.cancelled.length
+        ) {
+          return prev;
+        }
+        return { pending: [], processing: [], completed: [], cancelled: [] };
+      });
+      return;
+    }
+    const previous = knownSellerOrderStatusByIdRef.current || {};
+    const next = {};
+    const updates = { pending: [], processing: [], completed: [], cancelled: [] };
+    const existingIds = new Set();
+    for (const order of list) {
+      const id = String(order?.id || "");
+      if (!id) continue;
+      existingIds.add(id);
+      const newStatus = String(order?.status || "").toLowerCase();
+      const prevStatus = String(previous[id] || "").toLowerCase();
+      next[id] = newStatus;
+      if (prevStatus && prevStatus !== newStatus) {
+        const targetTab = orderStatusToTabId(newStatus);
+        if (targetTab === "pending" || targetTab === "processing" || targetTab === "completed" || targetTab === "cancelled") {
+          updates[targetTab].push(id);
+        }
+      }
+    }
+    knownSellerOrderStatusByIdRef.current = next;
+    setRecentSellerOrderIdsByTab((prev) => {
+      const merged = {
+        pending: (prev.pending ?? []).filter((id) => existingIds.has(id)),
+        processing: prev.processing.filter((id) => existingIds.has(id)),
+        completed: prev.completed.filter((id) => existingIds.has(id)),
+        cancelled: prev.cancelled.filter((id) => existingIds.has(id)),
+      };
+      let changed = false;
+      for (const tab of RECENT_ORDER_TAB_KEYS) {
+        if (!updates[tab].length) continue;
+        const set = new Set(merged[tab]);
+        const before = set.size;
+        updates[tab].forEach((id) => set.add(id));
+        if (set.size !== before) {
+          merged[tab] = Array.from(set);
+          changed = true;
+        }
+      }
+      if (!changed) {
+        const sameLengths =
+          merged.pending.length === (prev.pending ?? []).length &&
+          merged.processing.length === prev.processing.length &&
+          merged.completed.length === prev.completed.length &&
+          merged.cancelled.length === prev.cancelled.length;
+        if (sameLengths) return prev;
+      }
+      return merged;
+    });
+    setRecentSellerOrderBadgeIdsByTab((prev) => {
+      const merged = {
+        pending: (prev.pending ?? []).filter((id) => existingIds.has(id)),
+        processing: prev.processing.filter((id) => existingIds.has(id)),
+        completed: prev.completed.filter((id) => existingIds.has(id)),
+        cancelled: prev.cancelled.filter((id) => existingIds.has(id)),
+      };
+      let changed = false;
+      for (const tab of RECENT_ORDER_TAB_KEYS) {
+        if (!updates[tab].length) continue;
+        const set = new Set(merged[tab]);
+        const before = set.size;
+        updates[tab].forEach((id) => set.add(id));
+        if (set.size !== before) {
+          merged[tab] = Array.from(set);
+          changed = true;
+        }
+      }
+      if (!changed) {
+        const sameLengths =
+          merged.pending.length === (prev.pending ?? []).length &&
+          merged.processing.length === prev.processing.length &&
+          merged.completed.length === prev.completed.length &&
+          merged.cancelled.length === prev.cancelled.length;
+        if (sameLengths) return prev;
+      }
+      return merged;
+    });
+  }, [sellerOrdersForBadges, ordersRole, activeView, ordersLoading]);
+  useEffect(() => {
+    const list = sellerOrdersForBadges;
+    if (list === null) return;
+    const onSellerOrdersScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
+    if (list.length === 0) {
+      if (onSellerOrdersScreen && ordersLoading) return;
+      lastSellerOrderIdSetRef.current = new Set();
+      return;
+    }
+    const currentIds = list.map((o) => String(o?.id || "")).filter(Boolean);
+    const currentSet = new Set(currentIds);
+    const prev = lastSellerOrderIdSetRef.current;
+    if (prev.size === 0) {
+      lastSellerOrderIdSetRef.current = currentSet;
+      return;
+    }
+    const newIds = currentIds.filter((id) => !prev.has(id));
+    const pendingNewIds = newIds.filter((id) => {
+      const order = list.find((o) => String(o?.id || "") === id);
+      return order && orderMatchesOrdersStatusTab(order.status, "pending");
+    });
+    if (pendingNewIds.length) {
+      setRecentlyAddedSellerOrderIds((prevList) => {
+        const set = new Set(prevList);
+        pendingNewIds.forEach((id) => set.add(id));
+        return Array.from(set);
+      });
+      setRecentSellerOrderBadgeIdsByTab((p) => {
+        const set = new Set(p.pending ?? []);
+        pendingNewIds.forEach((id) => set.add(id));
+        return { ...p, pending: Array.from(set) };
+      });
+      setRecentSellerOrderIdsByTab((p) => {
+        const set = new Set(p.pending ?? []);
+        pendingNewIds.forEach((id) => set.add(id));
+        return { ...p, pending: Array.from(set) };
+      });
+    }
+    lastSellerOrderIdSetRef.current = currentSet;
+  }, [sellerOrdersForBadges, ordersRole, activeView, ordersLoading]);
+  useEffect(() => {
+    const list = sellerOrdersForBadges;
+    if (list === null) return;
+    setRecentlyAddedSellerOrderIds((prev) => {
+      if (!prev.length) return prev;
+      const pendingIds = new Set(
+        list
+          .filter((o) => orderMatchesOrdersStatusTab(o.status, "pending"))
+          .map((o) => String(o?.id || ""))
+          .filter(Boolean),
+      );
+      const next = prev.filter((id) => pendingIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [sellerOrdersForBadges]);
+  useEffect(() => {
+    if (!token) {
+      lastSellerOrderIdSetRef.current = new Set();
+      setPolledSellerOrders(null);
+    }
+  }, [token]);
+  useEffect(() => {
+    setRecentlyAddedCartListingIds((prev) => {
+      if (!prev.length) return prev;
+      const existingIds = new Set(cartItems.map((it) => String(it?.listingId || "")));
+      const next = prev.filter((id) => existingIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [cartItems]);
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
   const [sellerProductsView, setSellerProductsView] = useState("list");
   const [communityProductsView, setCommunityProductsView] = useState("grid");
@@ -1776,7 +2438,7 @@ function App() {
   }, [user?.id]);
 
   const joinCommunityAndAttachListings = useCallback(
-    async (community) => {
+    async (community, { notifySuccess = false } = {}) => {
       const joinedName = toTitleCase(String(community?.name || "").trim());
       applyJoinedCommunity(joinedName);
       if (!token || !community?.id) return;
@@ -1806,6 +2468,9 @@ function App() {
         if (activeView === VIEWS.COMMUNITY_SHOP && String(shopCommunityId || "") === targetCommunityId) {
           const scoped = await apiRequest(`/listings?communityId=${encodeURIComponent(targetCommunityId)}`, { token });
           setListings(scoped.listings || []);
+        }
+        if (notifySuccess) {
+          setMarketplaceMessage(`You joined ${joinedName || "the community"} successfully.`);
         }
       } catch (error) {
         setMarketplaceMessage(error?.message || "Joined, but we could not attach your listings yet. Try Join again.");
@@ -2756,6 +3421,7 @@ function App() {
     setActiveView(VIEWS.MY_PURCHASES);
   }, []);
 
+
   const goCart = useCallback(() => {
     setActiveView(VIEWS.CART);
   }, []);
@@ -2857,6 +3523,50 @@ function App() {
     () => orders.filter((o) => orderMatchesOrdersStatusTab(o.status, ordersStatusTab)),
     [orders, ordersStatusTab],
   );
+  const purchaseNavBadgeCount = useMemo(() => {
+    const s = new Set(recentlyAddedPurchaseOrderIds.map(String));
+    for (const tab of RECENT_ORDER_TAB_KEYS) {
+      (recentOrderBadgeIdsByTab[tab] || []).forEach((id) => s.add(String(id)));
+    }
+    return s.size;
+  }, [recentlyAddedPurchaseOrderIds, recentOrderBadgeIdsByTab]);
+  const sellerNavBadgeCount = useMemo(() => {
+    const list = sellerOrdersForBadges;
+    const onSellerOrdersScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
+    const s = new Set();
+    recentlyAddedSellerOrderIds.forEach((id) => s.add(String(id)));
+    for (const tab of RECENT_ORDER_TAB_KEYS) {
+      (recentSellerOrderBadgeIdsByTab[tab] || []).forEach((id) => s.add(String(id)));
+    }
+    if (!onSellerOrdersScreen && list) {
+      list
+        .filter((o) => orderMatchesOrdersStatusTab(o.status, "pending"))
+        .forEach((o) => s.add(String(o?.id || "")));
+    }
+    return s.size;
+  }, [
+    sellerOrdersForBadges,
+    recentSellerOrderBadgeIdsByTab,
+    recentlyAddedSellerOrderIds,
+    ordersRole,
+    activeView,
+  ]);
+  const ordersTabRecentPendingIds = ordersRole === "seller" ? recentlyAddedSellerOrderIds : recentlyAddedPurchaseOrderIds;
+  const ordersTabBadgeIdsByTab = ordersRole === "seller" ? recentSellerOrderBadgeIdsByTab : recentOrderBadgeIdsByTab;
+  const ordersTabHighlightIdsByTab = ordersRole === "seller" ? recentSellerOrderIdsByTab : recentOrderIdsByTab;
+  const pendingTabPillCount = useMemo(() => {
+    const ids = ordersRole === "seller" ? recentlyAddedSellerOrderIds : recentlyAddedPurchaseOrderIds;
+    const tabPending = ordersRole === "seller" ? recentSellerOrderBadgeIdsByTab.pending : recentOrderBadgeIdsByTab.pending;
+    const s = new Set(ids.map(String));
+    (tabPending || []).forEach((id) => s.add(String(id)));
+    return s.size;
+  }, [
+    ordersRole,
+    recentlyAddedSellerOrderIds,
+    recentlyAddedPurchaseOrderIds,
+    recentSellerOrderBadgeIdsByTab.pending,
+    recentOrderBadgeIdsByTab.pending,
+  ]);
 
   const listingDescriptionCount = useMemo(() => String(listingForm.description || "").length, [listingForm.description]);
   const listingFormDirty = useMemo(() => {
@@ -2896,7 +3606,7 @@ function App() {
     if (!token) return;
     try {
       const d = await apiRequest("/me/cart", { token });
-      const incoming = Array.isArray(d.items) ? d.items : [];
+      const incoming = Array.isArray(d?.items) ? d.items : [];
       setCartItems((prev) => mergeCartItemsPreservingOrder(prev, incoming));
     } catch {
       setCartItems([]);
@@ -2916,21 +3626,21 @@ function App() {
       if (n === 0) {
         if (token) {
           setCartQtySavingId(id);
+          startCartItemFadeOut(id);
           try {
-            const d = await apiRequest(`/me/cart/items/${id}`, {
+            await apiRequest(`/me/cart/items/${id}`, {
               method: "DELETE",
               token,
             });
-            const incoming = Array.isArray(d.items) ? d.items : [];
-            setCartItems((prev) => mergeCartItemsPreservingOrder(prev, incoming));
             setMarketplaceMessage("");
           } catch (e) {
+            cancelCartItemFadeOut(id);
             setMarketplaceMessage(e.message || "Could not remove item from cart.");
           } finally {
             setCartQtySavingId(null);
           }
         } else {
-          setCartItems((prev) => prev.filter((it) => String(it.listingId) !== id));
+          startCartItemFadeOut(id);
         }
         return;
       }
@@ -2944,7 +3654,7 @@ function App() {
             token,
             body: { quantity: clamped },
           });
-          const incoming = Array.isArray(d.items) ? d.items : [];
+          const incoming = Array.isArray(d?.items) ? d.items : [];
           setCartItems((prev) => mergeCartItemsPreservingOrder(prev, incoming));
           setMarketplaceMessage("");
         } catch (e) {
@@ -2956,7 +3666,7 @@ function App() {
         setCartItems((prev) => prev.map((it) => (String(it.listingId) === id ? { ...it, quantity: clamped } : it)));
       }
     },
-    [cartItems, token, mergeCartItemsPreservingOrder],
+    [cancelCartItemFadeOut, cartItems, mergeCartItemsPreservingOrder, startCartItemFadeOut, token],
   );
 
   useEffect(() => {
@@ -2964,7 +3674,11 @@ function App() {
       Object.values(cartQtyCommitTimersRef.current).forEach((timerId) => {
         clearTimeout(timerId);
       });
+      Object.values(cartRemovingListingIdsRef.current).forEach((timerId) => {
+        clearTimeout(timerId);
+      });
       cartQtyCommitTimersRef.current = {};
+      cartRemovingListingIdsRef.current = {};
     };
   }, []);
 
@@ -3101,21 +3815,35 @@ function App() {
       const modes = Array.isArray(item?.fulfillmentModes) ? item.fulfillmentModes : [];
       const fulfillmentType = modes.includes("pickup") ? "pickup" : modes.includes("delivery") ? "delivery" : "pickup";
       try {
-        await apiRequest("/orders", {
+        const created = await apiRequest("/orders", {
           method: "POST",
           token,
           body: { listingId, fulfillmentType, quantity: qty },
         });
+        const createdOrderId = String(created?.order?.id || "");
+        if (createdOrderId) {
+          setRecentlyAddedPurchaseOrderIds((prev) => (prev.includes(createdOrderId) ? prev : [...prev, createdOrderId]));
+          setRecentOrderBadgeIdsByTab((prev) => {
+            const set = new Set(prev.pending ?? []);
+            set.add(createdOrderId);
+            return { ...prev, pending: Array.from(set) };
+          });
+          setRecentOrderIdsByTab((prev) => {
+            const set = new Set(prev.pending ?? []);
+            set.add(createdOrderId);
+            return { ...prev, pending: Array.from(set) };
+          });
+        }
         successCount += 1;
+        startCartItemFadeOut(listingId);
         try {
-          const d = await apiRequest(`/me/cart/items/${listingId}`, {
+          await apiRequest(`/me/cart/items/${listingId}`, {
             method: "DELETE",
             token,
           });
-          const incoming = Array.isArray(d.items) ? d.items : [];
-          setCartItems((prev) => mergeCartItemsPreservingOrder(prev, incoming));
         } catch {
           // Keep checkout success even if cart row deletion returns an error.
+          cancelCartItemFadeOut(listingId);
         }
       } catch {
         failedCount += 1;
@@ -3135,7 +3863,23 @@ function App() {
       return;
     }
     setMarketplaceMessage("Could not check out selected items.");
-  }, [selectedCartItems, token, mergeCartItemsPreservingOrder, goMyPurchases]);
+  }, [cancelCartItemFadeOut, goMyPurchases, mergeCartItemsPreservingOrder, selectedCartItems, startCartItemFadeOut, token]);
+
+  const appendSellerOrderTabNotifications = useCallback((tab, orderIds) => {
+    if (!RECENT_ORDER_TAB_KEYS.includes(tab)) return;
+    const ids = (Array.isArray(orderIds) ? orderIds : []).map((id) => String(id || "")).filter(Boolean);
+    if (!ids.length) return;
+    setRecentSellerOrderBadgeIdsByTab((prev) => {
+      const set = new Set(prev[tab] ?? []);
+      ids.forEach((id) => set.add(id));
+      return { ...prev, [tab]: Array.from(set) };
+    });
+    setRecentSellerOrderIdsByTab((prev) => {
+      const set = new Set(prev[tab] ?? []);
+      ids.forEach((id) => set.add(id));
+      return { ...prev, [tab]: Array.from(set) };
+    });
+  }, []);
 
   const applyTransitionToSelectedOrders = useCallback(
     async (transition, label) => {
@@ -3151,10 +3895,12 @@ function App() {
       setOrdersBulkActionSubmitting(true);
       let successCount = 0;
       let failedCount = 0;
+      const acceptedOrderIds = [];
       for (const order of selectedOrders) {
         try {
           await apiRequest(`/orders/${order.id}`, { method: "PATCH", token, body: { transition } });
           successCount += 1;
+          if (transition === "seller_accept") acceptedOrderIds.push(String(order.id || ""));
         } catch {
           failedCount += 1;
         }
@@ -3165,10 +3911,12 @@ function App() {
       } catch {
         // Keep prior rows if refresh fails; result banner still informs user.
       }
+      if (transition === "seller_accept" && ordersRole === "seller" && acceptedOrderIds.length) {
+        appendSellerOrderTabNotifications("processing", acceptedOrderIds);
+      }
       setOrdersBulkActionSubmitting(false);
       setOrderSelection({});
       if (successCount > 0) {
-        if (transition === "cancel") setOrdersStatusTab("cancelled");
         setMarketplaceMessage(
           failedCount === 0
             ? `${label} ${successCount} order${successCount > 1 ? "s" : ""}.`
@@ -3178,7 +3926,7 @@ function App() {
         setMarketplaceMessage(`Could not ${label.toLowerCase()} selected orders.`);
       }
     },
-    [selectedOrders, token, ordersRole],
+    [appendSellerOrderTabNotifications, selectedOrders, token, ordersRole],
   );
 
   useEffect(() => {
@@ -3230,10 +3978,13 @@ function App() {
       setBrowseSubId(null);
       setBrowseQuickFilter("all");
       setSelectedListingId(null);
-      setActiveView(VIEWS.COMMUNITY_SHOP);
+      // Keep user intent on non-browse screens (e.g., post-buy redirect to My purchases).
+      if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(activeView)) {
+        setActiveView(VIEWS.COMMUNITY_SHOP);
+      }
     }
     return undefined;
-  }, [shopCommunityId]);
+  }, [shopCommunityId, activeView]);
   useEffect(() => {
     if (activeView !== VIEWS.COMMUNITY_SHOP && activeView !== VIEWS.FAVORITES) setMobileCommunityFiltersOpen(false);
   }, [activeView]);
@@ -3363,10 +4114,11 @@ function App() {
     if (roleScopeChanged) {
       ordersDataQueryKeyRef.current = roleKey;
       setOrders([]);
+      setOrdersLoading(true);
     }
     let cancelled = false;
     (async () => {
-      if (roleScopeChanged || ordersRef.current.length === 0) setOrdersLoading(true);
+      if (!roleScopeChanged && ordersRef.current.length === 0) setOrdersLoading(true);
       try {
         const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
         if (!cancelled) setOrders(data.orders || []);
@@ -3378,6 +4130,32 @@ function App() {
     })();
     return () => {
       cancelled = true;
+    };
+  }, [token, activeView, ordersRole]);
+
+  useEffect(() => {
+    if (!token) return undefined;
+    const onSellerOrdersScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
+    if (onSellerOrdersScreen) return undefined;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const data = await apiRequest("/orders?role=seller", { token });
+        if (!cancelled) setPolledSellerOrders(data.orders || []);
+      } catch {
+        if (!cancelled) setPolledSellerOrders([]);
+      }
+    };
+    void run();
+    const id = window.setInterval(run, 25000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void run();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [token, activeView, ordersRole]);
 
@@ -3698,6 +4476,9 @@ function App() {
       await apiRequest(`/orders/${orderId}`, { method: "PATCH", token, body: { transition } });
       const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
       setOrders(data.orders || []);
+      if (transition === "seller_accept" && ordersRole === "seller" && orderId) {
+        appendSellerOrderTabNotifications("processing", [String(orderId)]);
+      }
       setMarketplaceMessage("Order updated.");
     } catch (e) {
       setMarketplaceMessage(e.message || "Could not update order.");
@@ -3798,6 +4579,90 @@ function App() {
     }
   };
 
+  const adjustSellerListingQuantityById = useCallback(
+    async (listingId, delta) => {
+      const id = String(listingId || "");
+      if (!id || !Number.isFinite(Number(delta)) || Number(delta) === 0) return;
+      if (!token) {
+        setMarketplaceMessage("Please sign in to update listing quantity.");
+        return;
+      }
+      const target = sellerListings.find((l) => String(l?.id || "") === id);
+      if (!target) return;
+      const currentQty = Math.max(0, Number(target.quantity) || 0);
+      const nextQty = Math.max(0, currentQty + Number(delta));
+      if (nextQty === currentQty) return;
+      setSellerListingQtySavingId(id);
+      try {
+        const res = await apiRequest(`/me/listings/${id}`, {
+          method: "PATCH",
+          token,
+          body: { quantity: nextQty },
+        });
+        const updated = res?.listing;
+        setSellerListings((prev) =>
+          prev.map((l) =>
+            String(l?.id || "") === id
+              ? {
+                  ...l,
+                  ...(updated || {}),
+                  quantity: Number.isFinite(Number(updated?.quantity)) ? Number(updated.quantity) : nextQty,
+                }
+              : l,
+          ),
+        );
+        setMarketplaceMessage("Product quantity updated.");
+      } catch (e) {
+        setMarketplaceMessage(e.message || "Could not update product quantity.");
+      } finally {
+        setSellerListingQtySavingId(null);
+      }
+    },
+    [sellerListings, token],
+  );
+
+  const setSellerListingQuantityById = useCallback(
+    async (listingId, targetQty) => {
+      const id = String(listingId || "");
+      const nextQty = Math.max(0, Math.floor(Number(targetQty) || 0));
+      if (!id) return;
+      if (!token) {
+        setMarketplaceMessage("Please sign in to update listing quantity.");
+        return;
+      }
+      const target = sellerListings.find((l) => String(l?.id || "") === id);
+      if (!target) return;
+      const currentQty = Math.max(0, Number(target.quantity) || 0);
+      if (nextQty === currentQty) return;
+      setSellerListingQtySavingId(id);
+      try {
+        const res = await apiRequest(`/me/listings/${id}`, {
+          method: "PATCH",
+          token,
+          body: { quantity: nextQty },
+        });
+        const updated = res?.listing;
+        setSellerListings((prev) =>
+          prev.map((l) =>
+            String(l?.id || "") === id
+              ? {
+                  ...l,
+                  ...(updated || {}),
+                  quantity: Number.isFinite(Number(updated?.quantity)) ? Number(updated.quantity) : nextQty,
+                }
+              : l,
+          ),
+        );
+        setMarketplaceMessage("Product quantity updated.");
+      } catch (e) {
+        setMarketplaceMessage(e.message || "Could not update product quantity.");
+      } finally {
+        setSellerListingQtySavingId(null);
+      }
+    },
+    [sellerListings, token],
+  );
+
   const applySellerListingDiscount = async (listing, percent) => {
     const id = String(listing?.id || "");
     if (!id) return;
@@ -3843,11 +4708,20 @@ function App() {
     }
   };
 
-  const openQuickAddModal = (listing) => {
+  const openQuickAddModal = (listing, actionType = "cart") => {
     if (!listing?.id) return;
-    const stock = Math.max(1, Number(listing.quantity) || 1);
+    const stock = Math.max(0, Number(listing.quantity) || 0);
+    if (stock <= 0) {
+      setMarketplaceMessage("This item is currently out of stock.");
+      return;
+    }
+    const mode = actionType === "buy" ? "buy" : "cart";
+    const listingModes = Array.isArray(listing.fulfillmentModes) && listing.fulfillmentModes.length ? listing.fulfillmentModes : ["pickup"];
+    const defaultFulfillment = listingModes.includes("pickup") ? "pickup" : listingModes[0];
     setQuickAddListing(listing);
-    setQuickAddQuantity(String(stock >= 1 ? 1 : stock));
+    setQuickActionType(mode);
+    setQuickOrderFulfillmentType(defaultFulfillment);
+    setQuickAddQuantity("1");
     setQuickAddComment("");
     setQuickAddModalOpen(true);
   };
@@ -3856,6 +4730,8 @@ function App() {
     if (quickAddSubmitting) return;
     setQuickAddModalOpen(false);
     setQuickAddListing(null);
+    setQuickActionType("cart");
+    setQuickOrderFulfillmentType("pickup");
     setQuickAddQuantity("1");
     setQuickAddComment("");
   };
@@ -3870,13 +4746,77 @@ function App() {
     }
     setQuickAddSubmitting(true);
     try {
+      if (quickActionType === "buy") {
+        if (!token) {
+          setMarketplaceMessage("Please sign in to place an order.");
+          return;
+        }
+        try {
+          const listingMaxQty = Math.max(0, Number(quickAddListing?.quantity) || 0);
+          const currentOrders = await apiRequest("/orders?role=buyer", { token });
+          const pendingQtyForListing = (Array.isArray(currentOrders?.orders) ? currentOrders.orders : [])
+            .filter(
+              (o) =>
+                String(o?.listingId || "") === String(quickAddListing?.id || "") &&
+                String(o?.status || "").toLowerCase() === "placed",
+            )
+            .reduce((sum, o) => sum + Math.max(0, Number(o?.quantity) || 0), 0);
+          const availableQty = Math.max(0, listingMaxQty - pendingQtyForListing);
+          if (availableQty < parsedQty) {
+            setMarketplaceMessage(
+              availableQty > 0
+                ? `Only ${availableQty} item${availableQty > 1 ? "s" : ""} left for pending orders.`
+                : "Maximum available quantity is already in pending orders.",
+            );
+            return;
+          }
+          const created = await apiRequest("/orders", {
+            method: "POST",
+            token,
+            body: {
+              listingId: String(quickAddListing.id),
+              quantity: parsedQty,
+              fulfillmentType: quickOrderFulfillmentType,
+            },
+          });
+          const createdOrderId = String(created?.order?.id || "");
+          if (createdOrderId) {
+            setRecentlyAddedPurchaseOrderIds((prev) => (prev.includes(createdOrderId) ? prev : [...prev, createdOrderId]));
+            setRecentOrderBadgeIdsByTab((prev) => {
+              const set = new Set(prev.pending ?? []);
+              set.add(createdOrderId);
+              return { ...prev, pending: Array.from(set) };
+            });
+            setRecentOrderIdsByTab((prev) => {
+              const set = new Set(prev.pending ?? []);
+              set.add(createdOrderId);
+              return { ...prev, pending: Array.from(set) };
+            });
+          }
+        } catch (e) {
+          setMarketplaceMessage(e.message || "Could not place order.");
+          return;
+        }
+        setQuickAddModalOpen(false);
+        setQuickAddListing(null);
+        setQuickActionType("cart");
+        setQuickOrderFulfillmentType("pickup");
+        setQuickAddQuantity("1");
+        setQuickAddComment("");
+        // Keep user in current marketplace/community view after successful buy.
+        setOrdersRole("buyer");
+        setOrdersStatusTab("pending");
+        setMarketplaceMessage("Order placed. Pay COD at pickup or when delivery is completed.");
+        return;
+      }
+      const addedListingId = String(quickAddListing.id);
       if (token) {
         try {
           const cartData = await apiRequest("/me/cart/items", {
             method: "POST",
             token,
             body: {
-              listingId: String(quickAddListing.id),
+              listingId: addedListingId,
               quantity: parsedQty,
               comment: String(quickAddComment || "").trim(),
             },
@@ -3886,6 +4826,7 @@ function App() {
             const merged = mergeCartItemsPreservingOrder(prev, incoming);
             return moveSellerGroupToTop(merged, quickAddListing?.sellerId);
           });
+          setRecentlyAddedCartListingIds((prev) => (prev.includes(addedListingId) ? prev : [...prev, addedListingId]));
           setMarketplaceMessage("Added to your cart.");
         } catch (e) {
           setMarketplaceMessage(e.message || "Could not save to cart.");
@@ -3938,9 +4879,10 @@ function App() {
           };
           return next;
         });
+        setRecentlyAddedCartListingIds((prev) => (prev.includes(addedListingId) ? prev : [...prev, addedListingId]));
         setMarketplaceMessage("Added to your cart.");
       }
-      setActiveView(VIEWS.CART);
+      setActiveView(shopCommunityId ? VIEWS.COMMUNITY_SHOP : VIEWS.BROWSE);
       setQuickAddModalOpen(false);
       setQuickAddListing(null);
       setQuickAddQuantity("1");
@@ -4214,17 +5156,36 @@ function App() {
     const nextFieldErrors = {};
     if (!normalizedUsername) {
       nextFieldErrors.username = "Username is required.";
-    } else if (normalizedUsername.length < 3) {
-      nextFieldErrors.username = "Username must be at least 3 characters.";
+    } else if (normalizedUsername.length < 3 || normalizedUsername.length > 20) {
+      nextFieldErrors.username = "Username must be 3-20 characters.";
+    } else if (!/^[A-Za-z]/.test(normalizedUsername)) {
+      nextFieldErrors.username = "Username must start with a letter.";
+    } else if (/\s/.test(normalizedUsername)) {
+      nextFieldErrors.username = "Username cannot contain spaces.";
+    } else if (!/^[A-Za-z0-9._]+$/.test(normalizedUsername)) {
+      nextFieldErrors.username = "Only letters, numbers, dots, and underscores are allowed.";
+    } else if (/[A-Z]/.test(normalizedUsername)) {
+      nextFieldErrors.username = "Use lowercase letters only (a-z).";
+    } else if (/(\.\.|__)/.test(normalizedUsername)) {
+      nextFieldErrors.username = "Username cannot contain duplicate dots or underscores.";
     }
-    if (normalizedFirstName.length < 2) {
-      nextFieldErrors.firstName = "First name must be at least 2 characters.";
+    const namePattern = /^[A-Za-z]+(?:[ -][A-Za-z]+)*$/;
+    if (!normalizedFirstName) {
+      nextFieldErrors.firstName = "First name is required.";
+    } else if (normalizedFirstName.length < 3 || normalizedFirstName.length > 50) {
+      nextFieldErrors.firstName = "First name must be 3-50 characters.";
+    } else if (!namePattern.test(normalizedFirstName)) {
+      nextFieldErrors.firstName = "First name can only contain letters, spaces, and hyphens.";
     }
-    if (normalizedMiddleName.length < 2) {
-      nextFieldErrors.middleName = "Middle name is required.";
+    if (normalizedMiddleName && !namePattern.test(normalizedMiddleName)) {
+      nextFieldErrors.middleName = "Middle name can only contain letters, spaces, and hyphens.";
     }
-    if (normalizedLastName.length < 2) {
+    if (!normalizedLastName) {
       nextFieldErrors.lastName = "Last name is required.";
+    } else if (normalizedLastName.length < 3 || normalizedLastName.length > 50) {
+      nextFieldErrors.lastName = "Last name must be 3-50 characters.";
+    } else if (!namePattern.test(normalizedLastName)) {
+      nextFieldErrors.lastName = "Last name can only contain letters, spaces, and hyphens.";
     }
     if (!normalizedGender) {
       nextFieldErrors.gender = "Gender is required.";
@@ -4234,8 +5195,6 @@ function App() {
     } else if (normalizedBirthday > todayIsoDate) {
       nextFieldErrors.birthday = "Birthday cannot be in the future.";
     }
-    if (!normalizedHouseStreet) nextFieldErrors.addressHouseStreet = "House Number & Street is required.";
-    if (!normalizedSubdivision) nextFieldErrors.addressSubdivision = "Subdivision is required.";
     if (!normalizedProvince) nextFieldErrors.addressProvince = "Province is required.";
     if (!normalizedCity) nextFieldErrors.addressCity = "City or Municipality is required.";
     if (!normalizedBarangay) nextFieldErrors.addressBarangay = "Barangay is required.";
@@ -4363,7 +5322,13 @@ function App() {
       }
       setProfileEditing(false);
     } catch (error) {
-      setProfileError(error.message || "Could not update profile.");
+      const message = String(error?.message || "Could not update profile.");
+      if (/phone number already in use|mobile number is already in use|phone.*already/i.test(message)) {
+        setProfileFieldErrors((prev) => ({ ...prev, phone: "This mobile number is already in use." }));
+        setProfileError("");
+      } else {
+        setProfileError(message);
+      }
     } finally {
       setProfileSaving(false);
     }
@@ -4818,6 +5783,9 @@ function App() {
         goOrders={goOrders}
         goMyPurchases={goMyPurchases}
         goCart={goCart}
+        cartItemCount={recentlyAddedCartListingIds.length}
+        purchasesItemCount={purchaseNavBadgeCount}
+        ordersItemCount={sellerNavBadgeCount}
         theme={theme}
         setTheme={setTheme}
         onLogout={logout}
@@ -4831,19 +5799,30 @@ function App() {
         }
       />
 
-      <main className="app-container space-y-4 py-5 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] max-sm:pt-4 md:space-y-6 md:py-8 md:pb-24 lg:pb-12">
-        {marketplaceMessage && activeView !== VIEWS.MY_LISTINGS ? (
-          <div
-            className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200/90 bg-amber-50/90 px-3 py-2 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100"
-            role="status"
+      {marketplaceFeedback.text ? (
+        <div
+          className={`fixed left-3 right-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px)+0.75rem)] z-[70] flex items-start justify-between gap-2 rounded-2xl border px-3.5 py-2.5 text-sm shadow-lg backdrop-blur sm:left-4 sm:right-4 md:left-auto md:right-6 md:bottom-6 md:w-[24rem] ${marketplaceFeedback.className}`}
+          role={marketplaceFeedback.role}
+          aria-live={marketplaceFeedback.live}
+        >
+          <span className="inline-flex min-w-0 items-start gap-2">
+            <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-current/30 text-[11px] font-bold">
+              {marketplaceFeedback.icon}
+            </span>
+            <span className="leading-relaxed">{marketplaceFeedback.text}</span>
+          </span>
+          <button
+            type="button"
+            className={`shrink-0 rounded-md px-1.5 py-0.5 text-base leading-none transition hover:bg-black/5 dark:hover:bg-white/10 ${marketplaceFeedback.dismissClass}`}
+            aria-label="Dismiss notification"
+            onClick={() => setMarketplaceMessage("")}
           >
-            <span>{marketplaceMessage}</span>
-            <button type="button" className="text-xs font-semibold text-amber-800 underline dark:text-amber-200" onClick={() => setMarketplaceMessage("")}>
-              Dismiss
-            </button>
-          </div>
-        ) : null}
+            ×
+          </button>
+        </div>
+      ) : null}
 
+      <main className="app-container space-y-4 py-5 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] max-sm:pt-4 md:space-y-6 md:py-8 md:pb-24 lg:pb-12">
         {isBrowseLikeView && activeView !== VIEWS.FAVORITES && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div className="space-y-4">
@@ -4872,8 +5851,7 @@ function App() {
                           type="button"
                           className="inline-flex items-center rounded-full bg-brand-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
                           onClick={async () => {
-                            await joinCommunityAndAttachListings(activeCommunity);
-                            setMarketplaceMessage("");
+                            await joinCommunityAndAttachListings(activeCommunity, { notifySuccess: true });
                             setShopCommunityId(activeCommunity?.id || null);
                             setActiveView(VIEWS.COMMUNITY_SHOP);
                             navigate("/", { replace: true });
@@ -4886,8 +5864,9 @@ function App() {
                           type="button"
                           className="inline-flex items-center rounded-full border border-rose-300/80 bg-white px-4 py-2 text-sm font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
                           onClick={() => {
+                            const leftName = toTitleCase(String(activeCommunity?.name || "").trim());
                             applyJoinedCommunity("");
-                            setMarketplaceMessage("");
+                            setMarketplaceMessage(`You left ${leftName || "the community"} successfully.`);
                             leaveCommunityToGlobalMarketplace();
                           }}
                         >
@@ -5006,8 +5985,7 @@ function App() {
                                 type="button"
                                 className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
                                 onClick={async () => {
-                                  await joinCommunityAndAttachListings(c);
-                                  setMarketplaceMessage("");
+                                  await joinCommunityAndAttachListings(c, { notifySuccess: true });
                                   setShopCommunityId(c.id);
                                   setActiveView(VIEWS.COMMUNITY_SHOP);
                                   navigate("/", { replace: true });
@@ -5287,8 +6265,8 @@ function App() {
                         currentUserId={user?.id || ""}
                         onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
                         onEdit={() => beginEditSellerListing(l)}
-                        onBuy={() => setSelectedListingId(l.id)}
-                        onAdd={() => openQuickAddModal(l)}
+                        onBuy={() => openQuickAddModal(l, "buy")}
+                        onAdd={() => openQuickAddModal(l, "cart")}
                         onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
                       />
                     ))}
@@ -5402,8 +6380,8 @@ function App() {
                       currentUserId={user?.id || ""}
                       onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
                       onEdit={() => beginEditSellerListing(l)}
-                      onBuy={() => setSelectedListingId(l.id)}
-                      onAdd={() => openQuickAddModal(l)}
+                      onBuy={() => openQuickAddModal(l, "buy")}
+                      onAdd={() => openQuickAddModal(l, "cart")}
                       onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
                     />
                   ))}
@@ -5647,21 +6625,6 @@ function App() {
                     Cancel
                   </button>
                 </div>
-                {marketplaceMessage ? (
-                  <div
-                    className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200/90 bg-amber-50/90 px-3 py-2 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100"
-                    role="status"
-                  >
-                    <span>{marketplaceMessage}</span>
-                    <button
-                      type="button"
-                      className="text-xs font-semibold text-amber-800 underline dark:text-amber-200"
-                      onClick={() => setMarketplaceMessage("")}
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                ) : null}
               </div>
             </form>
           </section>
@@ -5719,11 +6682,23 @@ function App() {
                     return acc;
                   }, {}),
                 ).map(([sellerId, items]) => {
-                  const rowIds = items.map((i) => String(i.listingId));
+                  const orderedItems = [...items].sort((a, b) => {
+                    const aId = String(a?.listingId || "");
+                    const bId = String(b?.listingId || "");
+                    const aIdx = recentlyAddedCartListingIds.indexOf(aId);
+                    const bIdx = recentlyAddedCartListingIds.indexOf(bId);
+                    const aRecent = aIdx >= 0;
+                    const bRecent = bIdx >= 0;
+                    if (aRecent && bRecent) return bIdx - aIdx; // latest added first
+                    if (aRecent) return -1;
+                    if (bRecent) return 1;
+                    return 0;
+                  });
+                  const rowIds = orderedItems.map((i) => String(i.listingId));
                   const selectedCount = rowIds.filter((id) => cartItemSelection[id]).length;
                   const allSelected = rowIds.length > 0 && selectedCount === rowIds.length;
                   const someSelected = selectedCount > 0 && !allSelected;
-                  const sellerLabel = items[0]?.sellerLabel || "Unknown seller";
+                  const sellerLabel = orderedItems[0]?.sellerLabel || "Unknown seller";
                   return (
                     <div key={sellerId} className={`${UI_KIT.surfaceCard} p-3.5`}>
                       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-neutral-200/80 pb-2 dark:border-slate-700/80">
@@ -5731,17 +6706,26 @@ function App() {
                           <CartSellerSelectAllCheckbox
                             allChecked={allSelected}
                             someSelected={someSelected}
-                            onChange={() => toggleCartSellerSelectAll(items)}
+                            onChange={() => toggleCartSellerSelectAll(orderedItems)}
                             ariaLabel={`Select all from ${sellerLabel}`}
                           />
                         </label>
                         <p className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-slate-300">{sellerLabel}</p>
                       </div>
                       <div className="divide-y divide-neutral-200/80 dark:divide-slate-700/80">
-                        {items.map((item) => {
+                        {orderedItems.map((item) => {
                           const lid = String(item.listingId);
+                          const isRecentlyAdded = recentlyAddedCartListingIds.includes(lid);
+                          const isRemoving = cartRemovingListingIds.includes(lid);
                           return (
-                            <div key={item.listingId} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
+                            <div
+                              key={item.listingId}
+                              className={`flex items-center gap-3 rounded-xl py-2.5 transition-opacity duration-[2000ms] first:pt-0 last:pb-0 ${
+                                isRecentlyAdded ? "bg-emerald-100/75 dark:bg-emerald-500/15" : ""
+                              } ${
+                                isRemoving ? "pointer-events-none opacity-0" : "opacity-100"
+                              }`}
+                            >
                               <input
                                 type="checkbox"
                                 className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
@@ -5759,6 +6743,11 @@ function App() {
                                 )}
                               </div>
                               <div className="min-w-0 flex-1">
+                                {isRecentlyAdded ? (
+                                  <span className="mb-1 inline-flex items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
+                                    Newly added
+                                  </span>
+                                ) : null}
                                 <MarketplaceProductDetailStack
                                   title={item.title || "Product"}
                                   priceCents={item.unitPriceCents}
@@ -5917,9 +6906,41 @@ function App() {
                     role="tab"
                     aria-selected={ordersStatusTab === id}
                     className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${ordersStatusTab === id ? UI_KIT.tabActive : UI_KIT.tabIdle}`}
-                    onClick={() => setOrdersStatusTab(id)}
+                    onClick={() => {
+                      if (
+                        activeView === VIEWS.MY_PURCHASES &&
+                        ordersRole === "buyer" &&
+                        (id === "pending" || id === "processing" || id === "completed" || id === "cancelled")
+                      ) {
+                        setRecentOrderBadgeIdsByTab((prev) => ({ ...prev, [id]: [] }));
+                        setRecentOrderIdsByTab((prev) => ({ ...prev, [id]: [] }));
+                        if (id === "pending") setRecentlyAddedPurchaseOrderIds([]);
+                      }
+                      if (
+                        activeView === VIEWS.ORDERS &&
+                        ordersRole === "seller" &&
+                        (id === "pending" || id === "processing" || id === "completed" || id === "cancelled")
+                      ) {
+                        setRecentSellerOrderBadgeIdsByTab((prev) => ({ ...prev, [id]: [] }));
+                        setRecentSellerOrderIdsByTab((prev) => ({ ...prev, [id]: [] }));
+                        if (id === "pending") setRecentlyAddedSellerOrderIds([]);
+                      }
+                      setOrdersStatusTab(id);
+                    }}
                   >
-                    {label}
+                    <span className="inline-flex items-center gap-1.5">
+                      <span>{label}</span>
+                      {id === "pending" && pendingTabPillCount > 0 ? (
+                        <span className="inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
+                          {pendingTabPillCount > 99 ? "99+" : pendingTabPillCount}
+                        </span>
+                      ) : null}
+                      {(id === "processing" || id === "completed" || id === "cancelled") && ordersTabBadgeIdsByTab[id]?.length > 0 ? (
+                        <span className="inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
+                          {ordersTabBadgeIdsByTab[id].length > 99 ? "99+" : ordersTabBadgeIdsByTab[id].length}
+                        </span>
+                      ) : null}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -5974,6 +6995,18 @@ function App() {
                     return acc;
                   }, {}),
                 ).map(([sellerId, sellerOrders]) => {
+                  const orderedSellerOrders = [...sellerOrders].sort((a, b) => {
+                    const aId = String(a?.id || "");
+                    const bId = String(b?.id || "");
+                    const aIdx = ordersTabRecentPendingIds.indexOf(aId);
+                    const bIdx = ordersTabRecentPendingIds.indexOf(bId);
+                    const aRecent = aIdx >= 0;
+                    const bRecent = bIdx >= 0;
+                    if (aRecent && bRecent) return bIdx - aIdx; // latest bought first
+                    if (aRecent) return -1;
+                    if (bRecent) return 1;
+                    return 0;
+                  });
                   const sellerUser = usersList.find((u) => String(u?.id || "") === String(sellerId || ""));
                   const usernameLabel = String(sellerUser?.username || "").trim()
                     ? `@${String(sellerUser.username).trim()}`
@@ -6011,7 +7044,81 @@ function App() {
                       : sellerId && sellerId !== "unknown"
                         ? `Seller ${sellerId.slice(0, 8)}`
                         : "Unknown seller";
-                  const sellerOrderIds = sellerOrders.map((order) => String(order.id || "")).filter(Boolean);
+                  const shouldMergeBuyerRows =
+                    ordersRole === "buyer" && !["completed", "cancelled"].includes(String(ordersStatusTab || ""));
+                  const mergedSellerOrders =
+                    shouldMergeBuyerRows
+                      ? orderedSellerOrders.reduce((acc, o) => {
+                          const listing = orderListingsById[String(o.listingId)] || null;
+                          const orderedQty = Math.max(1, Number(o.quantity) || 1);
+                          const cardListing = listing
+                            ? { ...listing, quantity: orderedQty }
+                            : {
+                                id: o.listingId,
+                                title: `Order ${String(o.id).slice(0, 8)}`,
+                                priceCents: o.codGoodsCents,
+                                quantity: orderedQty,
+                                fulfillmentModes: [o.fulfillmentType],
+                                imageUrl: "",
+                                description: "",
+                                sellerId: o.sellerId,
+                              };
+                          // Always merge same product rows by listing id in buyer purchases.
+                          const mergeKey = String(o.listingId || "");
+                          const existing = acc.find((entry) => entry.mergeKey === mergeKey);
+                          if (!existing) {
+                            const maxAvailableQty = Number.isFinite(Number(listing?.quantity))
+                              ? Math.max(1, Number(listing.quantity))
+                              : orderedQty;
+                            const clampedQty = Math.min(orderedQty, maxAvailableQty);
+                            const unitPriceCents = Math.max(0, Number(cardListing.priceCents) || 0);
+                            acc.push({
+                              mergeKey,
+                              representativeOrder: o,
+                              orderIds: [String(o.id || "")],
+                              rawTotalQty: orderedQty,
+                              maxAvailableQty,
+                              cardListing: { ...cardListing, quantity: clampedQty },
+                              mergedGoodsCents: unitPriceCents * clampedQty,
+                              mergedDeliveryCents: Math.max(0, Number(o.codDeliveryCents) || 0),
+                            });
+                            return acc;
+                          }
+                          existing.orderIds.push(String(o.id || ""));
+                          existing.rawTotalQty += orderedQty;
+                          existing.maxAvailableQty = Number.isFinite(Number(listing?.quantity))
+                            ? Math.max(1, Number(listing.quantity))
+                            : existing.maxAvailableQty;
+                          const clampedQty = Math.min(existing.rawTotalQty, existing.maxAvailableQty);
+                          const unitPriceCents = Math.max(0, Number(existing.cardListing.priceCents) || 0);
+                          existing.cardListing = { ...existing.cardListing, quantity: clampedQty };
+                          existing.mergedGoodsCents = unitPriceCents * clampedQty;
+                          existing.mergedDeliveryCents += Math.max(0, Number(o.codDeliveryCents) || 0);
+                          return acc;
+                        }, [])
+                      : orderedSellerOrders.map((o) => {
+                          const listing = orderListingsById[String(o.listingId)] || null;
+                          const orderedQty = Math.max(1, Number(o.quantity) || 1);
+                          const cardListing = listing
+                            ? { ...listing, quantity: orderedQty }
+                            : {
+                                id: o.listingId,
+                                title: `Order ${String(o.id).slice(0, 8)}`,
+                                priceCents: o.codGoodsCents,
+                                quantity: orderedQty,
+                                fulfillmentModes: [o.fulfillmentType],
+                                imageUrl: "",
+                                description: "",
+                                sellerId: o.sellerId,
+                              };
+                          return {
+                            mergeKey: String(o.id || ""),
+                            representativeOrder: o,
+                            orderIds: [String(o.id || "")],
+                            cardListing,
+                          };
+                        });
+                  const sellerOrderIds = mergedSellerOrders.flatMap((entry) => entry.orderIds).filter(Boolean);
                   const sellerSelectedCount = sellerOrderIds.filter((id) => orderSelection[id]).length;
                   const sellerAllSelected = sellerOrderIds.length > 0 && sellerSelectedCount === sellerOrderIds.length;
                   const sellerSomeSelected = sellerSelectedCount > 0 && !sellerAllSelected;
@@ -6022,36 +7129,47 @@ function App() {
                           <CartSellerSelectAllCheckbox
                             allChecked={sellerAllSelected}
                             someSelected={sellerSomeSelected}
-                            onChange={() => toggleOrderSellerSelectAll(sellerOrders)}
+                            onChange={() => toggleOrderSellerSelectAll(orderedSellerOrders)}
                             ariaLabel={`Select all orders from ${sellerLabel}`}
                           />
                         ) : null}
                         <p className="text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-slate-300">{sellerLabel}</p>
                       </div>
-                      <div className="space-y-3">
-                        {sellerOrders.map((o) => {
-                          const listing = orderListingsById[String(o.listingId)] || null;
-                          const cardListing = listing || {
-                            id: o.listingId,
-                            title: `Order ${String(o.id).slice(0, 8)}`,
-                            priceCents: o.codGoodsCents,
-                            quantity: o.quantity,
-                            fulfillmentModes: [o.fulfillmentType],
-                            imageUrl: "",
-                            description: "",
-                            sellerId: o.sellerId,
-                          };
+                      <div className="divide-y divide-neutral-200/80 dark:divide-slate-700/80">
+                        {mergedSellerOrders.map((entry) => {
+                          const o = entry.representativeOrder;
+                          const cardListing = entry.cardListing;
                           const orderId = String(o.id || "");
+                          const shouldHighlightRecent =
+                            RECENT_ORDER_TAB_KEYS.includes(String(ordersStatusTab)) &&
+                            entry.orderIds.some((id) => Boolean(ordersTabHighlightIdsByTab[ordersStatusTab]?.includes(id)));
+                          const rowAllSelected = entry.orderIds.length > 0 && entry.orderIds.every((id) => Boolean(orderSelection[id]));
                           return (
-                            <div key={o.id} className="rounded-xl border border-neutral-200/80 bg-white/80 p-2.5 dark:border-slate-700 dark:bg-slate-900/50">
+                            <div
+                              key={`${sellerId}:${entry.mergeKey}`}
+                              className={`rounded-xl py-2.5 first:pt-0 last:pb-0 ${
+                                shouldHighlightRecent ? "bg-emerald-100/75 dark:bg-emerald-500/15" : ""
+                              }`}
+                            >
                               <div className="flex items-center gap-3">
                                 {ordersStatusTab === "pending" ? (
                                   <input
                                     type="checkbox"
                                     className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
-                                    checked={Boolean(orderSelection[orderId])}
-                                    onChange={() => toggleOrderSelected(orderId)}
-                                    aria-label={`Select order ${orderId}`}
+                                    checked={rowAllSelected}
+                                    onChange={() => {
+                                      const nextChecked = !rowAllSelected;
+                                      setOrderSelection((prev) => {
+                                        const next = { ...prev };
+                                        for (const id of entry.orderIds) {
+                                          if (!id) continue;
+                                          if (nextChecked) next[id] = true;
+                                          else delete next[id];
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                    aria-label={`Select order ${orderId}${entry.orderIds.length > 1 ? " group" : ""}`}
                                   />
                                 ) : null}
                                 <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800">
@@ -6064,6 +7182,11 @@ function App() {
                                   )}
                                 </div>
                                 <div className="min-w-0 flex-1">
+                                  {shouldHighlightRecent ? (
+                                    <span className="mb-1 inline-flex items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
+                                      Recently updated
+                                    </span>
+                                  ) : null}
                                   <MarketplaceProductDetailStack
                                     title={cardListing.title || "Product"}
                                     priceCents={cardListing.priceCents}
@@ -6085,13 +7208,28 @@ function App() {
                               <div className="mt-3 space-y-2 border-t border-neutral-200/80 pt-2 text-sm dark:border-slate-700/80">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="text-[11px] text-neutral-500 dark:text-slate-400">
-                                    <span className="mr-1.5 font-medium text-neutral-600 dark:text-slate-300">Order ID</span>
-                                    <span className="font-mono">{o.id}</span>
+                                    <span className="mr-1.5 font-medium text-neutral-600 dark:text-slate-300">
+                                      {entry.orderIds.length > 1 ? "Order IDs" : "Order ID"}
+                                    </span>
+                                    {entry.orderIds.length > 1 ? (
+                                      <span className="mt-1 block space-y-0.5">
+                                        {entry.orderIds.map((id) => (
+                                          <span key={id} className="block font-mono">
+                                            {id}
+                                          </span>
+                                        ))}
+                                      </span>
+                                    ) : (
+                                      <span className="font-mono">{entry.orderIds[0]}</span>
+                                    )}
                                   </span>
                                 </div>
                                 <p className="text-xs text-neutral-600 dark:text-slate-400">
-                                  {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods {formatCents(o.codGoodsCents)}
-                                  {o.codDeliveryCents > 0 ? <span> · delivery {formatCents(o.codDeliveryCents)}</span> : null}
+                                  {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods{" "}
+                                  {formatCents(entry.mergedGoodsCents ?? o.codGoodsCents)}
+                                  {(entry.mergedDeliveryCents ?? o.codDeliveryCents) > 0 ? (
+                                    <span> · delivery {formatCents(entry.mergedDeliveryCents ?? o.codDeliveryCents)}</span>
+                                  ) : null}
                                 </p>
                                 <div className="flex flex-wrap items-center gap-2">
                                   {ordersRole === "seller" && o.status === "placed" ? (
@@ -6268,6 +7406,8 @@ function App() {
                         }}
                         required
                         minLength={3}
+                        maxLength={20}
+                        title="3-20 chars, start with a letter, use a-z 0-9 . _ only, no spaces, no duplicate dots/underscores."
                       />
                       {profileFieldErrors.username ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.username}</p> : null}
                     </div>
@@ -6362,7 +7502,10 @@ function App() {
                             setProfileFieldErrors((prev) => ({ ...prev, firstName: "" }));
                           }}
                           required
-                          minLength={2}
+                          minLength={3}
+                          maxLength={50}
+                          pattern="[A-Za-z]+(?:[ -][A-Za-z]+)*"
+                          title="3-50 chars. Letters, spaces, and hyphens only."
                         />
                         {profileFieldErrors.firstName ? (
                           <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.firstName}</p>
@@ -6373,7 +7516,7 @@ function App() {
                           className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400"
                           htmlFor="profile-middle-name"
                         >
-                          Middle name *
+                          Middle name
                         </label>
                         <input
                           id="profile-middle-name"
@@ -6385,7 +7528,8 @@ function App() {
                             setProfileDraft((prev) => ({ ...prev, middleName: e.target.value }));
                             setProfileFieldErrors((prev) => ({ ...prev, middleName: "" }));
                           }}
-                          required
+                          pattern="[A-Za-z]+(?:[ -][A-Za-z]+)*"
+                          title="Optional. Letters, spaces, and hyphens only."
                         />
                         {profileFieldErrors.middleName ? (
                           <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.middleName}</p>
@@ -6409,7 +7553,10 @@ function App() {
                             setProfileFieldErrors((prev) => ({ ...prev, lastName: "" }));
                           }}
                           required
-                          minLength={0}
+                          minLength={3}
+                          maxLength={50}
+                          pattern="[A-Za-z]+(?:[ -][A-Za-z]+)*"
+                          title="3-50 chars. Letters, spaces, and hyphens only."
                         />
                         {profileFieldErrors.lastName ? (
                           <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.lastName}</p>
@@ -6526,7 +7673,7 @@ function App() {
                       <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-x-4">
                         <div className="min-w-0">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-house-street">
-                          House Number &amp; Street *
+                          House Number &amp; Street
                         </label>
                         <input
                           id="profile-address-house-street"
@@ -6539,7 +7686,6 @@ function App() {
                             setProfileDraft((prev) => ({ ...prev, addressHouseStreet: e.target.value }));
                             setProfileFieldErrors((prev) => ({ ...prev, addressHouseStreet: "" }));
                           }}
-                          required
                         />
                         {profileFieldErrors.addressHouseStreet ? (
                           <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressHouseStreet}</p>
@@ -6547,7 +7693,7 @@ function App() {
                       </div>
                         <div className="min-w-0">
                         <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-subdivision">
-                          Subdivision *
+                          Subdivision
                         </label>
                         <input
                           id="profile-address-subdivision"
@@ -6560,7 +7706,6 @@ function App() {
                             setProfileDraft((prev) => ({ ...prev, addressSubdivision: e.target.value }));
                             setProfileFieldErrors((prev) => ({ ...prev, addressSubdivision: "" }));
                           }}
-                          required
                         />
                         {profileFieldErrors.addressSubdivision ? (
                           <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressSubdivision}</p>
@@ -7285,6 +8430,13 @@ function App() {
                               onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
                               onEdit={() => beginEditSellerListing(l)}
                               onDelete={() => deleteSellerListingById(l.id)}
+                              onAdjustQuantity={(delta) => {
+                                void adjustSellerListingQuantityById(l.id, delta);
+                              }}
+                              onSetQuantity={(qty) => {
+                                void setSellerListingQuantityById(l.id, qty);
+                              }}
+                              quantityUpdating={sellerListingQtySavingId === String(l.id)}
                             />
                           );
                         })}
@@ -7367,7 +8519,7 @@ function App() {
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 id="quick-add-modal-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
-                  Add to cart
+                  {quickActionType === "buy" ? "Confirm purchase" : "Add to cart"}
                 </h2>
               </div>
               <button
@@ -7473,22 +8625,58 @@ function App() {
                   />
                 </div>
               </div>
-              <div className="border-t border-neutral-200/90 pt-3 dark:border-slate-600/90">
-                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="quick-add-comment">
-                  Comment
-                </label>
-                <textarea
-                  id="quick-add-comment"
-                  rows={3}
-                  maxLength={250}
-                  className="input-base w-full resize-none"
-                  placeholder="Optional note for your order"
-                  value={quickAddComment}
-                  onChange={(e) => setQuickAddComment(e.target.value)}
-                />
-              </div>
+              {quickActionType === "buy" ? (
+                <div className="border-t border-neutral-200/90 pt-3 dark:border-slate-600/90">
+                  <p className="mb-2 text-xs font-medium text-neutral-600 dark:text-slate-400">Fulfillment</p>
+                  <div className="flex flex-wrap gap-3 text-sm">
+                    {(Array.isArray(quickAddListing.fulfillmentModes) && quickAddListing.fulfillmentModes.length
+                      ? quickAddListing.fulfillmentModes
+                      : ["pickup"]
+                    ).includes("pickup") ? (
+                      <label className="inline-flex cursor-pointer items-center gap-2">
+                        <input
+                          type="radio"
+                          name="quick-order-fulfillment"
+                          checked={quickOrderFulfillmentType === "pickup"}
+                          onChange={() => setQuickOrderFulfillmentType("pickup")}
+                        />
+                        Pickup
+                      </label>
+                    ) : null}
+                    {(Array.isArray(quickAddListing.fulfillmentModes) && quickAddListing.fulfillmentModes.length
+                      ? quickAddListing.fulfillmentModes
+                      : ["pickup"]
+                    ).includes("delivery") ? (
+                      <label className="inline-flex cursor-pointer items-center gap-2">
+                        <input
+                          type="radio"
+                          name="quick-order-fulfillment"
+                          checked={quickOrderFulfillmentType === "delivery"}
+                          onChange={() => setQuickOrderFulfillmentType("delivery")}
+                        />
+                        Delivery
+                      </label>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="border-t border-neutral-200/90 pt-3 dark:border-slate-600/90">
+                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="quick-add-comment">
+                    Comment
+                  </label>
+                  <textarea
+                    id="quick-add-comment"
+                    rows={3}
+                    maxLength={250}
+                    className="input-base w-full resize-none"
+                    placeholder="Optional note for your cart item"
+                    value={quickAddComment}
+                    onChange={(e) => setQuickAddComment(e.target.value)}
+                  />
+                </div>
+              )}
               <button type="button" className="btn-primary w-full" disabled={quickAddSubmitting} onClick={submitQuickAddOrder}>
-                {quickAddSubmitting ? "Confirming…" : "Confirm action"}
+                {quickAddSubmitting ? "Confirming…" : quickActionType === "buy" ? "Confirm order" : "Confirm action"}
               </button>
             </div>
           </div>

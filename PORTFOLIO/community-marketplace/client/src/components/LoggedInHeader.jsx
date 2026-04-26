@@ -261,6 +261,9 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {(t: "light"|"dark") => void} props.setTheme
  * @param {() => void} props.onLogout
  * @param {(u: object) => string} props.getDisplayNameFromUser
+ * @param {number} [props.cartItemCount] Total cart quantity badge count
+ * @param {number} [props.purchasesItemCount] Recent purchases badge count
+ * @param {number} [props.ordersItemCount] Seller orders tab / new-order badge count
  * @param {() => void} [props.onNavigateHome] Clear SPA path (e.g. /l/…) when opening marketplace from the logo
  * @param {string | null} [props.communityShopName] When set, user is in a community-scoped shop (show context + leave control)
  * @param {() => void} [props.onLeaveCommunityShop] Navigate to global marketplace (all areas)
@@ -277,6 +280,9 @@ export function LoggedInHeader({
   setTheme,
   onLogout,
   getDisplayNameFromUser,
+  cartItemCount = 0,
+  purchasesItemCount = 0,
+  ordersItemCount = 0,
   onNavigateHome,
   communityShopName = null,
   onLeaveCommunityShop,
@@ -465,6 +471,11 @@ export function LoggedInHeader({
             >
               <MenuCartIcon className="h-[18px] w-[18px] shrink-0" />
               Add to cart
+              {cartItemCount > 0 ? (
+                <span className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-brand-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
+                  {cartItemCount > 99 ? "99+" : cartItemCount}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -476,10 +487,25 @@ export function LoggedInHeader({
             >
               <MenuFileIcon className="h-[18px] w-[18px] shrink-0" />
               My purchases
+              {purchasesItemCount > 0 ? (
+                <span className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-brand-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
+                  {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
               className={`inline-flex shrink-0 items-center gap-1.5 ${navPill(activeView === VIEWS.ORDERS)}`}
+              aria-label={
+                ordersItemCount > 0
+                  ? `Orders, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} seller alerts`
+                  : "Orders"
+              }
+              title={
+                ordersItemCount > 0
+                  ? `${ordersItemCount > 99 ? "99+" : ordersItemCount} pending or updated seller order${ordersItemCount === 1 ? "" : "s"}`
+                  : undefined
+              }
               onClick={() => {
                 goOrders();
                 closeAllMenus();
@@ -487,6 +513,14 @@ export function LoggedInHeader({
             >
               <MenuOrdersIcon className="h-[18px] w-[18px] shrink-0" />
               Orders
+              {ordersItemCount > 0 ? (
+                <span
+                  className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-brand-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900"
+                  aria-hidden
+                >
+                  {ordersItemCount > 99 ? "99+" : ordersItemCount}
+                </span>
+              ) : null}
             </button>
           </nav>
         </div>
@@ -893,7 +927,14 @@ export function LoggedInHeader({
             closeAllMenus();
           }}
         >
-          <MenuCartIcon className="shrink-0" />
+          <span className="relative inline-flex">
+            <MenuCartIcon className="shrink-0" />
+            {cartItemCount > 0 ? (
+              <span className="absolute -right-2 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[9px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
+                {cartItemCount > 99 ? "99+" : cartItemCount}
+              </span>
+            ) : null}
+          </span>
           <span className="max-w-[3.25rem] truncate sm:max-w-none">Add to cart</span>
         </button>
         <button
@@ -904,18 +945,45 @@ export function LoggedInHeader({
             closeAllMenus();
           }}
         >
-          <MenuFileIcon className="shrink-0" />
+          <span className="relative inline-flex">
+            <MenuFileIcon className="shrink-0" />
+            {purchasesItemCount > 0 ? (
+              <span className="absolute -right-2 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[9px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
+                {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
+              </span>
+            ) : null}
+          </span>
           <span className="max-w-[3.25rem] truncate sm:max-w-none">Purchases</span>
         </button>
         <button
           type="button"
           className={bottomNavItemClass(activeView === VIEWS.ORDERS)}
+          aria-label={
+            ordersItemCount > 0
+              ? `Orders, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} seller alerts`
+              : "Orders"
+          }
+          title={
+            ordersItemCount > 0
+              ? `${ordersItemCount > 99 ? "99+" : ordersItemCount} pending or updated seller order${ordersItemCount === 1 ? "" : "s"}`
+              : undefined
+          }
           onClick={() => {
             goOrders();
             closeAllMenus();
           }}
         >
-          <MenuOrdersIcon className="shrink-0" />
+          <span className="relative inline-flex">
+            <MenuOrdersIcon className="shrink-0" />
+            {ordersItemCount > 0 ? (
+              <span
+                className="absolute -right-2 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[9px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900"
+                aria-hidden
+              >
+                {ordersItemCount > 99 ? "99+" : ordersItemCount}
+              </span>
+            ) : null}
+          </span>
           <span className="max-w-[3.25rem] truncate sm:max-w-none">Orders</span>
         </button>
       </div>

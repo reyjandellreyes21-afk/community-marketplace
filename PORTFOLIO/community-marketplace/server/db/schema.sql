@@ -26,6 +26,14 @@ create table if not exists public.profiles (
   updated_at timestamptz not null default now()
 );
 
+create unique index if not exists profiles_phone_unique_non_empty_idx
+  on public.profiles (phone)
+  where nullif(trim(phone), '') is not null;
+
+create unique index if not exists profiles_phone_mobile10_unique_idx
+  on public.profiles ((right(regexp_replace(phone, '\D', '', 'g'), 10)))
+  where length(regexp_replace(phone, '\D', '', 'g')) >= 10;
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
