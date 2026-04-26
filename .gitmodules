@@ -1,4 +1,0 @@
-[submodule "quiz-app"]
-	path = PORTFOLIO/quiz-app
-	url = https://github.com/reyjandellreyes21-afk/quiz-app.git
-	branch = main

@@ -591,7 +591,7 @@ const apiRequest = async (path, { method = "GET", token, body, headers = {} } = 
     let fallback = `Request failed (${response.status})`;
     if (response.status === 502 && proxiedDev) {
       fallback =
-        "Request failed (502): Vite could not reach the API at http://127.0.0.1:4000. Start the backend (quiz-app/server → npm run dev) and wait for MongoDB to connect.";
+        "Request failed (502): Vite could not reach the API at http://127.0.0.1:4000. Start `community-marketplace/server` (npm run dev) and ensure the API is listening on port 4000.";
     }
     const requestedUrl =
       typeof window !== "undefined"
