@@ -10,6 +10,12 @@ const isSchemaMissingError = (error) =>
   Boolean(error) &&
   (error.code === "PGRST205" || /schema cache/i.test(String(error.message || "")));
 
+const isBuyerCommentMissingError = (error) => {
+  if (!error) return false;
+  const msg = String(error.message || "");
+  return /buyer_comment/i.test(msg) && (error.code === "PGRST204" || /schema cache/i.test(msg));
+};
+
 const ALLOWED_LISTING_STATUSES = new Set(["active", "paused", "sold"]);
 const firstRow = (data) => (Array.isArray(data) && data.length > 0 ? data[0] : null);
 
@@ -56,7 +62,16 @@ const listingRowToApi = (row) => ({
   updatedAt: row.updated_at,
 });
 
-const orderRowToApi = (row) => ({
+const buyerReviewRowToApi = (row) => {
+  if (!row) return null;
+  return {
+    rating: row.rating,
+    reviewText: String(row.review_text ?? "").trim() || null,
+    updatedAt: row.updated_at,
+  };
+};
+
+const orderRowToApi = (row, reviewRow = null) => ({
   id: row.id,
   listingId: row.listing_id,
   buyerId: row.buyer_id,
@@ -67,6 +82,12 @@ const orderRowToApi = (row) => ({
   codGoodsCents: row.cod_goods_cents,
   codDeliveryCents: row.cod_delivery_cents,
   acceptedBidId: row.accepted_bid_id,
+  comment: String(row.buyer_comment ?? "").trim(),
+  buyerReceiptAcknowledgedAt: row.buyer_receipt_acknowledged_at ?? null,
+  buyerReview: buyerReviewRowToApi(reviewRow),
+  processingEnteredAt: row.processing_entered_at ?? null,
+  completedAt: row.completed_at ?? null,
+  cancelledAt: row.cancelled_at ?? null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -631,6 +652,7 @@ export const createOrder = async (req, res, next) => {
   try {
     const listingId = String(req.body.listingId);
     const fulfillmentType = String(req.body.fulfillmentType);
+    const buyerComment = String(req.body.comment || "").trim().slice(0, 2000);
     if (!["pickup", "delivery"].includes(fulfillmentType)) throw new AppError(400, "Invalid fulfillment type.");
     const quantity = req.body.quantity != null ? Number(req.body.quantity) : 1;
     if (quantity < 1) throw new AppError(400, "Invalid quantity.");
@@ -657,6 +679,7 @@ export const createOrder = async (req, res, next) => {
       .eq("buyer_id", req.user.id)
       .eq("status", initialStatus);
     if (existingErr) throw new AppError(500, existingErr.message);
+    let preferredRowId = null;
     if ((existingPlacedOrders || []).length > 0) {
       const ordered = [...existingPlacedOrders].sort((a, b) => {
         const at = String(a?.created_at || "");
@@ -666,40 +689,71 @@ export const createOrder = async (req, res, next) => {
       const primary = ordered[0];
       const existingQtyTotal = ordered.reduce((sum, row) => sum + Math.max(0, Number(row?.quantity) || 0), 0);
       const mergedQty = existingQtyTotal + quantity;
+      const mergedBuyerComment =
+        buyerComment || String(primary?.buyer_comment || "").trim();
       const patch = {
         quantity: mergedQty,
         cod_goods_cents: listing.price_cents * mergedQty,
         // Keep latest selected fulfillment option for the merged pending order.
         fulfillment_type: fulfillmentType,
+        buyer_comment: mergedBuyerComment,
       };
-      const { data: updated, error: uerr } = await supabaseAdmin
+      let { data: updated, error: uerr } = await supabaseAdmin
         .from("orders")
         .update(patch)
         .eq("id", primary.id)
         .select("*")
         .single();
+      if (isBuyerCommentMissingError(uerr)) {
+        const fallbackPatch = { ...patch };
+        delete fallbackPatch.buyer_comment;
+        ({ data: updated, error: uerr } = await supabaseAdmin
+          .from("orders")
+          .update(fallbackPatch)
+          .eq("id", primary.id)
+          .select("*")
+          .single());
+      }
       if (uerr) throw new AppError(400, uerr.message);
+      preferredRowId = String(updated?.id || primary.id);
       const duplicateIds = ordered.slice(1).map((row) => row?.id).filter(Boolean);
       if (duplicateIds.length > 0) {
         const { error: derr } = await supabaseAdmin.from("orders").delete().in("id", duplicateIds);
         if (derr) throw new AppError(500, derr.message);
       }
-      return res.status(201).json({ order: orderRowToApi(updated) });
+    } else {
+      const row = {
+        listing_id: listingId,
+        buyer_id: req.user.id,
+        seller_id: listing.seller_id,
+        quantity,
+        fulfillment_type: fulfillmentType,
+        status: initialStatus,
+        cod_goods_cents: codGoodsCents,
+        cod_delivery_cents: 0,
+        buyer_comment: buyerComment,
+      };
+      let { data, error } = await supabaseAdmin.from("orders").insert(row).select("*").single();
+      if (isBuyerCommentMissingError(error)) {
+        const fallbackRow = { ...row };
+        delete fallbackRow.buyer_comment;
+        ({ data, error } = await supabaseAdmin.from("orders").insert(fallbackRow).select("*").single());
+      }
+      if (error?.code === "PGRST205") throw new AppError(500, "Orders table missing.");
+      if (error) throw new AppError(400, error.message);
+      preferredRowId = String(data?.id || "");
     }
-    const row = {
-      listing_id: listingId,
-      buyer_id: req.user.id,
-      seller_id: listing.seller_id,
-      quantity,
-      fulfillment_type: fulfillmentType,
+
+    // Merge any duplicate `placed` rows for this buyer+listing (e.g. concurrent POST /orders).
+    const finalized = await consolidateBuyerListingStatusOrders({
+      buyerId: req.user.id,
+      listingId,
       status: initialStatus,
-      cod_goods_cents: codGoodsCents,
-      cod_delivery_cents: 0,
-    };
-    const { data, error } = await supabaseAdmin.from("orders").insert(row).select("*").single();
-    if (error?.code === "PGRST205") throw new AppError(500, "Orders table missing.");
-    if (error) throw new AppError(400, error.message);
-    res.status(201).json({ order: orderRowToApi(data) });
+      fulfillmentType: null,
+      preferredId: preferredRowId || null,
+    });
+    if (!finalized) throw new AppError(500, "Could not finalize order.");
+    res.status(201).json({ order: orderRowToApi(finalized) });
   } catch (e) {
     next(e);
   }
@@ -727,12 +781,35 @@ const consolidateBuyerListingStatusOrders = async ({ buyerId, listingId, status,
   const totalGoods = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.cod_goods_cents) || 0), 0);
   const totalDelivery = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.cod_delivery_cents) || 0), 0);
 
+  let mergedBuyerComment = "";
+  let bestCommentTs = "";
+  for (const r of sorted) {
+    const c = String(r?.buyer_comment ?? "").trim();
+    if (!c) continue;
+    const ts = String(r?.updated_at || r?.created_at || "");
+    if (ts >= bestCommentTs) {
+      bestCommentTs = ts;
+      mergedBuyerComment = c;
+    }
+  }
+
   const patch = {
     quantity: totalQty,
     cod_goods_cents: totalGoods,
     cod_delivery_cents: totalDelivery,
+    buyer_comment: mergedBuyerComment,
   };
-  const { data: updated, error: uerr } = await supabaseAdmin.from("orders").update(patch).eq("id", primary.id).select("*").single();
+  let { data: updated, error: uerr } = await supabaseAdmin.from("orders").update(patch).eq("id", primary.id).select("*").single();
+  if (isBuyerCommentMissingError(uerr)) {
+    const fallbackPatch = { ...patch };
+    delete fallbackPatch.buyer_comment;
+    ({ data: updated, error: uerr } = await supabaseAdmin
+      .from("orders")
+      .update(fallbackPatch)
+      .eq("id", primary.id)
+      .select("*")
+      .single());
+  }
   if (uerr) throw new AppError(500, uerr.message);
 
   const duplicateIds = others.map((r) => r?.id).filter(Boolean);
@@ -752,7 +829,68 @@ export const listOrders = async (req, res, next) => {
     const { data, error } = await q;
     if (error?.code === "PGRST205") return res.json({ orders: [] });
     if (error) throw new AppError(500, error.message);
-    res.json({ orders: (data || []).map(orderRowToApi) });
+    const rows = data || [];
+    const orderIds = rows.map((r) => r?.id).filter(Boolean);
+    const reviewByOrderId = new Map();
+    if (orderIds.length > 0) {
+      const { data: revs, error: rerr } = await supabaseAdmin.from("order_reviews").select("*").in("order_id", orderIds);
+      if (!rerr && Array.isArray(revs)) {
+        for (const r of revs) {
+          if (r?.order_id) reviewByOrderId.set(r.order_id, r);
+        }
+      }
+    }
+    res.json({ orders: rows.map((row) => orderRowToApi(row, reviewByOrderId.get(row.id) || null)) });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const upsertOrderReview = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const rating = Number(req.body.rating);
+    const reviewTextRaw = req.body.reviewText != null ? String(req.body.reviewText) : "";
+    const reviewText = reviewTextRaw.trim().slice(0, 2000);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new AppError(400, "Rating must be between 1 and 5.");
+
+    const { data: order, error } = await supabaseAdmin.from("orders").select("*").eq("id", id).maybeSingle();
+    if (error) throw new AppError(500, error.message);
+    if (!order) throw new AppError(404, "Order not found.");
+    if (order.buyer_id !== req.user.id) throw new AppError(403, "Only the buyer can review this order.");
+    if (order.status !== "completed") throw new AppError(400, "You can only review completed orders.");
+
+    const now = new Date().toISOString();
+    const { data: existing } = await supabaseAdmin.from("order_reviews").select("id").eq("order_id", id).maybeSingle();
+    let reviewRow;
+    if (existing?.id) {
+      const { data: updated, error: uerr } = await supabaseAdmin
+        .from("order_reviews")
+        .update({ rating, review_text: reviewText || null, updated_at: now })
+        .eq("order_id", id)
+        .select("*")
+        .single();
+      if (uerr) throw new AppError(500, uerr.message);
+      reviewRow = updated;
+    } else {
+      const { data: inserted, error: ierr } = await supabaseAdmin
+        .from("order_reviews")
+        .insert({
+          order_id: id,
+          buyer_id: order.buyer_id,
+          seller_id: order.seller_id,
+          listing_id: order.listing_id,
+          rating,
+          review_text: reviewText || null,
+          created_at: now,
+          updated_at: now,
+        })
+        .select("*")
+        .single();
+      if (ierr) throw new AppError(500, ierr.message);
+      reviewRow = inserted;
+    }
+    res.json({ order: orderRowToApi(order, reviewRow), review: buyerReviewRowToApi(reviewRow) });
   } catch (e) {
     next(e);
   }
@@ -761,27 +899,38 @@ export const listOrders = async (req, res, next) => {
 export const patchOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const transition = String(req.body.transition || "");
+    const transition = String(req.body.transition ?? "").trim();
     const { data: order, error } = await supabaseAdmin.from("orders").select("*").eq("id", id).maybeSingle();
     if (error) throw new AppError(500, error.message);
     if (!order) throw new AppError(404, "Order not found.");
     const isBuyer = order.buyer_id === req.user.id;
     const isSeller = order.seller_id === req.user.id;
-    let patch = { updated_at: new Date().toISOString() };
+    const ts = new Date().toISOString();
+    let patch = { updated_at: ts };
 
     if (transition === "seller_accept") {
       if (!isSeller) throw new AppError(403, "Only the seller can accept.");
       if (order.status !== "placed") throw new AppError(400, "Invalid state.");
       patch.status = order.fulfillment_type === "delivery" ? "bidding_open" : "seller_accepted";
       if (order.fulfillment_type === "pickup") patch.status = "ready_for_pickup";
+      if (!order.processing_entered_at) patch.processing_entered_at = ts;
     } else if (transition === "mark_pickup_done") {
-      if (!isBuyer && !isSeller) throw new AppError(403, "Forbidden.");
+      if (!isSeller) throw new AppError(403, "Only the seller can mark pickup complete.");
       if (order.status !== "ready_for_pickup") throw new AppError(400, "Invalid state.");
       patch.status = "completed";
+      patch.completed_at = ts;
+    } else if (transition === "buyer_ack_receipt") {
+      if (!isBuyer) throw new AppError(403, "Only the buyer can acknowledge receipt.");
+      if (order.status !== "ready_for_pickup") throw new AppError(400, "Invalid state.");
+      if (order.buyer_receipt_acknowledged_at) {
+        return res.json({ order: orderRowToApi(order) });
+      }
+      patch.buyer_receipt_acknowledged_at = new Date().toISOString();
     } else if (transition === "cancel") {
       if (!isBuyer && !isSeller) throw new AppError(403, "Forbidden.");
       if (["completed", "cancelled"].includes(order.status)) throw new AppError(400, "Cannot cancel.");
       patch.status = "cancelled";
+      patch.cancelled_at = ts;
     } else if (transition === "mark_out_for_delivery") {
       if (!isSeller) throw new AppError(403, "Only seller can mark out for delivery.");
       if (order.status !== "bid_accepted") throw new AppError(400, "Invalid state.");
@@ -790,8 +939,15 @@ export const patchOrder = async (req, res, next) => {
       if (!isBuyer && !isSeller) throw new AppError(403, "Forbidden.");
       if (order.status !== "out_for_delivery") throw new AppError(400, "Invalid state.");
       patch.status = "completed";
+      patch.completed_at = ts;
     } else {
-      throw new AppError(400, "Unknown transition.");
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[patchOrder] unrecognized transition:", transition);
+      }
+      throw new AppError(
+        400,
+        "Unrecognized order action. Refresh the page, or restart the marketplace API if you are on a local dev setup.",
+      );
     }
 
     const { data: updated, error: uerr } = await supabaseAdmin.from("orders").update(patch).eq("id", id).select("*").single();
@@ -808,16 +964,17 @@ export const patchOrder = async (req, res, next) => {
         await supabaseAdmin.from("listings").update(listingPatch).eq("id", order.listing_id);
       }
     }
-    const consolidated =
-      updated?.buyer_id && updated?.listing_id && updated?.status
-        ? await consolidateBuyerListingStatusOrders({
-            buyerId: updated.buyer_id,
-            listingId: updated.listing_id,
-            status: updated.status,
-            fulfillmentType: updated.fulfillment_type,
-            preferredId: updated.id,
-          })
-        : updated;
+    const shouldConsolidate =
+      transition !== "buyer_ack_receipt" && updated?.buyer_id && updated?.listing_id && updated?.status;
+    const consolidated = shouldConsolidate
+      ? await consolidateBuyerListingStatusOrders({
+          buyerId: updated.buyer_id,
+          listingId: updated.listing_id,
+          status: updated.status,
+          fulfillmentType: updated.fulfillment_type,
+          preferredId: updated.id,
+        })
+      : updated;
     res.json({ order: orderRowToApi(consolidated || updated) });
   } catch (e) {
     next(e);
@@ -841,17 +998,15 @@ export const acceptBid = async (req, res, next) => {
     await supabaseAdmin.from("delivery_bids").update({ status: "rejected" }).eq("order_id", orderId).neq("id", bidId);
     await supabaseAdmin.from("delivery_bids").update({ status: "accepted" }).eq("id", bidId);
 
-    const { data: updated, error: uerr } = await supabaseAdmin
-      .from("orders")
-      .update({
-        status: "bid_accepted",
-        accepted_bid_id: bidId,
-        cod_delivery_cents: bid.amount_cents,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", orderId)
-      .select("*")
-      .single();
+    const bidTs = new Date().toISOString();
+    const bidPatch = {
+      status: "bid_accepted",
+      accepted_bid_id: bidId,
+      cod_delivery_cents: bid.amount_cents,
+      updated_at: bidTs,
+      ...(!order.processing_entered_at ? { processing_entered_at: bidTs } : {}),
+    };
+    const { data: updated, error: uerr } = await supabaseAdmin.from("orders").update(bidPatch).eq("id", orderId).select("*").single();
     if (uerr) throw new AppError(500, uerr.message);
     res.json({ order: orderRowToApi(updated) });
   } catch (e) {

@@ -192,25 +192,60 @@ const accountMenuIconWrap =
 const accountMenuIconWrapDanger =
   "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-rose-200/80 bg-rose-50 text-rose-600 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-400";
 
-/** Compact item for fixed bottom main nav (mobile / tablet). */
-function bottomNavItemClass(active) {
-  return `flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 py-1.5 text-[10px] font-semibold leading-tight transition sm:px-1 sm:text-[11px] ${
-    active
-      ? "bg-brand-soft/70 text-brand-primary dark:bg-slate-800 dark:text-slate-100"
-      : "text-neutral-600 hover:bg-neutral-100/90 dark:text-slate-400 dark:hover:bg-slate-800/90"
-  }`;
-}
-
 function LinkMartLogo({ className = "h-7 w-auto max-w-[11rem] shrink-0 object-contain sm:h-8 sm:max-w-[13rem]" }) {
   return <img src={navLogo} alt="LinkMart logo" className={className} />;
 }
 
-function navPill(active) {
-  return `rounded-full px-2.5 py-2 text-sm font-medium transition sm:px-3 ${
-    active
-      ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100"
-      : "text-neutral-700 hover:bg-neutral-100 dark:text-slate-300 dark:hover:bg-slate-800"
-  }`;
+/** Desktop pills for Marketplace vs Cart — shop flow inside the shop segment. */
+function navPillShop(active, role) {
+  const layout =
+    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition sm:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-offset-slate-900";
+  if (!active) {
+    return `${layout} text-neutral-600 hover:bg-white/90 hover:text-neutral-900 focus-visible:ring-violet-400/35 dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100 dark:focus-visible:ring-violet-500/30`;
+  }
+  if (role === "browse") {
+    return `${layout} bg-white text-violet-950 shadow-sm ring-1 ring-violet-300/90 focus-visible:ring-violet-400/40 dark:bg-slate-900 dark:text-violet-50 dark:ring-violet-500/50`;
+  }
+  return `${layout} bg-white text-amber-950 shadow-sm ring-1 ring-amber-300/90 focus-visible:ring-amber-400/40 dark:bg-slate-900 dark:text-amber-50 dark:ring-amber-500/50`;
+}
+
+/** Desktop pills for Buying vs Selling — distinct active colors inside the trade group. */
+function navPillTrade(active, role) {
+  const layout =
+    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition sm:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-sky-500/35 dark:focus-visible:ring-offset-slate-900";
+  if (!active) {
+    return `${layout} text-neutral-600 hover:bg-white/90 hover:text-neutral-900 dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100`;
+  }
+  if (role === "buy") {
+    return `${layout} bg-white text-sky-900 shadow-sm ring-1 ring-sky-300/90 dark:bg-slate-900 dark:text-sky-50 dark:ring-sky-500/55`;
+  }
+  return `${layout} bg-white text-emerald-900 shadow-sm ring-1 ring-emerald-300/90 dark:bg-slate-900 dark:text-emerald-50 dark:ring-emerald-500/50`;
+}
+
+/** Bottom bar: Marketplace + Cart share one visual segment. */
+function bottomNavShopClass(active, role) {
+  const layout =
+    "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-0.5 py-1.5 text-[11px] font-semibold leading-tight transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-400/35 sm:px-1";
+  if (!active) {
+    return `${layout} text-neutral-600 hover:bg-white/75 dark:text-slate-400 dark:hover:bg-slate-800/90`;
+  }
+  if (role === "browse") {
+    return `${layout} bg-white text-violet-950 shadow-sm ring-1 ring-violet-200/95 dark:bg-slate-900 dark:text-violet-50 dark:ring-violet-600/45`;
+  }
+  return `${layout} bg-white text-amber-950 shadow-sm ring-1 ring-amber-200/95 dark:bg-slate-900 dark:text-amber-50 dark:ring-amber-600/45`;
+}
+
+/** Bottom bar: Buying / Selling share one visual segment. */
+function bottomNavTradeClass(active, role) {
+  const layout =
+    "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-0.5 py-1.5 text-[11px] font-semibold leading-tight transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/35 sm:px-1";
+  if (!active) {
+    return `${layout} text-neutral-600 hover:bg-white/75 dark:text-slate-400 dark:hover:bg-slate-800/90`;
+  }
+  if (role === "buy") {
+    return `${layout} bg-white text-sky-900 shadow-sm ring-1 ring-sky-200/95 dark:bg-slate-900 dark:text-sky-50 dark:ring-sky-600/45`;
+  }
+  return `${layout} bg-white text-emerald-900 shadow-sm ring-1 ring-emerald-200/95 dark:bg-slate-900 dark:text-emerald-50 dark:ring-emerald-600/45`;
 }
 
 function ThemeToggleGroup({ theme, setTheme }) {
@@ -446,82 +481,106 @@ export function LoggedInHeader({
           </div>
         ) : null}
 
-        <div className="hidden min-w-0 flex-1 items-center justify-center gap-0.5 overflow-x-auto lg:flex lg:gap-1">
-          <nav className="flex min-w-0 items-center justify-center gap-0.5 lg:gap-1" aria-label="Main">
-            <button
-              type="button"
-              className={`inline-flex shrink-0 items-center gap-1.5 ${navPill(browsePillActive)}`}
-              onClick={() => {
-                setAccountMenuOpen(false);
-                setSettingsFlyoutOpen(false);
-                goBrowse();
-                closeAllMenus();
-              }}
+        <div className="hidden min-w-0 flex-1 items-center justify-center overflow-x-auto lg:flex">
+          <nav className="flex min-w-0 max-w-full items-center justify-center" aria-label="Main">
+            <div
+              className="flex max-w-full shrink-0 items-center gap-0.5 rounded-full border border-neutral-200/80 bg-neutral-100/85 p-0.5 shadow-[inset_0_1px_2px_rgba(15,23,42,0.05)] dark:border-slate-600 dark:bg-slate-800/55 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.2)]"
+              role="group"
+              aria-label="Marketplace, cart, and your orders"
             >
-              <GridIcon className="h-[18px] w-[18px] shrink-0" />
-              Marketplace
-            </button>
-            <button
-              type="button"
-              className={`inline-flex shrink-0 items-center gap-1.5 ${navPill(activeView === VIEWS.CART)}`}
-              onClick={() => {
-                goCart();
-                closeAllMenus();
-              }}
-            >
-              <MenuCartIcon className="h-[18px] w-[18px] shrink-0" />
-              Add to cart
-              {cartItemCount > 0 ? (
-                <span className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-brand-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
-                  {cartItemCount > 99 ? "99+" : cartItemCount}
-                </span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              className={`inline-flex shrink-0 items-center gap-1.5 ${navPill(activeView === VIEWS.MY_PURCHASES)}`}
-              onClick={() => {
-                goMyPurchases();
-                closeAllMenus();
-              }}
-            >
-              <MenuFileIcon className="h-[18px] w-[18px] shrink-0" />
-              Purchases
-              {purchasesItemCount > 0 ? (
-                <span className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-brand-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
-                  {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
-                </span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              className={`inline-flex shrink-0 items-center gap-1.5 ${navPill(activeView === VIEWS.ORDERS)}`}
-              aria-label={
-                ordersItemCount > 0
-                  ? `Orders, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} seller alerts`
-                  : "Orders"
-              }
-              title={
-                ordersItemCount > 0
-                  ? `${ordersItemCount > 99 ? "99+" : ordersItemCount} pending or updated seller order${ordersItemCount === 1 ? "" : "s"}`
-                  : undefined
-              }
-              onClick={() => {
-                goOrders();
-                closeAllMenus();
-              }}
-            >
-              <MenuOrdersIcon className="h-[18px] w-[18px] shrink-0" />
-              Orders
-              {ordersItemCount > 0 ? (
-                <span
-                  className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-brand-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900"
-                  aria-hidden
-                >
-                  {ordersItemCount > 99 ? "99+" : ordersItemCount}
-                </span>
-              ) : null}
-            </button>
+              <button
+                type="button"
+                className={navPillShop(browsePillActive, "browse")}
+                aria-label="Marketplace"
+                title="Browse listings"
+                onClick={() => {
+                  setAccountMenuOpen(false);
+                  setSettingsFlyoutOpen(false);
+                  goBrowse();
+                  closeAllMenus();
+                }}
+              >
+                <GridIcon
+                  className={`h-[18px] w-[18px] shrink-0 ${browsePillActive ? "text-violet-600 dark:text-violet-300" : ""}`}
+                />
+                <span className="max-w-[5.5rem] truncate sm:max-w-none">Marketplace</span>
+              </button>
+              <button
+                type="button"
+                className={navPillShop(activeView === VIEWS.CART, "cart")}
+                aria-label={cartItemCount > 0 ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} items` : "Shopping cart"}
+                title="Review items before checkout"
+                onClick={() => {
+                  goCart();
+                  closeAllMenus();
+                }}
+              >
+                <MenuCartIcon
+                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.CART ? "text-amber-600 dark:text-amber-300" : ""}`}
+                />
+                <span className="max-w-[7rem] truncate sm:max-w-none">Add to cart</span>
+                {cartItemCount > 0 ? (
+                  <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-amber-500">
+                    {cartItemCount > 99 ? "99+" : cartItemCount}
+                  </span>
+                ) : null}
+              </button>
+              <button
+                type="button"
+                className={navPillTrade(activeView === VIEWS.MY_PURCHASES, "buy")}
+                aria-label={
+                  purchasesItemCount > 0
+                    ? `Buying, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
+                    : "Buying — things you purchased"
+                }
+                title="Things you bought — track status, pickup, and COD"
+                onClick={() => {
+                  goMyPurchases();
+                  closeAllMenus();
+                }}
+              >
+                <MenuFileIcon
+                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.MY_PURCHASES ? "text-sky-600 dark:text-sky-300" : ""}`}
+                />
+                <span className="max-w-[5.5rem] truncate sm:max-w-none">Buying</span>
+                {purchasesItemCount > 0 ? (
+                  <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-sky-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-sky-500">
+                    {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
+                  </span>
+                ) : null}
+              </button>
+              <button
+                type="button"
+                className={navPillTrade(activeView === VIEWS.ORDERS, "sell")}
+                aria-label={
+                  ordersItemCount > 0
+                    ? `Selling, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} buyer order alerts`
+                    : "Selling — orders from your buyers"
+                }
+                title={
+                  ordersItemCount > 0
+                    ? `${ordersItemCount > 99 ? "99+" : ordersItemCount} pending or updated buyer order${ordersItemCount === 1 ? "" : "s"}`
+                    : "Orders people placed with you"
+                }
+                onClick={() => {
+                  goOrders();
+                  closeAllMenus();
+                }}
+              >
+                <MenuOrdersIcon
+                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.ORDERS ? "text-emerald-600 dark:text-emerald-300" : ""}`}
+                />
+                <span className="max-w-[5.5rem] truncate sm:max-w-none">Selling</span>
+                {ordersItemCount > 0 ? (
+                  <span
+                    className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-emerald-500"
+                    aria-hidden
+                  >
+                    {ordersItemCount > 99 ? "99+" : ordersItemCount}
+                  </span>
+                ) : null}
+              </button>
+            </div>
           </nav>
         </div>
 
@@ -905,87 +964,131 @@ export function LoggedInHeader({
       className="fixed inset-x-0 bottom-0 z-[40] border-t border-neutral-200/90 bg-white/95 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-4px_24px_rgba(15,23,42,0.06)] backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95 lg:hidden"
       aria-label="Main"
     >
-      <div className="app-container flex items-stretch justify-between gap-0.5">
-        <button
-          type="button"
-          className={bottomNavItemClass(browsePillActive)}
-          onClick={() => {
-            setAccountMenuOpen(false);
-            setSettingsFlyoutOpen(false);
-            goBrowse();
-            closeAllMenus();
-          }}
+      <div className="app-container flex items-stretch px-1">
+        <div
+          className="flex min-h-0 min-w-0 flex-1 items-stretch gap-px rounded-2xl border border-neutral-200/85 bg-neutral-100/90 p-px shadow-[inset_0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-600 dark:bg-slate-800/65 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.18)]"
+          role="group"
+          aria-label="Marketplace, cart, and your orders"
         >
-          <GridIcon className="shrink-0" />
-          <span className="max-w-[3.25rem] truncate sm:max-w-none">Marketplace</span>
-        </button>
-        <button
-          type="button"
-          className={bottomNavItemClass(activeView === VIEWS.CART)}
-          onClick={() => {
-            goCart();
-            closeAllMenus();
-          }}
-        >
-          <span className="relative inline-flex">
-            <MenuCartIcon className="shrink-0" />
-            {cartItemCount > 0 ? (
-              <span className="absolute -right-2 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[9px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
-                {cartItemCount > 99 ? "99+" : cartItemCount}
-              </span>
-            ) : null}
-          </span>
-          <span className="max-w-[3.25rem] truncate sm:max-w-none">Add to cart</span>
-        </button>
-        <button
-          type="button"
-          className={bottomNavItemClass(activeView === VIEWS.MY_PURCHASES)}
-          onClick={() => {
-            goMyPurchases();
-            closeAllMenus();
-          }}
-        >
-          <span className="relative inline-flex">
-            <MenuFileIcon className="shrink-0" />
-            {purchasesItemCount > 0 ? (
-              <span className="absolute -right-2 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[9px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
-                {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
-              </span>
-            ) : null}
-          </span>
-          <span className="max-w-[3.25rem] truncate sm:max-w-none">Purchases</span>
-        </button>
-        <button
-          type="button"
-          className={bottomNavItemClass(activeView === VIEWS.ORDERS)}
-          aria-label={
-            ordersItemCount > 0
-              ? `Orders, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} seller alerts`
-              : "Orders"
-          }
-          title={
-            ordersItemCount > 0
-              ? `${ordersItemCount > 99 ? "99+" : ordersItemCount} pending or updated seller order${ordersItemCount === 1 ? "" : "s"}`
-              : undefined
-          }
-          onClick={() => {
-            goOrders();
-            closeAllMenus();
-          }}
-        >
-          <span className="relative inline-flex">
-            <MenuOrdersIcon className="shrink-0" />
-            {ordersItemCount > 0 ? (
-              <span
-                className="absolute -right-2 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[9px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900"
-                aria-hidden
-              >
-                {ordersItemCount > 99 ? "99+" : ordersItemCount}
-              </span>
-            ) : null}
-          </span>
-          <span className="max-w-[3.25rem] truncate sm:max-w-none">Orders</span>
-        </button>
+          <button
+            type="button"
+            className={bottomNavShopClass(browsePillActive, "browse")}
+            aria-label="Marketplace"
+            title="Browse listings"
+            onClick={() => {
+              setAccountMenuOpen(false);
+              setSettingsFlyoutOpen(false);
+              goBrowse();
+              closeAllMenus();
+            }}
+          >
+            <span
+              className={`relative inline-flex shrink-0 ${
+                browsePillActive ? "text-violet-700 dark:text-violet-300" : "text-neutral-500 dark:text-slate-500"
+              }`}
+            >
+              <GridIcon className="shrink-0" />
+            </span>
+            <span className="text-center leading-snug">
+              <span className="md:hidden">Shop</span>
+              <span className="hidden md:inline">Marketplace</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className={bottomNavShopClass(activeView === VIEWS.CART, "cart")}
+            aria-label={cartItemCount > 0 ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} items` : "Shopping cart"}
+            title="Review items before checkout"
+            onClick={() => {
+              goCart();
+              closeAllMenus();
+            }}
+          >
+            <span
+              className={`relative inline-flex shrink-0 ${
+                activeView === VIEWS.CART ? "text-amber-700 dark:text-amber-300" : "text-neutral-500 dark:text-slate-500"
+              }`}
+            >
+              <MenuCartIcon className="shrink-0" />
+              {cartItemCount > 0 ? (
+                <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-amber-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-amber-500">
+                  {cartItemCount > 99 ? "99+" : cartItemCount}
+                </span>
+              ) : null}
+            </span>
+            <span className="text-center leading-snug">
+              <span className="md:hidden">Cart</span>
+              <span className="hidden md:inline">Add to cart</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className={bottomNavTradeClass(activeView === VIEWS.MY_PURCHASES, "buy")}
+            aria-label={
+              purchasesItemCount > 0
+                ? `Buying, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
+                : "Buying — things you purchased"
+            }
+            title="Things you bought — track status, pickup, and COD"
+            onClick={() => {
+              goMyPurchases();
+              closeAllMenus();
+            }}
+          >
+            <span
+              className={`relative inline-flex shrink-0 ${
+                activeView === VIEWS.MY_PURCHASES
+                  ? "text-sky-700 dark:text-sky-300"
+                  : "text-neutral-500 dark:text-slate-500"
+              }`}
+            >
+              <MenuFileIcon className="shrink-0" />
+              {purchasesItemCount > 0 ? (
+                <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-sky-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-sky-500">
+                  {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
+                </span>
+              ) : null}
+            </span>
+            <span className="text-center leading-snug">Buying</span>
+          </button>
+          <button
+            type="button"
+            className={bottomNavTradeClass(activeView === VIEWS.ORDERS, "sell")}
+            aria-label={
+              ordersItemCount > 0
+                ? `Selling, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} buyer order alerts`
+                : "Selling — orders from your buyers"
+            }
+            title={
+              ordersItemCount > 0
+                ? `${ordersItemCount > 99 ? "99+" : ordersItemCount} pending or updated buyer order${ordersItemCount === 1 ? "" : "s"}`
+                : "Orders people placed with you"
+            }
+            onClick={() => {
+              goOrders();
+              closeAllMenus();
+            }}
+          >
+            <span
+              className={`relative inline-flex shrink-0 ${
+                activeView === VIEWS.ORDERS
+                  ? "text-emerald-700 dark:text-emerald-300"
+                  : "text-neutral-500 dark:text-slate-500"
+              }`}
+            >
+              <MenuOrdersIcon className="shrink-0" />
+              {ordersItemCount > 0 ? (
+                <span
+                  className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-emerald-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-emerald-500"
+                  aria-hidden
+                >
+                  {ordersItemCount > 99 ? "99+" : ordersItemCount}
+                </span>
+              ) : null}
+            </span>
+            <span className="text-center leading-snug">Selling</span>
+          </button>
+        </div>
       </div>
     </nav>
     </>

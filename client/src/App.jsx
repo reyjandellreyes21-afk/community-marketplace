@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import navLogo from "./assets/LM-LIGHT.png";
 import tabLogo from "./assets/logo-png.png";
 import heroStudyImage from "./assets/hero.png";
-import communityImage from "./assets/community-image.png";
 import { createSupabaseClient } from "./lib/supabaseClient";
 import {
   isLikelySameCommunityName,
@@ -17,1568 +15,278 @@ import { LoggedInHeader } from "./components/LoggedInHeader.jsx";
 import { PublicListingPage } from "./components/PublicListingPage.jsx";
 import { formatCents } from "./marketplace/money.js";
 import { SELLER_TABS, VIEWS } from "./views.js";
-import { getApiV1Base } from "./apiBase.js";
+import { readAuthToken, writeAuthToken, readThemeMode, writeThemeMode } from "./lib/appSession.js";
+import { apiRequest, isUnauthorizedApiError } from "./lib/appApi.js";
+import { UI_KIT } from "./lib/appUiKit.js";
+import {
+  formatDisplayName,
+  getDisplayNameFromUser,
+  getProfileCardDisplayNameFromUser,
+  PROFILE_GENDER_OPTIONS,
+  formatBirthdayDisplay,
+  computeAgeFromBirthday,
+} from "./lib/userProfileFormat.js";
+import {
+  PH_PROVINCE_OPTIONS,
+  normalizePhLocalityName,
+  toPhilippinesLocalPhone10,
+  toPhilippinesE164,
+  toPhilippinesLocal11Display,
+  normalizePhPostalCode,
+  normalizePhPsgcCode,
+  formatPhCityMunicipalityName,
+  formatCommunityMarketplaceSubtitle,
+  stripBrgyPrefixLabel,
+  splitAddressParts,
+  buildAddressValue,
+  toTitleCase,
+} from "./lib/philippinesAddress.js";
+import {
+  parseSaleMetaFromDescription,
+  removeSaleMetaLines,
+  listingCodAvailabilityLabel,
+} from "./lib/listingSaleMeta.js";
+import {
+  CART_RECENT_BADGE_STORAGE_KEY,
+  buyerOrderDismissedStorageKey,
+  sellerOrderDismissedStorageKey,
+  readStoredStringArray,
+  readStoredRecentIdsByTab,
+  readQuickOrderFulfillmentPref,
+  writeQuickOrderFulfillmentPref,
+  emptyOrderAttentionByTab,
+  RECENT_ORDER_TAB_KEYS,
+  ORDERS_STATUS_TABS,
+  orderMatchesOrdersStatusTab,
+} from "./lib/orderAttentionStorage.js";
+import { computeMarketplaceFeedbackForText } from "./lib/marketplaceFeedbackToast.js";
+import { fileToDataUrl } from "./lib/fileToDataUrl.js";
+import { LANDING_DISCOVERY_SLIDES, BROWSE_QUICK_FILTERS } from "./lib/landingDiscoveryData.js";
+import { quickFilterIcon, categoryIcon } from "./components/browse/BrowseFilterIcons.jsx";
+import { MarketplaceProductDetailStack } from "./components/marketplace/MarketplaceProductDetailStack.jsx";
+import { SectionHeading } from "./components/marketplace/SectionHeading.jsx";
+import { FilterOptionButton } from "./components/marketplace/FilterOptionButton.jsx";
+import { CommunityShopListingCard } from "./components/marketplace/CommunityShopListingCard.jsx";
+import { ListingCategoryPicker } from "./components/marketplace/ListingCategoryPicker.jsx";
+import { OrderBuyerReviewForm } from "./components/marketplace/OrderBuyerReviewForm.jsx";
+import { CartSellerSelectAllCheckbox } from "./components/marketplace/CartSellerSelectAllCheckbox.jsx";
+import { SellerProductCard } from "./components/marketplace/SellerProductCard.jsx";
+import { ProductInspectModal } from "./components/marketplace/ProductInspectModal.jsx";
+import { LandingFeatureRow, LANDING_FEATURE_ROWS } from "./components/landing/LandingFeatureRows.jsx";
+import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  EyeHidePasswordIcon,
+  EyeShowPasswordIcon,
+  LandingIllustration,
+  LandingSiteFooter,
+  LinkMartLogo,
+} from "./components/landing/LandingMarketing.jsx";
 
-/**
- * Dev: call the API on its own origin. The Vite proxy (`/api` → 4000) can 404 some POST routes
- * even when GET works. `cors()` on the server allows the browser origin.
- */
-const API_URL = getApiV1Base();
+/** Best-effort recency for ordering “unseen” pending rows (API field names vary). */
+function orderRowSortMs(o) {
+  const raw = o?.updatedAt ?? o?.updated_at ?? o?.createdAt ?? o?.created_at ?? 0;
+  const t = new Date(raw).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+function formatOrderCompletedAtLabel(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+/** Full milestone context on the Completed tab (placed → processing → done). */
+function OrderCompletedMilestoneList({ order }) {
+  const createdRaw = order?.createdAt ?? order?.created_at;
+  const processingRaw = order?.processingEnteredAt ?? order?.processing_entered_at;
+  const completedRaw = order?.completedAt ?? order?.completed_at;
+  const updatedRaw = order?.updatedAt ?? order?.updated_at;
+  const items = [];
+  if (createdRaw) {
+    const t = formatOrderCompletedAtLabel(createdRaw);
+    if (t) items.push({ key: "placed", label: "Placed (pending)", time: t });
+  }
+  if (processingRaw) {
+    const t = formatOrderCompletedAtLabel(processingRaw);
+    if (t) items.push({ key: "processing", label: "Processing started", time: t });
+  }
+  const doneIso = completedRaw || updatedRaw;
+  if (doneIso) {
+    const t = formatOrderCompletedAtLabel(doneIso);
+    if (t) items.push({ key: "completed", label: "Completed", time: t });
+  }
+  if (items.length === 0) return null;
+  return (
+    <div className="max-w-full overflow-hidden rounded-lg border border-neutral-200/80 bg-neutral-50/90 px-2.5 py-1.5 sm:px-3 sm:py-2 dark:border-slate-600/80 dark:bg-slate-900/50">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500">Order timeline</p>
+      <ul className="mt-1.5 space-y-1.5 text-[11px] text-neutral-600 dark:text-slate-400">
+        {items.map((it) => (
+          <li key={it.key} className="flex flex-col gap-0.5 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5">
+            <span className="shrink-0 font-medium text-neutral-800 dark:text-slate-200">{it.label}</span>
+            <span className="hidden sm:inline text-neutral-400 dark:text-slate-500">·</span>
+            <span className="min-w-0 break-words text-neutral-600 dark:text-slate-400">{it.time}</span>
+          </li>
+        ))}
+      </ul>
+      {!processingRaw && createdRaw && doneIso ? (
+        <p className="mt-1.5 text-pretty text-[10px] leading-snug text-neutral-500 dark:text-slate-500">
+          Processing start time was not recorded for this order (older data or edge case).
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 const COMMUNITY_MEMBERSHIP_KEY_PREFIX = "community_membership_v1:";
-const AUTH_TOKEN_STORAGE_KEY = "linkmart_session_v1";
-const LEGACY_AUTH_TOKEN_KEY = "quiz_token";
-const THEME_STORAGE_KEY = "linkmart_theme_v1";
-const LEGACY_THEME_KEY_V2 = "quiz_theme_v2";
-const LEGACY_THEME_KEY_V1 = "quiz_theme";
-
-function readAuthToken() {
-  if (typeof window === "undefined") return "";
-  const next = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
-  if (next) return next;
-  const legacy = localStorage.getItem(LEGACY_AUTH_TOKEN_KEY) || "";
-  if (legacy) {
-    localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, legacy);
-    localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
-  }
-  return legacy;
-}
-
-function writeAuthToken(token) {
-  if (typeof window === "undefined") return;
-  if (!token) {
-    localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
-    localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
-    return;
-  }
-  localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
-  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
-}
-
-function readThemeMode() {
-  if (typeof window === "undefined") return "light";
-  if (localStorage.getItem(THEME_STORAGE_KEY) === "dark") return "dark";
-  if (localStorage.getItem(LEGACY_THEME_KEY_V2) === "dark") return "dark";
-  return "light";
-}
-
-function writeThemeMode(theme) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(THEME_STORAGE_KEY, theme);
-  localStorage.removeItem(LEGACY_THEME_KEY_V2);
-  localStorage.removeItem(LEGACY_THEME_KEY_V1);
-}
-
 /** Success toast: full visible time before fade; fade length (should match CSS transition) */
 const PUBLISH_TOAST_DURATION_MS = 7500;
 const PUBLISH_TOAST_FADE_MS = 350;
+/** Seller snapshot polling while away from Sales inbox — complements Supabase Realtime for nav badge latency. */
+const SELLER_ORDERS_POLL_MS = 28_000;
+/** Coalesce bursty `orders` row events without delaying badge updates too much. */
+const ORDERS_REALTIME_DEBOUNCE_MS = 200;
 
-const quickFilterIcon = (id) => {
-  const cls = "h-3.5 w-3.5 shrink-0";
-  if (id === "new") {
-    return (
-      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18M3 12h18" />
-      </svg>
-    );
+/** Responsive browse layouts: list, comfortable auto-fill grid, or compact auto-fill grid. */
+function communityBrowseGridClass(view) {
+  if (view === "list") return "space-y-3 sm:space-y-4";
+  if (view === "compact") {
+    return "grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,10.25rem),1fr))] gap-2 sm:gap-3";
   }
-  if (id === "sale") {
-    return (
-      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M17 17h.01M6 18 18 6" />
-        <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h5L6 11zM18 18h-5l5-5z" />
-      </svg>
-    );
-  }
-  return (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <rect x="3" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect x="3" y="14" width="7" height="7" rx="1" />
-      <rect x="14" y="14" width="7" height="7" rx="1" />
-    </svg>
-  );
-};
-const categoryIcon = (id) => {
-  const cls = "h-3.5 w-3.5 shrink-0";
-  const key = String(id || "").toLowerCase();
-  if (key.includes("grocer")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🛒</span>;
-  if (key.includes("food")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🍽️</span>;
-  if (key.includes("service")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🛠️</span>;
-  if (key.includes("property") || key.includes("home")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🏠</span>;
-  if (key.includes("electronic")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>💻</span>;
-  if (key.includes("fashion")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>👕</span>;
-  if (key.includes("vehicle")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🚗</span>;
-  if (key.includes("job")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>💼</span>;
-  if (key.includes("pet")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🐾</span>;
-  if (key.includes("health") || key.includes("beauty")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>💊</span>;
-  if (key.includes("baby") || key.includes("kids")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🧸</span>;
-  if (key.includes("sport")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>🏀</span>;
-  if (key.includes("book") || key.includes("school")) return <span className={`${cls} inline-flex items-center justify-center text-[12px]`}>📚</span>;
-  return (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <circle cx="12" cy="12" r="9" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 2" />
-    </svg>
-  );
-};
-/** Title-case each word: "rey jandell b reyes" → "Rey Jandell B Reyes". */
-const formatDisplayName = (name) => {
-  if (!name || typeof name !== "string") return "";
-  return name
-    .trim()
-    .split(/\s+/)
-    .map((segment) => {
-      if (!segment) return "";
-      return segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase();
-    })
-    .filter(Boolean)
-    .join(" ");
-};
-/** Prefer structured name fields from the API; fall back to legacy `name` string. */
-const getDisplayNameFromUser = (user) => {
-  if (!user || typeof user !== "object") return "";
-  const parts = [user.firstName, user.middleName, user.lastName].map((s) => String(s ?? "").trim()).filter(Boolean);
-  if (parts.length > 0) return formatDisplayName(parts.join(" "));
-  return formatDisplayName(user.name || "");
-};
-
-/** Read-only profile card: first + middle initial + last; edit form still uses full middle name. */
-const getProfileCardDisplayNameFromUser = (user) => {
-  if (!user || typeof user !== "object") return "";
-  const first = String(user.firstName ?? "").trim();
-  const middle = String(user.middleName ?? "").trim();
-  const last = String(user.lastName ?? "").trim();
-  if (first || middle || last) {
-    const segments = [];
-    if (first) segments.push(formatDisplayName(first));
-    if (middle) segments.push(`${middle.charAt(0).toUpperCase()}.`);
-    if (last) segments.push(formatDisplayName(last));
-    return segments.join(" ");
-  }
-  return formatDisplayName(user.name || "");
-};
-
-const PROFILE_GENDER_OPTIONS = [
-  ["female", "Female"],
-  ["male", "Male"],
-  ["non_binary", "Non-binary"],
-  ["other", "Other"],
-  ["prefer_not_to_say", "Prefer not to say"],
-];
-const COUNTRY_OPTIONS = (() => {
-  try {
-    if (typeof Intl !== "undefined" && typeof Intl.DisplayNames === "function" && typeof Intl.supportedValuesOf === "function") {
-      const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
-      const generated = Intl.supportedValuesOf("region")
-        .map((code) => regionNames.of(code))
-        .filter((name) => typeof name === "string" && name.trim().length > 0)
-        .sort((a, b) => a.localeCompare(b));
-      return Array.from(new Set(generated));
-    }
-  } catch {
-    // Ignore and use fallback.
-  }
-  return ["Philippines", "United States", "Canada", "United Kingdom", "Australia", "Japan", "Singapore"];
-})();
-const PH_PROVINCE_OPTIONS = [
-  "Abra",
-  "Agusan del Norte",
-  "Agusan del Sur",
-  "Aklan",
-  "Albay",
-  "Antique",
-  "Apayao",
-  "Aurora",
-  "Basilan",
-  "Bataan",
-  "Batanes",
-  "Batangas",
-  "Benguet",
-  "Biliran",
-  "Bohol",
-  "Bukidnon",
-  "Bulacan",
-  "Cagayan",
-  "Camarines Norte",
-  "Camarines Sur",
-  "Camiguin",
-  "Capiz",
-  "Catanduanes",
-  "Cavite",
-  "Cebu",
-  "Cotabato",
-  "Davao de Oro",
-  "Davao del Norte",
-  "Davao del Sur",
-  "Davao Occidental",
-  "Davao Oriental",
-  "Dinagat Islands",
-  "Eastern Samar",
-  "Guimaras",
-  "Ifugao",
-  "Ilocos Norte",
-  "Ilocos Sur",
-  "Iloilo",
-  "Isabela",
-  "Kalinga",
-  "La Union",
-  "Laguna",
-  "Lanao del Norte",
-  "Lanao del Sur",
-  "Leyte",
-  "Maguindanao del Norte",
-  "Maguindanao del Sur",
-  "Marinduque",
-  "Masbate",
-  "Misamis Occidental",
-  "Misamis Oriental",
-  "Mountain Province",
-  "Negros Occidental",
-  "Negros Oriental",
-  "Northern Samar",
-  "Nueva Ecija",
-  "Nueva Vizcaya",
-  "Occidental Mindoro",
-  "Oriental Mindoro",
-  "Palawan",
-  "Pampanga",
-  "Pangasinan",
-  "Quezon",
-  "Quirino",
-  "Rizal",
-  "Romblon",
-  "Samar",
-  "Sarangani",
-  "Siquijor",
-  "Sorsogon",
-  "South Cotabato",
-  "Southern Leyte",
-  "Sultan Kudarat",
-  "Sulu",
-  "Surigao del Norte",
-  "Surigao del Sur",
-  "Tarlac",
-  "Tawi-Tawi",
-  "Zambales",
-  "Zamboanga del Norte",
-  "Zamboanga del Sur",
-  "Zamboanga Sibugay",
-];
-const normalizeCountryValue = (value) => {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return "";
-  if (trimmed.toLowerCase() === "pilipinas") return "Philippines";
-  return trimmed;
-};
-const normalizePhLocalityName = (value) =>
-  String(value || "")
-    .toLowerCase()
-    .replace(/\bcity of\b/g, "")
-    .replace(/\bmunicipality of\b/g, "")
-    .replace(/\bcity\b/g, "")
-    .replace(/\bmunicipality\b/g, "")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-const toPhilippinesLocalPhone10 = (value) => {
-  const digits = String(value || "").replace(/\D/g, "");
-  if (!digits) return "";
-  let local = digits;
-  if (local.startsWith("63") && local.length >= 12) local = local.slice(2);
-  if (local.startsWith("0") && local.length >= 11) local = local.slice(1);
-  if (local.length > 10) local = local.slice(-10);
-  return local.slice(0, 10);
-};
-const toPhilippinesE164 = (local10) => {
-  const local = toPhilippinesLocalPhone10(local10);
-  return local ? `+63${local}` : "";
-};
-const toPhilippinesLocal11Display = (value) => {
-  const local10 = toPhilippinesLocalPhone10(value);
-  return local10 ? `0${local10}` : "";
-};
-const normalizePhPostalCode = (value) => {
-  const digits = String(value || "").replace(/\D/g, "");
-  if (digits.length >= 4) return digits.slice(0, 4);
-  return "";
-};
-const normalizePhPsgcCode = (value) => String(value || "").replace(/\D/g, "").trim();
-const formatPhCityMunicipalityName = (value) => {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  const cityOfMatch = raw.match(/^city of\s+(.+)$/i);
-  if (cityOfMatch) return `${toTitleCase(cityOfMatch[1])} City`;
-  const municipalityOfMatch = raw.match(/^municipality of\s+(.+)$/i);
-  if (municipalityOfMatch) return `${toTitleCase(municipalityOfMatch[1])} Municipality`;
-  return raw;
-};
-
-function formatBirthdayDisplay(iso) {
-  if (!iso || typeof iso !== "string") return "";
-  const parts = iso.split("-");
-  if (parts.length !== 3) return iso;
-  const y = Number(parts[0]);
-  const m = Number(parts[1]);
-  const d = Number(parts[2]);
-  if (!y || !m || !d) return iso;
-  try {
-    return new Date(y, m - 1, d).toLocaleDateString(undefined, {
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-    });
-  } catch {
-    return iso;
-  }
+  return "grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))] gap-3 sm:gap-4 lg:gap-5";
 }
 
-function computeAgeFromBirthday(iso) {
-  if (!iso || typeof iso !== "string") return "";
-  const parts = iso.split("-");
-  if (parts.length !== 3) return "";
-  const year = Number(parts[0]);
-  const month = Number(parts[1]);
-  const day = Number(parts[2]);
-  if (!year || !month || !day) return "";
-  const birthDate = new Date(year, month - 1, day);
-  if (Number.isNaN(birthDate.getTime())) return "";
-  const today = new Date();
-  let age = today.getFullYear() - year;
-  const hasBirthdayPassedThisYear =
-    today.getMonth() > month - 1 || (today.getMonth() === month - 1 && today.getDate() >= day);
-  if (!hasBirthdayPassedThisYear) age -= 1;
-  if (age < 0 || age > 120) return "";
-  return age;
+function sellerListingsGridClass(view) {
+  if (view === "list") return "mt-3 space-y-3";
+  if (view === "compact") {
+    return "mt-3 grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,10.25rem),1fr))] gap-2 sm:gap-3";
+  }
+  return "mt-3 grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))] gap-3 sm:gap-4";
 }
 
-function formatGenderDisplay(value) {
-  const v = String(value || "").trim();
-  if (!v) return "";
-  const found = PROFILE_GENDER_OPTIONS.find(([k]) => k === v);
-  return found ? found[1] : v;
-}
-const toTitleCase = (value) =>
-  String(value || "")
-    .trim()
-    .split(/\s+/)
-    .map((segment) => (segment ? segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase() : ""))
-    .filter(Boolean)
-    .join(" ");
-/** City, province, postal line on marketplace community cards (structured fields or comma-separated `address`). */
-const formatCommunityMarketplaceSubtitle = (c) => {
-  const city = String(c.city || "").trim();
-  const prov = String(c.province || "").trim();
-  const zip = String(c.postalCode || "").trim();
-  if (city || prov || zip) return [toTitleCase(city), toTitleCase(prov), zip].filter(Boolean).join(", ");
-  return String(c.address || "")
-    .split(",")
-    .map((part) => toTitleCase(part.trim()))
-    .filter(Boolean)
-    .join(", ");
-};
-/** Align with server `profileListingCommunity.js` — "Barangay 5" vs "Brgy. 5" */
-const stripBrgyPrefixLabel = (s) =>
-  String(s || "")
-    .trim()
-    .replace(/^(barangay|brgy\.?|bgy\.?|bar\.?)\s+/i, "")
-    .trim()
-    .replace(/\s+/g, " ");
-
-const splitEscapedAddressParts = (address) => {
-  const input = String(address || "");
-  const parts = [];
-  let current = "";
-  let escaping = false;
-  for (let i = 0; i < input.length; i += 1) {
-    const ch = input[i];
-    if (escaping) {
-      current += ch;
-      escaping = false;
-      continue;
-    }
-    if (ch === "\\") {
-      escaping = true;
-      continue;
-    }
-    if (ch === ",") {
-      parts.push(current.trim());
-      current = "";
-      continue;
-    }
-    current += ch;
-  }
-  parts.push(current.trim());
-  return parts;
-};
-const escapeAddressPart = (value) =>
-  String(value || "")
-    .trim()
-    .replace(/\\/g, "\\\\")
-    .replace(/,/g, "\\,");
-
-const splitAddressParts = (address) => {
-  const parts = splitEscapedAddressParts(address);
-  if (parts.length === 7) {
-    const [addressHouseStreet = "", addressSubdivision = "", addressBarangay = "", addressCity = "", addressProvince = "", addressPostalCode = "", addressCountry = ""] = parts;
-    return {
-      addressHouseStreet,
-      addressSubdivision,
-      addressBarangay,
-      addressCity,
-      addressProvince,
-      addressCountry,
-      addressPostalCode,
-      completeAddress: addressHouseStreet,
-    };
-  }
-  if (parts.length <= 5) {
-    const [completeAddress = "", addressCity = "", addressProvince = "", addressCountry = "", addressPostalCode = ""] = parts;
-    return {
-      addressHouseStreet: completeAddress,
-      addressSubdivision: "",
-      addressBarangay: "",
-      addressCity,
-      addressProvince,
-      addressCountry,
-      addressPostalCode,
-      completeAddress,
-    };
-  }
-  // Flexible fallback: preserve stable tail mapping for city/province/postal/country.
-  const addressCountry = parts.at(-1) || "";
-  const addressPostalCode = parts.at(-2) || "";
-  const addressProvince = parts.at(-3) || "";
-  const addressCity = parts.at(-4) || "";
-  const leading = parts.slice(0, -4);
-  // Right-anchor Subdivision/Barangay so extra commas in house/street do not shift fields.
-  const addressBarangay = leading.length > 0 ? leading[leading.length - 1] || "" : "";
-  const addressSubdivision = leading.length > 1 ? leading[leading.length - 2] || "" : "";
-  const addressHouseStreet =
-    leading.length > 2 ? leading.slice(0, -2).filter(Boolean).join(", ") : leading[0] || "";
-  const completeAddress = [addressHouseStreet, addressSubdivision, addressBarangay].filter(Boolean).join(", ");
-  return {
-    addressHouseStreet,
-    addressSubdivision,
-    addressBarangay,
-    addressCity,
-    addressProvince,
-    addressCountry,
-    addressPostalCode,
-    completeAddress,
-  };
-};
-const buildAddressValue = (draft) =>
-  [
-    draft.addressHouseStreet,
-    draft.addressSubdivision,
-    draft.addressBarangay,
-    draft.addressCity,
-    draft.addressProvince,
-    draft.addressPostalCode,
-    draft.addressCountry,
-  ]
-    .map((part) => escapeAddressPart(part))
-    .join(", ");
-const getApiErrorMessage = (payload, fallback) => {
-  if (!payload || typeof payload !== "object") return fallback;
-  const rawDetails = payload.error?.details;
-  if (rawDetails && typeof rawDetails === "object" && !Array.isArray(rawDetails)) {
-    const { method, url } = rawDetails;
-    if (typeof method === "string" && typeof url === "string" && url) {
-      return `Route not found (${method} ${url}).`;
-    }
-  }
-  const detailed = Array.isArray(payload.error?.details)
-    ? payload.error.details
-        .map((entry) => {
-          const msg = entry?.msg || entry?.message;
-          if (!msg) return "";
-          const field = entry?.path || entry?.param;
-          return field ? `${field}: ${msg}` : msg;
-        })
-        .filter(Boolean)
-        .join(" ")
-    : "";
-  const normalizedDetails = detailed.replace(/\s{2,}/g, " ").trim();
-  if (/^firstName:\s*Invalid value$/i.test(normalizedDetails)) {
-    return "Please enter a valid username.";
-  }
-  if (normalizedDetails) return normalizedDetails;
-  const genericMessage = payload.error?.message || payload.message || fallback;
-  return genericMessage === "Validation failed." ? "Please check the highlighted fields and try again." : genericMessage;
-};
-const readApiPayload = async (response) => {
-  const text = await response.text();
-  const trimmed = text.trim();
-  if (!trimmed) {
-    if (!response.ok) return { error: { message: `Request failed (${response.status})` } };
-    return null;
-  }
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    if (!response.ok) {
-      return { error: { message: text.slice(0, 200) || `Request failed (${response.status})` } };
-    }
-    return { error: { message: "Invalid response from server." } };
-  }
-};
-
-const fileToDataUrl = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("Could not read selected image."));
-    reader.readAsDataURL(file);
-  });
-
-const apiRequest = async (path, { method = "GET", token, body, headers = {} } = {}) => {
-  const requestHeaders = { ...headers };
-  if (token) requestHeaders.Authorization = `Bearer ${token}`;
-  const hasBody = body !== undefined;
-  if (hasBody && !(body instanceof FormData) && !requestHeaders["Content-Type"]) {
-    requestHeaders["Content-Type"] = "application/json";
-  }
-  const response = await fetch(`${API_URL}${path}`, {
-    method,
-    headers: requestHeaders,
-    body: hasBody ? (body instanceof FormData ? body : JSON.stringify(body)) : undefined,
-  });
-  const payload = await readApiPayload(response);
-  if (!response.ok) {
-    const proxiedDev = import.meta.env.DEV && API_URL.startsWith("/");
-    let fallback = `Request failed (${response.status})`;
-    if (response.status === 502 && proxiedDev) {
-      fallback =
-        "Request failed (502): Vite could not reach the API at http://127.0.0.1:4000. Start `community-marketplace/server` (npm run dev) and ensure the API is listening on port 4000.";
-    }
-    const requestedUrl =
-      typeof window !== "undefined"
-        ? (() => {
-            try {
-              const base =
-                API_URL.startsWith("http") ? API_URL : `${window.location.origin}${API_URL.startsWith("/") ? "" : "/"}${API_URL}`;
-              return new URL(path.replace(/^\//, ""), `${base.replace(/\/+$/, "")}/`).href;
-            } catch {
-              return `${API_URL}${path}`;
-            }
-          })()
-        : `${API_URL}${path}`;
-    const error = new Error(
-      `${getApiErrorMessage(payload, fallback)}${response.status === 404 ? `\nRequested: ${requestedUrl}` : ""}`,
-    );
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
-};
-
-/** Only treat 401 as invalid session — do not clear the token on network or server errors. */
-const isUnauthorizedApiError = (error) => typeof error?.status === "number" && error.status === 401;
-
-const LANDING_DISCOVERY_CARDS = [
-  {
-    badge: "GRC",
-    title: "Groceries and Essentials",
-    description: "Find daily needs from trusted sellers in your neighborhood with quick local pickup options.",
-  },
-  {
-    badge: "HOM",
-    title: "Home and Living",
-    description: "Browse furniture, appliances, and home upgrades posted by people in your area.",
-  },
-  {
-    badge: "FAS",
-    title: "Fashion and Personal",
-    description: "Shop preloved and brand new fashion finds from nearby community sellers.",
-  },
-  {
-    badge: "GAD",
-    title: "Gadgets and Electronics",
-    description: "Discover phones, accessories, and devices sold locally for safer meetups and faster deals.",
-  },
-  {
-    badge: "SVS",
-    title: "Local Services",
-    description: "Connect with nearby service providers for repairs, errands, and home-based work.",
-  },
-  {
-    badge: "COM",
-    title: "Community Deals",
-    description: "See curated listings and time-limited offers happening around your subdivision or barangay.",
-  },
-];
-
-const LANDING_DISCOVERY_SLIDE_SIZE = 3;
-const LANDING_DISCOVERY_SLIDES = Array.from({ length: Math.ceil(LANDING_DISCOVERY_CARDS.length / LANDING_DISCOVERY_SLIDE_SIZE) }, (_, i) =>
-  LANDING_DISCOVERY_CARDS.slice(i * LANDING_DISCOVERY_SLIDE_SIZE, i * LANDING_DISCOVERY_SLIDE_SIZE + LANDING_DISCOVERY_SLIDE_SIZE),
-);
-
-const BROWSE_QUICK_FILTERS = [
-  { id: "all", label: "All categories" },
-  { id: "new", label: "New" },
-  { id: "sale", label: "Sale" },
-];
-const SALE_PERCENT_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40, 50, 70, 90];
-const formatPesoWhole = (priceCents) => `₱${Math.floor((Number(priceCents) || 0) / 100)}`;
-const parseSaleMetaFromDescription = (description) => {
-  const text = String(description || "");
-  const pctMatch = text.match(/Sale\s+(\d{1,2})%\s+off/i);
-  const originalMatch = text.match(/Original\s+₱\s*(\d+)/i);
-  return {
-    percent: pctMatch ? Number(pctMatch[1]) : null,
-    originalPesos: originalMatch ? Number(originalMatch[1]) : null,
-  };
-};
-const removeSaleMetaLines = (description) =>
-  String(description || "")
-    .split("\n")
-    .filter((line) => !/Sale\s+\d{1,2}%\s+off/i.test(line) && !/Original\s+₱\s*\d+/i.test(line))
-    .join("\n")
-    .trim();
-
-/** COD fulfillment label for listing cards (pickup / delivery / both). */
-const listingCodAvailabilityLabel = (fulfillmentModes) => {
-  const modes = Array.isArray(fulfillmentModes) ? fulfillmentModes : [];
-  const supportsPickup = modes.includes("pickup");
-  const supportsDelivery = modes.includes("delivery");
-  return supportsPickup && supportsDelivery ? "COD pickup + delivery" : supportsDelivery ? "COD delivery" : "COD pickup";
-};
-
-/**
- * Same stack as community product cards: title, price (+ sale), quantity row, availability, description.
- * When `quantityAfterDescription` is true (cart / add modal), quantity renders after the description.
- * `quantityRow` is usually listing stock (browse) or an adjustable qty control (cart / add modal).
- */
-function MarketplaceProductDetailStack({
-  title,
-  priceCents,
-  description,
-  fulfillmentModes,
-  quantityRow,
-  quantityAfterDescription = false,
-  hideDescription = false,
+function ProductViewDensityToggle({
+  value,
+  onChange,
+  groupAriaLabel = "Product layout",
+  gridTitle = "Grid — columns fit your screen (comfortable cards)",
+  compactTitle = "Compact — more tiles per row, shorter cards",
 }) {
-  const saleMeta = parseSaleMetaFromDescription(description);
-  const currentPesos = Math.floor((Number(priceCents) || 0) / 100);
-  const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
-  const descriptionPreview = removeSaleMetaLines(description);
-  const availabilityLabel = listingCodAvailabilityLabel(fulfillmentModes);
-
-  const qtyBlock = quantityRow ? <div className="pt-0.5">{quantityRow}</div> : null;
-  const availabilityBlock = <p className="text-xs text-neutral-600 dark:text-slate-400">Availability: {availabilityLabel}</p>;
-  const descriptionBlock = !hideDescription && descriptionPreview ? (
-    <p className="line-clamp-3 text-pretty text-xs leading-relaxed text-neutral-600 dark:text-slate-400">{descriptionPreview}</p>
-  ) : null;
-
-  return (
-    <div className="min-w-0 flex-1 space-y-1">
-      {title ? <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">{title}</p> : null}
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-sm font-semibold text-neutral-800 dark:text-slate-200">{formatPesoWhole(priceCents)}</p>
-        {originalPesos != null && originalPesos > currentPesos ? (
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">₱{originalPesos}</span>
-            {saleMeta.percent ? (
-              <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-                -{saleMeta.percent}%
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-      {quantityAfterDescription ? (
-        <>
-          {availabilityBlock}
-          {descriptionBlock}
-          {qtyBlock}
-        </>
-      ) : (
-        <>
-          {qtyBlock}
-          {availabilityBlock}
-          {descriptionBlock}
-        </>
-      )}
-    </div>
-  );
-}
-
-/** Maps API `order.status` to Orders view tabs (Pending / Processing / Completed / Cancelled). */
-const ORDERS_STATUS_TABS = [
-  { id: "pending", label: "Pending" },
-  { id: "processing", label: "Processing" },
-  { id: "completed", label: "Completed" },
-  { id: "cancelled", label: "Cancelled" },
-];
-const orderMatchesOrdersStatusTab = (status, tabId) => {
-  const s = String(status || "").toLowerCase();
-  if (tabId === "pending") return s === "placed";
-  if (tabId === "completed") return s === "completed";
-  if (tabId === "cancelled") return s === "cancelled";
-  if (tabId === "processing") return Boolean(s) && !["placed", "completed", "cancelled"].includes(s);
-  return false;
-};
-const orderStatusToTabId = (status) => {
-  const s = String(status || "").toLowerCase();
-  if (s === "placed") return "pending";
-  if (s === "completed") return "completed";
-  if (s === "cancelled") return "cancelled";
-  return s ? "processing" : "";
-};
-
-const UI_KIT = {
-  viewSection:
-    "app-card rounded-2xl border border-brand-primary/15 bg-gradient-to-b from-white to-violet-50/30 shadow-sm ring-1 ring-brand-primary/5 dark:border-slate-700 dark:from-slate-900 dark:to-slate-900/70 dark:ring-slate-800/80",
-  sectionTitle: "text-[1.65rem] font-semibold tracking-tight text-neutral-900 dark:text-slate-100",
-  sectionSubtitle: "mt-1 text-sm leading-relaxed text-neutral-600 dark:text-slate-400",
-  headerEyebrow: "text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent",
-  surfaceCard:
-    "rounded-2xl border border-brand-primary/15 bg-white/95 shadow-sm ring-1 ring-brand-primary/5 dark:border-slate-700 dark:bg-slate-900/80 dark:ring-slate-800/70",
-  surfaceRaised:
-    "rounded-2xl border border-brand-primary/20 bg-gradient-to-b from-white to-brand-soft/20 shadow-sm dark:border-slate-700 dark:from-slate-900 dark:to-slate-900/70",
-  surfaceFloating:
-    "rounded-2xl border border-brand-primary/20 bg-white/95 shadow-[0_18px_45px_rgba(76,29,149,0.12)] dark:border-slate-700 dark:bg-slate-900/95",
-  surfaceMuted: "rounded-xl border border-neutral-200/80 bg-neutral-50/60 dark:border-slate-700 dark:bg-slate-900/45",
-  stateSuccess:
-    "border-emerald-200/90 bg-emerald-50/90 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
-  stateWarning:
-    "border-amber-200/90 bg-amber-50/90 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300",
-  stateDanger: "border-rose-200/90 bg-rose-50/90 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300",
-  chipActive:
-    "inline-flex items-center rounded-full border border-brand-primary/30 bg-brand-soft/70 px-2.5 py-1 text-xs font-semibold text-brand-primary dark:border-brand-accent/35 dark:bg-slate-800 dark:text-slate-100",
-  chipMuted:
-    "inline-flex items-center rounded-full border border-neutral-200 bg-neutral-100 px-2.5 py-1 text-xs font-semibold text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
-  tabActive:
-    "bg-brand-soft text-brand-primary ring-2 ring-brand-primary/30 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-accent/30",
-  tabIdle: "border border-neutral-200/90 text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800",
-};
-
-const PURCHASES_PENDING_BADGE_STORAGE_KEY = "lm_recent_pending_purchase_ids_v1";
-const PURCHASES_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY = "lm_recent_status_highlight_ids_by_tab_v1";
-const PURCHASES_RECENT_STATUS_BADGE_STORAGE_KEY = "lm_recent_status_badge_ids_by_tab_v1";
-const SELLER_PENDING_BADGE_STORAGE_KEY = "lm_recent_pending_seller_order_ids_v1";
-const SELLER_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY = "lm_seller_recent_status_highlight_ids_by_tab_v1";
-const SELLER_RECENT_STATUS_BADGE_STORAGE_KEY = "lm_seller_recent_status_badge_ids_by_tab_v1";
-const CART_RECENT_BADGE_STORAGE_KEY = "lm_recent_cart_listing_ids_v1";
-
-const readStoredStringArray = (key) => {
-  try {
-    if (typeof window === "undefined") return [];
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map((x) => String(x || "")).filter(Boolean) : [];
-  } catch {
-    return [];
-  }
-};
-
-const RECENT_ORDER_TAB_KEYS = ["pending", "processing", "completed", "cancelled"];
-
-const emptyOrderAttentionByTab = () => ({
-  pending: [],
-  processing: [],
-  completed: [],
-  cancelled: [],
-});
-
-const persistBuyerOrderAttentionToStorage = () => {
-  try {
-    if (typeof window === "undefined") return;
-    const empty = emptyOrderAttentionByTab();
-    window.localStorage.setItem(PURCHASES_RECENT_STATUS_BADGE_STORAGE_KEY, JSON.stringify(empty));
-    window.localStorage.setItem(PURCHASES_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY, JSON.stringify(empty));
-    window.localStorage.setItem(PURCHASES_PENDING_BADGE_STORAGE_KEY, JSON.stringify([]));
-  } catch {
-    // ignore
-  }
-};
-
-const readStoredRecentIdsByTab = (key) => {
-  const empty = { pending: [], processing: [], completed: [], cancelled: [] };
-  try {
-    if (typeof window === "undefined") return empty;
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return empty;
-    const parsed = JSON.parse(raw);
-    return {
-      pending: Array.isArray(parsed?.pending) ? parsed.pending.map((x) => String(x || "")).filter(Boolean) : [],
-      processing: Array.isArray(parsed?.processing) ? parsed.processing.map((x) => String(x || "")).filter(Boolean) : [],
-      completed: Array.isArray(parsed?.completed) ? parsed.completed.map((x) => String(x || "")).filter(Boolean) : [],
-      cancelled: Array.isArray(parsed?.cancelled) ? parsed.cancelled.map((x) => String(x || "")).filter(Boolean) : [],
-    };
-  } catch {
-    return empty;
-  }
-};
-
-const normalizeAttentionIdsByTabObject = (raw) => {
-  const empty = emptyOrderAttentionByTab();
-  if (!raw || typeof raw !== "object") return empty;
-  for (const t of RECENT_ORDER_TAB_KEYS) {
-    empty[t] = Array.isArray(raw[t]) ? raw[t].map((x) => String(x || "")).filter(Boolean) : [];
-  }
-  return empty;
-};
-
-const normalizeRecentPendingIdsFromApi = (raw) =>
-  Array.isArray(raw) ? raw.map((x) => String(x || "")).filter(Boolean) : [];
-
-/** Styling + a11y for marketplace toast banners (single source for stacked toasts). */
-const computeMarketplaceFeedbackForText = (raw) => {
-  const text = String(raw ?? "").trim();
-  const isError =
-    /(^|[\s])(error|failed|could not|cannot|can't|invalid|required|already|expired|unable|denied|not found)\b/i.test(text);
-  const isSuccess =
-    !isError && /(success|successfully|added|updated|deleted|accepted|applied|joined|saved|published|completed)/i.test(text);
-  const tone = isError ? "error" : isSuccess ? "success" : "info";
-  if (tone === "success") {
-    return {
-      text,
-      tone,
-      icon: "✓",
-      role: "status",
-      live: "polite",
-      className:
-        "border-emerald-200/90 bg-emerald-50/90 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200",
-      dismissClass: "text-emerald-800 hover:text-emerald-900 dark:text-emerald-200 dark:hover:text-emerald-100",
-    };
-  }
-  if (tone === "error") {
-    return {
-      text,
-      tone,
-      icon: "!",
-      role: "alert",
-      live: "assertive",
-      className:
-        "border-rose-200/90 bg-rose-50/90 text-rose-950 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200",
-      dismissClass: "text-rose-800 hover:text-rose-900 dark:text-rose-200 dark:hover:text-rose-100",
-    };
-  }
-  return {
-    text,
-    tone,
-    icon: "i",
-    role: "status",
-    live: "polite",
-    className: "border-sky-200/90 bg-sky-50/90 text-sky-950 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200",
-    dismissClass: "text-sky-800 hover:text-sky-900 dark:text-sky-200 dark:hover:text-sky-100",
-  };
-};
-
-function SectionHeading({ title, subtitle, trailing = null }) {
-  return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h2 className={UI_KIT.sectionTitle}>{title}</h2>
-        {subtitle ? <p className={UI_KIT.sectionSubtitle}>{subtitle}</p> : null}
-      </div>
-      {trailing}
-    </div>
-  );
-}
-
-function FilterOptionButton({ active, onClick, icon, label }) {
-  return (
-    <button
-      type="button"
-      className={`min-h-[2.75rem] w-full rounded-xl border px-3 py-2.5 text-left text-sm font-medium leading-tight transition ${
-        active
-          ? "border-brand-primary/50 bg-white text-brand-primary shadow-sm ring-1 ring-brand-primary/15 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-primary/20"
-          : "border-transparent bg-white/80 text-neutral-700 hover:border-neutral-200 hover:bg-white dark:bg-slate-800/60 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-800"
-      }`}
-      onClick={onClick}
-    >
-      <span className="inline-flex items-center gap-1.5">
-        {icon}
-        <span>{label}</span>
-      </span>
-    </button>
-  );
-}
-
-function MarketplaceListingCard({ listing, isFavorite, onOpen, onToggleFavorite }) {
-  const saleMeta = parseSaleMetaFromDescription(listing.description);
-  const currentPesos = Math.floor((Number(listing.priceCents) || 0) / 100);
-  const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
-  const descriptionPreview = removeSaleMetaLines(listing.description);
+  const btn = (isActive) =>
+    `inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-md px-2 py-1.5 text-xs font-semibold transition sm:min-h-0 sm:min-w-0 sm:gap-1.5 sm:px-2.5 ${
+      isActive
+        ? "bg-brand-soft text-brand-primary shadow-sm dark:bg-slate-800 dark:text-slate-100"
+        : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"
+    }`;
+  const iconCls = "h-4 w-4 shrink-0";
   return (
     <div
-      role="button"
-      tabIndex={0}
-      className="group relative cursor-pointer rounded-2xl border border-neutral-200/90 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-primary/35 hover:shadow-md dark:border-slate-600 dark:bg-slate-900/80 dark:hover:border-slate-500"
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onOpen();
-        }
-      }}
+      className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-xl border border-neutral-200/90 bg-white p-1 shadow-sm dark:border-slate-600 dark:bg-slate-900"
+      role="group"
+      aria-label={groupAriaLabel}
     >
-      <p className="pr-10 text-xs font-semibold text-brand-primary">{getVerticalById(listing.verticalId)?.label ?? listing.verticalId}</p>
-      <h3 className="mt-1 truncate text-base font-semibold text-neutral-900 dark:text-slate-100">{listing.title}</h3>
-      <div className="mt-1 flex items-center gap-2">
-        <p className="text-sm font-semibold text-neutral-800 dark:text-slate-200">{formatPesoWhole(listing.priceCents)}</p>
-        {originalPesos != null && originalPesos > currentPesos ? (
-          <>
-            <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">₱{originalPesos}</span>
-            {saleMeta.percent ? (
-              <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-                -{saleMeta.percent}%
-              </span>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-      <div className="mt-2 flex items-center justify-between">
-        <p className="text-xs text-neutral-600 dark:text-slate-400">
-          Qty <span className="font-semibold text-neutral-800 dark:text-slate-200">{Number(listing.quantity) || 0}</span>
-        </p>
-        {listing.cityLabel ? <span className={UI_KIT.chipMuted}>{listing.cityLabel}</span> : null}
-      </div>
-      <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-neutral-600 dark:text-slate-400">{descriptionPreview}</p>
-    </div>
-  );
-}
-
-function SellerProductCard({
-  listing,
-  gridMode,
-  onSaleSelect,
-  onEdit,
-  onDelete,
-  onAdjustQuantity,
-  onSetQuantity,
-  quantityUpdating = false,
-}) {
-  const [saleOpen, setSaleOpen] = useState(false);
-  const [qtyDraft, setQtyDraft] = useState(String(Math.max(0, Number(listing?.quantity) || 0)));
-  const normalizedStatus = String(listing.status || "").toLowerCase();
-  const statusClass =
-    normalizedStatus === "active"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-      : "border-neutral-200 bg-neutral-100 text-neutral-700 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300";
-  const imageUrl = String(listing.imageUrl || "").trim();
-  const availabilityLabel = listingCodAvailabilityLabel(listing.fulfillmentModes);
-  const saleMeta = parseSaleMetaFromDescription(listing.description);
-  const currentPesos = Math.floor((Number(listing.priceCents) || 0) / 100);
-  const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
-  const descriptionPreview = removeSaleMetaLines(listing.description);
-
-  useEffect(() => {
-    setQtyDraft(String(Math.max(0, Number(listing?.quantity) || 0)));
-  }, [listing?.quantity, listing?.id]);
-
-  return (
-    <li className={`rounded-2xl border border-neutral-200 bg-white p-3.5 shadow-sm dark:border-slate-700 dark:bg-slate-900/60 ${gridMode ? "h-full" : ""}`}>
-      <div className={`flex ${gridMode ? "flex-col gap-2.5" : "flex-row items-start gap-3"}`}>
-        <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 ${gridMode ? "h-48 w-full" : "h-32 w-32"}`}>
-          {imageUrl ? (
-            <img src={imageUrl} alt={listing.title || "Product"} className="h-full w-full object-cover" />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">No image</div>
-          )}
-        </div>
-        <div className="min-w-0 flex-1 space-y-1">
-          <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">{listing.title || "Untitled product"}</p>
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-semibold text-neutral-800 dark:text-slate-200">{formatPesoWhole(listing.priceCents)}</p>
-            {originalPesos != null && originalPesos > currentPesos ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">₱{originalPesos}</span>
-                {saleMeta.percent ? (
-                  <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-                    -{saleMeta.percent}%
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-2 text-xs text-neutral-600 dark:text-slate-400">
-            <span>
-              Quantity: <span className="font-semibold">{Number(listing.quantity) || 0}</span>
-            </span>
-            <div className="inline-flex items-center gap-1">
-              <button
-                type="button"
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-neutral-300 bg-white text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                disabled={quantityUpdating || (Number(listing.quantity) || 0) <= 0}
-                onClick={() => onAdjustQuantity?.(-1)}
-                aria-label="Decrease product quantity"
-              >
-                -
-              </button>
-              <button
-                type="button"
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-neutral-300 bg-white text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                disabled={quantityUpdating}
-                onClick={() => onAdjustQuantity?.(1)}
-                aria-label="Increase product quantity"
-              >
-                +
-              </button>
-            </div>
-            <div className="inline-flex items-center gap-1">
-              <input
-                type="number"
-                min={0}
-                step={1}
-                inputMode="numeric"
-                className="h-6 w-16 rounded-md border border-neutral-300 bg-white px-1.5 text-[11px] text-neutral-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
-                value={qtyDraft}
-                disabled={quantityUpdating}
-                onChange={(e) => {
-                  const digits = String(e.target.value || "").replace(/[^\d]/g, "");
-                  setQtyDraft(digits);
-                }}
-                onBlur={() => {
-                  if (qtyDraft === "") setQtyDraft("0");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return;
-                  e.preventDefault();
-                  const parsed = Number(qtyDraft);
-                  if (!Number.isFinite(parsed) || parsed < 0) return;
-                  onSetQuantity?.(Math.floor(parsed));
-                }}
-                aria-label="Set product quantity"
-              />
-              <button
-                type="button"
-                className="inline-flex h-6 items-center justify-center rounded-md border border-neutral-300 bg-white px-1.5 text-[10px] font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                disabled={quantityUpdating}
-                onClick={() => {
-                  const parsed = Number(qtyDraft);
-                  if (!Number.isFinite(parsed) || parsed < 0) return;
-                  onSetQuantity?.(Math.floor(parsed));
-                }}
-                aria-label="Apply quantity"
-              >
-                Set
-              </button>
-            </div>
-            {quantityUpdating ? <span className="text-[10px] font-medium text-neutral-500 dark:text-slate-400">Saving…</span> : null}
-          </div>
-          <p className="text-xs text-neutral-600 dark:text-slate-400">Availability: {availabilityLabel}</p>
-          {descriptionPreview ? (
-            <p className="line-clamp-3 text-pretty text-xs leading-relaxed text-neutral-600 dark:text-slate-400">{descriptionPreview}</p>
-          ) : null}
-          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${statusClass}`}>{normalizedStatus || "unknown"}</span>
-        </div>
-        <div className={`flex items-center gap-1.5 ${gridMode ? "self-start" : "shrink-0"}`}>
-          <button
-            type="button"
-            className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-50 dark:border-amber-500/50 dark:text-amber-300 dark:hover:bg-amber-950/30"
-            onClick={() => setSaleOpen((prev) => !prev)}
-          >
-            Sale
-          </button>
-          <button
-            type="button"
-            className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-            onClick={onEdit}
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
-            onClick={onDelete}
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-      {saleOpen ? (
-        <div className="mt-3 overflow-x-auto">
-          <div className="flex min-w-max items-center gap-1.5 rounded-xl border border-amber-200/80 bg-amber-50/80 p-2 dark:border-amber-500/30 dark:bg-amber-500/10">
-            {SALE_PERCENT_OPTIONS.map((percent) => (
-              <button
-                key={percent}
-                type="button"
-                className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
-                onClick={() => {
-                  onSaleSelect(percent);
-                  setSaleOpen(false);
-                }}
-              >
-                {percent}%
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </li>
-  );
-}
-
-function CommunityShopListingCard({
-  listing,
-  gridMode,
-  isFavorite,
-  onAdd,
-  onBuy,
-  onToggleFavorite,
-  showActions = false,
-  showFavoriteIcon = true,
-  currentUserId = "",
-  onSaleSelect,
-  onEdit,
-}) {
-  const [saleOpen, setSaleOpen] = useState(false);
-  const imageUrl = String(listing.imageUrl || "").trim();
-  const isOwner = String(listing.sellerId || "") === String(currentUserId || "");
-  const stockQty = Math.max(0, Number(listing.quantity) || 0);
-  const isOutOfStock = stockQty <= 0;
-
-  return (
-    <div
-      className={`group relative rounded-2xl border border-neutral-200 bg-white p-3.5 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-primary/35 hover:shadow-md dark:border-slate-700 dark:bg-slate-900/75 ${gridMode ? "h-full" : ""}`}
-    >
-      {!isOwner && showFavoriteIcon ? (
-        <button
-          type="button"
-          className="absolute right-3 top-3 z-10 rounded-full border border-neutral-200/90 bg-white/95 p-1.5 text-rose-500 shadow-sm transition hover:bg-rose-50 dark:border-slate-600 dark:bg-slate-900/95 dark:hover:bg-rose-950/30"
-          aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleFavorite?.();
-          }}
-        >
-          <span className="text-base leading-none">{isFavorite ? "♥" : "♡"}</span>
-        </button>
-      ) : null}
-      <div className={`flex ${gridMode ? "flex-col gap-2.5" : "flex-row items-start gap-3"}`}>
-        <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 ${gridMode ? "h-48 w-full" : "h-32 w-32"}`}>
-          {imageUrl ? (
-            <img src={imageUrl} alt={listing.title || "Product"} className="h-full w-full object-cover" />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">No image</div>
-          )}
-        </div>
-        <div className="min-w-0 flex-1 space-y-1">
-          <MarketplaceProductDetailStack
-            title={listing.title || "Untitled product"}
-            priceCents={listing.priceCents}
-            description={listing.description}
-            fulfillmentModes={listing.fulfillmentModes}
-            quantityRow={
-              <div className="flex items-center gap-2">
-                <p className="text-xs text-neutral-600 dark:text-slate-400">Quantity: {stockQty}</p>
-                {isOutOfStock ? (
-                  <span className="rounded-full border border-rose-300 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
-                    Out of stock
-                  </span>
-                ) : null}
-              </div>
-            }
-          />
-          {listing.cityLabel ? <span className={UI_KIT.chipMuted}>{listing.cityLabel}</span> : null}
-        </div>
-      </div>
-      {showActions ? (
-        <div className="mt-3 flex items-center gap-2">
-          {isOwner ? (
-            <>
-              <button
-                type="button"
-                className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-50 dark:border-amber-500/50 dark:text-amber-300 dark:hover:bg-amber-950/30"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSaleOpen((prev) => !prev);
-                }}
-              >
-                Sale
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit?.();
-                }}
-              >
-                Edit
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                disabled={isOutOfStock}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAdd?.();
-                }}
-              >
-                {isOutOfStock ? "Unavailable" : "Add to cart"}
-              </button>
-              <button
-                type="button"
-                className="rounded-lg bg-brand-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary/90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
-                disabled={isOutOfStock}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onBuy?.();
-                }}
-              >
-                {isOutOfStock ? "Out of stock" : "Buy"}
-              </button>
-            </>
-          )}
-        </div>
-      ) : null}
-      {showActions && isOwner && saleOpen ? (
-        <div className="mt-2 overflow-x-auto">
-          <div className="flex min-w-max items-center gap-1.5 rounded-xl border border-amber-200/80 bg-amber-50/80 p-2 dark:border-amber-500/30 dark:bg-amber-500/10">
-            {SALE_PERCENT_OPTIONS.map((percent) => (
-              <button
-                key={percent}
-                type="button"
-                className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSaleSelect?.(percent);
-                  setSaleOpen(false);
-                }}
-              >
-                {percent}%
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function LandingIllustration() {
-  return (
-    <div className="relative w-full overflow-hidden rounded-[1.75rem] border border-neutral-200/80 bg-gradient-to-br from-white to-violet-50/60 shadow-[0_18px_45px_-28px_rgba(67,56,202,0.45)] dark:border-slate-700 dark:from-slate-900 dark:to-slate-800/80">
-      <div className="aspect-[16/10] w-full">
-        <img
-          src={communityImage}
-          alt="Local community marketplace"
-          className="h-full w-full object-cover object-[74%_center]"
-        />
-      </div>
-    </div>
-  );
-}
-
-function LinkMartLogo({ className = "h-7 w-auto max-w-[11rem] shrink-0 object-contain sm:h-8 sm:max-w-[13rem]" }) {
-  return <img src={navLogo} alt="LinkMart logo" className={className} />;
-}
-
-function EyeShowPasswordIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
-function EyeHidePasswordIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 01-4.24-4.24" />
-      <path d="M1 1l22 22" />
-    </svg>
-  );
-}
-
-function ChevronDownIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M6 9l6 6 6-6" />
-    </svg>
-  );
-}
-
-function ChevronLeftIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M15 18l-6-6 6-6" />
-    </svg>
-  );
-}
-
-function ChevronRightIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M9 18l6-6-6-6" />
-    </svg>
-  );
-}
-
-function LandingFooterIconMail(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-      <path d="M22 6l-10 7L2 6" />
-    </svg>
-  );
-}
-
-function LandingFooterIconMapPin(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
-      <circle cx="12" cy="10" r="3" />
-    </svg>
-  );
-}
-
-function LandingSiteFooter() {
-  const accent = "text-teal-400 shrink-0";
-  return (
-    <footer className="landing-site-footer w-full" role="contentinfo">
-      <svg className="block h-11 w-full shrink-0" viewBox="0 0 1440 48" preserveAspectRatio="none" aria-hidden>
-        <path fill="#2d3748" d="M0 48V16Q720 0 1440 16V48H0z" />
-      </svg>
-      <div className="-mt-px bg-[#2d3748] px-6 pb-8 pt-0 sm:px-8 lg:px-12">
-        <div className="app-container mx-auto grid max-w-7xl grid-cols-1 gap-12 pb-14 md:grid-cols-2 md:gap-10 lg:grid-cols-3 lg:gap-8 lg:pb-16">
-          <div className="text-left">
-            <h2 className="text-base font-bold tracking-tight text-white">Why LinkMart</h2>
-            <p className="mt-4 text-sm leading-relaxed text-white/85">
-              LinkMart is built for local communities where neighbors can buy and sell with people they trust.
-            </p>
-            <p className="mt-3 text-sm leading-relaxed text-white/85">
-              Discover nearby listings, support local sellers, and complete faster transactions inside your subdivision, barangay, or compound.
-            </p>
-          </div>
-          <div className="text-left">
-            <h2 className="text-base font-bold tracking-tight text-white">Contact</h2>
-            <ul className="mt-4 flex flex-col gap-4 text-sm">
-              <li className="flex gap-3">
-                <LandingFooterIconMail className={`${accent} mt-0.5`} />
-                <a href="mailto:reyjandellreyes21@gmail.com">reyjandellreyes21@gmail.com</a>
-              </li>
-              <li className="flex gap-3">
-                <LandingFooterIconMapPin className={`${accent} mt-0.5 self-start`} />
-                <span className="text-white/90">
-                  CPR, Calamba City,
-                  <br />
-                  Laguna, Philippines
-                </span>
-              </li>
-            </ul>
-          </div>
-          <div className="text-left">
-            <h2 className="text-base font-bold tracking-tight text-white">Key stats</h2>
-            <dl className="mt-4 flex flex-col gap-6">
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Active listings</dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">8k+</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Local sellers</dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">1.2k+</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Covered communities</dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">50+</dd>
-              </div>
-            </dl>
-          </div>
-        </div>
-        <div className="app-container mx-auto max-w-7xl border-t border-white/15 pt-10">
-          <div className="flex flex-col items-center gap-8 lg:flex-row lg:items-end lg:justify-between">
-            <div className="flex flex-col items-center gap-1 lg:items-start">
-              <LinkMartLogo className="h-9 w-auto max-w-[12rem] shrink-0 object-contain brightness-0 invert sm:h-10 sm:max-w-[13rem]" />
-              <p className="text-xs font-medium tracking-wide text-white/55">Local marketplace for every community</p>
-            </div>
-            <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-sm text-white/85" aria-label="Legal">
-              <a href="#">Privacy Policy</a>
-              <a href="#">Copyright</a>
-              <a href="#">Terms of Service</a>
-            </nav>
-            <div className="flex items-center justify-center gap-2 sm:gap-3">
-              <a href="#" className="landing-footer-social" aria-label="Facebook">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
-                </svg>
-              </a>
-              <a href="#" className="landing-footer-social" aria-label="X / Twitter">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                </svg>
-              </a>
-              <a href="#" className="landing-footer-social" aria-label="Instagram">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" />
-                </svg>
-              </a>
-              <a href="#" className="landing-footer-social" aria-label="YouTube">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
-                </svg>
-              </a>
-            </div>
-          </div>
-        </div>
-      </div>
-    </footer>
-  );
-}
-
-function LandingFeatureIconDiscussion(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
-    </svg>
-  );
-}
-
-function LandingFeatureIconExchange(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
-      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
-      <path d="M8 7h8M8 11h6" />
-    </svg>
-  );
-}
-
-function LandingFeatureIconBuddy(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
-    </svg>
-  );
-}
-
-function LandingFeatureRow({ Icon, eyebrow, title, body }) {
-  return (
-    <div className="flex gap-4 sm:gap-5">
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-teal-50 text-brand-accent shadow-sm dark:bg-slate-800 dark:text-brand-accent">
-        <Icon className="h-5 w-5" />
-      </div>
-      <div className="min-w-0">
-        <p className="text-xs font-semibold uppercase tracking-wide text-brand-accent">{eyebrow}</p>
-        <h3 className="mt-1 text-base font-bold leading-snug text-neutral-900 dark:text-slate-100 sm:text-lg">{title}</h3>
-        <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-slate-400">{body}</p>
-      </div>
-    </div>
-  );
-}
-
-const LANDING_FEATURE_ROWS = [
-  {
-    Icon: LandingFeatureIconDiscussion,
-    eyebrow: "Verified Local Sellers",
-    title: "Buy with more confidence nearby",
-    body: "Transact with sellers in your own community so pickups and communication are easier to manage.",
-  },
-  {
-    Icon: LandingFeatureIconExchange,
-    eyebrow: "Fast Local Listings",
-    title: "Post and sell in minutes",
-    body: "Create listings quickly and reach active buyers around your area without complex setup.",
-  },
-  {
-    Icon: LandingFeatureIconBuddy,
-    eyebrow: "Community Connections",
-    title: "Build trust through repeat transactions",
-    body: "Grow your reputation with neighbors and keep a reliable marketplace network close to home.",
-  },
-];
-
-function OrderPlacementForm({ listing, token, onDone, onError }) {
-  const modes = listing?.fulfillmentModes?.length ? listing.fulfillmentModes : ["pickup"];
-  const [fulfillmentType, setFulfillmentType] = useState(() => (modes.includes("pickup") ? "pickup" : modes[0]));
-  const [submitting, setSubmitting] = useState(false);
-  const isOutOfStock = Math.max(0, Number(listing?.quantity) || 0) <= 0;
-
-  useEffect(() => {
-    const m = listing?.fulfillmentModes?.length ? listing.fulfillmentModes : ["pickup"];
-    setFulfillmentType(m.includes("pickup") ? "pickup" : m[0]);
-  }, [listing?.id, listing?.fulfillmentModes]);
-
-  const place = async () => {
-    if (!token) return;
-    if (isOutOfStock) {
-      onError("This listing is currently out of stock.");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const desiredQty = 1;
-      const listingMaxQty = Math.max(0, Number(listing?.quantity) || 0);
-      const currentOrders = await apiRequest("/orders?role=buyer", { token });
-      const pendingQtyForListing = (Array.isArray(currentOrders?.orders) ? currentOrders.orders : [])
-        .filter((o) => String(o?.listingId || "") === String(listing?.id || "") && String(o?.status || "").toLowerCase() === "placed")
-        .reduce((sum, o) => sum + Math.max(0, Number(o?.quantity) || 0), 0);
-      const availableQty = Math.max(0, listingMaxQty - pendingQtyForListing);
-      if (availableQty < desiredQty) {
-        onError("Maximum available quantity is already in pending orders.");
-        return;
-      }
-      const created = await apiRequest("/orders", {
-        method: "POST",
-        token,
-        body: { listingId: listing.id, fulfillmentType, quantity: desiredQty },
-      });
-      const createdOrderId = String(created?.order?.id || "");
-      onDone("Order placed. Pay COD at pickup or when delivery is completed.", createdOrderId);
-    } catch (e) {
-      onError(e.message || "Could not place order.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="mt-4 space-y-3 rounded-xl border border-neutral-200/90 bg-white/80 p-4 dark:border-slate-600 dark:bg-slate-900/60">
-      <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">Place order (COD)</p>
-      {isOutOfStock ? (
-        <p className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-2 text-xs font-medium text-rose-700 dark:border-rose-500/40 dark:bg-rose-950/20 dark:text-rose-300">
-          Out of stock. You can still view this item, but ordering is disabled.
-        </p>
-      ) : null}
-      <div className="flex flex-wrap gap-3 text-sm">
-        {modes.includes("pickup") ? (
-          <label className="inline-flex cursor-pointer items-center gap-2">
-            <input type="radio" name="fulfillment" checked={fulfillmentType === "pickup"} onChange={() => setFulfillmentType("pickup")} />
-            Pickup (pay seller in cash when you meet)
-          </label>
-        ) : null}
-        {modes.includes("delivery") ? (
-          <label className="inline-flex cursor-pointer items-center gap-2">
-            <input type="radio" name="fulfillment" checked={fulfillmentType === "delivery"} onChange={() => setFulfillmentType("delivery")} />
-            Delivery (couriers bid; pay COD at handoff)
-          </label>
-        ) : null}
-      </div>
-      <button type="button" className="btn-primary" disabled={submitting || isOutOfStock} onClick={place}>
-        {submitting ? "Placing…" : "Confirm order"}
+      <button
+        type="button"
+        className={btn(value === "list")}
+        aria-label="List view"
+        title="List — full-width rows"
+        onClick={() => onChange("list")}
+      >
+        <svg className={iconCls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />
+        </svg>
+        <span className="hidden pl-1 sm:inline">List</span>
+      </button>
+      <button
+        type="button"
+        className={btn(value === "grid")}
+        aria-label="Grid view"
+        title={gridTitle}
+        onClick={() => onChange("grid")}
+      >
+        <svg className={iconCls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <rect x="3" y="3" width="7" height="7" rx="1" />
+          <rect x="14" y="3" width="7" height="7" rx="1" />
+          <rect x="3" y="14" width="7" height="7" rx="1" />
+          <rect x="14" y="14" width="7" height="7" rx="1" />
+        </svg>
+        <span className="hidden pl-1 sm:inline">Grid</span>
+      </button>
+      <button
+        type="button"
+        className={btn(value === "compact")}
+        aria-label="Compact grid"
+        title={compactTitle}
+        onClick={() => onChange("compact")}
+      >
+        <svg className={iconCls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <rect x="2" y="2" width="5" height="5" rx="0.5" />
+          <rect x="9.5" y="2" width="5" height="5" rx="0.5" />
+          <rect x="17" y="2" width="5" height="5" rx="0.5" />
+          <rect x="2" y="9.5" width="5" height="5" rx="0.5" />
+          <rect x="9.5" y="9.5" width="5" height="5" rx="0.5" />
+          <rect x="17" y="9.5" width="5" height="5" rx="0.5" />
+          <rect x="2" y="17" width="5" height="5" rx="0.5" />
+          <rect x="9.5" y="17" width="5" height="5" rx="0.5" />
+          <rect x="17" y="17" width="5" height="5" rx="0.5" />
+        </svg>
+        <span className="hidden pl-1 sm:inline">Dense</span>
       </button>
     </div>
   );
 }
 
-function CartSellerSelectAllCheckbox({ allChecked, someSelected, onChange, ariaLabel }) {
-  const ref = useRef(null);
-  useLayoutEffect(() => {
-    if (ref.current) ref.current.indeterminate = Boolean(someSelected && !allChecked);
-  }, [someSelected, allChecked]);
-  return (
-    <input
-      ref={ref}
-      type="checkbox"
-      className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
-      checked={allChecked}
-      onChange={onChange}
-      aria-label={ariaLabel}
-    />
-  );
+const COMMERCE_FLOW_BUYER_STORAGE_KEY = "linkmart_commerce_flow_buyer_v1";
+const COMMERCE_FLOW_SELLER_STORAGE_KEY = "linkmart_commerce_flow_seller_v1";
+/** Legacy single key — migrated once into buyer/seller keys. */
+const COMMERCE_FLOW_VIEW_STORAGE_KEY_LEGACY = "linkmart_commerce_flow_view_v1";
+
+function normalizeCommerceFlowView(v) {
+  if (v === "list" || v === "grid" || v === "compact") return v;
+  return "list";
+}
+
+function readCommerceFlowFromStorage(primaryKey) {
+  if (typeof window === "undefined") return "list";
+  try {
+    const direct = window.localStorage.getItem(primaryKey);
+    if (direct != null && String(direct).trim() !== "") return normalizeCommerceFlowView(direct);
+    const legacy = window.localStorage.getItem(COMMERCE_FLOW_VIEW_STORAGE_KEY_LEGACY);
+    if (legacy != null && String(legacy).trim() !== "") return normalizeCommerceFlowView(legacy);
+  } catch {
+    /* ignore */
+  }
+  return "list";
+}
+
+/**
+ * Line items inside one seller card (Add to cart, My purchases, Sales inbox).
+ * List: stacked rows. Grid: 2 columns from sm+. Dense: 3 columns from lg+ (same as buying/selling).
+ */
+function commerceFlowLineItemsClass(view, ctx = {}) {
+  const variant = ctx.variant ?? "cart";
+
+  if (view === "list") return "divide-y divide-neutral-200/80 dark:divide-slate-700/80";
+
+  if (variant === "orders" || variant === "cart") {
+    if (view === "compact") {
+      return [
+        "grid items-stretch gap-2 sm:gap-2.5",
+        "grid-cols-1",
+        "sm:grid-cols-2",
+        "lg:grid-cols-3",
+      ].join(" ");
+    }
+    return [
+      "grid items-stretch gap-2.5 sm:gap-3",
+      "grid-cols-1",
+      "sm:grid-cols-2",
+    ].join(" ");
+  }
+
+  return "grid items-stretch gap-2.5 sm:gap-3 grid-cols-1 sm:grid-cols-2";
 }
 
 function App() {
@@ -1674,60 +382,109 @@ function App() {
   ordersRef.current = orders;
   const [ordersRole, setOrdersRole] = useState("buyer");
   const [ordersStatusTab, setOrdersStatusTab] = useState("pending");
+  /** Completed tab: `orderId` -> expanded "Order details" (ID, pickup line, timeline). */
+  const [completedTabOrderDetailsOpen, setCompletedTabOrderDetailsOpen] = useState({});
+  const activeViewRef = useRef(activeView);
+  const ordersRoleRef = useRef(ordersRole);
+  useEffect(() => {
+    activeViewRef.current = activeView;
+    ordersRoleRef.current = ordersRole;
+  }, [activeView, ordersRole]);
+  useEffect(() => {
+    if (ordersStatusTab !== "completed") setCompletedTabOrderDetailsOpen({});
+  }, [ordersStatusTab]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   /** `orderId` -> selected (orders screen only). */
   const [orderSelection, setOrderSelection] = useState({});
   const [ordersBulkActionSubmitting, setOrdersBulkActionSubmitting] = useState(false);
-  const [recentOrderIdsByTab, setRecentOrderIdsByTab] = useState(() => readStoredRecentIdsByTab(PURCHASES_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY));
-  const [recentOrderBadgeIdsByTab, setRecentOrderBadgeIdsByTab] = useState(() => readStoredRecentIdsByTab(PURCHASES_RECENT_STATUS_BADGE_STORAGE_KEY));
-  const knownBuyerOrderStatusByIdRef = useRef({});
-  /** Baseline order ids for “first seen” badges/highlights on My purchases (and buyer Orders). */
-  const lastBuyerOrdersAttentionIdSetRef = useRef(new Set());
-  /** True after the buyer opens these Purchases queues; leaving Purchases then clears that tab’s badges. */
+  /** Order ids the user has marked “seen” per status tab (localStorage per user). Unseen rows drive badges + highlights. */
+  const [buyerOrderDismissedIdsByTab, setBuyerOrderDismissedIdsByTab] = useState(() => emptyOrderAttentionByTab());
+  const [sellerOrderDismissedIdsByTab, setSellerOrderDismissedIdsByTab] = useState(() => emptyOrderAttentionByTab());
+  /** True after the buyer opens these Purchases queues; leaving Purchases can dismiss only those tabs. */
   const buyerCancelledTabVisitedThisPurchasesSessionRef = useRef(false);
   const buyerProcessingTabVisitedThisPurchasesSessionRef = useRef(false);
   const buyerCompletedTabVisitedThisPurchasesSessionRef = useRef(false);
-  /** True after the seller opens these Orders queues; leaving Orders then clears that tab’s badges (same idea as Purchases). */
+  /** Same for seller Orders. */
   const sellerCancelledTabVisitedThisOrdersSessionRef = useRef(false);
   const sellerProcessingTabVisitedThisOrdersSessionRef = useRef(false);
   const sellerCompletedTabVisitedThisOrdersSessionRef = useRef(false);
-  /** Tracks orders status tab + screen so leaving a tab can dismiss that tab’s badges/highlights only. */
   const ordersStatusTabDismissContextRef = useRef({ key: "", tab: "pending" });
-  const [recentSellerOrderIdsByTab, setRecentSellerOrderIdsByTab] = useState(() =>
-    readStoredRecentIdsByTab(SELLER_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY),
-  );
-  const [recentSellerOrderBadgeIdsByTab, setRecentSellerOrderBadgeIdsByTab] = useState(() =>
-    readStoredRecentIdsByTab(SELLER_RECENT_STATUS_BADGE_STORAGE_KEY),
-  );
-  const knownSellerOrderStatusByIdRef = useRef({});
-  const lastSellerOrderIdSetRef = useRef(new Set());
-  const [recentlyAddedSellerOrderIds, setRecentlyAddedSellerOrderIds] = useState(() =>
-    readStoredStringArray(SELLER_PENDING_BADGE_STORAGE_KEY),
-  );
-  /** After first successful `/me/order-attention` load for this session; debounced saves wait for this. */
-  const [orderAttentionRemoteReady, setOrderAttentionRemoteReady] = useState(false);
-  const orderAttentionRemoteReadyRef = useRef(false);
-  orderAttentionRemoteReadyRef.current = orderAttentionRemoteReady;
-  const orderAttentionSkipSaveRef = useRef(false);
-  const orderAttentionSnapshotRef = useRef({
-    buyer: {
-      badgeIdsByTab: emptyOrderAttentionByTab(),
-      highlightIdsByTab: emptyOrderAttentionByTab(),
-      recentPendingIds: [],
-    },
-    seller: {
-      badgeIdsByTab: emptyOrderAttentionByTab(),
-      highlightIdsByTab: emptyOrderAttentionByTab(),
-      recentPendingIds: [],
-    },
-  });
-  /** Seller orders from `/orders?role=seller` while not on the seller Orders screen — drives nav badges for owners on Marketplace etc. */
+
+  useEffect(() => {
+    if (!user?.id) {
+      setBuyerOrderDismissedIdsByTab(emptyOrderAttentionByTab());
+      setSellerOrderDismissedIdsByTab(emptyOrderAttentionByTab());
+      return;
+    }
+    setBuyerOrderDismissedIdsByTab(readStoredRecentIdsByTab(buyerOrderDismissedStorageKey(user.id)));
+    setSellerOrderDismissedIdsByTab(readStoredRecentIdsByTab(sellerOrderDismissedStorageKey(user.id)));
+  }, [user?.id]);
+
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined" || !user?.id) return;
+      window.localStorage.setItem(buyerOrderDismissedStorageKey(user.id), JSON.stringify(buyerOrderDismissedIdsByTab));
+    } catch {
+      // ignore
+    }
+  }, [user?.id, buyerOrderDismissedIdsByTab]);
+
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined" || !user?.id) return;
+      window.localStorage.setItem(sellerOrderDismissedStorageKey(user.id), JSON.stringify(sellerOrderDismissedIdsByTab));
+    } catch {
+      // ignore
+    }
+  }, [user?.id, sellerOrderDismissedIdsByTab]);
+
+  /** Seller orders from `/orders?role=seller` while not on the seller Orders screen — Selling nav badges. */
   const [polledSellerOrders, setPolledSellerOrders] = useState(null);
+  /** Buyer orders while in seller mode — Buying nav badges. */
+  const [polledBuyerOrders, setPolledBuyerOrders] = useState(null);
+  const polledSellerOrdersRef = useRef(null);
+  const polledBuyerOrdersRef = useRef(null);
+  polledSellerOrdersRef.current = polledSellerOrders;
+  polledBuyerOrdersRef.current = polledBuyerOrders;
+
   const sellerOrdersForBadges = useMemo(() => {
     if (ordersRole === "seller" && activeView === VIEWS.ORDERS) return orders;
     if (polledSellerOrders === null) return null;
     return polledSellerOrders;
   }, [ordersRole, activeView, orders, polledSellerOrders]);
+
+  const buyerOrdersForBadges = useMemo(() => {
+    if (ordersRole === "buyer") return orders;
+    if (polledBuyerOrders === null) return null;
+    return polledBuyerOrders;
+  }, [ordersRole, orders, polledBuyerOrders]);
+
+  const dismissBuyerOrdersForTab = useCallback((tabId, list) => {
+    const ids = (list || [])
+      .filter((o) => orderMatchesOrdersStatusTab(o.status, tabId))
+      .map((o) => String(o.id || ""))
+      .filter(Boolean);
+    if (!ids.length) return;
+    setBuyerOrderDismissedIdsByTab((prev) => {
+      const set = new Set(prev[tabId] ?? []);
+      ids.forEach((id) => set.add(id));
+      return { ...prev, [tabId]: Array.from(set) };
+    });
+  }, []);
+
+  const dismissSellerOrdersForTab = useCallback((tabId, list) => {
+    const ids = (list || [])
+      .filter((o) => orderMatchesOrdersStatusTab(o.status, tabId))
+      .map((o) => String(o.id || ""))
+      .filter(Boolean);
+    if (!ids.length) return;
+    setSellerOrderDismissedIdsByTab((prev) => {
+      const set = new Set(prev[tabId] ?? []);
+      ids.forEach((id) => set.add(id));
+      return { ...prev, [tabId]: Array.from(set) };
+    });
+  }, []);
+
   const [orderListingsById, setOrderListingsById] = useState({});
   const [sellerSummary, setSellerSummary] = useState(null);
   const [expenses, setExpenses] = useState([]);
@@ -1790,6 +547,9 @@ function App() {
   communitiesRef.current = communities;
   const [communitiesLoading, setCommunitiesLoading] = useState(false);
   const [communitiesError, setCommunitiesError] = useState("");
+  /** Global Marketplace → Communities directory: filter / sort as the list grows. */
+  const [communityDirectoryQuery, setCommunityDirectoryQuery] = useState("");
+  const [communityDirectorySort, setCommunityDirectorySort] = useState("name");
   const [communityFormOpen, setCommunityFormOpen] = useState(false);
   const [communityEditingId, setCommunityEditingId] = useState(null);
   const [communityForm, setCommunityForm] = useState({
@@ -1916,6 +676,28 @@ function App() {
     },
     [listingCommunityFromProfile.id],
   );
+  const directoryCommunities = useMemo(() => {
+    let rows = communities.slice();
+    const q = communityDirectoryQuery.trim().toLowerCase();
+    if (q) {
+      rows = rows.filter((c) => {
+        const name = String(c.name || "").toLowerCase();
+        const sub = String(formatCommunityMarketplaceSubtitle(c) || "").toLowerCase();
+        const city = String(c.city || "").toLowerCase();
+        const prov = String(c.province || "").toLowerCase();
+        return name.includes(q) || sub.includes(q) || city.includes(q) || prov.includes(q);
+      });
+    }
+    const countFor = (c) => getDisplayedMemberCount(c.id, c.memberCount);
+    if (communityDirectorySort === "members") {
+      rows.sort((a, b) => countFor(b) - countFor(a) || String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" }));
+    } else {
+      rows.sort((a, b) =>
+        toTitleCase(String(a.name || "").trim()).localeCompare(toTitleCase(String(b.name || "").trim()), undefined, { sensitivity: "base" }),
+      );
+    }
+    return rows;
+  }, [communities, communityDirectoryQuery, communityDirectorySort, getDisplayedMemberCount]);
   const prevShopCommunityIdRef = useRef(null);
   /** Avoid clearing listings + duplicate fetch when only `communities` hydration updates `activeCommunity`. */
   const communityShopListingsQueryKeyRef = useRef(null);
@@ -1932,10 +714,9 @@ function App() {
   const [quickAddComment, setQuickAddComment] = useState("");
   const [quickOrderFulfillmentType, setQuickOrderFulfillmentType] = useState("pickup");
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
+  /** Read-only modal: full listing text + cart/order buyer note. */
+  const [productInspect, setProductInspect] = useState(null);
   const [recentlyAddedCartListingIds, setRecentlyAddedCartListingIds] = useState(() => readStoredStringArray(CART_RECENT_BADGE_STORAGE_KEY));
-  const [recentlyAddedPurchaseOrderIds, setRecentlyAddedPurchaseOrderIds] = useState(() =>
-    readStoredStringArray(PURCHASES_PENDING_BADGE_STORAGE_KEY),
-  );
   const [cartItems, setCartItems] = useState([]);
   /** `listingId` → selected (cart screen only). */
   const [cartItemSelection, setCartItemSelection] = useState({});
@@ -2020,163 +801,13 @@ function App() {
       // ignore storage failures
     }
   }, [recentlyAddedCartListingIds]);
-  useEffect(() => {
-    try {
-      if (typeof window === "undefined") return;
-      window.localStorage.setItem(PURCHASES_PENDING_BADGE_STORAGE_KEY, JSON.stringify(recentlyAddedPurchaseOrderIds));
-    } catch {
-      // ignore storage failures
-    }
-  }, [recentlyAddedPurchaseOrderIds]);
-  useEffect(() => {
-    try {
-      if (typeof window === "undefined") return;
-      window.localStorage.setItem(PURCHASES_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY, JSON.stringify(recentOrderIdsByTab));
-    } catch {
-      // ignore storage failures
-    }
-  }, [recentOrderIdsByTab]);
-  useEffect(() => {
-    try {
-      if (typeof window === "undefined") return;
-      window.localStorage.setItem(PURCHASES_RECENT_STATUS_BADGE_STORAGE_KEY, JSON.stringify(recentOrderBadgeIdsByTab));
-    } catch {
-      // ignore storage failures
-    }
-  }, [recentOrderBadgeIdsByTab]);
-  useEffect(() => {
-    try {
-      if (typeof window === "undefined") return;
-      window.localStorage.setItem(SELLER_PENDING_BADGE_STORAGE_KEY, JSON.stringify(recentlyAddedSellerOrderIds));
-    } catch {
-      // ignore storage failures
-    }
-  }, [recentlyAddedSellerOrderIds]);
-  useEffect(() => {
-    try {
-      if (typeof window === "undefined") return;
-      window.localStorage.setItem(SELLER_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY, JSON.stringify(recentSellerOrderIdsByTab));
-    } catch {
-      // ignore storage failures
-    }
-  }, [recentSellerOrderIdsByTab]);
-  useEffect(() => {
-    try {
-      if (typeof window === "undefined") return;
-      window.localStorage.setItem(SELLER_RECENT_STATUS_BADGE_STORAGE_KEY, JSON.stringify(recentSellerOrderBadgeIdsByTab));
-    } catch {
-      // ignore storage failures
-    }
-  }, [recentSellerOrderBadgeIdsByTab]);
 
-  useEffect(() => {
-    if (!token) {
-      orderAttentionSkipSaveRef.current = false;
-      setOrderAttentionRemoteReady(false);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await apiRequest("/me/order-attention", { token });
-        if (cancelled) return;
-        if (data?.schemaMissing) {
-          orderAttentionSkipSaveRef.current = true;
-          setOrderAttentionRemoteReady(true);
-          return;
-        }
-        orderAttentionSkipSaveRef.current = false;
-        if (data?.buyer) {
-          setRecentOrderBadgeIdsByTab(normalizeAttentionIdsByTabObject(data.buyer.badgeIdsByTab));
-          setRecentOrderIdsByTab(normalizeAttentionIdsByTabObject(data.buyer.highlightIdsByTab));
-          setRecentlyAddedPurchaseOrderIds(normalizeRecentPendingIdsFromApi(data.buyer.recentPendingIds));
-        }
-        if (data?.seller) {
-          setRecentSellerOrderBadgeIdsByTab(normalizeAttentionIdsByTabObject(data.seller.badgeIdsByTab));
-          setRecentSellerOrderIdsByTab(normalizeAttentionIdsByTabObject(data.seller.highlightIdsByTab));
-          setRecentlyAddedSellerOrderIds(normalizeRecentPendingIdsFromApi(data.seller.recentPendingIds));
-        }
-      } catch {
-        // Keep localStorage-backed state if the API fails.
-      } finally {
-        if (!cancelled) setOrderAttentionRemoteReady(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-
-  useEffect(() => {
-    orderAttentionSnapshotRef.current = {
-      buyer: {
-        badgeIdsByTab: recentOrderBadgeIdsByTab,
-        highlightIdsByTab: recentOrderIdsByTab,
-        recentPendingIds: recentlyAddedPurchaseOrderIds,
-      },
-      seller: {
-        badgeIdsByTab: recentSellerOrderBadgeIdsByTab,
-        highlightIdsByTab: recentSellerOrderIdsByTab,
-        recentPendingIds: recentlyAddedSellerOrderIds,
-      },
-    };
-  }, [
-    recentOrderBadgeIdsByTab,
-    recentOrderIdsByTab,
-    recentlyAddedPurchaseOrderIds,
-    recentSellerOrderBadgeIdsByTab,
-    recentSellerOrderIdsByTab,
-    recentlyAddedSellerOrderIds,
-  ]);
-
-  useEffect(() => {
-    if (!token || !orderAttentionRemoteReady || orderAttentionSkipSaveRef.current) return;
-    const tid = window.setTimeout(() => {
-      void apiRequest("/me/order-attention", {
-        method: "PUT",
-        token,
-        body: orderAttentionSnapshotRef.current,
-      }).catch(() => {});
-    }, 900);
-    return () => window.clearTimeout(tid);
-  }, [
-    token,
-    orderAttentionRemoteReady,
-    recentOrderBadgeIdsByTab,
-    recentOrderIdsByTab,
-    recentlyAddedPurchaseOrderIds,
-    recentSellerOrderBadgeIdsByTab,
-    recentSellerOrderIdsByTab,
-    recentlyAddedSellerOrderIds,
-  ]);
-
-  /** Same `/me/order-attention` PUT as the debounced effect; call before losing the session so seller + buyer queues persist. */
-  const flushOrderAttentionToServer = useCallback(async (authToken) => {
-    const t = String(authToken || "").trim();
-    if (!t || !orderAttentionRemoteReadyRef.current || orderAttentionSkipSaveRef.current) return;
-    try {
-      await apiRequest("/me/order-attention", {
-        method: "PUT",
-        token: t,
-        body: orderAttentionSnapshotRef.current,
-      });
-    } catch {
-      // Token may already be invalid; localStorage still holds queues until next login.
-    }
-  }, []);
-
-  useEffect(() => {
-    const onPageHide = () => {
-      void flushOrderAttentionToServer(authTokenRef.current);
-    };
-    window.addEventListener("pagehide", onPageHide);
-    return () => window.removeEventListener("pagehide", onPageHide);
-  }, [flushOrderAttentionToServer]);
-
-  /** Clear order badges/highlights when leaving My purchases or Orders (tab-switch rules elsewhere; seller leave mirrors buyer Purchases). */
+  /** Dismiss queues when leaving Purchases / Orders or switching tabs (localStorage-backed). */
   const ordersNavPrevRef = useRef({ view: activeView, role: ordersRole });
   useEffect(() => {
     const prev = ordersNavPrevRef.current;
+    const buyerList = buyerOrdersForBadges ?? [];
+    const sellerList = sellerOrdersForBadges ?? [];
     const leftMyPurchases = prev.view === VIEWS.MY_PURCHASES && activeView !== VIEWS.MY_PURCHASES;
     const leftOrders = prev.view === VIEWS.ORDERS && activeView !== VIEWS.ORDERS;
     if (leftMyPurchases) {
@@ -2186,20 +817,10 @@ function App() {
       buyerCancelledTabVisitedThisPurchasesSessionRef.current = false;
       buyerProcessingTabVisitedThisPurchasesSessionRef.current = false;
       buyerCompletedTabVisitedThisPurchasesSessionRef.current = false;
-      setRecentOrderBadgeIdsByTab((p) => ({
-        pending: [],
-        processing: dismissProcessing ? [] : [...(p.processing ?? [])],
-        completed: dismissCompleted ? [] : [...(p.completed ?? [])],
-        cancelled: dismissCancelled ? [] : [...(p.cancelled ?? [])],
-      }));
-      setRecentOrderIdsByTab((p) => ({
-        pending: [],
-        processing: dismissProcessing ? [] : [...(p.processing ?? [])],
-        completed: dismissCompleted ? [] : [...(p.completed ?? [])],
-        cancelled: dismissCancelled ? [] : [...(p.cancelled ?? [])],
-      }));
-      setRecentlyAddedPurchaseOrderIds([]);
-      lastBuyerOrdersAttentionIdSetRef.current = new Set();
+      dismissBuyerOrdersForTab("pending", buyerList);
+      if (dismissProcessing) dismissBuyerOrdersForTab("processing", buyerList);
+      if (dismissCompleted) dismissBuyerOrdersForTab("completed", buyerList);
+      if (dismissCancelled) dismissBuyerOrdersForTab("cancelled", buyerList);
     }
     if (leftOrders) {
       if (prev.role === "seller") {
@@ -2209,47 +830,42 @@ function App() {
         sellerCancelledTabVisitedThisOrdersSessionRef.current = false;
         sellerProcessingTabVisitedThisOrdersSessionRef.current = false;
         sellerCompletedTabVisitedThisOrdersSessionRef.current = false;
-        setRecentSellerOrderBadgeIdsByTab((p) => ({
-          pending: [],
-          processing: dismissProcessing ? [] : [...(p.processing ?? [])],
-          completed: dismissCompleted ? [] : [...(p.completed ?? [])],
-          cancelled: dismissCancelled ? [] : [...(p.cancelled ?? [])],
-        }));
-        setRecentSellerOrderIdsByTab((p) => ({
-          pending: [],
-          processing: dismissProcessing ? [] : [...(p.processing ?? [])],
-          completed: dismissCompleted ? [] : [...(p.completed ?? [])],
-          cancelled: dismissCancelled ? [] : [...(p.cancelled ?? [])],
-        }));
-        setRecentlyAddedSellerOrderIds([]);
-        lastSellerOrderIdSetRef.current = new Set();
+        dismissSellerOrdersForTab("pending", sellerList);
+        if (dismissProcessing) dismissSellerOrdersForTab("processing", sellerList);
+        if (dismissCompleted) dismissSellerOrdersForTab("completed", sellerList);
+        if (dismissCancelled) dismissSellerOrdersForTab("cancelled", sellerList);
       }
       if (prev.role === "buyer") {
-        setRecentOrderBadgeIdsByTab(emptyOrderAttentionByTab());
-        setRecentOrderIdsByTab(emptyOrderAttentionByTab());
-        setRecentlyAddedPurchaseOrderIds([]);
-        lastBuyerOrdersAttentionIdSetRef.current = new Set();
-        persistBuyerOrderAttentionToStorage();
+        setBuyerOrderDismissedIdsByTab((prevTabs) => {
+          const next = { ...prevTabs };
+          for (const tab of RECENT_ORDER_TAB_KEYS) {
+            const ids = buyerList
+              .filter((o) => orderMatchesOrdersStatusTab(o.status, tab))
+              .map((o) => String(o.id || ""))
+              .filter(Boolean);
+            const set = new Set(next[tab] ?? []);
+            ids.forEach((id) => set.add(id));
+            next[tab] = Array.from(set);
+          }
+          return next;
+        });
       }
     }
     const enteredMyPurchases = prev.view !== VIEWS.MY_PURCHASES && activeView === VIEWS.MY_PURCHASES;
     if (enteredMyPurchases) {
-      lastBuyerOrdersAttentionIdSetRef.current = new Set();
       buyerCancelledTabVisitedThisPurchasesSessionRef.current = false;
       buyerProcessingTabVisitedThisPurchasesSessionRef.current = false;
       buyerCompletedTabVisitedThisPurchasesSessionRef.current = false;
     }
     const enteredSellerOrders = prev.view !== VIEWS.ORDERS && activeView === VIEWS.ORDERS && ordersRole === "seller";
     if (enteredSellerOrders) {
-      lastSellerOrderIdSetRef.current = new Set();
       sellerCancelledTabVisitedThisOrdersSessionRef.current = false;
       sellerProcessingTabVisitedThisOrdersSessionRef.current = false;
       sellerCompletedTabVisitedThisOrdersSessionRef.current = false;
     }
     ordersNavPrevRef.current = { view: activeView, role: ordersRole };
-  }, [activeView, ordersRole]);
+  }, [activeView, ordersRole, buyerOrdersForBadges, sellerOrdersForBadges, dismissBuyerOrdersForTab, dismissSellerOrdersForTab]);
 
-  /** Remember which buyer Purchases queues were opened so leaving the screen can dismiss only those. */
   useEffect(() => {
     if (activeView !== VIEWS.MY_PURCHASES || ordersRole !== "buyer") return;
     if (ordersStatusTab === "cancelled") buyerCancelledTabVisitedThisPurchasesSessionRef.current = true;
@@ -2257,7 +873,6 @@ function App() {
     if (ordersStatusTab === "completed") buyerCompletedTabVisitedThisPurchasesSessionRef.current = true;
   }, [activeView, ordersRole, ordersStatusTab]);
 
-  /** Remember which seller Orders queues were opened (same pattern as buyer Purchases). */
   useEffect(() => {
     if (activeView !== VIEWS.ORDERS || ordersRole !== "seller") return;
     if (ordersStatusTab === "cancelled") sellerCancelledTabVisitedThisOrdersSessionRef.current = true;
@@ -2265,14 +880,6 @@ function App() {
     if (ordersStatusTab === "completed") sellerCompletedTabVisitedThisOrdersSessionRef.current = true;
   }, [activeView, ordersRole, ordersStatusTab]);
 
-  /**
-   * **My purchases** (buyer) and **Orders** as buyer: switching status tabs clears badges + row highlights
-   * for the tab you leave. For buyer queues, Processing / Completed / Cancelled attention is not cleared
-   * when *entering* those tabs (badges/highlights stay until you switch away or leave the screen).
-   *
-   * **Orders** as seller: clearing on *enter* each tab as well so tab + header badges reflect “seen”
-   * queues without visiting every pill first.
-   */
   useEffect(() => {
     const key =
       ordersRole === "buyer" && activeView === VIEWS.MY_PURCHASES
@@ -2287,412 +894,23 @@ function App() {
     const leaving = ctx.tab;
     const entering = ordersStatusTab;
     const leavingIsTab = RECENT_ORDER_TAB_KEYS.includes(leaving);
-    const deferQueueTabEnter = (k, t) =>
-      k !== "seller-ord" &&
-      (k === "buyer-mp" || k === "buyer-ord") &&
-      (t === "cancelled" || t === "processing" || t === "completed");
-    if (key === ctx.key && key !== "other" && leaving !== entering && RECENT_ORDER_TAB_KEYS.includes(entering)) {
+    if (key === ctx.key && key !== "other" && leaving !== entering && RECENT_ORDER_TAB_KEYS.includes(entering) && leavingIsTab) {
+      const buyerList = buyerOrdersForBadges ?? [];
+      const sellerList = sellerOrdersForBadges ?? [];
       if (key.startsWith("buyer")) {
-        setRecentOrderBadgeIdsByTab((p) => {
-          const next = { ...p };
-          if (!deferQueueTabEnter(key, entering)) next[entering] = [];
-          if (leavingIsTab) next[leaving] = [];
-          return next;
-        });
-        setRecentOrderIdsByTab((p) => {
-          const next = { ...p };
-          if (!deferQueueTabEnter(key, entering)) next[entering] = [];
-          if (leavingIsTab) next[leaving] = [];
-          return next;
-        });
-        if (entering === "pending" || leaving === "pending") {
-          setRecentlyAddedPurchaseOrderIds([]);
-        }
+        dismissBuyerOrdersForTab(leaving, buyerList);
       } else if (key === "seller-ord") {
-        setRecentSellerOrderBadgeIdsByTab((p) => {
-          const next = { ...p };
-          if (!deferQueueTabEnter(key, entering)) next[entering] = [];
-          if (leavingIsTab) next[leaving] = [];
-          return next;
-        });
-        setRecentSellerOrderIdsByTab((p) => {
-          const next = { ...p };
-          if (!deferQueueTabEnter(key, entering)) next[entering] = [];
-          if (leavingIsTab) next[leaving] = [];
-          return next;
-        });
-        if (entering === "pending" || leaving === "pending") {
-          setRecentlyAddedSellerOrderIds([]);
-        }
+        dismissSellerOrdersForTab(leaving, sellerList);
+        dismissSellerOrdersForTab(entering, sellerList);
       }
     }
     ordersStatusTabDismissContextRef.current = { key, tab: ordersStatusTab };
-  }, [ordersStatusTab, activeView, ordersRole]);
+  }, [ordersStatusTab, activeView, ordersRole, buyerOrdersForBadges, sellerOrdersForBadges, dismissBuyerOrdersForTab, dismissSellerOrdersForTab]);
 
-  useEffect(() => {
-    if (ordersRole !== "buyer") return;
-    if (orders.length === 0) {
-      if (ordersLoading) return;
-      const onBuyerBadgeScreen =
-        activeView === VIEWS.MY_PURCHASES || (activeView === VIEWS.ORDERS && ordersRole === "buyer");
-      // Avoid wiping persisted tab badges (Processing / Completed / Cancelled) while on Cart/Marketplace with an empty list.
-      if (!onBuyerBadgeScreen) return;
-      knownBuyerOrderStatusByIdRef.current = {};
-      setRecentOrderIdsByTab((prev) => {
-        if (
-          !(prev.pending?.length) &&
-          !prev.processing.length &&
-          !prev.completed.length &&
-          !prev.cancelled.length
-        ) {
-          return prev;
-        }
-        return { pending: [], processing: [], completed: [], cancelled: [] };
-      });
-      setRecentOrderBadgeIdsByTab((prev) => {
-        if (
-          !(prev.pending?.length) &&
-          !prev.processing.length &&
-          !prev.completed.length &&
-          !prev.cancelled.length
-        ) {
-          return prev;
-        }
-        return { pending: [], processing: [], completed: [], cancelled: [] };
-      });
-      return;
-    }
-    const previous = knownBuyerOrderStatusByIdRef.current || {};
-    const next = {};
-    const updates = { pending: [], processing: [], completed: [], cancelled: [] };
-    const existingIds = new Set();
-    for (const order of orders) {
-      const id = String(order?.id || "");
-      if (!id) continue;
-      existingIds.add(id);
-      const rawNew = String(order?.status || "").toLowerCase();
-      const prevStatus = String(previous[id] || "").toLowerCase();
-      const carriedStatus = rawNew || prevStatus;
-      next[id] = carriedStatus;
-      if (prevStatus && rawNew && prevStatus !== rawNew) {
-        const targetTab = orderStatusToTabId(rawNew);
-        if (targetTab === "pending" || targetTab === "processing" || targetTab === "completed" || targetTab === "cancelled") {
-          updates[targetTab].push(id);
-        }
-      }
-    }
-    knownBuyerOrderStatusByIdRef.current = next;
-
-    const orderById = new Map();
-    for (const order of orders) {
-      const oid = String(order?.id || "");
-      if (!oid) continue;
-      orderById.set(oid, order);
-    }
-    const filterBuyerIdsForTab = (ids, tabId) =>
-      (ids || []).filter((id) => {
-        if (!existingIds.has(id)) return false;
-        const st = String(orderById.get(id)?.status || "").toLowerCase();
-        if (!st) return true;
-        return orderMatchesOrdersStatusTab(orderById.get(id)?.status, tabId);
-      });
-    setRecentOrderIdsByTab((prev) => {
-      const merged = {
-        pending: filterBuyerIdsForTab(prev.pending ?? [], "pending"),
-        processing: filterBuyerIdsForTab(prev.processing, "processing"),
-        completed: filterBuyerIdsForTab(prev.completed, "completed"),
-        cancelled: filterBuyerIdsForTab(prev.cancelled, "cancelled"),
-      };
-      for (const tab of RECENT_ORDER_TAB_KEYS) {
-        if (!updates[tab].length) continue;
-        const set = new Set(merged[tab]);
-        updates[tab].forEach((id) => set.add(id));
-        merged[tab] = Array.from(set);
-      }
-      return merged;
-    });
-    setRecentOrderBadgeIdsByTab((prev) => {
-      const merged = {
-        pending: filterBuyerIdsForTab(prev.pending ?? [], "pending"),
-        processing: filterBuyerIdsForTab(prev.processing, "processing"),
-        completed: filterBuyerIdsForTab(prev.completed, "completed"),
-        cancelled: filterBuyerIdsForTab(prev.cancelled, "cancelled"),
-      };
-      for (const tab of RECENT_ORDER_TAB_KEYS) {
-        if (!updates[tab].length) continue;
-        const set = new Set(merged[tab]);
-        updates[tab].forEach((id) => set.add(id));
-        merged[tab] = Array.from(set);
-      }
-      return merged;
-    });
-    setRecentlyAddedPurchaseOrderIds((prev) => {
-      if (!prev.length) return prev;
-      const next = prev.filter((id) => {
-        if (!existingIds.has(String(id))) return false;
-        const st = String(orderById.get(String(id))?.status || "").toLowerCase();
-        if (!st) return true;
-        return orderMatchesOrdersStatusTab(orderById.get(String(id))?.status, "pending");
-      });
-      return next.length === prev.length && next.every((v, i) => v === prev[i]) ? prev : next;
-    });
-  }, [orders, ordersRole, ordersLoading]);
-
-  /** Buyer: badge + highlight every order by its current tab the first time it appears in `/orders?role=buyer` (any screen). */
-  useEffect(() => {
-    if (ordersRole !== "buyer") return;
-    const appendBuyerAttentionForTab = (tab, ids) => {
-      if (!RECENT_ORDER_TAB_KEYS.includes(tab) || !ids.length) return;
-      if (tab === "pending") {
-        setRecentlyAddedPurchaseOrderIds((prevList) => {
-          const set = new Set(prevList);
-          ids.forEach((id) => set.add(id));
-          return Array.from(set);
-        });
-      }
-      setRecentOrderBadgeIdsByTab((p) => {
-        const set = new Set(p[tab] ?? []);
-        ids.forEach((id) => set.add(id));
-        return { ...p, [tab]: Array.from(set) };
-      });
-      setRecentOrderIdsByTab((p) => {
-        const set = new Set(p[tab] ?? []);
-        ids.forEach((id) => set.add(id));
-        return { ...p, [tab]: Array.from(set) };
-      });
-    };
-    if (!orders.length) {
-      if (ordersLoading) return;
-      lastBuyerOrdersAttentionIdSetRef.current = new Set();
-      return;
-    }
-    const list = orders;
-    const currentIds = list.map((o) => String(o?.id || "")).filter(Boolean);
-    const currentSet = new Set(currentIds);
-    const prev = lastBuyerOrdersAttentionIdSetRef.current;
-    if (prev.size === 0) {
-      lastBuyerOrdersAttentionIdSetRef.current = currentSet;
-      return;
-    }
-    const newIds = currentIds.filter((id) => !prev.has(id));
-    for (const id of newIds) {
-      const order = list.find((o) => String(o?.id || "") === id);
-      if (!order) continue;
-      for (const tab of RECENT_ORDER_TAB_KEYS) {
-        if (orderMatchesOrdersStatusTab(order.status, tab)) {
-          appendBuyerAttentionForTab(tab, [id]);
-          break;
-        }
-      }
-    }
-    lastBuyerOrdersAttentionIdSetRef.current = currentSet;
-  }, [orders, ordersRole, ordersLoading]);
-
-  /** Keep row highlights aligned with tab badges (baseline “new id” pass skips `appendBuyerAttentionForTab` highlights). */
-  useEffect(() => {
-    if (ordersRole !== "buyer") return;
-    if (activeView !== VIEWS.MY_PURCHASES && activeView !== VIEWS.ORDERS) return;
-    if (!orders.length) return;
-
-    const orderById = new Map();
-    for (const o of orders) {
-      const id = String(o?.id || "");
-      if (id) orderById.set(id, o);
-    }
-
-    setRecentOrderIdsByTab((highlightPrev) => {
-      let touched = false;
-      const next = { ...highlightPrev };
-      for (const tab of RECENT_ORDER_TAB_KEYS) {
-        const badgeIds = recentOrderBadgeIdsByTab[tab] || [];
-        if (!badgeIds.length) continue;
-        const existing = new Set((next[tab] || []).map(String));
-        let tabTouched = false;
-        for (const bid of badgeIds) {
-          const id = String(bid);
-          if (!orderById.has(id)) continue;
-          const o = orderById.get(id);
-          const st = String(o?.status || "").toLowerCase();
-          if (st && !orderMatchesOrdersStatusTab(o.status, tab)) continue;
-          if (!existing.has(id)) {
-            existing.add(id);
-            tabTouched = true;
-          }
-        }
-        if (tabTouched) {
-          next[tab] = Array.from(existing);
-          touched = true;
-        }
-      }
-      return touched ? next : highlightPrev;
-    });
-  }, [orders, ordersRole, activeView, recentOrderBadgeIdsByTab]);
-
-  useEffect(() => {
-    const list = sellerOrdersForBadges;
-    if (list === null) return;
-    const onSellerOrdersScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
-    if (list.length === 0) {
-      if (onSellerOrdersScreen && ordersLoading) return;
-      knownSellerOrderStatusByIdRef.current = {};
-      lastSellerOrderIdSetRef.current = new Set();
-      if (onSellerOrdersScreen) {
-        setRecentSellerOrderIdsByTab((prev) => {
-          if (
-            !(prev.pending?.length) &&
-            !prev.processing.length &&
-            !prev.completed.length &&
-            !prev.cancelled.length
-          ) {
-            return prev;
-          }
-          return { pending: [], processing: [], completed: [], cancelled: [] };
-        });
-        setRecentSellerOrderBadgeIdsByTab((prev) => {
-          if (
-            !(prev.pending?.length) &&
-            !prev.processing.length &&
-            !prev.completed.length &&
-            !prev.cancelled.length
-          ) {
-            return prev;
-          }
-          return { pending: [], processing: [], completed: [], cancelled: [] };
-        });
-      }
-      return;
-    }
-    const previous = knownSellerOrderStatusByIdRef.current || {};
-    const next = {};
-    const updates = { pending: [], processing: [], completed: [], cancelled: [] };
-    const existingIds = new Set();
-    for (const order of list) {
-      const id = String(order?.id || "");
-      if (!id) continue;
-      existingIds.add(id);
-      const rawNew = String(order?.status || "").toLowerCase();
-      const prevStatus = String(previous[id] || "").toLowerCase();
-      const carriedStatus = rawNew || prevStatus;
-      next[id] = carriedStatus;
-      if (prevStatus && rawNew && prevStatus !== rawNew) {
-        const targetTab = orderStatusToTabId(rawNew);
-        if (targetTab === "pending" || targetTab === "processing" || targetTab === "completed" || targetTab === "cancelled") {
-          updates[targetTab].push(id);
-        }
-      }
-    }
-    knownSellerOrderStatusByIdRef.current = next;
-    const onSellerBadgeScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
-    if (!onSellerBadgeScreen) return;
-
-    const sellerOrderById = new Map();
-    for (const order of list) {
-      const oid = String(order?.id || "");
-      if (!oid) continue;
-      sellerOrderById.set(oid, order);
-    }
-    const filterSellerIdsForTab = (ids, tabId) =>
-      (ids || []).filter((id) => {
-        if (!existingIds.has(id)) return false;
-        const st = String(sellerOrderById.get(id)?.status || "").toLowerCase();
-        if (!st) return true;
-        return orderMatchesOrdersStatusTab(sellerOrderById.get(id)?.status, tabId);
-      });
-    setRecentSellerOrderIdsByTab((prev) => {
-      const merged = {
-        pending: filterSellerIdsForTab(prev.pending ?? [], "pending"),
-        processing: filterSellerIdsForTab(prev.processing, "processing"),
-        completed: filterSellerIdsForTab(prev.completed, "completed"),
-        cancelled: filterSellerIdsForTab(prev.cancelled, "cancelled"),
-      };
-      for (const tab of RECENT_ORDER_TAB_KEYS) {
-        if (!updates[tab].length) continue;
-        const set = new Set(merged[tab]);
-        updates[tab].forEach((id) => set.add(id));
-        merged[tab] = Array.from(set);
-      }
-      return merged;
-    });
-    setRecentSellerOrderBadgeIdsByTab((prev) => {
-      const merged = {
-        pending: filterSellerIdsForTab(prev.pending ?? [], "pending"),
-        processing: filterSellerIdsForTab(prev.processing, "processing"),
-        completed: filterSellerIdsForTab(prev.completed, "completed"),
-        cancelled: filterSellerIdsForTab(prev.cancelled, "cancelled"),
-      };
-      for (const tab of RECENT_ORDER_TAB_KEYS) {
-        if (!updates[tab].length) continue;
-        const set = new Set(merged[tab]);
-        updates[tab].forEach((id) => set.add(id));
-        merged[tab] = Array.from(set);
-      }
-      return merged;
-    });
-    setRecentlyAddedSellerOrderIds((prev) => {
-      if (!prev.length) return prev;
-      const next = prev.filter((id) => {
-        if (!existingIds.has(String(id))) return false;
-        const st = String(sellerOrderById.get(String(id))?.status || "").toLowerCase();
-        if (!st) return true;
-        return orderMatchesOrdersStatusTab(sellerOrderById.get(String(id))?.status, "pending");
-      });
-      return next.length === prev.length && next.every((v, i) => v === prev[i]) ? prev : next;
-    });
-  }, [sellerOrdersForBadges, ordersRole, activeView, ordersLoading]);
-  useEffect(() => {
-    const list = sellerOrdersForBadges;
-    if (list === null) return;
-    const onSellerOrdersScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
-    const appendSellerAttentionForTab = (tab, ids) => {
-      if (!RECENT_ORDER_TAB_KEYS.includes(tab) || !ids.length) return;
-      if (tab === "pending") {
-        setRecentlyAddedSellerOrderIds((prevList) => {
-          const set = new Set(prevList);
-          ids.forEach((id) => set.add(id));
-          return Array.from(set);
-        });
-      }
-      setRecentSellerOrderBadgeIdsByTab((p) => {
-        const set = new Set(p[tab] ?? []);
-        ids.forEach((id) => set.add(id));
-        return { ...p, [tab]: Array.from(set) };
-      });
-      setRecentSellerOrderIdsByTab((p) => {
-        const set = new Set(p[tab] ?? []);
-        ids.forEach((id) => set.add(id));
-        return { ...p, [tab]: Array.from(set) };
-      });
-    };
-    if (list.length === 0) {
-      if (onSellerOrdersScreen && ordersLoading) return;
-      lastSellerOrderIdSetRef.current = new Set();
-      return;
-    }
-    const currentIds = list.map((o) => String(o?.id || "")).filter(Boolean);
-    const currentSet = new Set(currentIds);
-    const prev = lastSellerOrderIdSetRef.current;
-    if (prev.size === 0) {
-      lastSellerOrderIdSetRef.current = currentSet;
-      return;
-    }
-    const newIds = currentIds.filter((id) => !prev.has(id));
-    for (const id of newIds) {
-      const order = list.find((o) => String(o?.id || "") === id);
-      if (!order) continue;
-      for (const tab of RECENT_ORDER_TAB_KEYS) {
-        if (orderMatchesOrdersStatusTab(order.status, tab)) {
-          appendSellerAttentionForTab(tab, [id]);
-          break;
-        }
-      }
-    }
-    lastSellerOrderIdSetRef.current = currentSet;
-  }, [sellerOrdersForBadges, ordersRole, activeView, ordersLoading]);
   useEffect(() => {
     if (!token) {
-      lastSellerOrderIdSetRef.current = new Set();
-      lastBuyerOrdersAttentionIdSetRef.current = new Set();
       setPolledSellerOrders(null);
+      setPolledBuyerOrders(null);
     }
   }, [token]);
   useEffect(() => {
@@ -2706,6 +924,36 @@ function App() {
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
   const [sellerProductsView, setSellerProductsView] = useState("list");
   const [communityProductsView, setCommunityProductsView] = useState("grid");
+  /** Migrate legacy layout keys (2 / 4 / 8) to list | grid | compact. */
+  useEffect(() => {
+    setCommunityProductsView((v) => {
+      if (v === "list" || v === "grid" || v === "compact") return v;
+      if (v === "8") return "compact";
+      return "grid";
+    });
+    setSellerProductsView((v) => {
+      if (v === "list" || v === "grid" || v === "compact") return v;
+      if (v === "8") return "compact";
+      if (v === "2" || v === "4") return "grid";
+      return "list";
+    });
+  }, []);
+  const [commerceFlowViewBuyer, setCommerceFlowViewBuyer] = useState(() => readCommerceFlowFromStorage(COMMERCE_FLOW_BUYER_STORAGE_KEY));
+  const [commerceFlowViewSeller, setCommerceFlowViewSeller] = useState(() => readCommerceFlowFromStorage(COMMERCE_FLOW_SELLER_STORAGE_KEY));
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(COMMERCE_FLOW_BUYER_STORAGE_KEY, commerceFlowViewBuyer);
+    } catch {
+      /* ignore */
+    }
+  }, [commerceFlowViewBuyer]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(COMMERCE_FLOW_SELLER_STORAGE_KEY, commerceFlowViewSeller);
+    } catch {
+      /* ignore */
+    }
+  }, [commerceFlowViewSeller]);
   /** Inline notice by “Upload product” on Profile (not the global marketplace banner). */
   const [profileUploadProductNotice, setProfileUploadProductNotice] = useState("");
 
@@ -2803,17 +1051,37 @@ function App() {
   }, [token, user?.id, user?.community]);
 
   const [mobileCommunityFiltersOpen, setMobileCommunityFiltersOpen] = useState(false);
+  const [mobileBrowseCategoryQuery, setMobileBrowseCategoryQuery] = useState("");
+  const browseVerticalsForMobileDrawer = useMemo(() => {
+    const q = mobileBrowseCategoryQuery.trim().toLowerCase();
+    if (!q) return VERTICALS;
+    return VERTICALS.filter(
+      (v) => v.label.toLowerCase().includes(q) || String(v.id).toLowerCase().includes(q)
+    );
+  }, [mobileBrowseCategoryQuery]);
   const [publishFlash, setPublishFlash] = useState("");
   const [publishFlashExiting, setPublishFlashExiting] = useState(false);
   const publishFlashTimersRef = useRef({ fade: null, remove: null });
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
-    if (!mobileCommunityFiltersOpen) return undefined;
+    if (!mobileCommunityFiltersOpen) {
+      setMobileBrowseCategoryQuery("");
+      return undefined;
+    }
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
+  }, [mobileCommunityFiltersOpen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !mobileCommunityFiltersOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") setMobileCommunityFiltersOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [mobileCommunityFiltersOpen]);
 
   const [profileEditing, setProfileEditing] = useState(false);
@@ -3245,15 +1513,13 @@ function App() {
         setProfileJoinedAtResolved(true);
       } catch (error) {
         if (isUnauthorizedApiError(error)) {
-          void flushOrderAttentionToServer(token).finally(() => {
-            writeAuthToken("");
-            setToken("");
-          });
+          writeAuthToken("");
+          setToken("");
         }
         setProfileJoinedAtResolved(true);
       }
     })();
-  }, [token, user, flushOrderAttentionToServer]);
+  }, [token, user]);
 
   useEffect(() => {
     if (user || !GOOGLE_CLIENT_ID || !authPanelVisible || !googleBtnRef.current) return;
@@ -3336,11 +1602,9 @@ function App() {
         }
       } catch (error) {
         if (!cancelled && isUnauthorizedApiError(error)) {
-          void flushOrderAttentionToServer(token).finally(() => {
-            writeAuthToken("");
-            setToken("");
-            setUser(null);
-          });
+          writeAuthToken("");
+          setToken("");
+          setUser(null);
         }
         if (!cancelled) setProfileJoinedAtResolved(true);
       }
@@ -3348,7 +1612,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, activeView, flushOrderAttentionToServer]);
+  }, [token, activeView]);
 
   useEffect(() => {
     if (activeView !== VIEWS.PROFILE) {
@@ -3484,14 +1748,11 @@ function App() {
   };
 
   const logout = () => {
-    const t = token;
-    void flushOrderAttentionToServer(t).finally(() => {
-      writeAuthToken("");
-      setToken("");
-      setUser(null);
-      setAuthPanelVisible(false);
-      setShopCommunityId(null);
-    });
+    writeAuthToken("");
+    setToken("");
+    setUser(null);
+    setAuthPanelVisible(false);
+    setShopCommunityId(null);
   };
 
   const pickBrowseScope = useCallback(
@@ -3512,13 +1773,24 @@ function App() {
   const goOrders = useCallback(() => {
     setOrdersRole("seller");
     setOrdersStatusTab("pending");
+    setSelectedListingId(null);
     setActiveView(VIEWS.ORDERS);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        window.scrollTo(0, 0);
+      });
+    }
   }, []);
 
   const goMyPurchases = useCallback(() => {
     setOrdersRole("buyer");
     setOrdersStatusTab("pending");
     setActiveView(VIEWS.MY_PURCHASES);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        window.scrollTo(0, 0);
+      });
+    }
   }, []);
 
 
@@ -3551,6 +1823,11 @@ function App() {
     setShopCommunityId(null);
     setActiveView(VIEWS.BROWSE);
   }, [navigate, listingCommunityFromProfile.id]);
+
+  /** My purchases vs Sales inbox use separate saved list/grid/dense preferences. */
+  const commerceFlowOrdersView = activeView === VIEWS.MY_PURCHASES ? commerceFlowViewBuyer : commerceFlowViewSeller;
+  const setCommerceFlowOrdersView =
+    activeView === VIEWS.MY_PURCHASES ? setCommerceFlowViewBuyer : setCommerceFlowViewSeller;
 
   const visibleBrowseListings = useMemo(() => {
     if (browseQuickFilter === "all") return listings;
@@ -3623,57 +1900,49 @@ function App() {
     () => orders.filter((o) => orderMatchesOrdersStatusTab(o.status, ordersStatusTab)),
     [orders, ordersStatusTab],
   );
-  /** Sum of per-tab attention counts (same basis as tab pills) so multiple new items add up until dismissed. */
-  const purchaseNavBadgeCount = useMemo(() => {
-    if (ordersRole === "buyer") {
-      const placedIds = new Set(
-        orders
-          .filter((o) => orderMatchesOrdersStatusTab(o.status, "pending"))
-          .map((o) => String(o?.id || ""))
-          .filter(Boolean),
-      );
-      const pendingAttention = new Set();
-      (recentOrderBadgeIdsByTab.pending || []).forEach((id) => {
-        if (placedIds.has(String(id))) pendingAttention.add(String(id));
-      });
-      recentlyAddedPurchaseOrderIds.forEach((id) => {
-        if (placedIds.has(String(id))) pendingAttention.add(String(id));
-      });
-      const pro = (recentOrderBadgeIdsByTab.processing || []).length;
-      const com = (recentOrderBadgeIdsByTab.completed || []).length;
-      const can = (recentOrderBadgeIdsByTab.cancelled || []).length;
-      return pendingAttention.size + pro + com + can;
-    }
-    const s = new Set(recentlyAddedPurchaseOrderIds.map(String));
+
+  const buyerUnseenIdsByTab = useMemo(() => {
+    const list = buyerOrdersForBadges ?? [];
+    const out = emptyOrderAttentionByTab();
     for (const tab of RECENT_ORDER_TAB_KEYS) {
-      (recentOrderBadgeIdsByTab[tab] || []).forEach((id) => s.add(String(id)));
+      const dismissed = new Set((buyerOrderDismissedIdsByTab[tab] || []).map(String));
+      const rows = list.filter(
+        (o) => orderMatchesOrdersStatusTab(o.status, tab) && !dismissed.has(String(o.id || "")),
+      );
+      rows.sort((a, b) => orderRowSortMs(b) - orderRowSortMs(a));
+      out[tab] = rows.map((o) => String(o.id || "")).filter(Boolean);
     }
-    return s.size;
-  }, [ordersRole, orders, recentlyAddedPurchaseOrderIds, recentOrderBadgeIdsByTab]);
-  /** Same counting rules as `purchaseNavBadgeCount` when `ordersRole === "buyer"`, using seller order lists + attention state. */
-  const sellerNavBadgeCount = useMemo(() => {
+    return out;
+  }, [buyerOrdersForBadges, buyerOrderDismissedIdsByTab]);
+
+  const sellerUnseenIdsByTab = useMemo(() => {
     const list = sellerOrdersForBadges ?? [];
-    const placedIds = new Set(
-      list
-        .filter((o) => orderMatchesOrdersStatusTab(o.status, "pending"))
-        .map((o) => String(o?.id || ""))
-        .filter(Boolean),
-    );
-    const pendingAttention = new Set();
-    (recentSellerOrderBadgeIdsByTab.pending || []).forEach((id) => {
-      if (placedIds.has(String(id))) pendingAttention.add(String(id));
-    });
-    recentlyAddedSellerOrderIds.forEach((id) => {
-      if (placedIds.has(String(id))) pendingAttention.add(String(id));
-    });
-    const pro = (recentSellerOrderBadgeIdsByTab.processing || []).length;
-    const com = (recentSellerOrderBadgeIdsByTab.completed || []).length;
-    const can = (recentSellerOrderBadgeIdsByTab.cancelled || []).length;
-    return pendingAttention.size + pro + com + can;
-  }, [sellerOrdersForBadges, recentSellerOrderBadgeIdsByTab, recentlyAddedSellerOrderIds]);
-  const ordersTabRecentPendingIds = ordersRole === "seller" ? recentlyAddedSellerOrderIds : recentlyAddedPurchaseOrderIds;
-  const ordersTabBadgeIdsByTab = ordersRole === "seller" ? recentSellerOrderBadgeIdsByTab : recentOrderBadgeIdsByTab;
-  const ordersTabHighlightIdsByTab = ordersRole === "seller" ? recentSellerOrderIdsByTab : recentOrderIdsByTab;
+    const out = emptyOrderAttentionByTab();
+    for (const tab of RECENT_ORDER_TAB_KEYS) {
+      const dismissed = new Set((sellerOrderDismissedIdsByTab[tab] || []).map(String));
+      const rows = list.filter(
+        (o) => orderMatchesOrdersStatusTab(o.status, tab) && !dismissed.has(String(o.id || "")),
+      );
+      rows.sort((a, b) => orderRowSortMs(b) - orderRowSortMs(a));
+      out[tab] = rows.map((o) => String(o.id || "")).filter(Boolean);
+    }
+    return out;
+  }, [sellerOrdersForBadges, sellerOrderDismissedIdsByTab]);
+
+  /** Buying nav: count orders not yet dismissed (works while Selling — uses `polledBuyerOrders`). */
+  const purchaseNavBadgeCount = useMemo(
+    () => RECENT_ORDER_TAB_KEYS.reduce((sum, tab) => sum + (buyerUnseenIdsByTab[tab]?.length || 0), 0),
+    [buyerUnseenIdsByTab],
+  );
+
+  const sellerNavBadgeCount = useMemo(
+    () => RECENT_ORDER_TAB_KEYS.reduce((sum, tab) => sum + (sellerUnseenIdsByTab[tab]?.length || 0), 0),
+    [sellerUnseenIdsByTab],
+  );
+
+  const ordersTabBadgeIdsByTab = ordersRole === "seller" ? sellerUnseenIdsByTab : buyerUnseenIdsByTab;
+  const ordersTabRecentPendingIds = ordersTabBadgeIdsByTab.pending;
+
   const pendingTabPillCount = useMemo(() => {
     const placedIds = new Set(
       orders
@@ -3681,24 +1950,12 @@ function App() {
         .map((o) => String(o?.id || ""))
         .filter(Boolean),
     );
-    const ids = ordersRole === "seller" ? recentlyAddedSellerOrderIds : recentlyAddedPurchaseOrderIds;
-    const tabPending = ordersRole === "seller" ? recentSellerOrderBadgeIdsByTab.pending : recentOrderBadgeIdsByTab.pending;
-    const s = new Set();
-    (tabPending || []).forEach((id) => {
-      if (placedIds.has(String(id))) s.add(String(id));
-    });
-    ids.forEach((id) => {
-      if (placedIds.has(String(id))) s.add(String(id));
-    });
-    return s.size;
-  }, [
-    orders,
-    ordersRole,
-    recentlyAddedSellerOrderIds,
-    recentlyAddedPurchaseOrderIds,
-    recentSellerOrderBadgeIdsByTab.pending,
-    recentOrderBadgeIdsByTab.pending,
-  ]);
+    let n = 0;
+    for (const id of ordersTabBadgeIdsByTab.pending || []) {
+      if (placedIds.has(String(id))) n += 1;
+    }
+    return n;
+  }, [orders, ordersTabBadgeIdsByTab.pending]);
 
   const listingDescriptionCount = useMemo(() => String(listingForm.description || "").length, [listingForm.description]);
   const listingFormDirty = useMemo(() => {
@@ -3952,20 +2209,6 @@ function App() {
           token,
           body: { listingId, fulfillmentType, quantity: qty },
         });
-        const createdOrderId = String(created?.order?.id || "");
-        if (createdOrderId) {
-          setRecentlyAddedPurchaseOrderIds((prev) => (prev.includes(createdOrderId) ? prev : [...prev, createdOrderId]));
-          setRecentOrderBadgeIdsByTab((prev) => {
-            const set = new Set(prev.pending ?? []);
-            set.add(createdOrderId);
-            return { ...prev, pending: Array.from(set) };
-          });
-          setRecentOrderIdsByTab((prev) => {
-            const set = new Set(prev.pending ?? []);
-            set.add(createdOrderId);
-            return { ...prev, pending: Array.from(set) };
-          });
-        }
         successCount += 1;
         startCartItemFadeOut(listingId);
         try {
@@ -3995,24 +2238,9 @@ function App() {
     pushMarketplaceToast("Could not check out selected items.");
   }, [cancelCartItemFadeOut, goMyPurchases, mergeCartItemsPreservingOrder, selectedCartItems, startCartItemFadeOut, token]);
 
-  const appendSellerOrderTabNotifications = useCallback((tab, orderIds) => {
-    if (!RECENT_ORDER_TAB_KEYS.includes(tab)) return;
-    const ids = (Array.isArray(orderIds) ? orderIds : []).map((id) => String(id || "")).filter(Boolean);
-    if (!ids.length) return;
-    setRecentSellerOrderBadgeIdsByTab((prev) => {
-      const set = new Set(prev[tab] ?? []);
-      ids.forEach((id) => set.add(id));
-      return { ...prev, [tab]: Array.from(set) };
-    });
-    setRecentSellerOrderIdsByTab((prev) => {
-      const set = new Set(prev[tab] ?? []);
-      ids.forEach((id) => set.add(id));
-      return { ...prev, [tab]: Array.from(set) };
-    });
-  }, []);
-
   const applyTransitionToSelectedOrders = useCallback(
     async (transition, label) => {
+      const transitionNorm = String(transition ?? "").trim();
       if (!selectedOrders.length) {
         pushMarketplaceToast("Select at least one order first.");
         return;
@@ -4028,9 +2256,9 @@ function App() {
       const acceptedOrderIds = [];
       for (const order of selectedOrders) {
         try {
-          await apiRequest(`/orders/${order.id}`, { method: "PATCH", token, body: { transition } });
+          await apiRequest(`/orders/${order.id}`, { method: "PATCH", token, body: { transition: transitionNorm } });
           successCount += 1;
-          if (transition === "seller_accept") acceptedOrderIds.push(String(order.id || ""));
+          if (transitionNorm === "seller_accept") acceptedOrderIds.push(String(order.id || ""));
         } catch {
           failedCount += 1;
         }
@@ -4040,9 +2268,6 @@ function App() {
         setOrders(data.orders || []);
       } catch {
         // Keep prior rows if refresh fails; result banner still informs user.
-      }
-      if (transition === "seller_accept" && ordersRole === "seller" && acceptedOrderIds.length) {
-        appendSellerOrderTabNotifications("processing", acceptedOrderIds);
       }
       setOrdersBulkActionSubmitting(false);
       setOrderSelection({});
@@ -4056,7 +2281,7 @@ function App() {
         pushMarketplaceToast(`Could not ${label.toLowerCase()} selected orders.`);
       }
     },
-    [appendSellerOrderTabNotifications, selectedOrders, token, ordersRole],
+    [selectedOrders, token, ordersRole],
   );
 
   useEffect(() => {
@@ -4282,7 +2507,7 @@ function App() {
       }
     };
     void run();
-    const id = window.setInterval(run, 10000);
+    const id = window.setInterval(run, 90000);
     const onVisibility = () => {
       if (document.visibilityState === "visible") void run();
     };
@@ -4294,57 +2519,135 @@ function App() {
     };
   }, [token, ordersRole]);
 
+  /** Refetch seller-side order list for Sales inbox rows or off-screen nav badges (same API as HTTP polling). */
+  const refreshSellerOrdersSnapshot = useCallback(async (isCancelled) => {
+    const cancelledFn = typeof isCancelled === "function" ? isCancelled : () => false;
+    const t = authTokenRef.current;
+    if (!t || cancelledFn()) return;
+    try {
+      const data = await apiRequest("/orders?role=seller", { token: t });
+      if (cancelledFn()) return;
+      const list = data.orders || [];
+      const onSellerOrdersScreen = ordersRoleRef.current === "seller" && activeViewRef.current === VIEWS.ORDERS;
+      if (onSellerOrdersScreen) setOrders(list);
+      else setPolledSellerOrders(list);
+    } catch {
+      if (cancelledFn()) return;
+      const onSellerOrdersScreen = ordersRoleRef.current === "seller" && activeViewRef.current === VIEWS.ORDERS;
+      if (!onSellerOrdersScreen) setPolledSellerOrders([]);
+    }
+  }, []);
+
+  /** Refetch buyer orders when Supabase Realtime reports a row change (RLS ensures only your parties). */
+  const refreshBuyerOrdersSnapshot = useCallback(async (isCancelled) => {
+    const cancelledFn = typeof isCancelled === "function" ? isCancelled : () => false;
+    const t = authTokenRef.current;
+    if (!t || cancelledFn()) return;
+    try {
+      const data = await apiRequest("/orders?role=buyer", { token: t });
+      if (cancelledFn()) return;
+      const list = data.orders || [];
+      if (ordersRoleRef.current === "buyer") setOrders(list);
+      else setPolledBuyerOrders(list);
+    } catch {
+      if (cancelledFn()) return;
+      if (ordersRoleRef.current !== "buyer") setPolledBuyerOrders([]);
+    }
+  }, []);
+
   /** Keep seller `orders` fresh on the Orders screen (off-screen seller poll skips this view). */
   useEffect(() => {
     if (!token) return undefined;
     if (ordersRole !== "seller") return undefined;
     if (activeView !== VIEWS.ORDERS) return undefined;
     let cancelled = false;
-    const run = async () => {
-      try {
-        const data = await apiRequest("/orders?role=seller", { token });
-        if (!cancelled) setOrders(data.orders || []);
-      } catch {
-        // Keep existing rows on transient errors.
-      }
-    };
-    const id = window.setInterval(run, 10000);
+    const isCancelled = () => cancelled;
+    void refreshSellerOrdersSnapshot(isCancelled);
+    const id = window.setInterval(() => void refreshSellerOrdersSnapshot(isCancelled), SELLER_ORDERS_POLL_MS);
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void run();
+      if (document.visibilityState === "visible") void refreshSellerOrdersSnapshot(isCancelled);
     };
+    const onFocus = () => void refreshSellerOrdersSnapshot(isCancelled);
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
     };
-  }, [token, activeView, ordersRole]);
+  }, [token, activeView, ordersRole, refreshSellerOrdersSnapshot]);
 
   useEffect(() => {
     if (!token) return undefined;
     const onSellerOrdersScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
     if (onSellerOrdersScreen) return undefined;
     let cancelled = false;
-    const run = async () => {
-      try {
-        const data = await apiRequest("/orders?role=seller", { token });
-        if (!cancelled) setPolledSellerOrders(data.orders || []);
-      } catch {
-        if (!cancelled) setPolledSellerOrders([]);
-      }
-    };
-    void run();
-    const id = window.setInterval(run, 25000);
+    const isCancelled = () => cancelled;
+    void refreshSellerOrdersSnapshot(isCancelled);
+    const id = window.setInterval(() => void refreshSellerOrdersSnapshot(isCancelled), SELLER_ORDERS_POLL_MS);
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void run();
+      if (document.visibilityState === "visible") void refreshSellerOrdersSnapshot(isCancelled);
     };
+    const onFocus = () => void refreshSellerOrdersSnapshot(isCancelled);
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
     };
-  }, [token, activeView, ordersRole]);
+  }, [token, activeView, ordersRole, refreshSellerOrdersSnapshot]);
+
+  /** While Selling, keep a buyer order snapshot for Buying nav badges (mirrors off-screen seller poll). */
+  useEffect(() => {
+    if (!token) return undefined;
+    if (ordersRole !== "seller") return undefined;
+    let cancelled = false;
+    const isCancelled = () => cancelled;
+    void refreshBuyerOrdersSnapshot(isCancelled);
+    const id = window.setInterval(() => void refreshBuyerOrdersSnapshot(isCancelled), SELLER_ORDERS_POLL_MS);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refreshBuyerOrdersSnapshot(isCancelled);
+    };
+    const onFocus = () => void refreshBuyerOrdersSnapshot(isCancelled);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [token, ordersRole, refreshBuyerOrdersSnapshot]);
+
+  /**
+   * Supabase Realtime: refetch order lists when `public.orders` rows you are party to change (RLS filters events).
+   * Debounced to coalesce bursts; HTTP polling above is a slow fallback if the socket is down.
+   */
+  useEffect(() => {
+    const supabase = createSupabaseClient();
+    if (!supabase || !token || !user?.id) return undefined;
+    let debounceTimer = null;
+    const flush = () => {
+      debounceTimer = null;
+      void refreshSellerOrdersSnapshot(() => false);
+      void refreshBuyerOrdersSnapshot(() => false);
+    };
+    const onOrdersChange = () => {
+      if (debounceTimer) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(flush, ORDERS_REALTIME_DEBOUNCE_MS);
+    };
+    const channel = supabase
+      .channel(`lm-orders-rt:${String(user.id)}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, onOrdersChange)
+      .subscribe();
+    return () => {
+      if (debounceTimer) window.clearTimeout(debounceTimer);
+      void supabase.removeChannel(channel);
+    };
+  }, [token, user?.id, refreshSellerOrdersSnapshot, refreshBuyerOrdersSnapshot]);
 
   useEffect(() => {
     if (!token || (activeView !== VIEWS.ORDERS && activeView !== VIEWS.MY_PURCHASES) || !orders.length) return undefined;
@@ -4611,6 +2914,7 @@ function App() {
     const candidate =
       listings.find((x) => String(x.id) === id) ||
       favoritesList.find((x) => String(x.id) === id) ||
+      (quickAddListing && String(quickAddListing.id) === id ? quickAddListing : null) ||
       (listingDetail && String(listingDetail.id) === id ? listingDetail : null) ||
       sellerListings.find((x) => String(x.id) === id) ||
       null;
@@ -4652,23 +2956,41 @@ function App() {
     }
   };
 
-  const closeListingDetail = () => {
-    setSelectedListingId(null);
-    navigate("/", { replace: true });
-  };
-
-  const patchOrderTransition = async (orderId, transition) => {
+  const patchOrderTransition = async (orderId, transition, options = {}) => {
+    const { orderIds, successMessage } = options;
+    const transitionNorm = String(transition ?? "").trim();
     clearMarketplaceToasts();
     try {
-      await apiRequest(`/orders/${orderId}`, { method: "PATCH", token, body: { transition } });
+      const ids =
+        transitionNorm === "buyer_ack_receipt" && Array.isArray(orderIds) && orderIds.length > 0
+          ? [...new Set(orderIds.map((x) => String(x || "")).filter(Boolean))]
+          : [String(orderId || "")].filter(Boolean);
+      for (const id of ids) {
+        await apiRequest(`/orders/${id}`, { method: "PATCH", token, body: { transition: transitionNorm } });
+      }
       const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
       setOrders(data.orders || []);
-      if (transition === "seller_accept" && ordersRole === "seller" && orderId) {
-        appendSellerOrderTabNotifications("processing", [String(orderId)]);
-      }
-      pushMarketplaceToast("Order updated.");
+      pushMarketplaceToast(successMessage || "Order updated.");
     } catch (e) {
       pushMarketplaceToast(e.message || "Could not update order.");
+    }
+  };
+
+  const toggleCompletedTabOrderDetails = useCallback((orderId) => {
+    const k = String(orderId || "");
+    if (!k) return;
+    setCompletedTabOrderDetailsOpen((prev) => ({ ...prev, [k]: !prev[k] }));
+  }, []);
+
+  const submitOrderReview = async (orderId, rating, reviewText) => {
+    clearMarketplaceToasts();
+    try {
+      await apiRequest(`/orders/${orderId}/review`, { method: "PUT", token, body: { rating, reviewText } });
+      const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+      setOrders(data.orders || []);
+      pushMarketplaceToast("Thanks for your feedback.");
+    } catch (e) {
+      pushMarketplaceToast(e.message || "Could not save review.");
     }
   };
 
@@ -4905,13 +3227,52 @@ function App() {
     const mode = actionType === "buy" ? "buy" : "cart";
     const listingModes = Array.isArray(listing.fulfillmentModes) && listing.fulfillmentModes.length ? listing.fulfillmentModes : ["pickup"];
     const defaultFulfillment = listingModes.includes("pickup") ? "pickup" : listingModes[0];
+    const savedPref = readQuickOrderFulfillmentPref();
+    const initialFulfillment = savedPref && listingModes.includes(savedPref) ? savedPref : defaultFulfillment;
     setQuickAddListing(listing);
     setQuickActionType(mode);
-    setQuickOrderFulfillmentType(defaultFulfillment);
+    setQuickOrderFulfillmentType(initialFulfillment);
     setQuickAddQuantity("1");
     setQuickAddComment("");
     setQuickAddModalOpen(true);
   };
+
+  const openListingFromPurchasedOrder = (listing) => {
+    if (!listing?.id) {
+      pushMarketplaceToast("Listing details are not available.");
+      return;
+    }
+    const stock = Math.max(0, Number(listing.quantity) || 0);
+    const hasPrice = Number.isFinite(Number(listing.priceCents));
+    if (stock > 0 && hasPrice) {
+      openQuickAddModal(listing, "buy");
+      return;
+    }
+    if (stock <= 0) {
+      pushMarketplaceToast("This listing is out of stock.");
+      return;
+    }
+    setSelectedListingId(String(listing.id));
+  };
+
+  /** Deep link `/l/:id` or fetch fallback: open the standard listing modal instead of the legacy inline panel. */
+  useEffect(() => {
+    if (!listingDetail?.id || !selectedListingId) return undefined;
+    if (String(listingDetail.id) !== String(selectedListingId)) return undefined;
+    if (quickAddModalOpen) return undefined;
+    const stock = Math.max(0, Number(listingDetail.quantity) || 0);
+    const fromListingShareLink = Boolean(routeListingId && String(routeListingId) === String(listingDetail.id));
+    if (stock <= 0) {
+      pushMarketplaceToast("This listing is out of stock.");
+      setSelectedListingId(null);
+      if (fromListingShareLink) navigate("/", { replace: true });
+      return undefined;
+    }
+    openQuickAddModal(listingDetail, "buy");
+    setSelectedListingId(null);
+    if (fromListingShareLink) navigate("/", { replace: true });
+    return undefined;
+  }, [listingDetail, selectedListingId, quickAddModalOpen, navigate, routeListingId]);
 
   const closeQuickAddModal = () => {
     if (quickAddSubmitting) return;
@@ -4922,6 +3283,37 @@ function App() {
     setQuickAddQuantity("1");
     setQuickAddComment("");
   };
+
+  const closeProductInspect = useCallback(() => setProductInspect(null), []);
+
+  const openProductInspect = useCallback((listingLike, extra = {}) => {
+    if (!listingLike) return;
+    const priceCents = Number(listingLike.priceCents ?? listingLike.unitPriceCents) || 0;
+    setProductInspect({
+      title: String(listingLike.title || "Product"),
+      imageUrl: listingLike.imageUrl,
+      priceCents,
+      description: String(listingLike.description || ""),
+      comment: String(extra.comment ?? "").trim(),
+      commentSectionRequired: Boolean(extra.commentSectionRequired),
+      commentHeading: extra.commentHeading || "Your note to the seller",
+      fulfillmentModes: listingLike.fulfillmentModes,
+      quantity:
+        extra.quantity != null && Number.isFinite(Number(extra.quantity)) ? Number(extra.quantity) : null,
+      quantityLabel: extra.quantityLabel || "Quantity",
+      subtitle: extra.subtitle || "",
+      listingStockQty:
+        extra.listingStockQty != null && Number.isFinite(Number(extra.listingStockQty))
+          ? Number(extra.listingStockQty)
+          : null,
+      showBuyerCommerceActions: Boolean(extra.showBuyerCommerceActions),
+      showSellerCommerceActions: Boolean(extra.showSellerCommerceActions),
+      onAddToCart: typeof extra.onAddToCart === "function" ? extra.onAddToCart : undefined,
+      onBuyNow: typeof extra.onBuyNow === "function" ? extra.onBuyNow : undefined,
+      onEditListing: typeof extra.onEditListing === "function" ? extra.onEditListing : undefined,
+      onSaleSelect: typeof extra.onSaleSelect === "function" ? extra.onSaleSelect : undefined,
+    });
+  }, []);
 
   const submitQuickAddOrder = async () => {
     if (!quickAddListing?.id || quickAddSubmitting) return;
@@ -4964,22 +3356,9 @@ function App() {
               listingId: String(quickAddListing.id),
               quantity: parsedQty,
               fulfillmentType: quickOrderFulfillmentType,
+              comment: String(quickAddComment || "").trim(),
             },
           });
-          const createdOrderId = String(created?.order?.id || "");
-          if (createdOrderId) {
-            setRecentlyAddedPurchaseOrderIds((prev) => (prev.includes(createdOrderId) ? prev : [...prev, createdOrderId]));
-            setRecentOrderBadgeIdsByTab((prev) => {
-              const set = new Set(prev.pending ?? []);
-              set.add(createdOrderId);
-              return { ...prev, pending: Array.from(set) };
-            });
-            setRecentOrderIdsByTab((prev) => {
-              const set = new Set(prev.pending ?? []);
-              set.add(createdOrderId);
-              return { ...prev, pending: Array.from(set) };
-            });
-          }
         } catch (e) {
           pushMarketplaceToast(e.message || "Could not place order.");
           return;
@@ -4993,7 +3372,14 @@ function App() {
         // Keep user in current marketplace/community view after successful buy.
         setOrdersRole("buyer");
         setOrdersStatusTab("pending");
-        pushMarketplaceToast("Order placed. Pay COD at pickup or when delivery is completed.");
+        writeQuickOrderFulfillmentPref(quickOrderFulfillmentType);
+        {
+          const titleForToast = String(quickAddListing.title || "Item").trim();
+          const shortTitle = titleForToast.length > 52 ? `${titleForToast.slice(0, 52)}…` : titleForToast;
+          pushMarketplaceToast(
+            `Order placed: ${shortTitle} ×${parsedQty}. Pay COD at pickup or when delivery is completed.`,
+          );
+        }
         return;
       }
       const addedListingId = String(quickAddListing.id);
@@ -5014,7 +3400,11 @@ function App() {
             return moveSellerGroupToTop(merged, quickAddListing?.sellerId);
           });
           setRecentlyAddedCartListingIds((prev) => (prev.includes(addedListingId) ? prev : [...prev, addedListingId]));
-          pushMarketplaceToast("Added to your cart.");
+          {
+            const titleForToast = String(quickAddListing.title || "Item").trim();
+            const shortTitle = titleForToast.length > 52 ? `${titleForToast.slice(0, 52)}…` : titleForToast;
+            pushMarketplaceToast(`Added to cart: ${shortTitle} ×${parsedQty}.`);
+          }
         } catch (e) {
           pushMarketplaceToast(e.message || "Could not save to cart.");
           return;
@@ -5067,7 +3457,11 @@ function App() {
           return next;
         });
         setRecentlyAddedCartListingIds((prev) => (prev.includes(addedListingId) ? prev : [...prev, addedListingId]));
-        pushMarketplaceToast("Added to your cart.");
+        {
+          const titleForToast = String(quickAddListing.title || "Item").trim();
+          const shortTitle = titleForToast.length > 52 ? `${titleForToast.slice(0, 52)}…` : titleForToast;
+          pushMarketplaceToast(`Added to cart: ${shortTitle} ×${parsedQty}.`);
+        }
       }
       setActiveView(shopCommunityId ? VIEWS.COMMUNITY_SHOP : VIEWS.BROWSE);
       setQuickAddModalOpen(false);
@@ -6027,20 +4421,66 @@ function App() {
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div className="space-y-4">
               {activeView === VIEWS.COMMUNITY_SHOP ? (
-                <div className={`${UI_KIT.surfaceRaised} p-4 sm:p-5`}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      className="inline-flex items-center rounded-full border border-neutral-300/80 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
-                      onClick={() => leaveCommunityToGlobalMarketplace()}
-                    >
-                      ← All communities
-                    </button>
-                    <div className="flex flex-wrap items-center gap-2">
+                <div
+                  className={`${UI_KIT.surfaceRaised} p-3 transition-opacity duration-200 sm:p-4 lg:p-5 ${
+                    mobileCommunityFiltersOpen ? "max-lg:pointer-events-none max-lg:opacity-40" : ""
+                  }`}
+                >
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+                    <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-start sm:gap-4 lg:gap-5">
+                      <button
+                        type="button"
+                        className="inline-flex w-full min-h-[44px] shrink-0 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-3.5 py-2.5 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 sm:w-auto sm:min-h-0 sm:justify-start sm:py-2 lg:mt-0.5 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                        onClick={() => leaveCommunityToGlobalMarketplace()}
+                      >
+                        ← All communities
+                      </button>
+                      <div className="min-w-0 flex-1 space-y-2 border-neutral-200 sm:space-y-2 lg:border-l lg:pl-5 dark:lg:border-slate-600">
+                        <div className="min-w-0">
+                          <h2 className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100 lg:text-2xl">
+                            {toTitleCase(activeCommunity?.name?.trim()) || "Community"}
+                          </h2>
+                          {activeCommunityLocaleLine ? (
+                            <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">{activeCommunityLocaleLine}</p>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {isMemberOfOpenCommunity ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/80 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300">
+                              ● Joined member
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-neutral-300/80 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                              ○ Not a member yet
+                            </span>
+                          )}
+                        </div>
+                        <p className="hidden max-w-2xl text-sm leading-relaxed text-neutral-600 dark:text-slate-400 sm:block lg:text-xs lg:leading-relaxed">
+                          Listings here are only visible to members of this community. Orders, profile, and the wider app stay in the top navigation.
+                        </p>
+                        <details className="sm:hidden open:[&_summary_svg]:rotate-180">
+                          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-semibold text-brand-primary dark:text-brand-accent [&::-webkit-details-marker]:hidden">
+                            <span>How this shop works</span>
+                            <svg className="h-3.5 w-3.5 shrink-0 transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                            </svg>
+                          </summary>
+                          <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
+                            Listings here are only visible to members of this community. Orders, profile, and the wider app stay in the top navigation.
+                          </p>
+                        </details>
+                        {!isMemberOfOpenCommunity ? (
+                          <p className="rounded-xl border border-sky-200/90 bg-sky-50/80 px-3.5 py-2.5 text-sm text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
+                            Since you are not a member yet, your products will not appear in this community yet.
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="flex w-full flex-wrap gap-2 lg:mt-0.5 lg:w-auto lg:shrink-0 lg:justify-end">
                       {activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "") ? (
                         <button
                           type="button"
-                          className="inline-flex items-center rounded-full border border-neutral-300/80 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                          className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-3 py-2.5 text-xs font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 sm:min-h-0 sm:flex-none sm:px-4 sm:py-2 sm:text-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
                           onClick={() => openEditCommunityModal(activeCommunity)}
                         >
                           Edit community
@@ -6049,7 +4489,7 @@ function App() {
                       {!isMemberOfOpenCommunity ? (
                         <button
                           type="button"
-                          className="inline-flex items-center rounded-full bg-brand-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
+                          className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-brand-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-primary/90 sm:min-h-0 sm:flex-none sm:py-2 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
                           onClick={async () => {
                             await joinCommunityAndAttachListings(activeCommunity, { notifySuccess: true });
                             setShopCommunityId(activeCommunity?.id || null);
@@ -6062,7 +4502,7 @@ function App() {
                       ) : (
                         <button
                           type="button"
-                          className="inline-flex items-center rounded-full border border-rose-300/80 bg-white px-4 py-2 text-sm font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
+                          className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-rose-300/80 bg-white px-3 py-2.5 text-xs font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 sm:min-h-0 sm:flex-none sm:px-4 sm:py-2 sm:text-sm dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
                           onClick={() => {
                             const leftName = toTitleCase(String(activeCommunity?.name || "").trim());
                             applyJoinedCommunity("");
@@ -6074,35 +4514,6 @@ function App() {
                         </button>
                       )}
                     </div>
-                  </div>
-                  <div className="mt-4 min-w-0">
-                    <h2 className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100 sm:text-2xl">
-                      {toTitleCase(activeCommunity?.name?.trim()) || "Community"}
-                    </h2>
-                    {activeCommunityLocaleLine ? (
-                      <p className="mt-1.5 text-sm text-neutral-600 dark:text-slate-400">
-                        {activeCommunityLocaleLine}
-                      </p>
-                    ) : null}
-                    <div className="mt-3">
-                      {isMemberOfOpenCommunity ? (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/80 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300">
-                          ● Joined member
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-neutral-300/80 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                          ○ Not a member yet
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-3 max-w-prose text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
-                      Listings in this shop are visible to this community only. Use the top navigation for orders, profile, and the rest of the app.
-                    </p>
-                    {!isMemberOfOpenCommunity ? (
-                      <p className="mt-3 max-w-prose rounded-xl border border-sky-200/90 bg-sky-50/80 px-3.5 py-2.5 text-sm text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
-                        Since you are not a member yet, your products will not appear in this community yet.
-                      </p>
-                    ) : null}
                   </div>
                 </div>
               ) : activeView === VIEWS.FAVORITES ? null : (
@@ -6123,8 +4534,55 @@ function App() {
                 {communitiesLoading && communities.length === 0 ? (
                   <p className="mt-3 text-sm text-neutral-600 dark:text-slate-400">Loading communities…</p>
                 ) : null}
+                {!(communitiesLoading && communities.length === 0) && communities.length > 0 ? (
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+                    <div className="relative min-w-0 flex-1 sm:max-w-md">
+                      <label htmlFor="community-directory-search" className="sr-only">
+                        Search communities
+                      </label>
+                      <input
+                        id="community-directory-search"
+                        type="search"
+                        autoComplete="off"
+                        placeholder="Search by name or location…"
+                        value={communityDirectoryQuery}
+                        onChange={(e) => setCommunityDirectoryQuery(e.target.value)}
+                        className="input-base w-full py-2 pl-3 pr-9 text-sm"
+                      />
+                      {communityDirectoryQuery.trim() ? (
+                        <button
+                          type="button"
+                          className="absolute right-1.5 top-1/2 inline-flex h-8 min-w-[2rem] -translate-y-1/2 items-center justify-center rounded-md text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                          aria-label="Clear search"
+                          onClick={() => setCommunityDirectoryQuery("")}
+                        >
+                          Clear
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                      <p className="text-xs text-neutral-500 dark:text-slate-400" aria-live="polite">
+                        {directoryCommunities.length === communities.length
+                          ? `${communities.length} ${communities.length === 1 ? "community" : "communities"}`
+                          : `${directoryCommunities.length} of ${communities.length} shown`}
+                      </p>
+                      <label htmlFor="community-directory-sort" className="sr-only">
+                        Sort communities
+                      </label>
+                      <select
+                        id="community-directory-sort"
+                        value={communityDirectorySort}
+                        onChange={(e) => setCommunityDirectorySort(e.target.value)}
+                        className="input-base min-w-[10.5rem] py-2 pl-3 pr-8 text-sm"
+                      >
+                        <option value="name">Name (A–Z)</option>
+                        <option value="members">Most members</option>
+                      </select>
+                    </div>
+                  </div>
+                ) : null}
                 <ul
-                  className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-2"
+                  className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
                   aria-label="Communities"
                 >
                   {!(communitiesLoading && communities.length === 0) && communities.length === 0 ? (
@@ -6132,27 +4590,41 @@ function App() {
                       No communities available right now.
                     </li>
                   ) : null}
-                  {communities.map((c) => {
+                  {!(communitiesLoading && communities.length === 0) &&
+                  communities.length > 0 &&
+                  directoryCommunities.length === 0 ? (
+                    <li className="col-span-full min-w-0 rounded-lg border border-dashed border-neutral-200 bg-neutral-50/60 px-4 py-6 text-center text-sm text-neutral-600 dark:border-slate-600 dark:bg-slate-800/40 dark:text-slate-400">
+                      No communities match “{communityDirectoryQuery.trim()}”.{" "}
+                      <button
+                        type="button"
+                        className="font-medium text-brand-primary underline decoration-brand-primary/35 underline-offset-2 hover:text-brand-primary/80"
+                        onClick={() => setCommunityDirectoryQuery("")}
+                      >
+                        Clear search
+                      </button>
+                    </li>
+                  ) : null}
+                  {directoryCommunities.map((c) => {
                     const g = gradientForId(c.id);
                     const initials = initialsFromName(c.name);
                     return (
                       <li key={c.id} className="min-w-0">
-                        <div className="flex h-full flex-col gap-2 rounded-xl border border-neutral-200/90 bg-neutral-50/40 p-2.5 dark:border-slate-600 dark:bg-slate-800/50 sm:p-3">
+                        <div className="flex h-full min-h-0 flex-col rounded-xl border border-neutral-200/90 bg-neutral-50/40 p-2.5 dark:border-slate-600 dark:bg-slate-800/50 sm:p-3">
                           <button
                             type="button"
-                            className="group flex w-full flex-col gap-2 text-left transition hover:opacity-95"
+                            className="group flex min-h-0 flex-1 flex-col gap-2 text-left transition hover:opacity-95"
                             onClick={() => {
                               setShopCommunityId(c.id);
                               setActiveView(VIEWS.COMMUNITY_SHOP);
                               navigate("/", { replace: true });
                             }}
                           >
-                            <div className="relative aspect-[4/3] overflow-hidden rounded-lg shadow-inner ring-1 ring-black/5 transition group-hover:ring-brand-primary/30 dark:ring-white/10 sm:aspect-[16/9]">
+                            <div className="relative aspect-[16/9] max-h-[9.5rem] w-full shrink-0 overflow-hidden rounded-lg shadow-inner ring-1 ring-black/5 transition group-hover:ring-brand-primary/30 dark:ring-white/10 sm:max-h-[10rem]">
                               {c.imageUrl ? (
                                 <img src={c.imageUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
                               ) : (
                                 <div
-                                  className="flex h-full w-full items-center justify-center text-lg font-bold tracking-tight text-white sm:text-2xl"
+                                  className="flex h-full w-full items-center justify-center text-base font-bold tracking-tight text-white sm:text-xl"
                                   style={{ backgroundImage: `linear-gradient(135deg, ${g.from}, ${g.to})` }}
                                   aria-hidden
                                 >
@@ -6160,14 +4632,14 @@ function App() {
                                 </div>
                               )}
                             </div>
-                            <div className="min-w-0 px-0.5">
-                              <p className="truncate text-base font-semibold text-neutral-900 dark:text-slate-100 sm:text-lg">
+                            <div className="min-w-0 flex-1 px-0.5">
+                              <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100 sm:text-base">
                                 {toTitleCase(String(c.name || "").trim())}
                               </p>
-                              <p className="mt-0.5 line-clamp-2 text-sm text-neutral-600 dark:text-slate-400">
+                              <p className="mt-0.5 line-clamp-2 text-xs text-neutral-600 dark:text-slate-400 sm:text-sm">
                                 {formatCommunityMarketplaceSubtitle(c)}
                               </p>
-                              <p className="mt-0.5 text-sm text-neutral-600 dark:text-slate-400">
+                              <p className="mt-0.5 text-xs text-neutral-600 dark:text-slate-400 sm:text-sm">
                                 Members:{" "}
                                 <span className="font-medium text-neutral-800 dark:text-slate-200">
                                   {getDisplayedMemberCount(c.id, c.memberCount)}
@@ -6175,7 +4647,7 @@ function App() {
                               </p>
                             </div>
                           </button>
-                          <div className="mt-1 flex items-center gap-2 px-0.5">
+                          <div className="mt-auto flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-neutral-200/80 pt-2 dark:border-slate-600/80">
                             {String(listingCommunityFromProfile.id || "") === String(c.id) ? (
                               <span className="inline-flex items-center rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300">
                                 Joined
@@ -6211,7 +4683,7 @@ function App() {
                               href={c.googleUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="px-0.5 text-xs font-medium text-brand-primary underline decoration-brand-primary/35 underline-offset-2 hover:text-brand-primary/80"
+                              className="mt-1 px-0.5 text-right text-xs font-medium text-brand-primary underline decoration-brand-primary/35 underline-offset-2 hover:text-brand-primary/80"
                             >
                               Open in Google Maps
                             </a>
@@ -6226,50 +4698,72 @@ function App() {
               )}
             </div>
             {(activeView === VIEWS.COMMUNITY_SHOP || activeView === VIEWS.FAVORITES) ? (
-            <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,17.5rem)_minmax(0,1fr)] lg:items-start lg:gap-6">
+            <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)] lg:items-start lg:gap-6">
               {mobileCommunityFiltersOpen ? (
                 <button
                   type="button"
-                  className="fixed inset-0 z-[90] bg-neutral-900/45 backdrop-blur-[1px] lg:hidden"
+                  className="fixed inset-0 z-[100] bg-neutral-950/60 backdrop-blur-[3px] motion-reduce:backdrop-blur-none lg:hidden"
                   aria-label="Close filters"
                   onClick={() => setMobileCommunityFiltersOpen(false)}
                 />
               ) : null}
               <aside
-                className={`order-1 space-y-3 p-3 shadow-sm transition-transform duration-300 ease-out sm:space-y-4 sm:p-4 lg:order-none lg:sticky lg:top-24 lg:rounded-2xl lg:border lg:border-neutral-200/80 lg:bg-neutral-50/40 dark:lg:border-slate-600 dark:lg:bg-slate-900/50 ${
+                className={`order-1 shadow-sm transition-[opacity,transform] duration-300 ease-out lg:order-none lg:sticky lg:top-24 lg:block lg:rounded-2xl lg:border lg:border-neutral-200/80 lg:bg-neutral-50/40 lg:p-3 lg:shadow-sm lg:transition-none dark:lg:border-slate-600 dark:lg:bg-slate-900/50 max-lg:fixed max-lg:inset-0 max-lg:z-[110] max-lg:flex max-lg:flex-col max-lg:items-stretch max-lg:justify-center max-lg:bg-transparent max-lg:p-3 max-lg:pt-[max(0.5rem,env(safe-area-inset-top))] max-lg:pb-[max(0.75rem,env(safe-area-inset-bottom))] max-lg:pointer-events-none ${
                   mobileCommunityFiltersOpen
-                    ? "fixed inset-y-0 left-0 z-[95] w-[88vw] max-w-[21rem] overflow-y-auto rounded-r-2xl border-r border-neutral-200 bg-white/98 pt-[max(0.6rem,env(safe-area-inset-top))] shadow-[0_20px_60px_rgba(15,23,42,0.28)] translate-x-0 dark:border-slate-700 dark:bg-slate-900/98"
-                    : "fixed inset-y-0 left-0 z-[95] w-[88vw] max-w-[21rem] overflow-y-auto rounded-r-2xl border-r border-neutral-200 bg-white/98 pt-[max(0.6rem,env(safe-area-inset-top))] shadow-[0_20px_60px_rgba(15,23,42,0.28)] -translate-x-full dark:border-slate-700 dark:bg-slate-900/98"
-                } lg:static lg:z-auto lg:w-auto lg:max-w-none lg:translate-x-0 lg:overflow-visible`}
+                    ? "max-lg:visible max-lg:scale-100 max-lg:opacity-100"
+                    : "max-lg:invisible max-lg:scale-[0.98] max-lg:opacity-0"
+                } space-y-3 sm:space-y-4 lg:pointer-events-auto lg:max-h-[calc(100dvh-6rem)] lg:w-auto lg:max-w-none lg:overflow-y-auto lg:overflow-x-visible lg:overscroll-y-contain lg:pr-0.5 drawer-scroll lg:opacity-100 lg:visible lg:scale-100`}
               >
-                  <div className="sticky top-0 z-10 mb-2 flex items-center justify-between rounded-xl border border-neutral-200/80 bg-white/95 px-3 py-2 backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95 lg:hidden">
-                    <div>
-                      <p className="text-sm font-semibold text-neutral-900 dark:text-slate-100">Filters</p>
-                      <p className="text-[11px] text-neutral-500 dark:text-slate-400">Browse and categories</p>
+                <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center max-lg:max-h-full lg:contents">
+                  <div className="flex min-h-0 w-full max-w-md flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-[0_24px_64px_-12px_rgba(15,23,42,0.45)] ring-1 ring-black/[0.04] max-lg:pointer-events-auto max-lg:max-h-[min(88dvh,40rem)] dark:border-slate-600 dark:bg-slate-900 dark:ring-white/[0.06] lg:max-h-none lg:max-w-none lg:rounded-none lg:border-0 lg:bg-transparent lg:shadow-none lg:ring-0 lg:contents">
+                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:contents">
+                  <div className="shrink-0 border-b border-neutral-100 bg-neutral-50/80 px-3 pb-3 pt-2.5 dark:border-slate-700/80 dark:bg-slate-800/40 lg:hidden lg:border-0 lg:bg-transparent lg:p-0">
+                    <div className="mb-3 flex items-start justify-between gap-2">
+                      <div className="min-w-0 pt-0.5">
+                        <p className="text-base font-bold tracking-tight text-neutral-900 dark:text-slate-50">Filters</p>
+                        <p className="mt-0.5 text-[12px] leading-snug text-neutral-500 dark:text-slate-400">
+                          Browse, quick picks, categories
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-700 shadow-sm transition hover:bg-neutral-50 active:scale-95 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                        aria-label="Close filters"
+                        onClick={() => setMobileCommunityFiltersOpen(false)}
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-300 text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                      aria-label="Close filters drawer"
-                      onClick={() => setMobileCommunityFiltersOpen(false)}
-                    >
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M18 6 6 18M6 6l12 12" />
-                      </svg>
-                    </button>
+                    <label htmlFor="mobile-browse-category-search" className="sr-only">
+                      Search categories
+                    </label>
+                    <input
+                      id="mobile-browse-category-search"
+                      type="search"
+                      enterKeyHint="search"
+                      autoComplete="off"
+                      placeholder="Search categories…"
+                      value={mobileBrowseCategoryQuery}
+                      onChange={(e) => setMobileBrowseCategoryQuery(e.target.value)}
+                      className="input-base border-neutral-200/90 bg-white py-2.5 pl-3 pr-9 text-sm shadow-sm dark:border-slate-600 dark:bg-slate-950"
+                    />
                   </div>
-                  <div>
-                    <p className="mb-1.5 flex items-center gap-1.5 px-0.5 text-xs font-semibold text-neutral-500 dark:text-slate-400 sm:mb-2">
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                  <div className="drawer-scroll min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-y-contain px-3 py-3 sm:space-y-5 lg:max-h-none lg:flex-none lg:space-y-3 lg:overflow-visible lg:px-0 lg:py-0">
+                  <div className="rounded-xl bg-neutral-50/90 p-2.5 dark:bg-slate-800/35 max-lg:ring-1 max-lg:ring-neutral-200/60 dark:max-lg:ring-slate-600/50 lg:bg-transparent lg:p-0 lg:ring-0">
+                    <p className="mb-2 flex items-center gap-2 px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-400 dark:text-slate-500">
+                      <svg className="h-3.5 w-3.5 text-brand-primary dark:text-brand-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 5h7v6H3zM14 5h7v6h-7zM14 14h7v6h-7zM3 14h7v6H3z" />
                       </svg>
-                      Browse
+                      Quick picks
                     </p>
                     <div className="grid grid-cols-1 gap-2 lg:flex lg:flex-col lg:gap-1.5">
                     {BROWSE_QUICK_FILTERS.map((filter) => (
                       <FilterOptionButton
                         key={filter.id}
                         active={browseQuickFilter === filter.id}
+                        sheet={mobileCommunityFiltersOpen}
                         icon={quickFilterIcon(filter.id)}
                         label={filter.label}
                         onClick={() => {
@@ -6291,21 +4785,27 @@ function App() {
                     ))}
                     </div>
                   </div>
-                  <div className="border-t border-neutral-200/80 pt-3 dark:border-slate-700 sm:pt-4">
-                    <p className="mb-1.5 flex items-center gap-1.5 px-0.5 text-xs font-semibold text-neutral-500 dark:text-slate-400 sm:mb-2">
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                  <div className="border-t border-neutral-200/90 pt-4 dark:border-slate-700">
+                    <p className="mb-2.5 flex items-center gap-2 px-0.5 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-400 dark:text-slate-500">
+                      <svg className="h-3.5 w-3.5 text-brand-primary dark:text-brand-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
                       </svg>
                       Categories
                     </p>
-                    <div className="flex flex-col gap-1 pr-0.5">
-                    {VERTICALS.map((v) => {
+                    <div className="flex flex-col gap-2 lg:gap-1">
+                    {browseVerticalsForMobileDrawer.length === 0 ? (
+                      <p className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50 px-3 py-3 text-center text-sm text-neutral-600 dark:border-slate-600 dark:bg-slate-800/50 dark:text-slate-400">
+                        No categories match your search.
+                      </p>
+                    ) : null}
+                    {browseVerticalsForMobileDrawer.map((v) => {
                       const allSub = v.subs.find((s) => s.id === "all") ?? v.subs[0];
                       const isActive = browseVerticalId === v.id;
                       return (
                         <FilterOptionButton
                           key={v.id}
                           active={isActive}
+                          sheet={mobileCommunityFiltersOpen}
                           icon={categoryIcon(v.id || v.label)}
                           label={v.label}
                           onClick={() => {
@@ -6317,6 +4817,10 @@ function App() {
                     })}
                     </div>
                   </div>
+                  </div>
+                  </div>
+                  </div>
+                  </div>
                 </aside>
               <div className="order-2 min-w-0 space-y-3 sm:space-y-4 lg:order-none">
                 {activeView === VIEWS.FAVORITES ? (
@@ -6325,101 +4829,37 @@ function App() {
                 <div className="lg:hidden">
                   <button
                     type="button"
-                    className="inline-flex items-center gap-2 rounded-xl border border-neutral-300/90 bg-white px-3.5 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                    className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl border border-neutral-300/90 bg-white px-3.5 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
                     onClick={() => setMobileCommunityFiltersOpen(true)}
                   >
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M7 12h10M10 18h4" />
                     </svg>
-                    Browse & Categories
+                    <span className="sm:hidden">{"Browse & filter"}</span>
+                    <span className="hidden sm:inline">{"Browse & Categories"}</span>
                   </button>
                 </div>
-                <div className={`${UI_KIT.surfaceMuted} flex flex-wrap items-center justify-between gap-2 px-3 py-2.5`}>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Active</span>
-                    {activeBrowseFilterSummary.length ? (
-                      activeBrowseFilterSummary.map((item) => (
+                {activeBrowseFilterSummary.length > 0 ? (
+                  <div className={`${UI_KIT.surfaceMuted} flex flex-wrap items-center justify-between gap-2 px-3 py-2`}>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                      <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Filters</span>
+                      {activeBrowseFilterSummary.map((item) => (
                         <span key={item} className={UI_KIT.chipActive}>
                           {item}
                         </span>
-                      ))
-                    ) : (
-                      <span className={UI_KIT.chipMuted}>No filters</span>
-                    )}
-                  </div>
-                  {(browseQuickFilter !== "all" || browseVerticalId != null || browseSubId != null) && (
+                      ))}
+                    </div>
                     <button
                       type="button"
-                      className="rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                      className="shrink-0 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
                       onClick={() => {
                         setBrowseVerticalId(null);
                         setBrowseSubId(null);
                         setBrowseQuickFilter("all");
                       }}
                     >
-                      Reset filters
+                      Reset
                     </button>
-                  )}
-                </div>
-                {listingDetail && selectedListingId ? (
-                  <div className="space-y-4 rounded-xl border border-brand-primary/25 bg-brand-soft/20 p-4 dark:border-slate-600 dark:bg-slate-900/50">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">{listingDetail.title}</h3>
-                      <button type="button" className="btn-secondary text-xs" onClick={closeListingDetail}>
-                        Close
-                      </button>
-                    </div>
-                    <p className="text-xl font-bold text-brand-primary">{formatCents(listingDetail.priceCents)}</p>
-                    <div className="text-sm text-neutral-600 dark:text-slate-400">
-                      <p>Quantity: {Number(listingDetail.quantity) || 0}</p>
-                      <p className="mt-0.5">Availability: {listingCodAvailabilityLabel(listingDetail.fulfillmentModes)}</p>
-                    </div>
-                    {listingDetail.cityLabel ? (
-                      <p className="text-sm text-neutral-600 dark:text-slate-400">{listingDetail.cityLabel}</p>
-                    ) : null}
-                    <p className="min-w-0 break-words text-xs text-neutral-500 dark:text-slate-400">
-                      Share this listing:{" "}
-                      <span className="inline-block max-w-full break-all font-mono text-[11px]">
-                        {typeof window !== "undefined" ? `${window.location.origin}/l/${listingDetail.id}` : ""}
-                      </span>
-                    </p>
-                    <p className="whitespace-pre-wrap text-sm text-neutral-700 dark:text-slate-300">{listingDetail.description}</p>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className={`rounded-full border px-3 py-1.5 text-sm font-medium ${favoriteIds.has(listingDetail.id) ? "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200" : "border-neutral-200 dark:border-slate-600"}`}
-                        onClick={() => toggleFavorite(listingDetail.id, !favoriteIds.has(listingDetail.id))}
-                      >
-                        {favoriteIds.has(listingDetail.id) ? "Saved" : "Save to favorites"}
-                      </button>
-                    </div>
-                    {listingDetail.sellerId !== user?.id ? (
-                      <OrderPlacementForm
-                        listing={listingDetail}
-                        token={token}
-                        onDone={(msg, createdOrderId) => {
-                          pushMarketplaceToast(msg);
-                          const oid = String(createdOrderId || "");
-                          if (oid) {
-                            setRecentlyAddedPurchaseOrderIds((prev) => (prev.includes(oid) ? prev : [...prev, oid]));
-                            setRecentOrderBadgeIdsByTab((prev) => {
-                              const set = new Set(prev.pending ?? []);
-                              set.add(oid);
-                              return { ...prev, pending: Array.from(set) };
-                            });
-                            setRecentOrderIdsByTab((prev) => {
-                              const set = new Set(prev.pending ?? []);
-                              set.add(oid);
-                              return { ...prev, pending: Array.from(set) };
-                            });
-                          }
-                          goMyPurchases();
-                        }}
-                        onError={(m) => pushMarketplaceToast(m)}
-                      />
-                    ) : (
-                      <p className="text-sm text-neutral-600 dark:text-slate-400">This is your listing.</p>
-                    )}
                   </div>
                 ) : null}
                 {activeView === VIEWS.FAVORITES ? (
@@ -6437,43 +4877,36 @@ function App() {
                 {(activeView === VIEWS.FAVORITES
                   ? !(favoritesLoading && strictFavoritesList.length === 0)
                   : !listingsError && !(listingsLoading && listings.length === 0)) ? (
-                  <div className="flex justify-end">
-                    <div className="inline-flex items-center rounded-lg border border-neutral-200/90 bg-white p-1 dark:border-slate-600 dark:bg-slate-900">
-                      <button
-                        type="button"
-                        className={`rounded-md p-1.5 transition ${communityProductsView === "list" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
-                        aria-label="List view"
-                        onClick={() => setCommunityProductsView("list")}
-                      >
-                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        className={`rounded-md p-1.5 transition ${communityProductsView === "grid" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
-                        aria-label="Grid view"
-                        onClick={() => setCommunityProductsView("grid")}
-                      >
-                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                          <rect x="3" y="3" width="7" height="7" rx="1" />
-                          <rect x="14" y="3" width="7" height="7" rx="1" />
-                          <rect x="3" y="14" width="7" height="7" rx="1" />
-                          <rect x="14" y="14" width="7" height="7" rx="1" />
-                        </svg>
-                      </button>
+                  <div
+                    className={
+                      activeView === VIEWS.COMMUNITY_SHOP
+                        ? "flex flex-wrap items-end justify-between gap-3 border-b border-neutral-200/80 pb-3 dark:border-slate-700/80"
+                        : "flex justify-end"
+                    }
+                  >
+                    {activeView === VIEWS.COMMUNITY_SHOP ? (
+                      <div className="min-w-0 flex-1 pr-2">
+                        <h3 className="text-base font-semibold tracking-tight text-neutral-900 dark:text-slate-100 lg:text-lg">
+                          Listings
+                        </h3>
+                        <p className="mt-0.5 text-xs text-neutral-500 dark:text-slate-400">Posted in this community</p>
+                      </div>
+                    ) : null}
+                    <div className="shrink-0">
+                      <ProductViewDensityToggle value={communityProductsView} onChange={setCommunityProductsView} />
                     </div>
                   </div>
                 ) : null}
                 {(activeView === VIEWS.FAVORITES
                   ? !(favoritesLoading && strictFavoritesList.length === 0) && visibleFavoritesListings.length > 0
                   : !listingsError && visibleBrowseListings.length > 0) ? (
-                  <div className={communityProductsView === "grid" ? "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" : "space-y-3"}>
+                  <div className={communityBrowseGridClass(communityProductsView)}>
                     {(activeView === VIEWS.FAVORITES ? visibleFavoritesListings : visibleBrowseListings).map((l) => (
                       <CommunityShopListingCard
                         key={l.id}
                         listing={l}
-                        gridMode={communityProductsView === "grid"}
+                        gridMode={communityProductsView !== "list"}
+                        compactGrid={communityProductsView === "compact"}
                         isFavorite={favoriteIds.has(l.id)}
                         showActions
                         currentUserId={user?.id || ""}
@@ -6482,6 +4915,42 @@ function App() {
                         onBuy={() => openQuickAddModal(l, "buy")}
                         onAdd={() => openQuickAddModal(l, "cart")}
                         onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
+                        onInspect={() => {
+                          const isOwn = String(l.sellerId || "") === String(user?.id || "");
+                          const stockListed = Math.max(0, Number(l.quantity) || 0);
+                          openProductInspect(l, {
+                            quantity: stockListed,
+                            quantityLabel: "Stock listed",
+                            subtitle: activeView === VIEWS.FAVORITES ? "Saved listing" : "Marketplace listing",
+                            listingStockQty: stockListed,
+                            showBuyerCommerceActions: !isOwn,
+                            showSellerCommerceActions: isOwn,
+                            onAddToCart: isOwn
+                              ? undefined
+                              : () => {
+                                  closeProductInspect();
+                                  openQuickAddModal(l, "cart");
+                                },
+                            onBuyNow: isOwn
+                              ? undefined
+                              : () => {
+                                  closeProductInspect();
+                                  openQuickAddModal(l, "buy");
+                                },
+                            onEditListing: isOwn
+                              ? () => {
+                                  closeProductInspect();
+                                  beginEditSellerListing(l);
+                                }
+                              : undefined,
+                            onSaleSelect: isOwn
+                              ? (pct) => {
+                                  closeProductInspect();
+                                  void applySellerListingDiscount(l, pct);
+                                }
+                              : undefined,
+                          });
+                        }}
                       />
                     ))}
                   </div>
@@ -6557,38 +5026,15 @@ function App() {
             {strictFavoritesList.length > 0 ? (
               <>
                 <div className="flex justify-end">
-                  <div className="inline-flex items-center rounded-lg border border-neutral-200/90 bg-white p-1 dark:border-slate-600 dark:bg-slate-900">
-                    <button
-                      type="button"
-                      className={`rounded-md p-1.5 transition ${communityProductsView === "list" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
-                      aria-label="List view"
-                      onClick={() => setCommunityProductsView("list")}
-                    >
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      className={`rounded-md p-1.5 transition ${communityProductsView === "grid" ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100" : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"}`}
-                      aria-label="Grid view"
-                      onClick={() => setCommunityProductsView("grid")}
-                    >
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                        <rect x="3" y="3" width="7" height="7" rx="1" />
-                        <rect x="14" y="3" width="7" height="7" rx="1" />
-                        <rect x="3" y="14" width="7" height="7" rx="1" />
-                        <rect x="14" y="14" width="7" height="7" rx="1" />
-                      </svg>
-                    </button>
-                  </div>
+                  <ProductViewDensityToggle value={communityProductsView} onChange={setCommunityProductsView} />
                 </div>
-                <div className={communityProductsView === "grid" ? "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" : "space-y-3"}>
+                <div className={communityBrowseGridClass(communityProductsView)}>
                   {strictFavoritesList.map((l) => (
                     <CommunityShopListingCard
                       key={l.id}
                       listing={l}
-                      gridMode={communityProductsView === "grid"}
+                      gridMode={communityProductsView !== "list"}
+                      compactGrid={communityProductsView === "compact"}
                       isFavorite={favoriteIds.has(l.id)}
                       showActions
                       currentUserId={user?.id || ""}
@@ -6597,6 +5043,42 @@ function App() {
                       onBuy={() => openQuickAddModal(l, "buy")}
                       onAdd={() => openQuickAddModal(l, "cart")}
                       onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
+                      onInspect={() => {
+                        const isOwn = String(l.sellerId || "") === String(user?.id || "");
+                        const stockListed = Math.max(0, Number(l.quantity) || 0);
+                        openProductInspect(l, {
+                          quantity: stockListed,
+                          quantityLabel: "Stock listed",
+                          subtitle: "Saved listing",
+                          listingStockQty: stockListed,
+                          showBuyerCommerceActions: !isOwn,
+                          showSellerCommerceActions: isOwn,
+                          onAddToCart: isOwn
+                            ? undefined
+                            : () => {
+                                closeProductInspect();
+                                openQuickAddModal(l, "cart");
+                              },
+                          onBuyNow: isOwn
+                            ? undefined
+                            : () => {
+                                closeProductInspect();
+                                openQuickAddModal(l, "buy");
+                              },
+                          onEditListing: isOwn
+                            ? () => {
+                                closeProductInspect();
+                                beginEditSellerListing(l);
+                              }
+                            : undefined,
+                          onSaleSelect: isOwn
+                            ? (pct) => {
+                                closeProductInspect();
+                                void applySellerListingDiscount(l, pct);
+                              }
+                            : undefined,
+                        });
+                      }}
                     />
                   ))}
                 </div>
@@ -6620,13 +5102,37 @@ function App() {
                   <p className="text-[11px] text-neutral-500 dark:text-slate-400">JPG/PNG/WebP up to 5MB</p>
                 </div>
                 <div
-                  className={`flex min-h-[8.5rem] flex-col items-center justify-center gap-2 rounded-xl border border-dashed bg-white/80 px-3 py-3 text-sm transition dark:bg-slate-900/60 ${
+                  className={`rounded-xl border border-dashed bg-white/80 transition dark:bg-slate-900/60 ${
                     listingImageDragActive
                       ? "border-brand-primary text-brand-primary dark:border-brand-accent dark:text-brand-accent"
                       : listingFieldErrors.image
                         ? "border-rose-400 text-neutral-500 dark:border-rose-500 dark:text-slate-400"
                         : "border-neutral-300 text-neutral-500 dark:border-slate-600 dark:text-slate-400"
+                  } ${
+                    listingImagePreviewUrl
+                      ? "p-3 sm:p-4"
+                      : "flex min-h-[10rem] cursor-pointer flex-col items-center justify-center gap-1.5 px-4 py-6 text-center text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-900"
                   }`}
+                  role={listingImagePreviewUrl ? undefined : "button"}
+                  tabIndex={listingImagePreviewUrl ? undefined : 0}
+                  aria-label={listingImagePreviewUrl ? undefined : "Upload listing photo"}
+                  onClick={
+                    listingImagePreviewUrl
+                      ? undefined
+                      : () => {
+                          listingImageInputRef.current?.click();
+                        }
+                  }
+                  onKeyDown={
+                    listingImagePreviewUrl
+                      ? undefined
+                      : (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            listingImageInputRef.current?.click();
+                          }
+                        }
+                  }
                   onDragOver={(e) => {
                     e.preventDefault();
                     setListingImageDragActive(true);
@@ -6639,35 +5145,6 @@ function App() {
                     if (file) setListingImage(file);
                   }}
                 >
-                  {listingImagePreviewUrl ? (
-                    <>
-                      <img src={listingImagePreviewUrl} alt="Selected listing" className="max-h-28 rounded-lg object-cover" />
-                      <p className="text-xs text-neutral-600 dark:text-slate-400">{listingImageFile?.name || "Selected image"}</p>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-rose-300 px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                        onClick={() => {
-                          setListingImageFile(null);
-                          if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
-                          setListingImagePreviewUrl("");
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <p>Drag a photo here</p>
-                      <p className="text-xs">Recommended ratio: 1:1 or 4:3</p>
-                    </>
-                  )}
-                  <button
-                    type="button"
-                    className="btn-secondary text-xs"
-                    onClick={() => listingImageInputRef.current?.click()}
-                  >
-                    Browse
-                  </button>
                   <input
                     ref={listingImageInputRef}
                     type="file"
@@ -6676,8 +5153,68 @@ function App() {
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (file) setListingImage(file);
+                      e.target.value = "";
                     }}
                   />
+                  {listingImagePreviewUrl ? (
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                      <button
+                        type="button"
+                        className="group relative mx-auto shrink-0 overflow-hidden rounded-xl ring-1 ring-neutral-200/90 transition hover:ring-brand-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:ring-slate-600 dark:hover:ring-brand-accent/40 dark:focus-visible:ring-brand-accent/50 sm:mx-0"
+                        aria-label="Replace listing photo"
+                        onClick={() => listingImageInputRef.current?.click()}
+                      >
+                        <img
+                          src={listingImagePreviewUrl}
+                          alt=""
+                          className="h-32 w-full max-w-[14rem] object-cover object-center sm:h-36 sm:w-36 sm:max-w-none"
+                        />
+                        <span className="pointer-events-none absolute inset-0 flex items-end justify-center bg-gradient-to-t from-black/55 to-transparent pb-2 text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
+                          Replace
+                        </span>
+                      </button>
+                      <div className="min-w-0 flex-1 space-y-2 text-center sm:text-left">
+                        <p className="truncate text-sm font-medium text-neutral-800 dark:text-slate-200" title={listingImageFile?.name || "Selected image"}>
+                          {listingImageFile?.name || "Selected image"}
+                        </p>
+                        <p className="text-xs text-neutral-500 dark:text-slate-400">Tip: click the photo or use Replace to choose a different image.</p>
+                        <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+                          <button
+                            type="button"
+                            className="btn-secondary text-xs"
+                            onClick={() => {
+                              setListingImageFile(null);
+                              if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+                              setListingImagePreviewUrl("");
+                              if (listingImageInputRef.current) listingImageInputRef.current.value = "";
+                            }}
+                          >
+                            Remove
+                          </button>
+                          <button type="button" className="btn-secondary text-xs" onClick={() => listingImageInputRef.current?.click()}>
+                            Replace
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="font-medium text-neutral-800 dark:text-slate-200">Drag and drop a photo here</p>
+                      <p className="max-w-sm text-xs text-neutral-500 dark:text-slate-400">
+                        or click this area to browse — square or 4:3 looks best. JPG, PNG, or WebP up to 5MB.
+                      </p>
+                      <button
+                        type="button"
+                        className="btn-secondary mt-1 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          listingImageInputRef.current?.click();
+                        }}
+                      >
+                        Choose photo
+                      </button>
+                    </>
+                  )}
                 </div>
                 {listingFieldErrors.image ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.image}</p> : null}
               </div>
@@ -6696,22 +5233,14 @@ function App() {
                 {listingFieldErrors.title ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.title}</p> : null}
               </div>
               <div className="md:col-span-2">
-                <label className="mb-1 block text-xs font-semibold text-neutral-700 dark:text-slate-300">Categories *</label>
-                <select
-                  className={`input-base w-full ${listingFieldErrors.categories ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
+                <ListingCategoryPicker
                   value={listingForm.categories}
-                  onChange={(e) => {
-                    setListingForm((p) => ({ ...p, categories: e.target.value }));
+                  invalid={Boolean(listingFieldErrors.categories)}
+                  onChange={(id) => {
+                    setListingForm((p) => ({ ...p, categories: id, subId: "all" }));
                     if (listingFieldErrors.categories) setListingFieldErrors((prev) => ({ ...prev, categories: "" }));
                   }}
-                >
-                  <option value="">Select the best category for your item</option>
-                  {VERTICALS.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.label}
-                    </option>
-                  ))}
-                </select>
+                />
                 {listingFieldErrors.categories ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.categories}</p> : null}
               </div>
               <div className="md:col-span-2">
@@ -6729,18 +5258,34 @@ function App() {
               <div className="md:col-span-2 grid grid-cols-1 gap-4 rounded-xl border border-neutral-200/80 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-900/65 sm:grid-cols-2">
                 <div className="min-w-0">
                   <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Pricing *</p>
-                  <input
-                    className={`input-base w-full ${listingFieldErrors.pricePesos ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="e.g. 499.00"
-                    value={listingForm.pricePesos}
-                    onChange={(e) => {
-                      setListingForm((p) => ({ ...p, pricePesos: e.target.value }));
-                      if (listingFieldErrors.pricePesos) setListingFieldErrors((prev) => ({ ...prev, pricePesos: "" }));
-                    }}
-                  />
+                  <div
+                    className={`flex min-w-0 overflow-hidden rounded-xl border bg-white transition dark:bg-slate-950 ${
+                      listingFieldErrors.pricePesos
+                        ? "border-rose-400 focus-within:border-rose-500 focus-within:ring-2 focus-within:ring-rose-200 dark:border-rose-500/70 dark:focus-within:ring-rose-500/30"
+                        : "border-neutral-200 focus-within:border-brand-primary focus-within:ring-2 focus-within:ring-brand-primary/25 dark:border-slate-600 dark:focus-within:border-brand-primary dark:focus-within:ring-brand-primary/25"
+                    }`}
+                  >
+                    <span
+                      className="flex shrink-0 select-none items-center border-r border-neutral-200 bg-neutral-50 px-3 text-xs font-semibold tracking-wide text-neutral-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300"
+                      aria-hidden
+                    >
+                      PHP
+                    </span>
+                    <input
+                      className="min-w-0 flex-1 border-0 bg-transparent px-3 py-2.5 text-sm text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      placeholder="e.g. 499.00"
+                      aria-label="Price in Philippine pesos"
+                      inputMode="decimal"
+                      value={listingForm.pricePesos}
+                      onChange={(e) => {
+                        setListingForm((p) => ({ ...p, pricePesos: e.target.value }));
+                        if (listingFieldErrors.pricePesos) setListingFieldErrors((prev) => ({ ...prev, pricePesos: "" }));
+                      }}
+                    />
+                  </div>
                   {listingFieldErrors.pricePesos ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.pricePesos}</p> : null}
                 </div>
                 <div className="min-w-0">
@@ -6849,6 +5394,13 @@ function App() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Add to cart</h2>
               <div className="flex flex-wrap items-center justify-end gap-2">
+                <ProductViewDensityToggle
+                  value={commerceFlowViewBuyer}
+                  onChange={setCommerceFlowViewBuyer}
+                  groupAriaLabel="Cart line layout"
+                  gridTitle="Grid — two columns for readable cart cards"
+                  compactTitle="Dense — three columns for a compact overview"
+                />
                 {selectedCartItems.length > 0 ? (
                   <div className="inline-flex items-center gap-2 rounded-xl border border-neutral-200/80 bg-white px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900">
                     <span className="font-semibold text-neutral-800 dark:text-slate-200">
@@ -6926,15 +5478,26 @@ function App() {
                         </label>
                         <p className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-slate-300">{sellerLabel}</p>
                       </div>
-                      <div className="divide-y divide-neutral-200/80 dark:divide-slate-700/80">
+                      <div className={commerceFlowLineItemsClass(commerceFlowViewBuyer, { variant: "cart" })}>
                         {orderedItems.map((item) => {
                           const lid = String(item.listingId);
                           const isRecentlyAdded = recentlyAddedCartListingIds.includes(lid);
                           const isRemoving = cartRemovingListingIds.includes(lid);
+                          const cfList = commerceFlowViewBuyer === "list";
+                          const cfCompact = commerceFlowViewBuyer === "compact";
+                          const thumbClass = cfList
+                            ? "h-20 w-20"
+                            : cfCompact
+                              ? "h-12 w-12 sm:h-14 sm:w-14"
+                              : "h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]";
                           return (
                             <div
                               key={item.listingId}
-                              className={`flex items-center gap-3 rounded-xl py-2.5 transition-opacity duration-[2000ms] first:pt-0 last:pb-0 ${
+                              className={`flex gap-2 transition-opacity duration-[2000ms] sm:gap-3 ${
+                                cfList
+                                  ? "items-center rounded-xl py-2.5 first:pt-0 last:pb-0"
+                                  : "h-full min-h-0 flex-1 items-start rounded-xl border border-neutral-200/80 bg-white/85 p-2 shadow-sm sm:items-center sm:p-2.5 dark:border-slate-700/70 dark:bg-slate-900/50"
+                              } ${
                                 isRecentlyAdded ? "bg-emerald-100/75 dark:bg-emerald-500/15" : ""
                               } ${
                                 isRemoving ? "pointer-events-none opacity-0" : "opacity-100"
@@ -6942,12 +5505,16 @@ function App() {
                             >
                               <input
                                 type="checkbox"
-                                className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
+                                className={`h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500 ${
+                                  cfList ? "" : "mt-0.5 sm:mt-0"
+                                }`}
                                 checked={Boolean(cartItemSelection[lid])}
                                 onChange={() => toggleCartListingSelected(item.listingId)}
                                 aria-label={`Select ${item.title || "product"}`}
                               />
-                              <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800">
+                              <div
+                                className={`${thumbClass} shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800`}
+                              >
                                 {item.imageUrl ? (
                                   <img src={item.imageUrl} alt={item.title || "Cart item"} className="h-full w-full object-cover" />
                                 ) : (
@@ -6969,13 +5536,51 @@ function App() {
                                   hideDescription
                                   fulfillmentModes={item.fulfillmentModes}
                                 />
-                                <div className="mt-1 space-y-0.5 text-xs text-neutral-600 dark:text-slate-400">
+                                <div
+                                  className={`mt-1 space-y-0.5 text-neutral-600 dark:text-slate-400 ${
+                                    cfCompact ? "text-[10px] leading-snug sm:text-[11px]" : "text-xs"
+                                  }`}
+                                >
                                   <p className="line-clamp-2 text-pretty">
                                     Description: {removeSaleMetaLines(item.description) || "No description"}
                                   </p>
                                   <p className="line-clamp-2 text-pretty">
                                     Comment: {String(item.comment || "").trim() || "N/a"}
                                   </p>
+                                  <button
+                                    type="button"
+                                    className="btn-secondary mt-1.5 touch-manipulation self-start px-3 py-1.5 text-xs"
+                                    onClick={() => {
+                                      const listingForQuick = {
+                                        ...item,
+                                        id: item.listingId,
+                                        priceCents: item.unitPriceCents,
+                                      };
+                                      const stockAvail =
+                                        Number(item.listingQuantity) >= 0
+                                          ? Math.max(0, Number(item.listingQuantity))
+                                          : Math.max(0, Number(item.quantity) || 0);
+                                      openProductInspect(listingForQuick, {
+                                        quantity: Number(item.quantity) || 1,
+                                        comment: String(item.comment || "").trim(),
+                                        commentSectionRequired: true,
+                                        commentHeading: "Your note to the seller",
+                                        subtitle: "Cart",
+                                        listingStockQty: stockAvail,
+                                        showBuyerCommerceActions: true,
+                                        onAddToCart: () => {
+                                          closeProductInspect();
+                                          openQuickAddModal(listingForQuick, "cart");
+                                        },
+                                        onBuyNow: () => {
+                                          closeProductInspect();
+                                          openQuickAddModal(listingForQuick, "buy");
+                                        },
+                                      });
+                                    }}
+                                  >
+                                    View details
+                                  </button>
                                 </div>
                                 <div className="mt-1 flex flex-wrap items-center gap-2">
                                   <span className="text-xs text-neutral-600 dark:text-slate-400">Qty</span>
@@ -7102,71 +5707,89 @@ function App() {
         {(activeView === VIEWS.ORDERS || activeView === VIEWS.MY_PURCHASES) && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div>
-              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">
-                {activeView === VIEWS.MY_PURCHASES ? "Purchases" : "Orders"}
+              <h2 className="text-xl font-semibold tracking-tight text-neutral-900 sm:text-2xl dark:text-slate-100">
+                {activeView === VIEWS.MY_PURCHASES ? "My purchases" : "Sales inbox"}
               </h2>
-              <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
+              <p className="mt-1 text-xs leading-relaxed text-neutral-600 line-clamp-4 sm:text-sm sm:leading-normal sm:line-clamp-none dark:text-slate-400">
                 {activeView === VIEWS.MY_PURCHASES
-                  ? "COD only — LinkMart never holds your money. No refunds; cancel in Pending before the seller accepts, otherwise contact the seller."
-                  : "Incoming buyer orders — COD at pickup or delivery. You collect payment; LinkMart never holds balances."}
+                  ? "Things you bought from other sellers. COD only — LinkMart never holds your money. No refunds; cancel in Pending before the seller accepts, otherwise contact the seller."
+                  : "Things buyers ordered from you. COD at pickup or delivery — you collect payment; LinkMart never holds balances."}
               </p>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-3 sm:gap-y-2">
-              <div className="flex min-w-0 flex-wrap gap-2" role="tablist" aria-label="Order status">
-                {ORDERS_STATUS_TABS.map(({ id, label }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    role="tab"
-                    aria-selected={ordersStatusTab === id}
-                    className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${ordersStatusTab === id ? UI_KIT.tabActive : UI_KIT.tabIdle}`}
-                    onClick={() => setOrdersStatusTab(id)}
-                  >
-                    <span className="inline-flex items-center gap-1.5">
-                      <span>{label}</span>
-                      {id === "pending" && ordersStatusTab !== "pending" && pendingTabPillCount > 0 ? (
-                        <span className="inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
-                          {pendingTabPillCount > 99 ? "99+" : pendingTabPillCount}
-                        </span>
-                      ) : null}
-                      {(id === "processing" || id === "completed" || id === "cancelled") &&
-                      ordersStatusTab !== id &&
-                      ordersTabBadgeIdsByTab[id]?.length > 0 ? (
-                        <span className="inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
-                          {ordersTabBadgeIdsByTab[id].length > 99 ? "99+" : ordersTabBadgeIdsByTab[id].length}
-                        </span>
-                      ) : null}
-                    </span>
-                  </button>
-                ))}
+            <div className="flex flex-col gap-3">
+              <div className="flex w-full min-w-0 items-center gap-2 border-b border-neutral-200/70 pb-2 dark:border-slate-700/70 sm:border-0 sm:pb-0">
+                <div
+                  className="-mx-0.5 flex min-w-0 flex-1 snap-x snap-mandatory gap-1.5 overflow-x-auto px-0.5 pb-0.5 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:gap-2 sm:overflow-visible sm:pb-0 sm:[scrollbar-width:auto] [&::-webkit-scrollbar]:hidden sm:[&::-webkit-scrollbar]:auto"
+                  role="tablist"
+                  aria-label={activeView === VIEWS.MY_PURCHASES ? "Purchase status" : "Sales order status"}
+                >
+                  {ORDERS_STATUS_TABS.map(({ id, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      role="tab"
+                      aria-selected={ordersStatusTab === id}
+                      className={`snap-start shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition sm:px-3 sm:py-1.5 sm:text-sm ${ordersStatusTab === id ? UI_KIT.tabActive : UI_KIT.tabIdle}`}
+                      onClick={() => setOrdersStatusTab(id)}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <span>{label}</span>
+                        {id === "pending" && pendingTabPillCount > 0 ? (
+                          <span className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-brand-primary px-1.5 text-[10px] font-bold leading-none text-white shadow-sm ring-1 ring-black/10 dark:bg-brand-accent dark:text-slate-950 dark:ring-white/15">
+                            {pendingTabPillCount > 99 ? "99+" : pendingTabPillCount}
+                          </span>
+                        ) : null}
+                        {(id === "processing" || id === "completed" || id === "cancelled") &&
+                        ordersTabBadgeIdsByTab[id]?.length > 0 ? (
+                          <span className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-brand-primary px-1.5 text-[10px] font-bold leading-none text-white shadow-sm ring-1 ring-black/10 dark:bg-brand-accent dark:text-slate-950 dark:ring-white/15">
+                            {ordersTabBadgeIdsByTab[id].length > 99 ? "99+" : ordersTabBadgeIdsByTab[id].length}
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <div className="shrink-0 self-center sm:self-start">
+                  <ProductViewDensityToggle
+                    value={commerceFlowOrdersView}
+                    onChange={setCommerceFlowOrdersView}
+                    groupAriaLabel={
+                      activeView === VIEWS.MY_PURCHASES ? "My purchases line layout" : "Sales inbox line layout"
+                    }
+                    gridTitle="Grid — two columns for readable order cards"
+                    compactTitle="Dense — three columns for a compact overview"
+                  />
+                </div>
               </div>
               {ordersStatusTab === "pending" ? (
-                <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:w-auto">
-                  <span className="inline-flex items-center rounded-lg border border-neutral-200/90 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                <div className="flex w-full flex-col gap-2 min-[480px]:flex-row min-[480px]:flex-wrap min-[480px]:items-center min-[480px]:justify-end min-[480px]:gap-2">
+                  <span className="inline-flex w-full items-center justify-center rounded-lg border border-neutral-200/90 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-600 min-[480px]:w-auto min-[480px]:justify-start dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
                     Selected: {selectedOrders.length}
                   </span>
-                  {ordersRole === "seller" ? (
+                  <div className="flex flex-col gap-2 min-[360px]:flex-row min-[360px]:justify-end min-[360px]:gap-2">
+                    {ordersRole === "seller" ? (
+                      <button
+                        type="button"
+                        className="btn-secondary min-h-11 w-full touch-manipulation text-sm disabled:cursor-not-allowed disabled:opacity-50 min-[360px]:w-auto min-[360px]:min-h-0 min-[480px]:shrink-0"
+                        disabled={ordersBulkActionSubmitting || !ordersAcceptEnabled}
+                        onClick={() => {
+                          void applyTransitionToSelectedOrders("seller_accept", "Accepted");
+                        }}
+                      >
+                        {ordersBulkActionSubmitting ? "Working…" : "Accept"}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
-                      className="btn-secondary shrink-0 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={ordersBulkActionSubmitting || !ordersAcceptEnabled}
+                      className="min-h-11 w-full touch-manipulation rounded-lg border border-rose-300 px-3 py-1.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 min-[360px]:w-auto min-[360px]:min-h-0 min-[480px]:shrink-0 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                      disabled={ordersBulkActionSubmitting || !ordersDeclineEnabled}
                       onClick={() => {
-                        void applyTransitionToSelectedOrders("seller_accept", "Accepted");
+                        void applyTransitionToSelectedOrders("cancel", "Declined");
                       }}
                     >
-                      {ordersBulkActionSubmitting ? "Working…" : "Accept"}
+                      {ordersBulkActionSubmitting ? "Working…" : "Decline"}
                     </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-lg border border-rose-300 px-3 py-1.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                    disabled={ordersBulkActionSubmitting || !ordersDeclineEnabled}
-                    onClick={() => {
-                      void applyTransitionToSelectedOrders("cancel", "Declined");
-                    }}
-                  >
-                    {ordersBulkActionSubmitting ? "Working…" : "Decline"}
-                  </button>
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -7174,11 +5797,41 @@ function App() {
               <p className="text-sm text-neutral-600 dark:text-slate-400">Loading…</p>
             ) : null}
             {!(ordersLoading && orders.length === 0) && orders.length === 0 ? (
-              <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-sm text-neutral-500 dark:text-slate-400`}>You have no orders yet.</div>
+              <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-sm text-neutral-500 dark:text-slate-400`}>
+                {activeView === VIEWS.MY_PURCHASES
+                  ? "You have no purchases yet. When you buy from the marketplace, they will show up here."
+                  : "You have no buyer orders yet. When someone buys your listings, they will show up here."}
+              </div>
             ) : null}
             {!(ordersLoading && orders.length === 0) && orders.length > 0 && ordersForStatusTab.length === 0 ? (
-              <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-sm text-neutral-500 dark:text-slate-400`}>
-                No {ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label?.toLowerCase() || ""} orders.
+              <div className={`${UI_KIT.surfaceMuted} space-y-2 border-dashed p-8 text-sm text-neutral-500 dark:text-slate-400`}>
+                <p>
+                  {activeView === VIEWS.MY_PURCHASES ? (
+                    <>
+                      No {ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label?.toLowerCase() || ""}{" "}
+                      purchases.
+                    </>
+                  ) : (
+                    <>
+                      No {ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label?.toLowerCase() || ""} orders.
+                    </>
+                  )}
+                </p>
+                {ordersRole === "seller" &&
+                ordersStatusTab === "pending" &&
+                orders.some((o) => orderMatchesOrdersStatusTab(o.status, "processing")) ? (
+                  <p className="text-xs leading-relaxed text-neutral-600 dark:text-slate-400">
+                    You still have seller orders in other stages. Open the{" "}
+                    <button
+                      type="button"
+                      className="font-semibold text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:text-brand-primary/90 dark:text-brand-accent"
+                      onClick={() => setOrdersStatusTab("processing")}
+                    >
+                      Processing
+                    </button>{" "}
+                    tab (for example after you accept a delivery order, or while pickup is being arranged).
+                  </p>
+                ) : null}
               </div>
             ) : null}
             {ordersForStatusTab.length > 0 ? (
@@ -7319,8 +5972,8 @@ function App() {
                   const sellerAllSelected = sellerOrderIds.length > 0 && sellerSelectedCount === sellerOrderIds.length;
                   const sellerSomeSelected = sellerSelectedCount > 0 && !sellerAllSelected;
                   return (
-                    <div key={sellerId} className={`${UI_KIT.surfaceCard} p-3.5`}>
-                      <div className="mb-2 flex items-center gap-2 border-b border-neutral-200/80 pb-2 dark:border-slate-700/80">
+                    <div key={sellerId} className={`${UI_KIT.surfaceCard} p-3 sm:p-3.5`}>
+                      <div className="mb-1.5 flex items-center gap-2 border-b border-neutral-200/80 pb-1.5 sm:mb-2 sm:pb-2 dark:border-slate-700/80">
                         {ordersStatusTab === "pending" ? (
                           <CartSellerSelectAllCheckbox
                             allChecked={sellerAllSelected}
@@ -7329,72 +5982,109 @@ function App() {
                             ariaLabel={`Select all orders from ${sellerLabel}`}
                           />
                         ) : null}
-                        <p className="text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-slate-300">{sellerLabel}</p>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-600 sm:text-xs dark:text-slate-300">
+                          {sellerLabel}
+                        </p>
                       </div>
-                      <div className="divide-y divide-neutral-200/80 dark:divide-slate-700/80">
+                      <div
+                        className={commerceFlowLineItemsClass(commerceFlowOrdersView, {
+                          variant: "orders",
+                        })}
+                      >
                         {mergedSellerOrders.map((entry) => {
                           const o = entry.representativeOrder;
                           const cardListing = entry.cardListing;
+                          const cfList = commerceFlowOrdersView === "list";
+                          const cfCompact = commerceFlowOrdersView === "compact";
+                          const multicolOrderCard = !cfList;
+                          const orderThumbClass = cfList
+                            ? "h-20 w-20"
+                            : cfCompact
+                              ? "h-12 w-12 sm:h-14 sm:w-14"
+                              : "h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]";
+                          const orderCommentPlain = String(o.comment || "").trim();
+                          const orderHasComment = orderCommentPlain.length > 0 && !/^n\/a$/i.test(orderCommentPlain);
+                          const orderDescPlain = String(removeSaleMetaLines(cardListing.description) || "").trim();
+                          const orderHasDesc = orderDescPlain.length > 0;
                           const orderId = String(o.id || "");
-                          const highlightIdsForTab = ordersTabHighlightIdsByTab[ordersStatusTab] || [];
-                          const tabQueueBadgeIds = ordersTabBadgeIdsByTab[ordersStatusTab] || [];
+                          const pickupBuyerAckOrderIds = entry.orderIds.filter((id) => {
+                            const ord = orders.find((x) => String(x.id) === id);
+                            return (
+                              ord &&
+                              String(ord.status || "") === "ready_for_pickup" &&
+                              !ord.buyerReceiptAcknowledgedAt
+                            );
+                          });
+                          const pickupBuyerAcknowledgedAll =
+                            ordersRole === "buyer" &&
+                            String(o.status || "") === "ready_for_pickup" &&
+                            entry.orderIds.length > 0 &&
+                            entry.orderIds.every((id) => {
+                              const ord = orders.find((x) => String(x.id) === id);
+                              return (
+                                ord &&
+                                String(ord.status || "") === "ready_for_pickup" &&
+                                Boolean(ord.buyerReceiptAcknowledgedAt)
+                              );
+                            });
+                          const pickupBuyerAcknowledgedAny =
+                            String(o.status || "") === "ready_for_pickup" &&
+                            entry.orderIds.some((id) => Boolean(orders.find((x) => String(x.id) === id)?.buyerReceiptAcknowledgedAt));
+                          const unseenIdsForTab = ordersTabBadgeIdsByTab[ordersStatusTab] || [];
                           const orderIdNeedsAttention = (oid) => {
                             const sid = String(oid || "");
-                            if (!sid) return false;
-                            if (highlightIdsForTab.some((x) => String(x) === sid)) return true;
-                            // Purchases / Orders: when badge ids remain for the active queue, row highlights can
-                            // follow tabQueueBadgeIds if highlight ids were cleared separately.
-                            if (
-                              ((ordersRole === "buyer" && activeView === VIEWS.MY_PURCHASES) ||
-                                activeView === VIEWS.ORDERS) &&
-                              (ordersStatusTab === "processing" ||
-                                ordersStatusTab === "completed" ||
-                                ordersStatusTab === "cancelled") &&
-                              tabQueueBadgeIds.some((x) => String(x) === sid)
-                            ) {
-                              return true;
-                            }
-                            // Pending nav / tab pills also use `recentlyAddedPurchaseOrderIds` (buyer) and
-                            // `recentlyAddedSellerOrderIds` (seller); those were not mirrored into row highlights.
-                            if (ordersStatusTab === "pending") {
-                              if (ordersRole === "buyer" && recentlyAddedPurchaseOrderIds.some((x) => String(x) === sid)) return true;
-                              if (ordersRole === "seller" && recentlyAddedSellerOrderIds.some((x) => String(x) === sid)) return true;
-                            }
-                            return false;
+                            return Boolean(sid && unseenIdsForTab.some((x) => String(x) === sid));
                           };
                           const shouldHighlightRecent =
                             RECENT_ORDER_TAB_KEYS.includes(String(ordersStatusTab)) &&
                             entry.orderIds.some(orderIdNeedsAttention);
                           const rowAllSelected = entry.orderIds.length > 0 && entry.orderIds.every((id) => Boolean(orderSelection[id]));
+                          const completedHistoryRow =
+                            ordersStatusTab === "completed" && String(o.status || "") === "completed";
+                          const completedDetailsKey = String(o.id || "");
+                          const completedDetailsOpen = Boolean(completedTabOrderDetailsOpen[completedDetailsKey]);
                           return (
                             <div
                               key={`${sellerId}:${entry.mergeKey}`}
-                              className={`rounded-xl py-2.5 first:pt-0 last:pb-0 ${
+                              className={`${
+                                cfList
+                                  ? "rounded-xl py-2 first:pt-0 last:pb-0 sm:py-2.5"
+                                  : "h-full min-h-0 min-w-0 flex-1 rounded-xl border border-neutral-200/80 bg-white/85 p-2 shadow-sm sm:p-2.5 dark:border-slate-700/70 dark:bg-slate-900/50"
+                              } ${
                                 shouldHighlightRecent ? "bg-emerald-100/75 dark:bg-emerald-500/15" : ""
                               }`}
                             >
-                              <div className="flex items-center gap-3">
-                                {ordersStatusTab === "pending" ? (
-                                  <input
-                                    type="checkbox"
-                                    className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
-                                    checked={rowAllSelected}
-                                    onChange={() => {
-                                      const nextChecked = !rowAllSelected;
-                                      setOrderSelection((prev) => {
-                                        const next = { ...prev };
-                                        for (const id of entry.orderIds) {
-                                          if (!id) continue;
-                                          if (nextChecked) next[id] = true;
-                                          else delete next[id];
-                                        }
-                                        return next;
-                                      });
-                                    }}
-                                    aria-label={`Select order ${orderId}${entry.orderIds.length > 1 ? " group" : ""}`}
-                                  />
-                                ) : null}
-                                <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800">
+                              <div
+                                className={`flex flex-col sm:flex-row sm:items-start ${
+                                  cfCompact ? "gap-2 sm:gap-3" : "gap-3 sm:gap-3"
+                                }`}
+                              >
+                                <div className="flex shrink-0 flex-row items-start gap-3">
+                                  {ordersStatusTab === "pending" ? (
+                                    <input
+                                      type="checkbox"
+                                      className={`h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500 ${
+                                        cfList ? "mt-1" : "mt-0.5 sm:mt-1"
+                                      }`}
+                                      checked={rowAllSelected}
+                                      onChange={() => {
+                                        const nextChecked = !rowAllSelected;
+                                        setOrderSelection((prev) => {
+                                          const next = { ...prev };
+                                          for (const id of entry.orderIds) {
+                                            if (!id) continue;
+                                            if (nextChecked) next[id] = true;
+                                            else delete next[id];
+                                          }
+                                          return next;
+                                        });
+                                      }}
+                                      aria-label={`Select order ${orderId}${entry.orderIds.length > 1 ? " group" : ""}`}
+                                    />
+                                  ) : null}
+                                  <div
+                                    className={`${orderThumbClass} shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800`}
+                                  >
                                   {String(cardListing.imageUrl || "").trim() ? (
                                     <img src={cardListing.imageUrl} alt={cardListing.title || "Order item"} className="h-full w-full object-cover" />
                                   ) : (
@@ -7402,6 +6092,7 @@ function App() {
                                       No image
                                     </div>
                                   )}
+                                  </div>
                                 </div>
                                 <div className="min-w-0 flex-1">
                                   {shouldHighlightRecent ? (
@@ -7414,82 +6105,446 @@ function App() {
                                     priceCents={cardListing.priceCents}
                                     description={cardListing.description}
                                     hideDescription
+                                    hideAvailability
                                     fulfillmentModes={cardListing.fulfillmentModes}
                                   />
-                                  <div className="mt-1 space-y-0.5 text-xs text-neutral-600 dark:text-slate-400">
-                                    <p className="line-clamp-2 text-pretty">
-                                      Description: {removeSaleMetaLines(cardListing.description) || "No description"}
-                                    </p>
-                                    <p className="line-clamp-2 text-pretty">Comment: N/a</p>
-                                  </div>
-                                  <p className="mt-1 text-xs text-neutral-600 dark:text-slate-400">
-                                    Qty: <span className="font-semibold">{Number(cardListing.quantity) || 1}</span>
+                                  <p className="mt-1 text-pretty text-[11px] leading-snug text-neutral-600 sm:text-xs dark:text-slate-400">
+                                    <span className="font-medium text-neutral-700 dark:text-slate-300">Qty</span>{" "}
+                                    <span className="font-semibold tabular-nums">{Number(cardListing.quantity) || 1}</span>
+                                    <span className="text-neutral-400 dark:text-slate-600"> · </span>
+                                    {listingCodAvailabilityLabel(cardListing.fulfillmentModes)}
                                   </p>
+                                  <div
+                                    className={`mt-1 space-y-0.5 leading-snug text-neutral-600 dark:text-slate-400 ${
+                                      cfCompact ? "text-[10px] sm:text-[11px]" : "text-[11px] sm:text-xs sm:leading-normal"
+                                    }`}
+                                  >
+                                    <p className="line-clamp-2 text-pretty">
+                                      Description: {orderHasDesc ? orderDescPlain : "No description"}
+                                    </p>
+                                    <p className="line-clamp-2 text-pretty">
+                                      Comment: {orderHasComment ? orderCommentPlain : "N/a"}
+                                    </p>
+                                  </div>
                                 </div>
                               </div>
-                              <div className="mt-3 space-y-2 border-t border-neutral-200/80 pt-2 text-sm dark:border-slate-700/80">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="text-[11px] text-neutral-500 dark:text-slate-400">
-                                    <span className="mr-1.5 font-medium text-neutral-600 dark:text-slate-300">
-                                      {entry.orderIds.length > 1 ? "Order IDs" : "Order ID"}
-                                    </span>
-                                    {entry.orderIds.length > 1 ? (
-                                      <span className="mt-1 block space-y-0.5">
-                                        {entry.orderIds.map((id) => (
-                                          <span key={id} className="block font-mono">
-                                            {id}
+                              <div
+                                className={`border-t border-neutral-200/80 text-sm dark:border-slate-700/80 ${
+                                  multicolOrderCard
+                                    ? "mt-1.5 space-y-1 pt-1.5 sm:mt-2 sm:space-y-1.5 sm:pt-2"
+                                    : "mt-2 space-y-1.5 pt-1.5 sm:mt-3 sm:space-y-2 sm:pt-2"
+                                }`}
+                              >
+                                {!completedHistoryRow ? (
+                                  <>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="min-w-0 text-[11px] text-neutral-500 dark:text-slate-400">
+                                        <span className="mr-1.5 font-medium text-neutral-600 dark:text-slate-300">
+                                          {entry.orderIds.length > 1 ? "Order IDs" : "Order ID"}
+                                        </span>
+                                        {entry.orderIds.length > 1 ? (
+                                          <span className="mt-1 block space-y-0.5">
+                                            {entry.orderIds.map((id) => (
+                                              <span key={id} className="block break-all font-mono">
+                                                {id}
+                                              </span>
+                                            ))}
                                           </span>
-                                        ))}
+                                        ) : (
+                                          <span className="break-all font-mono">{entry.orderIds[0]}</span>
+                                        )}
                                       </span>
-                                    ) : (
-                                      <span className="font-mono">{entry.orderIds[0]}</span>
-                                    )}
-                                  </span>
-                                </div>
-                                <p className="text-xs text-neutral-600 dark:text-slate-400">
-                                  {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods{" "}
-                                  {formatCents(entry.mergedGoodsCents ?? o.codGoodsCents)}
-                                  {(entry.mergedDeliveryCents ?? o.codDeliveryCents) > 0 ? (
-                                    <span> · delivery {formatCents(entry.mergedDeliveryCents ?? o.codDeliveryCents)}</span>
-                                  ) : null}
-                                </p>
-                                <div className="flex flex-wrap items-center gap-2">
+                                    </div>
+                                    <p className="text-pretty text-xs leading-snug text-neutral-600 dark:text-slate-400">
+                                      {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods{" "}
+                                      {formatCents(entry.mergedGoodsCents ?? o.codGoodsCents)}
+                                      {(entry.mergedDeliveryCents ?? o.codDeliveryCents) > 0 ? (
+                                        <span> · delivery {formatCents(entry.mergedDeliveryCents ?? o.codDeliveryCents)}</span>
+                                      ) : null}
+                                    </p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="flex items-start gap-2 sm:gap-3">
+                                      <p className="min-w-0 flex-1 text-pretty text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
+                                        Completed{" "}
+                                        <span className="font-medium text-neutral-800 dark:text-slate-200">
+                                          {formatOrderCompletedAtLabel(
+                                            o.completedAt || o.completed_at || o.updatedAt || o.updated_at,
+                                          )}
+                                        </span>
+                                      </p>
+                                      <button
+                                        type="button"
+                                        className="shrink-0 rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700/80 sm:px-3 sm:py-2 sm:text-xs"
+                                        aria-expanded={completedDetailsOpen}
+                                        onClick={() => toggleCompletedTabOrderDetails(o.id)}
+                                      >
+                                        <span className="sm:hidden">{completedDetailsOpen ? "Hide" : "Details"}</span>
+                                        <span className="hidden sm:inline">
+                                          {completedDetailsOpen ? "Hide order details" : "Order details"}
+                                        </span>
+                                      </button>
+                                    </div>
+                                    {completedDetailsOpen ? (
+                                      <>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="min-w-0 text-[11px] text-neutral-500 dark:text-slate-400">
+                                            <span className="mr-1.5 font-medium text-neutral-600 dark:text-slate-300">
+                                              {entry.orderIds.length > 1 ? "Order IDs" : "Order ID"}
+                                            </span>
+                                            {entry.orderIds.length > 1 ? (
+                                              <span className="mt-1 block space-y-0.5">
+                                                {entry.orderIds.map((id) => (
+                                                  <span key={id} className="block break-all font-mono">
+                                                    {id}
+                                                  </span>
+                                                ))}
+                                              </span>
+                                            ) : (
+                                              <span className="break-all font-mono">{entry.orderIds[0]}</span>
+                                            )}
+                                          </span>
+                                        </div>
+                                        <p className="text-pretty text-xs leading-snug text-neutral-600 dark:text-slate-400">
+                                          {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods{" "}
+                                          {formatCents(entry.mergedGoodsCents ?? o.codGoodsCents)}
+                                          {(entry.mergedDeliveryCents ?? o.codDeliveryCents) > 0 ? (
+                                            <span> · delivery {formatCents(entry.mergedDeliveryCents ?? o.codDeliveryCents)}</span>
+                                          ) : null}
+                                        </p>
+                                        <OrderCompletedMilestoneList order={o} />
+                                      </>
+                                    ) : null}
+                                  </>
+                                )}
+                                {(() => {
+                                  const tab = String(ordersStatusTab || "");
+                                  if (tab === "completed" && String(o.status || "") === "completed") return null;
+                                  const line =
+                                    tab === "pending" && (o.createdAt || o.created_at)
+                                      ? `Placed ${formatOrderCompletedAtLabel(o.createdAt || o.created_at)}`
+                                      : tab === "processing"
+                                        ? o.processingEnteredAt || o.processing_entered_at
+                                          ? `In progress since ${formatOrderCompletedAtLabel(o.processingEnteredAt || o.processing_entered_at)}`
+                                          : o.updatedAt || o.updated_at
+                                            ? `Last updated ${formatOrderCompletedAtLabel(o.updatedAt || o.updated_at)}`
+                                            : null
+                                        : tab === "cancelled"
+                                          ? `Cancelled ${formatOrderCompletedAtLabel(o.cancelledAt || o.cancelled_at || o.updatedAt || o.updated_at)}`
+                                          : null;
+                                  if (!line) return null;
+                                  return (
+                                    <p className="text-pretty text-[11px] leading-snug text-neutral-500 dark:text-slate-500">{line}</p>
+                                  );
+                                })()}
+                                {ordersRole === "buyer" && ordersStatusTab === "completed" && String(o.status || "") === "completed" ? (
+                                  <div
+                                    className={`flex flex-col rounded-lg border border-neutral-200/70 bg-white/50 dark:border-slate-600/80 dark:bg-slate-900/30 ${
+                                      multicolOrderCard
+                                        ? "gap-1.5 p-2 sm:gap-2 sm:p-2.5"
+                                        : "gap-2 p-2.5 sm:gap-3 sm:p-3"
+                                    }`}
+                                  >
+                                    <div className="min-w-0 space-y-1">
+                                      {o.buyerReceiptAcknowledgedAt ? (
+                                        <p className="text-pretty text-[11px] leading-snug text-neutral-500 dark:text-slate-500">
+                                          You had marked this order as received before it was completed.
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                    <div
+                                      className={
+                                        multicolOrderCard
+                                          ? "flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-1.5"
+                                          : "-mx-0.5 flex gap-2 overflow-x-auto pb-0.5 sm:mx-0 sm:flex-wrap sm:justify-end sm:overflow-visible sm:pb-0"
+                                      }
+                                    >
+                                      <button
+                                        type="button"
+                                        className={`btn-secondary w-full touch-manipulation whitespace-nowrap sm:w-auto ${
+                                          multicolOrderCard
+                                            ? "min-h-9 shrink-0 px-2.5 py-1.5 text-[11px] sm:min-h-0"
+                                            : "min-h-10 shrink-0 px-3 text-xs sm:min-h-0"
+                                        }`}
+                                        onClick={() => {
+                                          const L = orderListingsById[String(o.listingId)];
+                                          if (!L?.id) {
+                                            pushMarketplaceToast("Listing is unavailable — it may have been removed.");
+                                            return;
+                                          }
+                                          openListingFromPurchasedOrder(L);
+                                        }}
+                                      >
+                                        View listing
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={`btn-secondary w-full touch-manipulation whitespace-nowrap sm:w-auto ${
+                                          multicolOrderCard
+                                            ? "min-h-9 shrink-0 px-2.5 py-1.5 text-[11px] sm:min-h-0"
+                                            : "min-h-10 shrink-0 px-3 text-xs sm:min-h-0"
+                                        }`}
+                                        onClick={() => {
+                                          const L = orderListingsById[String(o.listingId)];
+                                          if (!L?.id) {
+                                            pushMarketplaceToast("Listing is unavailable — it may have been removed.");
+                                            return;
+                                          }
+                                          openQuickAddModal(L, "cart");
+                                        }}
+                                      >
+                                        Buy again
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={`btn-secondary w-full touch-manipulation whitespace-nowrap sm:w-auto ${
+                                          multicolOrderCard
+                                            ? "min-h-9 shrink-0 px-2.5 py-1.5 text-[11px] sm:min-h-0"
+                                            : "min-h-10 shrink-0 px-3 text-xs sm:min-h-0"
+                                        }`}
+                                        onClick={() => {
+                                          setActiveView(VIEWS.MESSAGES);
+                                          pushMarketplaceToast("Messaging is coming soon — you will reach the seller from here.");
+                                        }}
+                                      >
+                                        Message seller
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {ordersRole === "buyer" && ordersStatusTab === "completed" && String(o.status || "") === "completed" ? (
+                                  <OrderBuyerReviewForm
+                                    orderId={o.id}
+                                    initialReview={o.buyerReview}
+                                    onSubmit={submitOrderReview}
+                                    disabled={!token}
+                                    compact={multicolOrderCard}
+                                  />
+                                ) : null}
+                                {ordersRole === "seller" && ordersStatusTab === "completed" && o.buyerReview?.rating ? (
+                                  <div
+                                    className={`rounded-lg border border-neutral-200/80 bg-neutral-50/60 dark:border-slate-600 dark:bg-slate-900/40 ${
+                                      multicolOrderCard ? "px-2 py-1.5 text-[11px]" : "px-3 py-2 text-xs"
+                                    }`}
+                                  >
+                                    <p className="font-medium text-neutral-800 dark:text-slate-200">
+                                      Buyer rated this order {o.buyerReview.rating} / 5
+                                    </p>
+                                    {o.buyerReview.reviewText ? (
+                                      <p className="mt-1 whitespace-pre-wrap break-words text-pretty text-neutral-600 dark:text-slate-400">
+                                        {o.buyerReview.reviewText}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                                <div className={`flex flex-col ${multicolOrderCard ? "gap-1.5" : "gap-2"}`}>
+                                  <div
+                                    className={`flex w-full flex-col min-[400px]:flex-row min-[400px]:flex-wrap min-[400px]:items-center ${
+                                      multicolOrderCard ? "gap-1.5" : "gap-2"
+                                    }`}
+                                  >
+                                  <button
+                                    type="button"
+                                    className={`btn-secondary w-full touch-manipulation whitespace-nowrap min-[400px]:w-auto min-[400px]:min-h-0 ${
+                                      multicolOrderCard
+                                        ? "min-h-9 shrink-0 px-2.5 py-1.5 text-[11px] sm:min-h-0"
+                                        : "min-h-10 shrink-0 px-3 text-xs sm:min-h-0"
+                                    }`}
+                                    onClick={() => {
+                                      const L = orderListingsById[String(o.listingId)];
+                                      const base =
+                                        L ||
+                                        ({
+                                          id: o.listingId,
+                                          title: cardListing.title,
+                                          imageUrl: cardListing.imageUrl,
+                                          priceCents: cardListing.priceCents,
+                                          description: cardListing.description,
+                                          fulfillmentModes: cardListing.fulfillmentModes,
+                                          quantity: cardListing.quantity,
+                                          sellerId: o.sellerId,
+                                          communityId: cardListing.communityId,
+                                        });
+                                      const listingIdStr = String(base.id || o.listingId || "");
+                                      const inspectPayload = {
+                                        title: base.title,
+                                        imageUrl: base.imageUrl,
+                                        priceCents: base.priceCents,
+                                        description: base.description,
+                                        fulfillmentModes: base.fulfillmentModes,
+                                      };
+                                      const forQuick = {
+                                        ...base,
+                                        id: listingIdStr,
+                                        priceCents: base.priceCents,
+                                        quantity: base.quantity,
+                                        fulfillmentModes:
+                                          Array.isArray(base.fulfillmentModes) && base.fulfillmentModes.length
+                                            ? base.fulfillmentModes
+                                            : [o.fulfillmentType],
+                                        sellerId: base.sellerId ?? o.sellerId,
+                                        communityId: base.communityId,
+                                        imageUrl: base.imageUrl,
+                                        title: base.title,
+                                        description: base.description,
+                                      };
+                                      const stockQty = Math.max(0, Number(base.quantity) || 0);
+                                      const isBuyer = ordersRole === "buyer";
+                                      const isOrderSeller =
+                                        ordersRole === "seller" && String(o.sellerId || "") === String(user?.id || "");
+                                      const buyerCanShop = isBuyer && String(o.sellerId || "") !== String(user?.id || "");
+
+                                      openProductInspect(inspectPayload, {
+                                        quantity: Number(cardListing.quantity) || 1,
+                                        comment: orderCommentPlain,
+                                        commentSectionRequired: true,
+                                        commentHeading:
+                                          ordersRole === "seller" ? "Buyer's note" : "Your order note",
+                                        subtitle:
+                                          ordersRole === "buyer"
+                                            ? `Your purchase · ${o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"}`
+                                            : `Buyer order · ${o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"}`,
+                                        listingStockQty: stockQty,
+                                        showBuyerCommerceActions: buyerCanShop && Boolean(listingIdStr),
+                                        showSellerCommerceActions: isOrderSeller && Boolean(listingIdStr),
+                                        onAddToCart:
+                                          buyerCanShop && listingIdStr
+                                            ? () => {
+                                                closeProductInspect();
+                                                openQuickAddModal(forQuick, "cart");
+                                              }
+                                            : undefined,
+                                        onBuyNow:
+                                          buyerCanShop && listingIdStr
+                                            ? () => {
+                                                closeProductInspect();
+                                                openQuickAddModal(forQuick, "buy");
+                                              }
+                                            : undefined,
+                                        onEditListing:
+                                          isOrderSeller && listingIdStr
+                                            ? () => {
+                                                closeProductInspect();
+                                                beginEditSellerListing(forQuick);
+                                              }
+                                            : undefined,
+                                        onSaleSelect:
+                                          isOrderSeller && listingIdStr
+                                            ? (pct) => {
+                                                closeProductInspect();
+                                                void applySellerListingDiscount(forQuick, pct);
+                                              }
+                                            : undefined,
+                                      });
+                                    }}
+                                  >
+                                    View details
+                                  </button>
                                   {ordersRole === "seller" && o.status === "placed" ? (
-                                    <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "seller_accept")}>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs min-[400px]:w-auto min-[400px]:min-h-0"
+                                      onClick={() => patchOrderTransition(o.id, "seller_accept")}
+                                    >
                                       Accept order
                                     </button>
                                   ) : null}
-                                  {o.status === "ready_for_pickup" ? (
-                                    <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_pickup_done")}>
+                                  {ordersRole === "seller" && o.status === "ready_for_pickup" ? (
+                                    <button
+                                      type="button"
+                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs min-[400px]:w-auto min-[400px]:min-h-0"
+                                      onClick={() => patchOrderTransition(o.id, "mark_pickup_done")}
+                                    >
                                       Mark pickup complete
                                     </button>
                                   ) : null}
                                   {ordersRole === "seller" && o.status === "bid_accepted" ? (
-                                    <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_out_for_delivery")}>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs min-[400px]:w-auto min-[400px]:min-h-0"
+                                      onClick={() => patchOrderTransition(o.id, "mark_out_for_delivery")}
+                                    >
                                       Mark out for delivery
                                     </button>
                                   ) : null}
                                   {o.status === "out_for_delivery" ? (
-                                    <button type="button" className="btn-secondary text-xs" onClick={() => patchOrderTransition(o.id, "mark_delivered")}>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs min-[400px]:w-auto min-[400px]:min-h-0"
+                                      onClick={() => patchOrderTransition(o.id, "mark_delivered")}
+                                    >
                                       Mark delivered
                                     </button>
                                   ) : null}
                                   {o.status === "bidding_open" ? (
-                                    <button type="button" className="btn-secondary text-xs" onClick={() => loadBidsForOrder(o.id)}>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs min-[400px]:w-auto min-[400px]:min-h-0"
+                                      onClick={() => loadBidsForOrder(o.id)}
+                                    >
                                       {expandedBidOrderId === o.id ? "Reload bids" : "View bids"}
                                     </button>
+                                  ) : null}
+                                  </div>
+                                  {ordersRole === "seller" && o.status === "ready_for_pickup" ? (
+                                    <div className="max-w-xl space-y-1 text-[11px] leading-snug text-neutral-500 dark:text-slate-400">
+                                      <p>
+                                        Close the order when the buyer has picked up the item and you have collected COD. LinkMart does not process in-app
+                                        payments.
+                                      </p>
+                                      {pickupBuyerAcknowledgedAny ? (
+                                        <p className="text-emerald-800 dark:text-emerald-200/90">
+                                          The buyer marked this pickup as received (optional). You still need to mark pickup complete to close the order.
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
+                                  {ordersRole === "buyer" && o.status === "ready_for_pickup" && o.fulfillmentType === "pickup" ? (
+                                    <div className="max-w-xl space-y-1.5">
+                                      {pickupBuyerAcknowledgedAll ? (
+                                        <p className="text-[11px] text-neutral-600 dark:text-slate-400">You marked this pickup as received.</p>
+                                      ) : (
+                                        <>
+                                          <p className="text-pretty text-[11px] leading-snug text-neutral-500 dark:text-slate-400">
+                                            Optional: confirm when you have the item in hand. The seller still marks pickup complete to close the order.
+                                          </p>
+                                          {pickupBuyerAckOrderIds.length > 0 ? (
+                                            <button
+                                              type="button"
+                                              className="btn-secondary min-h-11 w-full max-w-md touch-manipulation text-xs sm:w-auto sm:min-h-0"
+                                              onClick={() =>
+                                                patchOrderTransition(pickupBuyerAckOrderIds[0], "buyer_ack_receipt", {
+                                                  orderIds: pickupBuyerAckOrderIds,
+                                                  successMessage: "Thanks — seller will mark pickup complete when handoff is done.",
+                                                })
+                                              }
+                                            >
+                                              Mark as received
+                                            </button>
+                                          ) : null}
+                                        </>
+                                      )}
+                                    </div>
                                   ) : null}
                                 </div>
                                 {expandedBidOrderId === o.id && o.status === "bidding_open" ? (
                                   <ul className="mt-2 space-y-2 rounded-lg border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-slate-600 dark:bg-slate-900/50">
                                     {bidsForOrder.length === 0 ? <li className="text-xs text-neutral-500">No bids yet.</li> : null}
                                     {bidsForOrder.map((b) => (
-                                      <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                                        <span>
+                                      <li
+                                        key={b.id}
+                                        className="flex flex-col gap-2 text-xs min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between"
+                                      >
+                                        <span className="min-w-0 break-words text-neutral-700 dark:text-slate-300">
                                           {formatCents(b.amountCents)} · {b.mode} · {b.status}
                                         </span>
                                         {b.status === "pending" && (o.buyerId === user?.id || o.sellerId === user?.id) ? (
-                                          <button type="button" className="text-brand-primary hover:underline" onClick={() => acceptOrderBid(o.id, b.id)}>
+                                          <button
+                                            type="button"
+                                            className="min-h-10 shrink-0 touch-manipulation self-start text-brand-primary hover:underline min-[420px]:self-auto"
+                                            onClick={() => acceptOrderBid(o.id, b.id)}
+                                          >
                                             Accept bid
                                           </button>
                                         ) : null}
@@ -8572,39 +7627,7 @@ function App() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">Listings & quantity</p>
                       <div className="flex items-center gap-2">
-                        <div className="inline-flex items-center rounded-lg border border-neutral-200/90 bg-white p-1 dark:border-slate-600 dark:bg-slate-900">
-                          <button
-                            type="button"
-                            className={`rounded-md p-1.5 transition ${
-                              sellerProductsView === "list"
-                                ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100"
-                                : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"
-                            }`}
-                            aria-label="List view"
-                            onClick={() => setSellerProductsView("list")}
-                          >
-                            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            className={`rounded-md p-1.5 transition ${
-                              sellerProductsView === "grid"
-                                ? "bg-brand-soft text-brand-primary dark:bg-slate-800 dark:text-slate-100"
-                                : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"
-                            }`}
-                            aria-label="Grid view"
-                            onClick={() => setSellerProductsView("grid")}
-                          >
-                            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                              <rect x="3" y="3" width="7" height="7" rx="1" />
-                              <rect x="14" y="3" width="7" height="7" rx="1" />
-                              <rect x="3" y="14" width="7" height="7" rx="1" />
-                              <rect x="14" y="14" width="7" height="7" rx="1" />
-                            </svg>
-                          </button>
-                        </div>
+                        <ProductViewDensityToggle value={sellerProductsView} onChange={setSellerProductsView} />
                         <button
                           type="button"
                           className="btn-primary shrink-0 text-sm"
@@ -8642,13 +7665,14 @@ function App() {
                       <p className="mt-3 text-sm text-neutral-600 dark:text-slate-400">Loading your listings…</p>
                     ) : null}
                     {sellerListings.length ? (
-                      <ul className={sellerProductsView === "grid" ? "mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2" : "mt-3 space-y-3"}>
+                      <ul className={sellerListingsGridClass(sellerProductsView)}>
                         {sellerListings.map((l) => {
                           return (
                             <SellerProductCard
                               key={l.id}
                               listing={l}
-                              gridMode={sellerProductsView === "grid"}
+                              gridMode={sellerProductsView !== "list"}
+                              compactGrid={sellerProductsView === "compact"}
                               onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
                               onEdit={() => beginEditSellerListing(l)}
                               onDelete={() => deleteSellerListingById(l.id)}
@@ -8659,6 +7683,24 @@ function App() {
                                 void setSellerListingQuantityById(l.id, qty);
                               }}
                               quantityUpdating={sellerListingQtySavingId === String(l.id)}
+                              onView={() => {
+                                const stockListed = Math.max(0, Number(l.quantity) || 0);
+                                openProductInspect(l, {
+                                  quantity: stockListed,
+                                  quantityLabel: "Stock listed",
+                                  subtitle: "Your listing",
+                                  listingStockQty: stockListed,
+                                  showSellerCommerceActions: true,
+                                  onEditListing: () => {
+                                    closeProductInspect();
+                                    beginEditSellerListing(l);
+                                  },
+                                  onSaleSelect: (pct) => {
+                                    closeProductInspect();
+                                    void applySellerListingDiscount(l, pct);
+                                  },
+                                });
+                              }}
                             />
                           );
                         })}
@@ -8726,6 +7768,10 @@ function App() {
 
       </main>
 
+      {productInspect ? (
+        <ProductInspectModal open onClose={closeProductInspect} {...productInspect} />
+      ) : null}
+
       {quickAddModalOpen && quickAddListing ? (
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="quick-add-modal-title">
           <button
@@ -8741,8 +7787,13 @@ function App() {
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 id="quick-add-modal-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
-                  {quickActionType === "buy" ? "Confirm purchase" : "Add to cart"}
+                  {quickActionType === "buy" ? "Complete your order" : "Add to cart"}
                 </h2>
+                <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">
+                  {quickActionType === "buy"
+                    ? "Pay COD when you receive your order."
+                    : "You can check out from your cart anytime."}
+                </p>
               </div>
               <button
                 type="button"
@@ -8770,14 +7821,15 @@ function App() {
                     priceCents={quickAddListing.priceCents}
                     description={quickAddListing.description}
                     fulfillmentModes={quickAddListing.fulfillmentModes}
+                    frameDescriptionAsSellerNote
                     quantityAfterDescription
                     quantityRow={
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs text-neutral-600 dark:text-slate-400">Qty</span>
-                        <div className="inline-flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                        <span className="text-xs font-medium text-neutral-600 dark:text-slate-400">Qty</span>
+                        <div className="inline-flex items-center gap-1 sm:gap-1.5">
                           <button
                             type="button"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:h-10 sm:w-10"
                             aria-label="Decrease quantity"
                             disabled={Number(quickAddQuantity) <= 1 || quickAddSubmitting}
                             onClick={() =>
@@ -8795,7 +7847,7 @@ function App() {
                             type="number"
                             min={1}
                             max={Math.max(1, Number(quickAddListing.quantity) || 1)}
-                            className="input-base h-8 w-14 px-1 text-center text-xs"
+                            className="input-base h-11 w-16 px-1 text-center text-sm tabular-nums sm:h-10 sm:w-14"
                             value={quickAddQuantity}
                             disabled={quickAddSubmitting}
                             onChange={(e) => {
@@ -8822,7 +7874,7 @@ function App() {
                           />
                           <button
                             type="button"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:h-10 sm:w-10"
                             aria-label="Increase quantity"
                             disabled={
                               Number(quickAddQuantity) >= Math.max(1, Number(quickAddListing.quantity) || 1) || quickAddSubmitting
@@ -8846,19 +7898,42 @@ function App() {
                     }
                   />
                 </div>
+                <div className="mt-3 border-t border-neutral-200/60 pt-3 dark:border-slate-600/60">
+                  <button
+                    type="button"
+                    className="text-left text-xs font-semibold text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:text-brand-primary/90 dark:text-brand-accent"
+                    onClick={() => {
+                      const q = Number(quickAddQuantity);
+                      openProductInspect(
+                        { ...quickAddListing, priceCents: quickAddListing.priceCents },
+                        {
+                          quantity: Number.isFinite(q) && q > 0 ? q : 1,
+                          comment: String(quickAddComment || "").trim(),
+                          commentSectionRequired: true,
+                          commentHeading:
+                            quickActionType === "buy" ? "Your note with this order" : "Your note to the seller",
+                          subtitle: quickActionType === "buy" ? "Order preview" : "Add to cart preview",
+                        },
+                      );
+                    }}
+                  >
+                    View full description & note
+                  </button>
+                </div>
               </div>
               {quickActionType === "buy" ? (
                 <div className="border-t border-neutral-200/90 pt-3 dark:border-slate-600/90">
                   <p className="mb-2 text-xs font-medium text-neutral-600 dark:text-slate-400">Fulfillment</p>
-                  <div className="flex flex-wrap gap-3 text-sm">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:gap-x-4 sm:gap-y-1">
                     {(Array.isArray(quickAddListing.fulfillmentModes) && quickAddListing.fulfillmentModes.length
                       ? quickAddListing.fulfillmentModes
                       : ["pickup"]
                     ).includes("pickup") ? (
-                      <label className="inline-flex cursor-pointer items-center gap-2">
+                      <label className="inline-flex min-h-[44px] cursor-pointer items-center gap-2.5 rounded-lg py-1 pr-2 text-sm sm:min-h-0">
                         <input
                           type="radio"
                           name="quick-order-fulfillment"
+                          className="h-4 w-4 shrink-0"
                           checked={quickOrderFulfillmentType === "pickup"}
                           onChange={() => setQuickOrderFulfillmentType("pickup")}
                         />
@@ -8869,10 +7944,11 @@ function App() {
                       ? quickAddListing.fulfillmentModes
                       : ["pickup"]
                     ).includes("delivery") ? (
-                      <label className="inline-flex cursor-pointer items-center gap-2">
+                      <label className="inline-flex min-h-[44px] cursor-pointer items-center gap-2.5 rounded-lg py-1 pr-2 text-sm sm:min-h-0">
                         <input
                           type="radio"
                           name="quick-order-fulfillment"
+                          className="h-4 w-4 shrink-0"
                           checked={quickOrderFulfillmentType === "delivery"}
                           onChange={() => setQuickOrderFulfillmentType("delivery")}
                         />
@@ -8880,25 +7956,52 @@ function App() {
                       </label>
                     ) : null}
                   </div>
+                  {(() => {
+                    const q = Math.max(1, Number(quickAddQuantity) || 1);
+                    const unitCents = Math.max(0, Number(quickAddListing.priceCents) || 0);
+                    const lineCents = unitCents * q;
+                    return (
+                      <div className="mt-3 rounded-lg border border-neutral-200/80 bg-neutral-50/80 px-3 py-2.5 dark:border-slate-600 dark:bg-slate-800/50">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Subtotal</p>
+                        <p className="mt-1 text-base font-semibold tabular-nums text-neutral-900 dark:text-slate-100">{formatCents(lineCents)}</p>
+                        <p className="mt-0.5 text-xs text-neutral-500 dark:text-slate-400">
+                          {q} {q === 1 ? "item" : "items"} at {formatCents(unitCents)} each
+                        </p>
+                      </div>
+                    );
+                  })()}
                 </div>
-              ) : (
-                <div className="border-t border-neutral-200/90 pt-3 dark:border-slate-600/90">
-                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="quick-add-comment">
-                    Comment
-                  </label>
-                  <textarea
-                    id="quick-add-comment"
-                    rows={3}
-                    maxLength={250}
-                    className="input-base w-full resize-none"
-                    placeholder="Optional note for your cart item"
-                    value={quickAddComment}
-                    onChange={(e) => setQuickAddComment(e.target.value)}
-                  />
-                </div>
-              )}
-              <button type="button" className="btn-primary w-full" disabled={quickAddSubmitting} onClick={submitQuickAddOrder}>
-                {quickAddSubmitting ? "Confirming…" : quickActionType === "buy" ? "Confirm order" : "Confirm action"}
+              ) : null}
+              <div className="border-t border-neutral-200/90 pt-3 dark:border-slate-600/90">
+                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="quick-add-comment">
+                  Comment
+                </label>
+                <textarea
+                  id="quick-add-comment"
+                  rows={3}
+                  maxLength={quickActionType === "buy" ? 2000 : 250}
+                  className="input-base w-full resize-none"
+                  placeholder={
+                    quickActionType === "buy" ? "Optional note for the seller" : "Optional note for your cart item"
+                  }
+                  value={quickAddComment}
+                  onChange={(e) => setQuickAddComment(e.target.value)}
+                />
+              </div>
+              <button
+                type="button"
+                className="btn-primary w-full"
+                disabled={quickAddSubmitting}
+                aria-busy={quickAddSubmitting}
+                onClick={submitQuickAddOrder}
+              >
+                {quickAddSubmitting
+                  ? quickActionType === "buy"
+                    ? "Placing order…"
+                    : "Adding…"
+                  : quickActionType === "buy"
+                    ? "Place order"
+                    : "Add to cart"}
               </button>
             </div>
           </div>
