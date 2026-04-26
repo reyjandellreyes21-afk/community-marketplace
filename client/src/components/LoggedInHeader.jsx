@@ -486,7 +486,7 @@ export function LoggedInHeader({
               }}
             >
               <MenuFileIcon className="h-[18px] w-[18px] shrink-0" />
-              My purchases
+              Purchases
               {purchasesItemCount > 0 ? (
                 <span className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-brand-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
                   {purchasesItemCount > 99 ? "99+" : purchasesItemCount}

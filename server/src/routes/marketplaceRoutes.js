@@ -13,6 +13,7 @@ import {
   deleteListing,
   getCourierModes,
   getListing,
+  getMeOrderAttention,
   listBidsForOrder,
   listCartItems,
   patchCartItem,
@@ -30,6 +31,7 @@ import {
   listingsValidators,
   patchCourierModes,
   patchOrder,
+  putMeOrderAttention,
   removeFavorite,
   removeCartItem,
   sellerSummary,
@@ -134,6 +136,9 @@ marketplaceRouter.get("/delivery/open", requireAuth, listOpenDeliveryOrders);
 marketplaceRouter.get("/delivery/my-bids", requireAuth, listMyBids);
 marketplaceRouter.get("/me/courier-modes", requireAuth, getCourierModes);
 marketplaceRouter.patch("/me/courier-modes", requireAuth, writeLimiter, [body("modes").isArray()], validate, patchCourierModes);
+
+marketplaceRouter.get("/me/order-attention", requireAuth, getMeOrderAttention);
+marketplaceRouter.put("/me/order-attention", requireAuth, writeLimiter, putMeOrderAttention);
 
 marketplaceRouter.get("/me/seller/summary", requireAuth, sellerSummary);
 marketplaceRouter.get("/me/expenses", requireAuth, listExpenses);

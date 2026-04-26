@@ -831,6 +831,25 @@ const readStoredStringArray = (key) => {
 
 const RECENT_ORDER_TAB_KEYS = ["pending", "processing", "completed", "cancelled"];
 
+const emptyOrderAttentionByTab = () => ({
+  pending: [],
+  processing: [],
+  completed: [],
+  cancelled: [],
+});
+
+const persistBuyerOrderAttentionToStorage = () => {
+  try {
+    if (typeof window === "undefined") return;
+    const empty = emptyOrderAttentionByTab();
+    window.localStorage.setItem(PURCHASES_RECENT_STATUS_BADGE_STORAGE_KEY, JSON.stringify(empty));
+    window.localStorage.setItem(PURCHASES_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY, JSON.stringify(empty));
+    window.localStorage.setItem(PURCHASES_PENDING_BADGE_STORAGE_KEY, JSON.stringify([]));
+  } catch {
+    // ignore
+  }
+};
+
 const readStoredRecentIdsByTab = (key) => {
   const empty = { pending: [], processing: [], completed: [], cancelled: [] };
   try {
@@ -847,6 +866,61 @@ const readStoredRecentIdsByTab = (key) => {
   } catch {
     return empty;
   }
+};
+
+const normalizeAttentionIdsByTabObject = (raw) => {
+  const empty = emptyOrderAttentionByTab();
+  if (!raw || typeof raw !== "object") return empty;
+  for (const t of RECENT_ORDER_TAB_KEYS) {
+    empty[t] = Array.isArray(raw[t]) ? raw[t].map((x) => String(x || "")).filter(Boolean) : [];
+  }
+  return empty;
+};
+
+const normalizeRecentPendingIdsFromApi = (raw) =>
+  Array.isArray(raw) ? raw.map((x) => String(x || "")).filter(Boolean) : [];
+
+/** Styling + a11y for marketplace toast banners (single source for stacked toasts). */
+const computeMarketplaceFeedbackForText = (raw) => {
+  const text = String(raw ?? "").trim();
+  const isError =
+    /(^|[\s])(error|failed|could not|cannot|can't|invalid|required|already|expired|unable|denied|not found)\b/i.test(text);
+  const isSuccess =
+    !isError && /(success|successfully|added|updated|deleted|accepted|applied|joined|saved|published|completed)/i.test(text);
+  const tone = isError ? "error" : isSuccess ? "success" : "info";
+  if (tone === "success") {
+    return {
+      text,
+      tone,
+      icon: "✓",
+      role: "status",
+      live: "polite",
+      className:
+        "border-emerald-200/90 bg-emerald-50/90 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200",
+      dismissClass: "text-emerald-800 hover:text-emerald-900 dark:text-emerald-200 dark:hover:text-emerald-100",
+    };
+  }
+  if (tone === "error") {
+    return {
+      text,
+      tone,
+      icon: "!",
+      role: "alert",
+      live: "assertive",
+      className:
+        "border-rose-200/90 bg-rose-50/90 text-rose-950 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200",
+      dismissClass: "text-rose-800 hover:text-rose-900 dark:text-rose-200 dark:hover:text-rose-100",
+    };
+  }
+  return {
+    text,
+    tone,
+    icon: "i",
+    role: "status",
+    live: "polite",
+    className: "border-sky-200/90 bg-sky-50/90 text-sky-950 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200",
+    dismissClass: "text-sky-800 hover:text-sky-900 dark:text-sky-200 dark:hover:text-sky-100",
+  };
 };
 
 function SectionHeading({ title, subtitle, trailing = null }) {
@@ -1501,12 +1575,13 @@ function OrderPlacementForm({ listing, token, onDone, onError }) {
         onError("Maximum available quantity is already in pending orders.");
         return;
       }
-      await apiRequest("/orders", {
+      const created = await apiRequest("/orders", {
         method: "POST",
         token,
         body: { listingId: listing.id, fulfillmentType, quantity: desiredQty },
       });
-      onDone("Order placed. Pay COD at pickup or when delivery is completed.");
+      const createdOrderId = String(created?.order?.id || "");
+      onDone("Order placed. Pay COD at pickup or when delivery is completed.", createdOrderId);
     } catch (e) {
       onError(e.message || "Could not place order.");
     } finally {
@@ -1625,6 +1700,8 @@ function App() {
   });
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(() => localStorage.getItem("quiz_token") || "");
+  const authTokenRef = useRef("");
+  authTokenRef.current = token;
   const navigate = useNavigate();
   const location = useLocation();
   const routeListingId = useMemo(() => /\/l\/([0-9a-f-]{36})/i.exec(location.pathname)?.[1] ?? null, [location.pathname]);
@@ -1706,6 +1783,18 @@ function App() {
   const [recentOrderIdsByTab, setRecentOrderIdsByTab] = useState(() => readStoredRecentIdsByTab(PURCHASES_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY));
   const [recentOrderBadgeIdsByTab, setRecentOrderBadgeIdsByTab] = useState(() => readStoredRecentIdsByTab(PURCHASES_RECENT_STATUS_BADGE_STORAGE_KEY));
   const knownBuyerOrderStatusByIdRef = useRef({});
+  /** Baseline order ids for “first seen” badges/highlights on My purchases (and buyer Orders). */
+  const lastBuyerOrdersAttentionIdSetRef = useRef(new Set());
+  /** True after the buyer opens these Purchases queues; leaving Purchases then clears that tab’s badges. */
+  const buyerCancelledTabVisitedThisPurchasesSessionRef = useRef(false);
+  const buyerProcessingTabVisitedThisPurchasesSessionRef = useRef(false);
+  const buyerCompletedTabVisitedThisPurchasesSessionRef = useRef(false);
+  /** True after the seller opens these Orders queues; leaving Orders then clears that tab’s badges (same idea as Purchases). */
+  const sellerCancelledTabVisitedThisOrdersSessionRef = useRef(false);
+  const sellerProcessingTabVisitedThisOrdersSessionRef = useRef(false);
+  const sellerCompletedTabVisitedThisOrdersSessionRef = useRef(false);
+  /** Tracks orders status tab + screen so leaving a tab can dismiss that tab’s badges/highlights only. */
+  const ordersStatusTabDismissContextRef = useRef({ key: "", tab: "pending" });
   const [recentSellerOrderIdsByTab, setRecentSellerOrderIdsByTab] = useState(() =>
     readStoredRecentIdsByTab(SELLER_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY),
   );
@@ -1717,6 +1806,23 @@ function App() {
   const [recentlyAddedSellerOrderIds, setRecentlyAddedSellerOrderIds] = useState(() =>
     readStoredStringArray(SELLER_PENDING_BADGE_STORAGE_KEY),
   );
+  /** After first successful `/me/order-attention` load for this session; debounced saves wait for this. */
+  const [orderAttentionRemoteReady, setOrderAttentionRemoteReady] = useState(false);
+  const orderAttentionRemoteReadyRef = useRef(false);
+  orderAttentionRemoteReadyRef.current = orderAttentionRemoteReady;
+  const orderAttentionSkipSaveRef = useRef(false);
+  const orderAttentionSnapshotRef = useRef({
+    buyer: {
+      badgeIdsByTab: emptyOrderAttentionByTab(),
+      highlightIdsByTab: emptyOrderAttentionByTab(),
+      recentPendingIds: [],
+    },
+    seller: {
+      badgeIdsByTab: emptyOrderAttentionByTab(),
+      highlightIdsByTab: emptyOrderAttentionByTab(),
+      recentPendingIds: [],
+    },
+  });
   /** Seller orders from `/orders?role=seller` while not on the seller Orders screen — drives nav badges for owners on Marketplace etc. */
   const [polledSellerOrders, setPolledSellerOrders] = useState(null);
   const sellerOrdersForBadges = useMemo(() => {
@@ -1745,49 +1851,42 @@ function App() {
   const listingImageInputRef = useRef(null);
   const [listingSaving, setListingSaving] = useState(false);
   const [listingFieldErrors, setListingFieldErrors] = useState({});
-  const [marketplaceMessage, setMarketplaceMessage] = useState("");
-  const marketplaceFeedback = useMemo(() => {
-    const text = String(marketplaceMessage || "").trim();
-    const lowered = text.toLowerCase();
-    const isError =
-      /(^|[\s])(error|failed|could not|cannot|can't|invalid|required|already|expired|unable|denied|not found)\b/i.test(text);
-    const isSuccess =
-      !isError && /(success|successfully|added|updated|deleted|accepted|applied|joined|saved|published|completed)/i.test(text);
-    const tone = isError ? "error" : isSuccess ? "success" : "info";
-    if (tone === "success") {
-      return {
-        text,
-        tone,
-        icon: "✓",
-        role: "status",
-        live: "polite",
-        className:
-          "border-emerald-200/90 bg-emerald-50/90 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200",
-        dismissClass: "text-emerald-800 hover:text-emerald-900 dark:text-emerald-200 dark:hover:text-emerald-100",
-      };
-    }
-    if (tone === "error") {
-      return {
-        text,
-        tone,
-        icon: "!",
-        role: "alert",
-        live: "assertive",
-        className:
-          "border-rose-200/90 bg-rose-50/90 text-rose-950 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200",
-        dismissClass: "text-rose-800 hover:text-rose-900 dark:text-rose-200 dark:hover:text-rose-100",
-      };
-    }
-    return {
-      text,
-      tone,
-      icon: "i",
-      role: "status",
-      live: "polite",
-      className: "border-sky-200/90 bg-sky-50/90 text-sky-950 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200",
-      dismissClass: "text-sky-800 hover:text-sky-900 dark:text-sky-200 dark:hover:text-sky-100",
-    };
-  }, [marketplaceMessage]);
+  /** Stacked marketplace toasts (e.g. multiple “Order placed” while prior toasts are still visible). */
+  const [marketplaceToasts, setMarketplaceToasts] = useState([]);
+  const marketplaceToastTimeoutsRef = useRef({});
+  const dismissMarketplaceToast = useCallback((id) => {
+    const tid = marketplaceToastTimeoutsRef.current[id];
+    if (tid) window.clearTimeout(tid);
+    delete marketplaceToastTimeoutsRef.current[id];
+    setMarketplaceToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+  const clearMarketplaceToasts = useCallback(() => {
+    Object.values(marketplaceToastTimeoutsRef.current).forEach((tid) => window.clearTimeout(tid));
+    marketplaceToastTimeoutsRef.current = {};
+    setMarketplaceToasts([]);
+  }, []);
+  const pushMarketplaceToast = useCallback((raw) => {
+    const text = String(raw ?? "").trim();
+    if (!text) return;
+    const id =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `mkt-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    setMarketplaceToasts((prev) => [...prev, { id, text }]);
+    const tid = window.setTimeout(() => {
+      delete marketplaceToastTimeoutsRef.current[id];
+      setMarketplaceToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 10000);
+    marketplaceToastTimeoutsRef.current[id] = tid;
+  }, []);
+
+  useEffect(
+    () => () => {
+      Object.values(marketplaceToastTimeoutsRef.current).forEach((t) => window.clearTimeout(t));
+      marketplaceToastTimeoutsRef.current = {};
+    },
+    [],
+  );
   const [communities, setCommunities] = useState([]);
   const communitiesRef = useRef([]);
   communitiesRef.current = communities;
@@ -1939,7 +2038,6 @@ function App() {
   const [recentlyAddedPurchaseOrderIds, setRecentlyAddedPurchaseOrderIds] = useState(() =>
     readStoredStringArray(PURCHASES_PENDING_BADGE_STORAGE_KEY),
   );
-  const hasViewedRecentPurchasesRef = useRef(false);
   const [cartItems, setCartItems] = useState([]);
   /** `listingId` → selected (cart screen only). */
   const [cartItemSelection, setCartItemSelection] = useState({});
@@ -2025,20 +2123,6 @@ function App() {
     }
   }, [recentlyAddedCartListingIds]);
   useEffect(() => {
-    if (activeView === VIEWS.MY_PURCHASES && recentlyAddedPurchaseOrderIds.length > 0) {
-      hasViewedRecentPurchasesRef.current = true;
-      return;
-    }
-    if (activeView !== VIEWS.MY_PURCHASES && hasViewedRecentPurchasesRef.current && recentlyAddedPurchaseOrderIds.length > 0) {
-      setRecentlyAddedPurchaseOrderIds([]);
-      hasViewedRecentPurchasesRef.current = false;
-      return;
-    }
-    if (activeView !== VIEWS.MY_PURCHASES && recentlyAddedPurchaseOrderIds.length === 0) {
-      hasViewedRecentPurchasesRef.current = false;
-    }
-  }, [activeView, recentlyAddedPurchaseOrderIds]);
-  useEffect(() => {
     try {
       if (typeof window === "undefined") return;
       window.localStorage.setItem(PURCHASES_PENDING_BADGE_STORAGE_KEY, JSON.stringify(recentlyAddedPurchaseOrderIds));
@@ -2086,53 +2170,275 @@ function App() {
       // ignore storage failures
     }
   }, [recentSellerOrderBadgeIdsByTab]);
+
   useEffect(() => {
-    if (activeView !== VIEWS.MY_PURCHASES) return;
-    if (ordersStatusTab === "pending") return;
-    if (
-      recentlyAddedPurchaseOrderIds.length === 0 &&
-      !(recentOrderBadgeIdsByTab.pending?.length) &&
-      !(recentOrderIdsByTab.pending?.length)
-    ) {
+    if (!token) {
+      orderAttentionSkipSaveRef.current = false;
+      setOrderAttentionRemoteReady(false);
       return;
     }
-    setRecentlyAddedPurchaseOrderIds([]);
-    setRecentOrderBadgeIdsByTab((p) => ({ ...p, pending: [] }));
-    setRecentOrderIdsByTab((p) => ({ ...p, pending: [] }));
-    hasViewedRecentPurchasesRef.current = false;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiRequest("/me/order-attention", { token });
+        if (cancelled) return;
+        if (data?.schemaMissing) {
+          orderAttentionSkipSaveRef.current = true;
+          setOrderAttentionRemoteReady(true);
+          return;
+        }
+        orderAttentionSkipSaveRef.current = false;
+        if (data?.buyer) {
+          setRecentOrderBadgeIdsByTab(normalizeAttentionIdsByTabObject(data.buyer.badgeIdsByTab));
+          setRecentOrderIdsByTab(normalizeAttentionIdsByTabObject(data.buyer.highlightIdsByTab));
+          setRecentlyAddedPurchaseOrderIds(normalizeRecentPendingIdsFromApi(data.buyer.recentPendingIds));
+        }
+        if (data?.seller) {
+          setRecentSellerOrderBadgeIdsByTab(normalizeAttentionIdsByTabObject(data.seller.badgeIdsByTab));
+          setRecentSellerOrderIdsByTab(normalizeAttentionIdsByTabObject(data.seller.highlightIdsByTab));
+          setRecentlyAddedSellerOrderIds(normalizeRecentPendingIdsFromApi(data.seller.recentPendingIds));
+        }
+      } catch {
+        // Keep localStorage-backed state if the API fails.
+      } finally {
+        if (!cancelled) setOrderAttentionRemoteReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    orderAttentionSnapshotRef.current = {
+      buyer: {
+        badgeIdsByTab: recentOrderBadgeIdsByTab,
+        highlightIdsByTab: recentOrderIdsByTab,
+        recentPendingIds: recentlyAddedPurchaseOrderIds,
+      },
+      seller: {
+        badgeIdsByTab: recentSellerOrderBadgeIdsByTab,
+        highlightIdsByTab: recentSellerOrderIdsByTab,
+        recentPendingIds: recentlyAddedSellerOrderIds,
+      },
+    };
   }, [
-    activeView,
-    ordersStatusTab,
+    recentOrderBadgeIdsByTab,
+    recentOrderIdsByTab,
     recentlyAddedPurchaseOrderIds,
-    recentOrderBadgeIdsByTab.pending,
-    recentOrderIdsByTab.pending,
-  ]);
-  useEffect(() => {
-    if (activeView !== VIEWS.ORDERS) return;
-    if (ordersRole !== "seller") return;
-    if (ordersStatusTab === "pending") return;
-    if (
-      recentlyAddedSellerOrderIds.length === 0 &&
-      !(recentSellerOrderBadgeIdsByTab.pending?.length) &&
-      !(recentSellerOrderIdsByTab.pending?.length)
-    ) {
-      return;
-    }
-    setRecentlyAddedSellerOrderIds([]);
-    setRecentSellerOrderBadgeIdsByTab((p) => ({ ...p, pending: [] }));
-    setRecentSellerOrderIdsByTab((p) => ({ ...p, pending: [] }));
-  }, [
-    activeView,
-    ordersRole,
-    ordersStatusTab,
+    recentSellerOrderBadgeIdsByTab,
+    recentSellerOrderIdsByTab,
     recentlyAddedSellerOrderIds,
-    recentSellerOrderBadgeIdsByTab.pending,
-    recentSellerOrderIdsByTab.pending,
   ]);
+
+  useEffect(() => {
+    if (!token || !orderAttentionRemoteReady || orderAttentionSkipSaveRef.current) return;
+    const tid = window.setTimeout(() => {
+      void apiRequest("/me/order-attention", {
+        method: "PUT",
+        token,
+        body: orderAttentionSnapshotRef.current,
+      }).catch(() => {});
+    }, 900);
+    return () => window.clearTimeout(tid);
+  }, [
+    token,
+    orderAttentionRemoteReady,
+    recentOrderBadgeIdsByTab,
+    recentOrderIdsByTab,
+    recentlyAddedPurchaseOrderIds,
+    recentSellerOrderBadgeIdsByTab,
+    recentSellerOrderIdsByTab,
+    recentlyAddedSellerOrderIds,
+  ]);
+
+  /** Same `/me/order-attention` PUT as the debounced effect; call before losing the session so seller + buyer queues persist. */
+  const flushOrderAttentionToServer = useCallback(async (authToken) => {
+    const t = String(authToken || "").trim();
+    if (!t || !orderAttentionRemoteReadyRef.current || orderAttentionSkipSaveRef.current) return;
+    try {
+      await apiRequest("/me/order-attention", {
+        method: "PUT",
+        token: t,
+        body: orderAttentionSnapshotRef.current,
+      });
+    } catch {
+      // Token may already be invalid; localStorage still holds queues until next login.
+    }
+  }, []);
+
+  useEffect(() => {
+    const onPageHide = () => {
+      void flushOrderAttentionToServer(authTokenRef.current);
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, [flushOrderAttentionToServer]);
+
+  /** Clear order badges/highlights when leaving My purchases or Orders (tab-switch rules elsewhere; seller leave mirrors buyer Purchases). */
+  const ordersNavPrevRef = useRef({ view: activeView, role: ordersRole });
+  useEffect(() => {
+    const prev = ordersNavPrevRef.current;
+    const leftMyPurchases = prev.view === VIEWS.MY_PURCHASES && activeView !== VIEWS.MY_PURCHASES;
+    const leftOrders = prev.view === VIEWS.ORDERS && activeView !== VIEWS.ORDERS;
+    if (leftMyPurchases) {
+      const dismissCancelled = buyerCancelledTabVisitedThisPurchasesSessionRef.current;
+      const dismissProcessing = buyerProcessingTabVisitedThisPurchasesSessionRef.current;
+      const dismissCompleted = buyerCompletedTabVisitedThisPurchasesSessionRef.current;
+      buyerCancelledTabVisitedThisPurchasesSessionRef.current = false;
+      buyerProcessingTabVisitedThisPurchasesSessionRef.current = false;
+      buyerCompletedTabVisitedThisPurchasesSessionRef.current = false;
+      setRecentOrderBadgeIdsByTab((p) => ({
+        pending: [],
+        processing: dismissProcessing ? [] : [...(p.processing ?? [])],
+        completed: dismissCompleted ? [] : [...(p.completed ?? [])],
+        cancelled: dismissCancelled ? [] : [...(p.cancelled ?? [])],
+      }));
+      setRecentOrderIdsByTab((p) => ({
+        pending: [],
+        processing: dismissProcessing ? [] : [...(p.processing ?? [])],
+        completed: dismissCompleted ? [] : [...(p.completed ?? [])],
+        cancelled: dismissCancelled ? [] : [...(p.cancelled ?? [])],
+      }));
+      setRecentlyAddedPurchaseOrderIds([]);
+      lastBuyerOrdersAttentionIdSetRef.current = new Set();
+    }
+    if (leftOrders) {
+      if (prev.role === "seller") {
+        const dismissCancelled = sellerCancelledTabVisitedThisOrdersSessionRef.current;
+        const dismissProcessing = sellerProcessingTabVisitedThisOrdersSessionRef.current;
+        const dismissCompleted = sellerCompletedTabVisitedThisOrdersSessionRef.current;
+        sellerCancelledTabVisitedThisOrdersSessionRef.current = false;
+        sellerProcessingTabVisitedThisOrdersSessionRef.current = false;
+        sellerCompletedTabVisitedThisOrdersSessionRef.current = false;
+        setRecentSellerOrderBadgeIdsByTab((p) => ({
+          pending: [],
+          processing: dismissProcessing ? [] : [...(p.processing ?? [])],
+          completed: dismissCompleted ? [] : [...(p.completed ?? [])],
+          cancelled: dismissCancelled ? [] : [...(p.cancelled ?? [])],
+        }));
+        setRecentSellerOrderIdsByTab((p) => ({
+          pending: [],
+          processing: dismissProcessing ? [] : [...(p.processing ?? [])],
+          completed: dismissCompleted ? [] : [...(p.completed ?? [])],
+          cancelled: dismissCancelled ? [] : [...(p.cancelled ?? [])],
+        }));
+        setRecentlyAddedSellerOrderIds([]);
+        lastSellerOrderIdSetRef.current = new Set();
+      }
+      if (prev.role === "buyer") {
+        setRecentOrderBadgeIdsByTab(emptyOrderAttentionByTab());
+        setRecentOrderIdsByTab(emptyOrderAttentionByTab());
+        setRecentlyAddedPurchaseOrderIds([]);
+        lastBuyerOrdersAttentionIdSetRef.current = new Set();
+        persistBuyerOrderAttentionToStorage();
+      }
+    }
+    const enteredMyPurchases = prev.view !== VIEWS.MY_PURCHASES && activeView === VIEWS.MY_PURCHASES;
+    if (enteredMyPurchases) {
+      lastBuyerOrdersAttentionIdSetRef.current = new Set();
+      buyerCancelledTabVisitedThisPurchasesSessionRef.current = false;
+      buyerProcessingTabVisitedThisPurchasesSessionRef.current = false;
+      buyerCompletedTabVisitedThisPurchasesSessionRef.current = false;
+    }
+    const enteredSellerOrders = prev.view !== VIEWS.ORDERS && activeView === VIEWS.ORDERS && ordersRole === "seller";
+    if (enteredSellerOrders) {
+      lastSellerOrderIdSetRef.current = new Set();
+      sellerCancelledTabVisitedThisOrdersSessionRef.current = false;
+      sellerProcessingTabVisitedThisOrdersSessionRef.current = false;
+      sellerCompletedTabVisitedThisOrdersSessionRef.current = false;
+    }
+    ordersNavPrevRef.current = { view: activeView, role: ordersRole };
+  }, [activeView, ordersRole]);
+
+  /** Remember which buyer Purchases queues were opened so leaving the screen can dismiss only those. */
+  useEffect(() => {
+    if (activeView !== VIEWS.MY_PURCHASES || ordersRole !== "buyer") return;
+    if (ordersStatusTab === "cancelled") buyerCancelledTabVisitedThisPurchasesSessionRef.current = true;
+    if (ordersStatusTab === "processing") buyerProcessingTabVisitedThisPurchasesSessionRef.current = true;
+    if (ordersStatusTab === "completed") buyerCompletedTabVisitedThisPurchasesSessionRef.current = true;
+  }, [activeView, ordersRole, ordersStatusTab]);
+
+  /** Remember which seller Orders queues were opened (same pattern as buyer Purchases). */
+  useEffect(() => {
+    if (activeView !== VIEWS.ORDERS || ordersRole !== "seller") return;
+    if (ordersStatusTab === "cancelled") sellerCancelledTabVisitedThisOrdersSessionRef.current = true;
+    if (ordersStatusTab === "processing") sellerProcessingTabVisitedThisOrdersSessionRef.current = true;
+    if (ordersStatusTab === "completed") sellerCompletedTabVisitedThisOrdersSessionRef.current = true;
+  }, [activeView, ordersRole, ordersStatusTab]);
+
+  /**
+   * **My purchases** (buyer) and **Orders** as buyer: switching status tabs clears badges + row highlights
+   * for the tab you leave. For buyer queues, Processing / Completed / Cancelled attention is not cleared
+   * when *entering* those tabs (badges/highlights stay until you switch away or leave the screen).
+   *
+   * **Orders** as seller: clearing on *enter* each tab as well so tab + header badges reflect “seen”
+   * queues without visiting every pill first.
+   */
+  useEffect(() => {
+    const key =
+      ordersRole === "buyer" && activeView === VIEWS.MY_PURCHASES
+        ? "buyer-mp"
+        : ordersRole === "buyer" && activeView === VIEWS.ORDERS
+          ? "buyer-ord"
+          : ordersRole === "seller" && activeView === VIEWS.ORDERS
+            ? "seller-ord"
+            : "other";
+
+    const ctx = ordersStatusTabDismissContextRef.current;
+    const leaving = ctx.tab;
+    const entering = ordersStatusTab;
+    const leavingIsTab = RECENT_ORDER_TAB_KEYS.includes(leaving);
+    const deferQueueTabEnter = (k, t) =>
+      k !== "seller-ord" &&
+      (k === "buyer-mp" || k === "buyer-ord") &&
+      (t === "cancelled" || t === "processing" || t === "completed");
+    if (key === ctx.key && key !== "other" && leaving !== entering && RECENT_ORDER_TAB_KEYS.includes(entering)) {
+      if (key.startsWith("buyer")) {
+        setRecentOrderBadgeIdsByTab((p) => {
+          const next = { ...p };
+          if (!deferQueueTabEnter(key, entering)) next[entering] = [];
+          if (leavingIsTab) next[leaving] = [];
+          return next;
+        });
+        setRecentOrderIdsByTab((p) => {
+          const next = { ...p };
+          if (!deferQueueTabEnter(key, entering)) next[entering] = [];
+          if (leavingIsTab) next[leaving] = [];
+          return next;
+        });
+        if (entering === "pending" || leaving === "pending") {
+          setRecentlyAddedPurchaseOrderIds([]);
+        }
+      } else if (key === "seller-ord") {
+        setRecentSellerOrderBadgeIdsByTab((p) => {
+          const next = { ...p };
+          if (!deferQueueTabEnter(key, entering)) next[entering] = [];
+          if (leavingIsTab) next[leaving] = [];
+          return next;
+        });
+        setRecentSellerOrderIdsByTab((p) => {
+          const next = { ...p };
+          if (!deferQueueTabEnter(key, entering)) next[entering] = [];
+          if (leavingIsTab) next[leaving] = [];
+          return next;
+        });
+        if (entering === "pending" || leaving === "pending") {
+          setRecentlyAddedSellerOrderIds([]);
+        }
+      }
+    }
+    ordersStatusTabDismissContextRef.current = { key, tab: ordersStatusTab };
+  }, [ordersStatusTab, activeView, ordersRole]);
+
   useEffect(() => {
     if (ordersRole !== "buyer") return;
     if (orders.length === 0) {
       if (ordersLoading) return;
+      const onBuyerBadgeScreen =
+        activeView === VIEWS.MY_PURCHASES || (activeView === VIEWS.ORDERS && ordersRole === "buyer");
+      // Avoid wiping persisted tab badges (Processing / Completed / Cancelled) while on Cart/Marketplace with an empty list.
+      if (!onBuyerBadgeScreen) return;
       knownBuyerOrderStatusByIdRef.current = {};
       setRecentOrderIdsByTab((prev) => {
         if (
@@ -2166,74 +2472,164 @@ function App() {
       const id = String(order?.id || "");
       if (!id) continue;
       existingIds.add(id);
-      const newStatus = String(order?.status || "").toLowerCase();
+      const rawNew = String(order?.status || "").toLowerCase();
       const prevStatus = String(previous[id] || "").toLowerCase();
-      next[id] = newStatus;
-      if (prevStatus && prevStatus !== newStatus) {
-        const targetTab = orderStatusToTabId(newStatus);
+      const carriedStatus = rawNew || prevStatus;
+      next[id] = carriedStatus;
+      if (prevStatus && rawNew && prevStatus !== rawNew) {
+        const targetTab = orderStatusToTabId(rawNew);
         if (targetTab === "pending" || targetTab === "processing" || targetTab === "completed" || targetTab === "cancelled") {
           updates[targetTab].push(id);
         }
       }
     }
     knownBuyerOrderStatusByIdRef.current = next;
+
+    const orderById = new Map();
+    for (const order of orders) {
+      const oid = String(order?.id || "");
+      if (!oid) continue;
+      orderById.set(oid, order);
+    }
+    const filterBuyerIdsForTab = (ids, tabId) =>
+      (ids || []).filter((id) => {
+        if (!existingIds.has(id)) return false;
+        const st = String(orderById.get(id)?.status || "").toLowerCase();
+        if (!st) return true;
+        return orderMatchesOrdersStatusTab(orderById.get(id)?.status, tabId);
+      });
     setRecentOrderIdsByTab((prev) => {
       const merged = {
-        pending: (prev.pending ?? []).filter((id) => existingIds.has(id)),
-        processing: prev.processing.filter((id) => existingIds.has(id)),
-        completed: prev.completed.filter((id) => existingIds.has(id)),
-        cancelled: prev.cancelled.filter((id) => existingIds.has(id)),
+        pending: filterBuyerIdsForTab(prev.pending ?? [], "pending"),
+        processing: filterBuyerIdsForTab(prev.processing, "processing"),
+        completed: filterBuyerIdsForTab(prev.completed, "completed"),
+        cancelled: filterBuyerIdsForTab(prev.cancelled, "cancelled"),
       };
-      let changed = false;
       for (const tab of RECENT_ORDER_TAB_KEYS) {
         if (!updates[tab].length) continue;
         const set = new Set(merged[tab]);
-        const before = set.size;
         updates[tab].forEach((id) => set.add(id));
-        if (set.size !== before) {
-          merged[tab] = Array.from(set);
-          changed = true;
-        }
-      }
-      if (!changed) {
-        const sameLengths =
-          merged.pending.length === (prev.pending ?? []).length &&
-          merged.processing.length === prev.processing.length &&
-          merged.completed.length === prev.completed.length &&
-          merged.cancelled.length === prev.cancelled.length;
-        if (sameLengths) return prev;
+        merged[tab] = Array.from(set);
       }
       return merged;
     });
     setRecentOrderBadgeIdsByTab((prev) => {
       const merged = {
-        pending: (prev.pending ?? []).filter((id) => existingIds.has(id)),
-        processing: prev.processing.filter((id) => existingIds.has(id)),
-        completed: prev.completed.filter((id) => existingIds.has(id)),
-        cancelled: prev.cancelled.filter((id) => existingIds.has(id)),
+        pending: filterBuyerIdsForTab(prev.pending ?? [], "pending"),
+        processing: filterBuyerIdsForTab(prev.processing, "processing"),
+        completed: filterBuyerIdsForTab(prev.completed, "completed"),
+        cancelled: filterBuyerIdsForTab(prev.cancelled, "cancelled"),
       };
-      let changed = false;
       for (const tab of RECENT_ORDER_TAB_KEYS) {
         if (!updates[tab].length) continue;
         const set = new Set(merged[tab]);
-        const before = set.size;
         updates[tab].forEach((id) => set.add(id));
-        if (set.size !== before) {
-          merged[tab] = Array.from(set);
-          changed = true;
-        }
-      }
-      if (!changed) {
-        const sameLengths =
-          merged.pending.length === (prev.pending ?? []).length &&
-          merged.processing.length === prev.processing.length &&
-          merged.completed.length === prev.completed.length &&
-          merged.cancelled.length === prev.cancelled.length;
-        if (sameLengths) return prev;
+        merged[tab] = Array.from(set);
       }
       return merged;
     });
+    setRecentlyAddedPurchaseOrderIds((prev) => {
+      if (!prev.length) return prev;
+      const next = prev.filter((id) => {
+        if (!existingIds.has(String(id))) return false;
+        const st = String(orderById.get(String(id))?.status || "").toLowerCase();
+        if (!st) return true;
+        return orderMatchesOrdersStatusTab(orderById.get(String(id))?.status, "pending");
+      });
+      return next.length === prev.length && next.every((v, i) => v === prev[i]) ? prev : next;
+    });
   }, [orders, ordersRole, ordersLoading]);
+
+  /** Buyer: badge + highlight every order by its current tab the first time it appears in `/orders?role=buyer` (any screen). */
+  useEffect(() => {
+    if (ordersRole !== "buyer") return;
+    const appendBuyerAttentionForTab = (tab, ids) => {
+      if (!RECENT_ORDER_TAB_KEYS.includes(tab) || !ids.length) return;
+      if (tab === "pending") {
+        setRecentlyAddedPurchaseOrderIds((prevList) => {
+          const set = new Set(prevList);
+          ids.forEach((id) => set.add(id));
+          return Array.from(set);
+        });
+      }
+      setRecentOrderBadgeIdsByTab((p) => {
+        const set = new Set(p[tab] ?? []);
+        ids.forEach((id) => set.add(id));
+        return { ...p, [tab]: Array.from(set) };
+      });
+      setRecentOrderIdsByTab((p) => {
+        const set = new Set(p[tab] ?? []);
+        ids.forEach((id) => set.add(id));
+        return { ...p, [tab]: Array.from(set) };
+      });
+    };
+    if (!orders.length) {
+      if (ordersLoading) return;
+      lastBuyerOrdersAttentionIdSetRef.current = new Set();
+      return;
+    }
+    const list = orders;
+    const currentIds = list.map((o) => String(o?.id || "")).filter(Boolean);
+    const currentSet = new Set(currentIds);
+    const prev = lastBuyerOrdersAttentionIdSetRef.current;
+    if (prev.size === 0) {
+      lastBuyerOrdersAttentionIdSetRef.current = currentSet;
+      return;
+    }
+    const newIds = currentIds.filter((id) => !prev.has(id));
+    for (const id of newIds) {
+      const order = list.find((o) => String(o?.id || "") === id);
+      if (!order) continue;
+      for (const tab of RECENT_ORDER_TAB_KEYS) {
+        if (orderMatchesOrdersStatusTab(order.status, tab)) {
+          appendBuyerAttentionForTab(tab, [id]);
+          break;
+        }
+      }
+    }
+    lastBuyerOrdersAttentionIdSetRef.current = currentSet;
+  }, [orders, ordersRole, ordersLoading]);
+
+  /** Keep row highlights aligned with tab badges (baseline “new id” pass skips `appendBuyerAttentionForTab` highlights). */
+  useEffect(() => {
+    if (ordersRole !== "buyer") return;
+    if (activeView !== VIEWS.MY_PURCHASES && activeView !== VIEWS.ORDERS) return;
+    if (!orders.length) return;
+
+    const orderById = new Map();
+    for (const o of orders) {
+      const id = String(o?.id || "");
+      if (id) orderById.set(id, o);
+    }
+
+    setRecentOrderIdsByTab((highlightPrev) => {
+      let touched = false;
+      const next = { ...highlightPrev };
+      for (const tab of RECENT_ORDER_TAB_KEYS) {
+        const badgeIds = recentOrderBadgeIdsByTab[tab] || [];
+        if (!badgeIds.length) continue;
+        const existing = new Set((next[tab] || []).map(String));
+        let tabTouched = false;
+        for (const bid of badgeIds) {
+          const id = String(bid);
+          if (!orderById.has(id)) continue;
+          const o = orderById.get(id);
+          const st = String(o?.status || "").toLowerCase();
+          if (st && !orderMatchesOrdersStatusTab(o.status, tab)) continue;
+          if (!existing.has(id)) {
+            existing.add(id);
+            tabTouched = true;
+          }
+        }
+        if (tabTouched) {
+          next[tab] = Array.from(existing);
+          touched = true;
+        }
+      }
+      return touched ? next : highlightPrev;
+    });
+  }, [orders, ordersRole, activeView, recentOrderBadgeIdsByTab]);
+
   useEffect(() => {
     const list = sellerOrdersForBadges;
     if (list === null) return;
@@ -2242,28 +2638,30 @@ function App() {
       if (onSellerOrdersScreen && ordersLoading) return;
       knownSellerOrderStatusByIdRef.current = {};
       lastSellerOrderIdSetRef.current = new Set();
-      setRecentSellerOrderIdsByTab((prev) => {
-        if (
-          !(prev.pending?.length) &&
-          !prev.processing.length &&
-          !prev.completed.length &&
-          !prev.cancelled.length
-        ) {
-          return prev;
-        }
-        return { pending: [], processing: [], completed: [], cancelled: [] };
-      });
-      setRecentSellerOrderBadgeIdsByTab((prev) => {
-        if (
-          !(prev.pending?.length) &&
-          !prev.processing.length &&
-          !prev.completed.length &&
-          !prev.cancelled.length
-        ) {
-          return prev;
-        }
-        return { pending: [], processing: [], completed: [], cancelled: [] };
-      });
+      if (onSellerOrdersScreen) {
+        setRecentSellerOrderIdsByTab((prev) => {
+          if (
+            !(prev.pending?.length) &&
+            !prev.processing.length &&
+            !prev.completed.length &&
+            !prev.cancelled.length
+          ) {
+            return prev;
+          }
+          return { pending: [], processing: [], completed: [], cancelled: [] };
+        });
+        setRecentSellerOrderBadgeIdsByTab((prev) => {
+          if (
+            !(prev.pending?.length) &&
+            !prev.processing.length &&
+            !prev.completed.length &&
+            !prev.cancelled.length
+          ) {
+            return prev;
+          }
+          return { pending: [], processing: [], completed: [], cancelled: [] };
+        });
+      }
       return;
     }
     const previous = knownSellerOrderStatusByIdRef.current || {};
@@ -2274,78 +2672,99 @@ function App() {
       const id = String(order?.id || "");
       if (!id) continue;
       existingIds.add(id);
-      const newStatus = String(order?.status || "").toLowerCase();
+      const rawNew = String(order?.status || "").toLowerCase();
       const prevStatus = String(previous[id] || "").toLowerCase();
-      next[id] = newStatus;
-      if (prevStatus && prevStatus !== newStatus) {
-        const targetTab = orderStatusToTabId(newStatus);
+      const carriedStatus = rawNew || prevStatus;
+      next[id] = carriedStatus;
+      if (prevStatus && rawNew && prevStatus !== rawNew) {
+        const targetTab = orderStatusToTabId(rawNew);
         if (targetTab === "pending" || targetTab === "processing" || targetTab === "completed" || targetTab === "cancelled") {
           updates[targetTab].push(id);
         }
       }
     }
     knownSellerOrderStatusByIdRef.current = next;
+    const onSellerBadgeScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
+    if (!onSellerBadgeScreen) return;
+
+    const sellerOrderById = new Map();
+    for (const order of list) {
+      const oid = String(order?.id || "");
+      if (!oid) continue;
+      sellerOrderById.set(oid, order);
+    }
+    const filterSellerIdsForTab = (ids, tabId) =>
+      (ids || []).filter((id) => {
+        if (!existingIds.has(id)) return false;
+        const st = String(sellerOrderById.get(id)?.status || "").toLowerCase();
+        if (!st) return true;
+        return orderMatchesOrdersStatusTab(sellerOrderById.get(id)?.status, tabId);
+      });
     setRecentSellerOrderIdsByTab((prev) => {
       const merged = {
-        pending: (prev.pending ?? []).filter((id) => existingIds.has(id)),
-        processing: prev.processing.filter((id) => existingIds.has(id)),
-        completed: prev.completed.filter((id) => existingIds.has(id)),
-        cancelled: prev.cancelled.filter((id) => existingIds.has(id)),
+        pending: filterSellerIdsForTab(prev.pending ?? [], "pending"),
+        processing: filterSellerIdsForTab(prev.processing, "processing"),
+        completed: filterSellerIdsForTab(prev.completed, "completed"),
+        cancelled: filterSellerIdsForTab(prev.cancelled, "cancelled"),
       };
-      let changed = false;
       for (const tab of RECENT_ORDER_TAB_KEYS) {
         if (!updates[tab].length) continue;
         const set = new Set(merged[tab]);
-        const before = set.size;
         updates[tab].forEach((id) => set.add(id));
-        if (set.size !== before) {
-          merged[tab] = Array.from(set);
-          changed = true;
-        }
-      }
-      if (!changed) {
-        const sameLengths =
-          merged.pending.length === (prev.pending ?? []).length &&
-          merged.processing.length === prev.processing.length &&
-          merged.completed.length === prev.completed.length &&
-          merged.cancelled.length === prev.cancelled.length;
-        if (sameLengths) return prev;
+        merged[tab] = Array.from(set);
       }
       return merged;
     });
     setRecentSellerOrderBadgeIdsByTab((prev) => {
       const merged = {
-        pending: (prev.pending ?? []).filter((id) => existingIds.has(id)),
-        processing: prev.processing.filter((id) => existingIds.has(id)),
-        completed: prev.completed.filter((id) => existingIds.has(id)),
-        cancelled: prev.cancelled.filter((id) => existingIds.has(id)),
+        pending: filterSellerIdsForTab(prev.pending ?? [], "pending"),
+        processing: filterSellerIdsForTab(prev.processing, "processing"),
+        completed: filterSellerIdsForTab(prev.completed, "completed"),
+        cancelled: filterSellerIdsForTab(prev.cancelled, "cancelled"),
       };
-      let changed = false;
       for (const tab of RECENT_ORDER_TAB_KEYS) {
         if (!updates[tab].length) continue;
         const set = new Set(merged[tab]);
-        const before = set.size;
         updates[tab].forEach((id) => set.add(id));
-        if (set.size !== before) {
-          merged[tab] = Array.from(set);
-          changed = true;
-        }
-      }
-      if (!changed) {
-        const sameLengths =
-          merged.pending.length === (prev.pending ?? []).length &&
-          merged.processing.length === prev.processing.length &&
-          merged.completed.length === prev.completed.length &&
-          merged.cancelled.length === prev.cancelled.length;
-        if (sameLengths) return prev;
+        merged[tab] = Array.from(set);
       }
       return merged;
+    });
+    setRecentlyAddedSellerOrderIds((prev) => {
+      if (!prev.length) return prev;
+      const next = prev.filter((id) => {
+        if (!existingIds.has(String(id))) return false;
+        const st = String(sellerOrderById.get(String(id))?.status || "").toLowerCase();
+        if (!st) return true;
+        return orderMatchesOrdersStatusTab(sellerOrderById.get(String(id))?.status, "pending");
+      });
+      return next.length === prev.length && next.every((v, i) => v === prev[i]) ? prev : next;
     });
   }, [sellerOrdersForBadges, ordersRole, activeView, ordersLoading]);
   useEffect(() => {
     const list = sellerOrdersForBadges;
     if (list === null) return;
     const onSellerOrdersScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
+    const appendSellerAttentionForTab = (tab, ids) => {
+      if (!RECENT_ORDER_TAB_KEYS.includes(tab) || !ids.length) return;
+      if (tab === "pending") {
+        setRecentlyAddedSellerOrderIds((prevList) => {
+          const set = new Set(prevList);
+          ids.forEach((id) => set.add(id));
+          return Array.from(set);
+        });
+      }
+      setRecentSellerOrderBadgeIdsByTab((p) => {
+        const set = new Set(p[tab] ?? []);
+        ids.forEach((id) => set.add(id));
+        return { ...p, [tab]: Array.from(set) };
+      });
+      setRecentSellerOrderIdsByTab((p) => {
+        const set = new Set(p[tab] ?? []);
+        ids.forEach((id) => set.add(id));
+        return { ...p, [tab]: Array.from(set) };
+      });
+    };
     if (list.length === 0) {
       if (onSellerOrdersScreen && ordersLoading) return;
       lastSellerOrderIdSetRef.current = new Set();
@@ -2359,47 +2778,22 @@ function App() {
       return;
     }
     const newIds = currentIds.filter((id) => !prev.has(id));
-    const pendingNewIds = newIds.filter((id) => {
+    for (const id of newIds) {
       const order = list.find((o) => String(o?.id || "") === id);
-      return order && orderMatchesOrdersStatusTab(order.status, "pending");
-    });
-    if (pendingNewIds.length) {
-      setRecentlyAddedSellerOrderIds((prevList) => {
-        const set = new Set(prevList);
-        pendingNewIds.forEach((id) => set.add(id));
-        return Array.from(set);
-      });
-      setRecentSellerOrderBadgeIdsByTab((p) => {
-        const set = new Set(p.pending ?? []);
-        pendingNewIds.forEach((id) => set.add(id));
-        return { ...p, pending: Array.from(set) };
-      });
-      setRecentSellerOrderIdsByTab((p) => {
-        const set = new Set(p.pending ?? []);
-        pendingNewIds.forEach((id) => set.add(id));
-        return { ...p, pending: Array.from(set) };
-      });
+      if (!order) continue;
+      for (const tab of RECENT_ORDER_TAB_KEYS) {
+        if (orderMatchesOrdersStatusTab(order.status, tab)) {
+          appendSellerAttentionForTab(tab, [id]);
+          break;
+        }
+      }
     }
     lastSellerOrderIdSetRef.current = currentSet;
   }, [sellerOrdersForBadges, ordersRole, activeView, ordersLoading]);
   useEffect(() => {
-    const list = sellerOrdersForBadges;
-    if (list === null) return;
-    setRecentlyAddedSellerOrderIds((prev) => {
-      if (!prev.length) return prev;
-      const pendingIds = new Set(
-        list
-          .filter((o) => orderMatchesOrdersStatusTab(o.status, "pending"))
-          .map((o) => String(o?.id || ""))
-          .filter(Boolean),
-      );
-      const next = prev.filter((id) => pendingIds.has(id));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [sellerOrdersForBadges]);
-  useEffect(() => {
     if (!token) {
       lastSellerOrderIdSetRef.current = new Set();
+      lastBuyerOrdersAttentionIdSetRef.current = new Set();
       setPolledSellerOrders(null);
     }
   }, [token]);
@@ -2470,10 +2864,10 @@ function App() {
           setListings(scoped.listings || []);
         }
         if (notifySuccess) {
-          setMarketplaceMessage(`You joined ${joinedName || "the community"} successfully.`);
+          pushMarketplaceToast(`You joined ${joinedName || "the community"} successfully.`);
         }
       } catch (error) {
-        setMarketplaceMessage(error?.message || "Joined, but we could not attach your listings yet. Try Join again.");
+        pushMarketplaceToast(error?.message || "Joined, but we could not attach your listings yet. Try Join again.");
       }
     },
     [activeView, applyJoinedCommunity, shopCommunityId, token],
@@ -3037,13 +3431,15 @@ function App() {
         setProfileJoinedAtResolved(true);
       } catch (error) {
         if (isUnauthorizedApiError(error)) {
-          localStorage.removeItem("quiz_token");
-          setToken("");
+          void flushOrderAttentionToServer(token).finally(() => {
+            localStorage.removeItem("quiz_token");
+            setToken("");
+          });
         }
         setProfileJoinedAtResolved(true);
       }
     })();
-  }, [token, user]);
+  }, [token, user, flushOrderAttentionToServer]);
 
   useEffect(() => {
     if (!user) return;
@@ -3206,9 +3602,11 @@ function App() {
         }
       } catch (error) {
         if (!cancelled && isUnauthorizedApiError(error)) {
-          localStorage.removeItem("quiz_token");
-          setToken("");
-          setUser(null);
+          void flushOrderAttentionToServer(token).finally(() => {
+            localStorage.removeItem("quiz_token");
+            setToken("");
+            setUser(null);
+          });
         }
         if (!cancelled) setProfileJoinedAtResolved(true);
       }
@@ -3216,7 +3614,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, activeView]);
+  }, [token, activeView, flushOrderAttentionToServer]);
 
   useEffect(() => {
     if (activeView !== VIEWS.PROFILE) {
@@ -3225,12 +3623,6 @@ function App() {
       setProfileUploadProductNotice("");
     }
   }, [activeView]);
-
-  useEffect(() => {
-    if (!marketplaceMessage) return undefined;
-    const timer = window.setTimeout(() => setMarketplaceMessage(""), 10000);
-    return () => window.clearTimeout(timer);
-  }, [marketplaceMessage]);
 
   useEffect(() => {
     if (profileCommunityName.trim()) setProfileUploadProductNotice("");
@@ -3384,14 +3776,17 @@ function App() {
   };
 
   const logout = () => {
-    localStorage.removeItem("quiz_token");
-    setToken("");
-    setUser(null);
-    setAuthPanelVisible(false);
-    setActiveQuiz(null);
-    setResult(null);
-    setSelectedQuiz(null);
-    setShopCommunityId(null);
+    const t = token;
+    void flushOrderAttentionToServer(t).finally(() => {
+      localStorage.removeItem("quiz_token");
+      setToken("");
+      setUser(null);
+      setAuthPanelVisible(false);
+      setActiveQuiz(null);
+      setResult(null);
+      setSelectedQuiz(null);
+      setShopCommunityId(null);
+    });
   };
 
   const pickBrowseScope = useCallback(
@@ -3523,44 +3918,76 @@ function App() {
     () => orders.filter((o) => orderMatchesOrdersStatusTab(o.status, ordersStatusTab)),
     [orders, ordersStatusTab],
   );
+  /** Sum of per-tab attention counts (same basis as tab pills) so multiple new items add up until dismissed. */
   const purchaseNavBadgeCount = useMemo(() => {
+    if (ordersRole === "buyer") {
+      const placedIds = new Set(
+        orders
+          .filter((o) => orderMatchesOrdersStatusTab(o.status, "pending"))
+          .map((o) => String(o?.id || ""))
+          .filter(Boolean),
+      );
+      const pendingAttention = new Set();
+      (recentOrderBadgeIdsByTab.pending || []).forEach((id) => {
+        if (placedIds.has(String(id))) pendingAttention.add(String(id));
+      });
+      recentlyAddedPurchaseOrderIds.forEach((id) => {
+        if (placedIds.has(String(id))) pendingAttention.add(String(id));
+      });
+      const pro = (recentOrderBadgeIdsByTab.processing || []).length;
+      const com = (recentOrderBadgeIdsByTab.completed || []).length;
+      const can = (recentOrderBadgeIdsByTab.cancelled || []).length;
+      return pendingAttention.size + pro + com + can;
+    }
     const s = new Set(recentlyAddedPurchaseOrderIds.map(String));
     for (const tab of RECENT_ORDER_TAB_KEYS) {
       (recentOrderBadgeIdsByTab[tab] || []).forEach((id) => s.add(String(id)));
     }
     return s.size;
-  }, [recentlyAddedPurchaseOrderIds, recentOrderBadgeIdsByTab]);
+  }, [ordersRole, orders, recentlyAddedPurchaseOrderIds, recentOrderBadgeIdsByTab]);
+  /** Same counting rules as `purchaseNavBadgeCount` when `ordersRole === "buyer"`, using seller order lists + attention state. */
   const sellerNavBadgeCount = useMemo(() => {
-    const list = sellerOrdersForBadges;
-    const onSellerOrdersScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
-    const s = new Set();
-    recentlyAddedSellerOrderIds.forEach((id) => s.add(String(id)));
-    for (const tab of RECENT_ORDER_TAB_KEYS) {
-      (recentSellerOrderBadgeIdsByTab[tab] || []).forEach((id) => s.add(String(id)));
-    }
-    if (!onSellerOrdersScreen && list) {
+    const list = sellerOrdersForBadges ?? [];
+    const placedIds = new Set(
       list
         .filter((o) => orderMatchesOrdersStatusTab(o.status, "pending"))
-        .forEach((o) => s.add(String(o?.id || "")));
-    }
-    return s.size;
-  }, [
-    sellerOrdersForBadges,
-    recentSellerOrderBadgeIdsByTab,
-    recentlyAddedSellerOrderIds,
-    ordersRole,
-    activeView,
-  ]);
+        .map((o) => String(o?.id || ""))
+        .filter(Boolean),
+    );
+    const pendingAttention = new Set();
+    (recentSellerOrderBadgeIdsByTab.pending || []).forEach((id) => {
+      if (placedIds.has(String(id))) pendingAttention.add(String(id));
+    });
+    recentlyAddedSellerOrderIds.forEach((id) => {
+      if (placedIds.has(String(id))) pendingAttention.add(String(id));
+    });
+    const pro = (recentSellerOrderBadgeIdsByTab.processing || []).length;
+    const com = (recentSellerOrderBadgeIdsByTab.completed || []).length;
+    const can = (recentSellerOrderBadgeIdsByTab.cancelled || []).length;
+    return pendingAttention.size + pro + com + can;
+  }, [sellerOrdersForBadges, recentSellerOrderBadgeIdsByTab, recentlyAddedSellerOrderIds]);
   const ordersTabRecentPendingIds = ordersRole === "seller" ? recentlyAddedSellerOrderIds : recentlyAddedPurchaseOrderIds;
   const ordersTabBadgeIdsByTab = ordersRole === "seller" ? recentSellerOrderBadgeIdsByTab : recentOrderBadgeIdsByTab;
   const ordersTabHighlightIdsByTab = ordersRole === "seller" ? recentSellerOrderIdsByTab : recentOrderIdsByTab;
   const pendingTabPillCount = useMemo(() => {
+    const placedIds = new Set(
+      orders
+        .filter((o) => orderMatchesOrdersStatusTab(o.status, "pending"))
+        .map((o) => String(o?.id || ""))
+        .filter(Boolean),
+    );
     const ids = ordersRole === "seller" ? recentlyAddedSellerOrderIds : recentlyAddedPurchaseOrderIds;
     const tabPending = ordersRole === "seller" ? recentSellerOrderBadgeIdsByTab.pending : recentOrderBadgeIdsByTab.pending;
-    const s = new Set(ids.map(String));
-    (tabPending || []).forEach((id) => s.add(String(id)));
+    const s = new Set();
+    (tabPending || []).forEach((id) => {
+      if (placedIds.has(String(id))) s.add(String(id));
+    });
+    ids.forEach((id) => {
+      if (placedIds.has(String(id))) s.add(String(id));
+    });
     return s.size;
   }, [
+    orders,
     ordersRole,
     recentlyAddedSellerOrderIds,
     recentlyAddedPurchaseOrderIds,
@@ -3632,10 +4059,10 @@ function App() {
               method: "DELETE",
               token,
             });
-            setMarketplaceMessage("");
+            clearMarketplaceToasts();
           } catch (e) {
             cancelCartItemFadeOut(id);
-            setMarketplaceMessage(e.message || "Could not remove item from cart.");
+            pushMarketplaceToast(e.message || "Could not remove item from cart.");
           } finally {
             setCartQtySavingId(null);
           }
@@ -3656,9 +4083,9 @@ function App() {
           });
           const incoming = Array.isArray(d?.items) ? d.items : [];
           setCartItems((prev) => mergeCartItemsPreservingOrder(prev, incoming));
-          setMarketplaceMessage("");
+          clearMarketplaceToasts();
         } catch (e) {
-          setMarketplaceMessage(e.message || "Could not update quantity.");
+          pushMarketplaceToast(e.message || "Could not update quantity.");
         } finally {
           setCartQtySavingId(null);
         }
@@ -3798,11 +4225,11 @@ function App() {
 
   const checkoutSelectedCartItems = useCallback(async () => {
     if (!selectedCartItems.length) {
-      setMarketplaceMessage("Select at least one product to check out.");
+      pushMarketplaceToast("Select at least one product to check out.");
       return;
     }
     if (!token) {
-      setMarketplaceMessage("Please sign in to check out.");
+      pushMarketplaceToast("Please sign in to check out.");
       return;
     }
     setCartCheckoutSubmitting(true);
@@ -3852,17 +4279,15 @@ function App() {
     setCartCheckoutSubmitting(false);
     setCartItemSelection({});
     if (successCount > 0) {
-      setMarketplaceMessage(
+      pushMarketplaceToast(
         failedCount === 0
           ? `Checked out ${successCount} item${successCount > 1 ? "s" : ""}.`
           : `Checked out ${successCount} item${successCount > 1 ? "s" : ""}. ${failedCount} failed.`,
       );
-      setOrdersRole("buyer");
-      setOrdersStatusTab("pending");
       goMyPurchases();
       return;
     }
-    setMarketplaceMessage("Could not check out selected items.");
+    pushMarketplaceToast("Could not check out selected items.");
   }, [cancelCartItemFadeOut, goMyPurchases, mergeCartItemsPreservingOrder, selectedCartItems, startCartItemFadeOut, token]);
 
   const appendSellerOrderTabNotifications = useCallback((tab, orderIds) => {
@@ -3884,14 +4309,14 @@ function App() {
   const applyTransitionToSelectedOrders = useCallback(
     async (transition, label) => {
       if (!selectedOrders.length) {
-        setMarketplaceMessage("Select at least one order first.");
+        pushMarketplaceToast("Select at least one order first.");
         return;
       }
       if (!token) {
-        setMarketplaceMessage("Please sign in to update orders.");
+        pushMarketplaceToast("Please sign in to update orders.");
         return;
       }
-      setMarketplaceMessage("");
+      clearMarketplaceToasts();
       setOrdersBulkActionSubmitting(true);
       let successCount = 0;
       let failedCount = 0;
@@ -3917,13 +4342,13 @@ function App() {
       setOrdersBulkActionSubmitting(false);
       setOrderSelection({});
       if (successCount > 0) {
-        setMarketplaceMessage(
+        pushMarketplaceToast(
           failedCount === 0
             ? `${label} ${successCount} order${successCount > 1 ? "s" : ""}.`
             : `${label} ${successCount} order${successCount > 1 ? "s" : ""}. ${failedCount} failed.`,
         );
       } else {
-        setMarketplaceMessage(`Could not ${label.toLowerCase()} selected orders.`);
+        pushMarketplaceToast(`Could not ${label.toLowerCase()} selected orders.`);
       }
     },
     [appendSellerOrderTabNotifications, selectedOrders, token, ordersRole],
@@ -4108,7 +4533,12 @@ function App() {
   }, [token, activeView, refreshFavorites]);
 
   useEffect(() => {
-    if (!token || (activeView !== VIEWS.ORDERS && activeView !== VIEWS.MY_PURCHASES)) return undefined;
+    if (!token) return undefined;
+    if (ordersRole === "seller") {
+      if (activeView !== VIEWS.ORDERS) return undefined;
+    } else if (ordersRole !== "buyer") {
+      return undefined;
+    }
     const roleKey = String(ordersRole);
     const roleScopeChanged = ordersDataQueryKeyRef.current !== roleKey;
     if (roleScopeChanged) {
@@ -4130,6 +4560,58 @@ function App() {
     })();
     return () => {
       cancelled = true;
+    };
+  }, [token, activeView, ordersRole]);
+
+  /** Keep buyer `orders` fresh on any screen so Processing/Cancelled tab badges update when the seller accepts or declines. */
+  useEffect(() => {
+    if (!token) return undefined;
+    if (ordersRole !== "buyer") return undefined;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const data = await apiRequest("/orders?role=buyer", { token });
+        if (!cancelled) setOrders(data.orders || []);
+      } catch {
+        // Keep existing rows on transient errors; initial load still clears via the main orders effect on role change.
+      }
+    };
+    void run();
+    const id = window.setInterval(run, 10000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void run();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [token, ordersRole]);
+
+  /** Keep seller `orders` fresh on the Orders screen (off-screen seller poll skips this view). */
+  useEffect(() => {
+    if (!token) return undefined;
+    if (ordersRole !== "seller") return undefined;
+    if (activeView !== VIEWS.ORDERS) return undefined;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const data = await apiRequest("/orders?role=seller", { token });
+        if (!cancelled) setOrders(data.orders || []);
+      } catch {
+        // Keep existing rows on transient errors.
+      }
+    };
+    const id = window.setInterval(run, 10000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void run();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [token, activeView, ordersRole]);
 
@@ -4335,7 +4817,7 @@ function App() {
     });
     setCommunityProvinceSuggestOpen(false);
     setCommunityCitySuggestOpen(false);
-    setMarketplaceMessage("");
+    clearMarketplaceToasts();
     setCommunityFormOpen(true);
   }, [profileCityProvincePostal.city, profileCityProvincePostal.postalCode, profileCityProvincePostal.province, profileCommunityName]);
 
@@ -4352,7 +4834,7 @@ function App() {
     setCommunityCitySuggestOpen(false);
     setCommunityImageFile(null);
     if (communityImageInputRef.current) communityImageInputRef.current.value = "";
-    setMarketplaceMessage("");
+    clearMarketplaceToasts();
     setCommunityFormOpen(true);
   }, []);
 
@@ -4381,7 +4863,7 @@ function App() {
   const handleCreateCommunity = async (ev) => {
     ev.preventDefault();
     if (!token) {
-      setMarketplaceMessage("Sign in again to add a community.");
+      pushMarketplaceToast("Sign in again to add a community.");
       return;
     }
     const nameDraft = String(communityForm.name || "").trim();
@@ -4390,7 +4872,7 @@ function App() {
     const provinceDraft = String(communityForm.province || "").trim();
     const postalDraft = String(communityForm.postalCode || "").trim();
     setCommunitySaving(true);
-    setMarketplaceMessage("");
+    clearMarketplaceToasts();
     try {
       const fd = new FormData();
       fd.append("name", communityName);
@@ -4409,9 +4891,9 @@ function App() {
         nextCommunities = [createdCommunity, ...nextCommunities];
       }
       setCommunities(nextCommunities);
-      setMarketplaceMessage(communityEditingId ? "Community updated." : "Community added.");
+      pushMarketplaceToast(communityEditingId ? "Community updated." : "Community added.");
     } catch (e) {
-      setMarketplaceMessage(e.message || "Could not create new community.");
+      pushMarketplaceToast(e.message || "Could not create new community.");
     } finally {
       setCommunitySaving(false);
     }
@@ -4419,7 +4901,7 @@ function App() {
 
   const toggleFavorite = async (listingId, makeFavorite) => {
     if (!token) return;
-    setMarketplaceMessage("");
+    clearMarketplaceToasts();
     const id = String(listingId || "");
     const candidate =
       listings.find((x) => String(x.id) === id) ||
@@ -4461,7 +4943,7 @@ function App() {
         if (prev.some((x) => String(x.id) === id)) return prev;
         return [candidate, ...prev];
       });
-      setMarketplaceMessage(e.message || "Could not update favorites.");
+      pushMarketplaceToast(e.message || "Could not update favorites.");
     }
   };
 
@@ -4471,7 +4953,7 @@ function App() {
   };
 
   const patchOrderTransition = async (orderId, transition) => {
-    setMarketplaceMessage("");
+    clearMarketplaceToasts();
     try {
       await apiRequest(`/orders/${orderId}`, { method: "PATCH", token, body: { transition } });
       const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
@@ -4479,23 +4961,23 @@ function App() {
       if (transition === "seller_accept" && ordersRole === "seller" && orderId) {
         appendSellerOrderTabNotifications("processing", [String(orderId)]);
       }
-      setMarketplaceMessage("Order updated.");
+      pushMarketplaceToast("Order updated.");
     } catch (e) {
-      setMarketplaceMessage(e.message || "Could not update order.");
+      pushMarketplaceToast(e.message || "Could not update order.");
     }
   };
 
   const acceptOrderBid = async (orderId, bidId) => {
-    setMarketplaceMessage("");
+    clearMarketplaceToasts();
     try {
       await apiRequest(`/orders/${orderId}/bids/${bidId}/accept`, { method: "POST", token });
       const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
       setOrders(data.orders || []);
       setExpandedBidOrderId(null);
       setBidsForOrder([]);
-      setMarketplaceMessage("Bid accepted. Agreed delivery fee is stored for COD at handoff.");
+      pushMarketplaceToast("Bid accepted. Agreed delivery fee is stored for COD at handoff.");
     } catch (e) {
-      setMarketplaceMessage(e.message || "Could not accept bid.");
+      pushMarketplaceToast(e.message || "Could not accept bid.");
     }
   };
 
@@ -4513,10 +4995,10 @@ function App() {
     ev.preventDefault();
     const pesos = Number(expenseDraft.amountPesos);
     if (!Number.isFinite(pesos) || pesos < 0) {
-      setMarketplaceMessage("Invalid expense amount.");
+      pushMarketplaceToast("Invalid expense amount.");
       return;
     }
-    setMarketplaceMessage("");
+    clearMarketplaceToasts();
     try {
       await apiRequest("/me/expenses", {
         method: "POST",
@@ -4531,9 +5013,9 @@ function App() {
       const [sum, exp] = await Promise.all([apiRequest("/me/seller/summary", { token }), apiRequest("/me/expenses", { token })]);
       setSellerSummary(sum);
       setExpenses(exp.expenses || []);
-      setMarketplaceMessage("Expense added.");
+      pushMarketplaceToast("Expense added.");
     } catch (e) {
-      setMarketplaceMessage(e.message || "Could not add expense.");
+      pushMarketplaceToast(e.message || "Could not add expense.");
     }
   };
 
@@ -4544,7 +5026,7 @@ function App() {
       setSellerSummary(sum);
       setExpenses(exp.expenses || []);
     } catch (e) {
-      setMarketplaceMessage(e.message || "Could not delete.");
+      pushMarketplaceToast(e.message || "Could not delete.");
     }
   };
 
@@ -4573,9 +5055,9 @@ function App() {
         if (listingImagePreviewUrl) URL.revokeObjectURL(listingImagePreviewUrl);
         setListingImagePreviewUrl("");
       }
-      setMarketplaceMessage("Listing deleted.");
+      pushMarketplaceToast("Listing deleted.");
     } catch (e) {
-      setMarketplaceMessage(e.message || "Could not delete listing.");
+      pushMarketplaceToast(e.message || "Could not delete listing.");
     }
   };
 
@@ -4584,7 +5066,7 @@ function App() {
       const id = String(listingId || "");
       if (!id || !Number.isFinite(Number(delta)) || Number(delta) === 0) return;
       if (!token) {
-        setMarketplaceMessage("Please sign in to update listing quantity.");
+        pushMarketplaceToast("Please sign in to update listing quantity.");
         return;
       }
       const target = sellerListings.find((l) => String(l?.id || "") === id);
@@ -4611,9 +5093,9 @@ function App() {
               : l,
           ),
         );
-        setMarketplaceMessage("Product quantity updated.");
+        pushMarketplaceToast("Product quantity updated.");
       } catch (e) {
-        setMarketplaceMessage(e.message || "Could not update product quantity.");
+        pushMarketplaceToast(e.message || "Could not update product quantity.");
       } finally {
         setSellerListingQtySavingId(null);
       }
@@ -4627,7 +5109,7 @@ function App() {
       const nextQty = Math.max(0, Math.floor(Number(targetQty) || 0));
       if (!id) return;
       if (!token) {
-        setMarketplaceMessage("Please sign in to update listing quantity.");
+        pushMarketplaceToast("Please sign in to update listing quantity.");
         return;
       }
       const target = sellerListings.find((l) => String(l?.id || "") === id);
@@ -4653,9 +5135,9 @@ function App() {
               : l,
           ),
         );
-        setMarketplaceMessage("Product quantity updated.");
+        pushMarketplaceToast("Product quantity updated.");
       } catch (e) {
-        setMarketplaceMessage(e.message || "Could not update product quantity.");
+        pushMarketplaceToast(e.message || "Could not update product quantity.");
       } finally {
         setSellerListingQtySavingId(null);
       }
@@ -4668,7 +5150,7 @@ function App() {
     if (!id) return;
     const pct = Number(percent);
     if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) {
-      setMarketplaceMessage("Choose a valid discount percentage.");
+      pushMarketplaceToast("Choose a valid discount percentage.");
       return;
     }
     const currentPriceCents = Math.max(0, Number(listing?.priceCents) || 0);
@@ -4679,7 +5161,7 @@ function App() {
     const discountedPesos = Math.max(0, Math.floor(basePesos * (1 - pct / 100)));
     const discountedPriceCents = discountedPesos * 100;
     if (discountedPriceCents === currentPriceCents) {
-      setMarketplaceMessage("Discount did not change the price.");
+      pushMarketplaceToast("Discount did not change the price.");
       return;
     }
     const baseDescription = removeSaleMetaLines(desc);
@@ -4702,9 +5184,9 @@ function App() {
         const shopData = await apiRequest(`/listings?${qs.toString()}`, { token });
         setListings(shopData.listings || []);
       }
-      setMarketplaceMessage(`Applied ${pct}% discount.`);
+      pushMarketplaceToast(`Applied ${pct}% discount.`);
     } catch (e) {
-      setMarketplaceMessage(e.message || "Could not apply discount.");
+      pushMarketplaceToast(e.message || "Could not apply discount.");
     }
   };
 
@@ -4712,7 +5194,7 @@ function App() {
     if (!listing?.id) return;
     const stock = Math.max(0, Number(listing.quantity) || 0);
     if (stock <= 0) {
-      setMarketplaceMessage("This item is currently out of stock.");
+      pushMarketplaceToast("This item is currently out of stock.");
       return;
     }
     const mode = actionType === "buy" ? "buy" : "cart";
@@ -4741,14 +5223,14 @@ function App() {
     const parsedQty = Number(quickAddQuantity);
     const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
     if (!Number.isFinite(parsedQty) || parsedQty < 1 || parsedQty > maxQty) {
-      setMarketplaceMessage(`Quantity must be between 1 and ${maxQty}.`);
+      pushMarketplaceToast(`Quantity must be between 1 and ${maxQty}.`);
       return;
     }
     setQuickAddSubmitting(true);
     try {
       if (quickActionType === "buy") {
         if (!token) {
-          setMarketplaceMessage("Please sign in to place an order.");
+          pushMarketplaceToast("Please sign in to place an order.");
           return;
         }
         try {
@@ -4763,7 +5245,7 @@ function App() {
             .reduce((sum, o) => sum + Math.max(0, Number(o?.quantity) || 0), 0);
           const availableQty = Math.max(0, listingMaxQty - pendingQtyForListing);
           if (availableQty < parsedQty) {
-            setMarketplaceMessage(
+            pushMarketplaceToast(
               availableQty > 0
                 ? `Only ${availableQty} item${availableQty > 1 ? "s" : ""} left for pending orders.`
                 : "Maximum available quantity is already in pending orders.",
@@ -4794,7 +5276,7 @@ function App() {
             });
           }
         } catch (e) {
-          setMarketplaceMessage(e.message || "Could not place order.");
+          pushMarketplaceToast(e.message || "Could not place order.");
           return;
         }
         setQuickAddModalOpen(false);
@@ -4806,7 +5288,7 @@ function App() {
         // Keep user in current marketplace/community view after successful buy.
         setOrdersRole("buyer");
         setOrdersStatusTab("pending");
-        setMarketplaceMessage("Order placed. Pay COD at pickup or when delivery is completed.");
+        pushMarketplaceToast("Order placed. Pay COD at pickup or when delivery is completed.");
         return;
       }
       const addedListingId = String(quickAddListing.id);
@@ -4827,9 +5309,9 @@ function App() {
             return moveSellerGroupToTop(merged, quickAddListing?.sellerId);
           });
           setRecentlyAddedCartListingIds((prev) => (prev.includes(addedListingId) ? prev : [...prev, addedListingId]));
-          setMarketplaceMessage("Added to your cart.");
+          pushMarketplaceToast("Added to your cart.");
         } catch (e) {
-          setMarketplaceMessage(e.message || "Could not save to cart.");
+          pushMarketplaceToast(e.message || "Could not save to cart.");
           return;
         }
       } else {
@@ -4880,7 +5362,7 @@ function App() {
           return next;
         });
         setRecentlyAddedCartListingIds((prev) => (prev.includes(addedListingId) ? prev : [...prev, addedListingId]));
-        setMarketplaceMessage("Added to your cart.");
+        pushMarketplaceToast("Added to your cart.");
       }
       setActiveView(shopCommunityId ? VIEWS.COMMUNITY_SHOP : VIEWS.BROWSE);
       setQuickAddModalOpen(false);
@@ -4911,7 +5393,7 @@ function App() {
       URL.revokeObjectURL(listingImagePreviewUrl);
     }
     setListingImagePreviewUrl(String(listing.imageUrl || "").trim());
-    setMarketplaceMessage("");
+    clearMarketplaceToasts();
     setActiveView(VIEWS.MY_LISTINGS);
     navigate("/", { replace: true });
   };
@@ -4932,7 +5414,7 @@ function App() {
     }
     if (Object.keys(nextErrors).length > 0) {
       setListingFieldErrors(nextErrors);
-      setMarketplaceMessage("");
+      clearMarketplaceToasts();
       return;
     }
     setListingFieldErrors({});
@@ -4940,26 +5422,26 @@ function App() {
     const qtyStr = String(listingForm.quantity ?? "").trim();
     const qtyMissing = qtyStr === "";
     if (catMissing && qtyMissing) {
-      setMarketplaceMessage("Select a category and enter a quantity before publishing.");
+      pushMarketplaceToast("Select a category and enter a quantity before publishing.");
       return;
     }
     if (catMissing) {
-      setMarketplaceMessage("Select a category before publishing.");
+      pushMarketplaceToast("Select a category before publishing.");
       return;
     }
     if (qtyMissing) {
-      setMarketplaceMessage("Enter a quantity before publishing.");
+      pushMarketplaceToast("Enter a quantity before publishing.");
       return;
     }
     const qtyNum = Number(qtyStr);
     if (!Number.isFinite(qtyNum) || qtyNum < 0 || !Number.isInteger(qtyNum)) {
-      setMarketplaceMessage("Enter a valid whole number for quantity (0 or more).");
+      pushMarketplaceToast("Enter a valid whole number for quantity (0 or more).");
       return;
     }
 
     const pesos = Number(listingForm.pricePesos);
     if (!Number.isFinite(pesos) || pesos < 0) {
-      setMarketplaceMessage("Enter a valid price in pesos.");
+      pushMarketplaceToast("Enter a valid price in pesos.");
       return;
     }
     const modes = [];
@@ -4967,11 +5449,11 @@ function App() {
     if (listingForm.delivery) modes.push("delivery");
     if (modes.length === 0) {
       setListingFieldErrors((prev) => ({ ...prev, fulfillment: "Choose at least one fulfillment method." }));
-      setMarketplaceMessage("");
+      clearMarketplaceToasts();
       return;
     }
     setListingSaving(true);
-    setMarketplaceMessage("");
+    clearMarketplaceToasts();
     try {
       let imageUrl = "";
       if (listingImageFile) {
@@ -5025,13 +5507,13 @@ function App() {
       if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
       setListingImagePreviewUrl("");
       setEditingListingId(null);
-      setMarketplaceMessage("");
+      clearMarketplaceToasts();
       setPublishFlash("");
       setSellerTab(SELLER_TABS.PRODUCTS);
       setActiveView(VIEWS.PROFILE);
       navigate("/", { replace: true });
     } catch (e) {
-      setMarketplaceMessage(e.message || "Could not publish listing.");
+      pushMarketplaceToast(e.message || "Could not publish listing.");
     } finally {
       setListingSaving(false);
     }
@@ -5040,18 +5522,18 @@ function App() {
   const setListingImage = (file) => {
     if (!file) return;
     if (!String(file.type || "").startsWith("image/")) {
-      setMarketplaceMessage("Please choose an image file.");
+      pushMarketplaceToast("Please choose an image file.");
       return;
     }
     const MAX_LISTING_IMAGE_BYTES = 5 * 1024 * 1024;
     if (file.size > MAX_LISTING_IMAGE_BYTES) {
-      setMarketplaceMessage("Image is too large. Please choose one smaller than 5MB.");
+      pushMarketplaceToast("Image is too large. Please choose one smaller than 5MB.");
       return;
     }
     if (listingImagePreviewUrl) URL.revokeObjectURL(listingImagePreviewUrl);
     setListingImageFile(file);
     setListingImagePreviewUrl(URL.createObjectURL(file));
-    setMarketplaceMessage("");
+    clearMarketplaceToasts();
   };
 
   const openProfileEdit = () => {
@@ -5799,26 +6281,39 @@ function App() {
         }
       />
 
-      {marketplaceFeedback.text ? (
+      {marketplaceToasts.length > 0 ? (
         <div
-          className={`fixed left-3 right-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px)+0.75rem)] z-[70] flex items-start justify-between gap-2 rounded-2xl border px-3.5 py-2.5 text-sm shadow-lg backdrop-blur sm:left-4 sm:right-4 md:left-auto md:right-6 md:bottom-6 md:w-[24rem] ${marketplaceFeedback.className}`}
-          role={marketplaceFeedback.role}
-          aria-live={marketplaceFeedback.live}
+          className="pointer-events-none fixed left-3 right-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px)+0.75rem)] z-[70] flex max-h-[min(70vh,calc(100vh-10rem))] flex-col gap-2 overflow-y-auto sm:left-4 sm:right-4 md:left-auto md:right-6 md:bottom-6 md:w-[24rem]"
+          role="region"
+          aria-label="Notifications"
+          aria-live="polite"
         >
-          <span className="inline-flex min-w-0 items-start gap-2">
-            <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-current/30 text-[11px] font-bold">
-              {marketplaceFeedback.icon}
-            </span>
-            <span className="leading-relaxed">{marketplaceFeedback.text}</span>
-          </span>
-          <button
-            type="button"
-            className={`shrink-0 rounded-md px-1.5 py-0.5 text-base leading-none transition hover:bg-black/5 dark:hover:bg-white/10 ${marketplaceFeedback.dismissClass}`}
-            aria-label="Dismiss notification"
-            onClick={() => setMarketplaceMessage("")}
-          >
-            ×
-          </button>
+          {marketplaceToasts.map((t) => {
+            const fb = computeMarketplaceFeedbackForText(t.text);
+            return (
+              <div
+                key={t.id}
+                className={`pointer-events-auto flex items-start justify-between gap-2 rounded-2xl border px-3.5 py-2.5 text-sm shadow-lg backdrop-blur ${fb.className}`}
+                role={fb.role}
+                aria-live={fb.live}
+              >
+                <span className="inline-flex min-w-0 items-start gap-2">
+                  <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-current/30 text-[11px] font-bold">
+                    {fb.icon}
+                  </span>
+                  <span className="leading-relaxed">{fb.text}</span>
+                </span>
+                <button
+                  type="button"
+                  className={`shrink-0 rounded-md px-1.5 py-0.5 text-base leading-none transition hover:bg-black/5 dark:hover:bg-white/10 ${fb.dismissClass}`}
+                  aria-label="Dismiss notification"
+                  onClick={() => dismissMarketplaceToast(t.id)}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
         </div>
       ) : null}
 
@@ -5866,7 +6361,7 @@ function App() {
                           onClick={() => {
                             const leftName = toTitleCase(String(activeCommunity?.name || "").trim());
                             applyJoinedCommunity("");
-                            setMarketplaceMessage(`You left ${leftName || "the community"} successfully.`);
+                            pushMarketplaceToast(`You left ${leftName || "the community"} successfully.`);
                             leaveCommunityToGlobalMarketplace();
                           }}
                         >
@@ -6197,11 +6692,25 @@ function App() {
                       <OrderPlacementForm
                         listing={listingDetail}
                         token={token}
-                        onDone={(msg) => {
-                          setMarketplaceMessage(msg);
+                        onDone={(msg, createdOrderId) => {
+                          pushMarketplaceToast(msg);
+                          const oid = String(createdOrderId || "");
+                          if (oid) {
+                            setRecentlyAddedPurchaseOrderIds((prev) => (prev.includes(oid) ? prev : [...prev, oid]));
+                            setRecentOrderBadgeIdsByTab((prev) => {
+                              const set = new Set(prev.pending ?? []);
+                              set.add(oid);
+                              return { ...prev, pending: Array.from(set) };
+                            });
+                            setRecentOrderIdsByTab((prev) => {
+                              const set = new Set(prev.pending ?? []);
+                              set.add(oid);
+                              return { ...prev, pending: Array.from(set) };
+                            });
+                          }
                           goMyPurchases();
                         }}
-                        onError={(m) => setMarketplaceMessage(m)}
+                        onError={(m) => pushMarketplaceToast(m)}
                       />
                     ) : (
                       <p className="text-sm text-neutral-600 dark:text-slate-400">This is your listing.</p>
@@ -6616,7 +7125,7 @@ function App() {
                       if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
                       setListingImagePreviewUrl("");
                       setEditingListingId(null);
-                      setMarketplaceMessage("");
+                      clearMarketplaceToasts();
                       setSellerTab(SELLER_TABS.PRODUCTS);
                       setActiveView(VIEWS.PROFILE);
                       navigate("/", { replace: true });
@@ -6889,7 +7398,7 @@ function App() {
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div>
               <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">
-                {activeView === VIEWS.MY_PURCHASES ? "My purchases" : "Orders"}
+                {activeView === VIEWS.MY_PURCHASES ? "Purchases" : "Orders"}
               </h2>
               <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
                 {activeView === VIEWS.MY_PURCHASES
@@ -6906,36 +7415,18 @@ function App() {
                     role="tab"
                     aria-selected={ordersStatusTab === id}
                     className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${ordersStatusTab === id ? UI_KIT.tabActive : UI_KIT.tabIdle}`}
-                    onClick={() => {
-                      if (
-                        activeView === VIEWS.MY_PURCHASES &&
-                        ordersRole === "buyer" &&
-                        (id === "pending" || id === "processing" || id === "completed" || id === "cancelled")
-                      ) {
-                        setRecentOrderBadgeIdsByTab((prev) => ({ ...prev, [id]: [] }));
-                        setRecentOrderIdsByTab((prev) => ({ ...prev, [id]: [] }));
-                        if (id === "pending") setRecentlyAddedPurchaseOrderIds([]);
-                      }
-                      if (
-                        activeView === VIEWS.ORDERS &&
-                        ordersRole === "seller" &&
-                        (id === "pending" || id === "processing" || id === "completed" || id === "cancelled")
-                      ) {
-                        setRecentSellerOrderBadgeIdsByTab((prev) => ({ ...prev, [id]: [] }));
-                        setRecentSellerOrderIdsByTab((prev) => ({ ...prev, [id]: [] }));
-                        if (id === "pending") setRecentlyAddedSellerOrderIds([]);
-                      }
-                      setOrdersStatusTab(id);
-                    }}
+                    onClick={() => setOrdersStatusTab(id)}
                   >
                     <span className="inline-flex items-center gap-1.5">
                       <span>{label}</span>
-                      {id === "pending" && pendingTabPillCount > 0 ? (
+                      {id === "pending" && ordersStatusTab !== "pending" && pendingTabPillCount > 0 ? (
                         <span className="inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
                           {pendingTabPillCount > 99 ? "99+" : pendingTabPillCount}
                         </span>
                       ) : null}
-                      {(id === "processing" || id === "completed" || id === "cancelled") && ordersTabBadgeIdsByTab[id]?.length > 0 ? (
+                      {(id === "processing" || id === "completed" || id === "cancelled") &&
+                      ordersStatusTab !== id &&
+                      ordersTabBadgeIdsByTab[id]?.length > 0 ? (
                         <span className="inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[10px] font-bold leading-none text-white dark:bg-brand-accent dark:text-slate-900">
                           {ordersTabBadgeIdsByTab[id].length > 99 ? "99+" : ordersTabBadgeIdsByTab[id].length}
                         </span>
@@ -7140,9 +7631,35 @@ function App() {
                           const o = entry.representativeOrder;
                           const cardListing = entry.cardListing;
                           const orderId = String(o.id || "");
+                          const highlightIdsForTab = ordersTabHighlightIdsByTab[ordersStatusTab] || [];
+                          const tabQueueBadgeIds = ordersTabBadgeIdsByTab[ordersStatusTab] || [];
+                          const orderIdNeedsAttention = (oid) => {
+                            const sid = String(oid || "");
+                            if (!sid) return false;
+                            if (highlightIdsForTab.some((x) => String(x) === sid)) return true;
+                            // Purchases / Orders: when badge ids remain for the active queue, row highlights can
+                            // follow tabQueueBadgeIds if highlight ids were cleared separately.
+                            if (
+                              ((ordersRole === "buyer" && activeView === VIEWS.MY_PURCHASES) ||
+                                activeView === VIEWS.ORDERS) &&
+                              (ordersStatusTab === "processing" ||
+                                ordersStatusTab === "completed" ||
+                                ordersStatusTab === "cancelled") &&
+                              tabQueueBadgeIds.some((x) => String(x) === sid)
+                            ) {
+                              return true;
+                            }
+                            // Pending nav / tab pills also use `recentlyAddedPurchaseOrderIds` (buyer) and
+                            // `recentlyAddedSellerOrderIds` (seller); those were not mirrored into row highlights.
+                            if (ordersStatusTab === "pending") {
+                              if (ordersRole === "buyer" && recentlyAddedPurchaseOrderIds.some((x) => String(x) === sid)) return true;
+                              if (ordersRole === "seller" && recentlyAddedSellerOrderIds.some((x) => String(x) === sid)) return true;
+                            }
+                            return false;
+                          };
                           const shouldHighlightRecent =
                             RECENT_ORDER_TAB_KEYS.includes(String(ordersStatusTab)) &&
-                            entry.orderIds.some((id) => Boolean(ordersTabHighlightIdsByTab[ordersStatusTab]?.includes(id)));
+                            entry.orderIds.some(orderIdNeedsAttention);
                           const rowAllSelected = entry.orderIds.length > 0 && entry.orderIds.every((id) => Boolean(orderSelection[id]));
                           return (
                             <div
