@@ -1253,3 +1253,125 @@ export const updateCommunity = async (req, res, next) => {
     next(e);
   }
 };
+
+const ORDER_ATTENTION_TAB_KEYS = ["pending", "processing", "completed", "cancelled"];
+const emptyAttentionByTab = () => ({
+  pending: [],
+  processing: [],
+  completed: [],
+  cancelled: [],
+});
+
+const UUID_RE = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+
+/** Normalize order id lists for persistence (max per tab / list caps abuse). */
+const normalizeOrderIdList = (arr, maxLen = 400) => {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const x of arr) {
+    const id = String(x || "").trim();
+    if (!UUID_RE.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= maxLen) break;
+  }
+  return out;
+};
+
+const normalizeAttentionIdsByTab = (raw) => {
+  const out = emptyAttentionByTab();
+  if (!raw || typeof raw !== "object") return out;
+  for (const k of ORDER_ATTENTION_TAB_KEYS) {
+    out[k] = normalizeOrderIdList(raw[k]);
+  }
+  return out;
+};
+
+const normalizeAttentionSidePayload = (input) => {
+  if (!input || typeof input !== "object") return null;
+  const badgeRaw = input.badgeIdsByTab ?? input.badge_ids_by_tab;
+  const hiRaw = input.highlightIdsByTab ?? input.highlight_ids_by_tab;
+  const pendRaw = input.recentPendingIds ?? input.recent_pending_ids;
+  return {
+    badgeIdsByTab: normalizeAttentionIdsByTab(badgeRaw),
+    highlightIdsByTab: normalizeAttentionIdsByTab(hiRaw),
+    recentPendingIds: normalizeOrderIdList(Array.isArray(pendRaw) ? pendRaw : []),
+  };
+};
+
+const attentionSideToApi = (row) => {
+  if (!row || typeof row !== "object") return null;
+  const badgeIdsByTab = normalizeAttentionIdsByTab(row.badgeIdsByTab ?? row.badge_ids_by_tab);
+  const highlightIdsByTab = normalizeAttentionIdsByTab(row.highlightIdsByTab ?? row.highlight_ids_by_tab);
+  const recentPendingIds = normalizeOrderIdList(
+    Array.isArray(row.recentPendingIds) ? row.recentPendingIds : row.recent_pending_ids,
+  );
+  return { badgeIdsByTab, highlightIdsByTab, recentPendingIds };
+};
+
+export const getMeOrderAttention = async (req, res, next) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("user_order_attention")
+      .select("buyer_attention, seller_attention")
+      .eq("user_id", req.user.id)
+      .maybeSingle();
+    if (error) {
+      if (isSchemaMissingError(error)) {
+        return res.json({ buyer: null, seller: null, schemaMissing: true });
+      }
+      throw new AppError(500, error.message);
+    }
+    if (!data) {
+      return res.json({ buyer: null, seller: null });
+    }
+    const buyer = attentionSideToApi(data.buyer_attention);
+    const seller = attentionSideToApi(data.seller_attention);
+    const hasAttentionSide = (side) => {
+      if (!side) return false;
+      if (side.recentPendingIds?.length) return true;
+      for (const k of ORDER_ATTENTION_TAB_KEYS) {
+        if ((side.badgeIdsByTab?.[k] || []).length) return true;
+        if ((side.highlightIdsByTab?.[k] || []).length) return true;
+      }
+      return false;
+    };
+    res.json({
+      buyer: hasAttentionSide(buyer) ? buyer : null,
+      seller: hasAttentionSide(seller) ? seller : null,
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const putMeOrderAttention = async (req, res, next) => {
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const buyer = normalizeAttentionSidePayload(body.buyer);
+    const seller = normalizeAttentionSidePayload(body.seller);
+    if (!buyer || !seller) {
+      throw new AppError(400, "Request body must include `buyer` and `seller` objects with badge/highlight queues.");
+    }
+    const row = {
+      user_id: req.user.id,
+      buyer_attention: buyer,
+      seller_attention: seller,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabaseAdmin.from("user_order_attention").upsert(row, { onConflict: "user_id" });
+    if (error) {
+      if (isSchemaMissingError(error)) {
+        throw new AppError(
+          503,
+          "Order attention table is missing. Apply migration `supabase/migrations/20260430120000_user_order_attention.sql` in Supabase.",
+        );
+      }
+      throw new AppError(400, error.message);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+};
