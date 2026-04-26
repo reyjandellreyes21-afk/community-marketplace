@@ -26,16 +26,53 @@ import { getApiV1Base } from "./apiBase.js";
 const API_URL = getApiV1Base();
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 const COMMUNITY_MEMBERSHIP_KEY_PREFIX = "community_membership_v1:";
+const AUTH_TOKEN_STORAGE_KEY = "linkmart_session_v1";
+const LEGACY_AUTH_TOKEN_KEY = "quiz_token";
+const THEME_STORAGE_KEY = "linkmart_theme_v1";
+const LEGACY_THEME_KEY_V2 = "quiz_theme_v2";
+const LEGACY_THEME_KEY_V1 = "quiz_theme";
+
+function readAuthToken() {
+  if (typeof window === "undefined") return "";
+  const next = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  if (next) return next;
+  const legacy = localStorage.getItem(LEGACY_AUTH_TOKEN_KEY) || "";
+  if (legacy) {
+    localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, legacy);
+    localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+  }
+  return legacy;
+}
+
+function writeAuthToken(token) {
+  if (typeof window === "undefined") return;
+  if (!token) {
+    localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+    return;
+  }
+  localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+}
+
+function readThemeMode() {
+  if (typeof window === "undefined") return "light";
+  if (localStorage.getItem(THEME_STORAGE_KEY) === "dark") return "dark";
+  if (localStorage.getItem(LEGACY_THEME_KEY_V2) === "dark") return "dark";
+  return "light";
+}
+
+function writeThemeMode(theme) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(THEME_STORAGE_KEY, theme);
+  localStorage.removeItem(LEGACY_THEME_KEY_V2);
+  localStorage.removeItem(LEGACY_THEME_KEY_V1);
+}
+
 /** Success toast: full visible time before fade; fade length (should match CSS transition) */
 const PUBLISH_TOAST_DURATION_MS = 7500;
 const PUBLISH_TOAST_FADE_MS = 350;
 
-const buildEmptyQuestion = () => ({
-  text: "",
-  kind: "mcq",
-  options: ["", "", "", ""],
-  correctOptionIndex: 0,
-});
 const quickFilterIcon = (id) => {
   const cls = "h-3.5 w-3.5 shrink-0";
   if (id === "new") {
@@ -443,83 +480,6 @@ const buildAddressValue = (draft) =>
   ]
     .map((part) => escapeAddressPart(part))
     .join(", ");
-const getQuizListId = (quiz) => quiz?.id || quiz?._id;
-const isQuizOwner = (quiz, currentUser) => {
-  if (!currentUser?.id || quiz?.createdBy == null || quiz.createdBy === "") return false;
-  return String(quiz.createdBy) === String(currentUser.id);
-};
-const formatTime = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-const getQuestionId = (question) => question?.id || question?._id;
-const getQuestionKey = (question, index) => getQuestionId(question) || `idx-${index}`;
-const normalizeQuestionKind = (value) => (value === "tf" ? "tf" : value === "fill" ? "fill" : "mcq");
-const isQuestionInvalid = (q) => {
-  if (!q.text?.trim() || q.text.trim().length < 5) return true;
-  const kind = normalizeQuestionKind(q.kind);
-  if (kind === "fill") return !(q.blankAnswer && String(q.blankAnswer).trim().length >= 1);
-  return !Array.isArray(q.options) || q.options.some((o) => !String(o || "").trim()) || !q.options[q.correctOptionIndex]?.trim();
-};
-const buildQuestionPayload = (question) => {
-  const kind = normalizeQuestionKind(question.kind);
-  if (kind === "fill") {
-    return {
-      text: question.text.trim(),
-      kind: "fill",
-      options: [],
-      correctAnswer: String(question.blankAnswer).trim(),
-    };
-  }
-  return {
-    text: question.text.trim(),
-    kind,
-    options: question.options.map((option) => option.trim()),
-    correctAnswer: question.options[question.correctOptionIndex].trim(),
-  };
-};
-const toEditableQuestion = (question) => {
-  const kind = normalizeQuestionKind(question.kind);
-  if (kind === "fill") {
-    return {
-      id: getQuestionId(question),
-      text: question.text || "",
-      kind: "fill",
-      options: [],
-      blankAnswer: question.correctAnswer || "",
-      correctOptionIndex: 0,
-    };
-  }
-  const options = Array.isArray(question.options) ? question.options : ["", ""];
-  const matchedIndex = options.findIndex((opt) => String(opt).trim() === String(question.correctAnswer || "").trim());
-  return {
-    id: getQuestionId(question),
-    text: question.text || "",
-    kind,
-    options,
-    correctOptionIndex: matchedIndex >= 0 ? matchedIndex : 0,
-    blankAnswer: "",
-  };
-};
-const toCreateDraftQuestion = (question) => {
-  const kind = normalizeQuestionKind(question.kind);
-  if (kind === "fill") {
-    return {
-      text: question.text || "",
-      kind: "fill",
-      options: [],
-      blankAnswer: question.correctAnswer || "",
-      correctOptionIndex: 0,
-    };
-  }
-  const options = Array.isArray(question.options) ? question.options : [];
-  const safeOptions = kind === "tf" ? ["True", "False"] : options.length >= 2 ? options : ["", "", "", ""];
-  const matchedIndex = safeOptions.findIndex((opt) => String(opt).trim() === String(question.correctAnswer || "").trim());
-  return {
-    text: question.text || "",
-    kind,
-    options: safeOptions,
-    correctOptionIndex: matchedIndex >= 0 ? matchedIndex : 0,
-    blankAnswer: "",
-  };
-};
 const getApiErrorMessage = (payload, fallback) => {
   if (!payload || typeof payload !== "object") return fallback;
   const rawDetails = payload.error?.details;
@@ -546,7 +506,7 @@ const getApiErrorMessage = (payload, fallback) => {
   }
   if (normalizedDetails) return normalizedDetails;
   const genericMessage = payload.error?.message || payload.message || fallback;
-  return genericMessage === "Validation failed." ? "Please check your quiz fields and try again." : genericMessage;
+  return genericMessage === "Validation failed." ? "Please check the highlighted fields and try again." : genericMessage;
 };
 const readApiPayload = async (response) => {
   const text = await response.text();
@@ -617,21 +577,7 @@ const apiRequest = async (path, { method = "GET", token, body, headers = {} } = 
 /** Only treat 401 as invalid session — do not clear the token on network or server errors. */
 const isUnauthorizedApiError = (error) => typeof error?.status === "number" && error.status === 401;
 
-const getStreakDays = (attempts) => {
-  if (!attempts.length) return 0;
-  const uniqueDays = [...new Set(attempts.map((a) => new Date(a.submittedAt).toISOString().slice(0, 10)))].sort().reverse();
-  let streak = 0;
-  const cursor = new Date();
-  cursor.setHours(0, 0, 0, 0);
-  for (const day of uniqueDays) {
-    if (day !== cursor.toISOString().slice(0, 10)) break;
-    streak += 1;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  return streak;
-};
-
-const LANDING_TARGET_EXAMS = [
+const LANDING_DISCOVERY_CARDS = [
   {
     badge: "GRC",
     title: "Groceries and Essentials",
@@ -664,9 +610,9 @@ const LANDING_TARGET_EXAMS = [
   },
 ];
 
-const LANDING_EXAM_SLIDE_SIZE = 3;
-const LANDING_EXAM_SLIDES = Array.from({ length: Math.ceil(LANDING_TARGET_EXAMS.length / LANDING_EXAM_SLIDE_SIZE) }, (_, i) =>
-  LANDING_TARGET_EXAMS.slice(i * LANDING_EXAM_SLIDE_SIZE, i * LANDING_EXAM_SLIDE_SIZE + LANDING_EXAM_SLIDE_SIZE),
+const LANDING_DISCOVERY_SLIDE_SIZE = 3;
+const LANDING_DISCOVERY_SLIDES = Array.from({ length: Math.ceil(LANDING_DISCOVERY_CARDS.length / LANDING_DISCOVERY_SLIDE_SIZE) }, (_, i) =>
+  LANDING_DISCOVERY_CARDS.slice(i * LANDING_DISCOVERY_SLIDE_SIZE, i * LANDING_DISCOVERY_SLIDE_SIZE + LANDING_DISCOVERY_SLIDE_SIZE),
 );
 
 const BROWSE_QUICK_FILTERS = [
@@ -1324,8 +1270,8 @@ function LandingIllustration() {
   );
 }
 
-function QuizAppLogo({ className = "h-7 w-auto max-w-[11rem] shrink-0 object-contain sm:h-8 sm:max-w-[13rem]" }) {
-  return <img src={navLogo} alt="LinkMark logo" className={className} />;
+function LinkMartLogo({ className = "h-7 w-auto max-w-[11rem] shrink-0 object-contain sm:h-8 sm:max-w-[13rem]" }) {
+  return <img src={navLogo} alt="LinkMart logo" className={className} />;
 }
 
 function EyeShowPasswordIcon(props) {
@@ -1444,7 +1390,7 @@ function LandingSiteFooter() {
         <div className="app-container mx-auto max-w-7xl border-t border-white/15 pt-10">
           <div className="flex flex-col items-center gap-8 lg:flex-row lg:items-end lg:justify-between">
             <div className="flex flex-col items-center gap-1 lg:items-start">
-              <QuizAppLogo className="h-9 w-auto max-w-[12rem] shrink-0 object-contain brightness-0 invert sm:h-10 sm:max-w-[13rem]" />
+              <LinkMartLogo className="h-9 w-auto max-w-[12rem] shrink-0 object-contain brightness-0 invert sm:h-10 sm:max-w-[13rem]" />
               <p className="text-xs font-medium tracking-wide text-white/55">Local marketplace for every community</p>
             </div>
             <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-sm text-white/85" aria-label="Legal">
@@ -1618,54 +1564,6 @@ function OrderPlacementForm({ listing, token, onDone, onError }) {
   );
 }
 
-function CategoryDropdown({ value, onChange, categories, placeholder = "Pick or type a category" }) {
-  const [open, setOpen] = useState(false);
-  const query = String(value || "").toLowerCase();
-  const options = categories.filter((category) => !query || category.toLowerCase().includes(query));
-
-  return (
-    <div className="relative">
-      <input
-        className="input-base pr-10"
-        placeholder={placeholder}
-        value={value}
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          onChange(e.target.value);
-          setOpen(true);
-        }}
-        required
-      />
-      <button
-        type="button"
-        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-neutral-500 hover:text-neutral-700 dark:text-slate-400 dark:hover:text-slate-200"
-        onClick={() => setOpen((prev) => !prev)}
-        aria-label="Toggle category suggestions"
-      >
-        <ChevronDownIcon className={`transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && options.length > 0 && (
-        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-slate-600 dark:bg-slate-900">
-          {options.map((category) => (
-            <button
-              key={category}
-              type="button"
-              className="w-full rounded-lg px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-slate-300 dark:hover:bg-slate-800"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                onChange(category);
-                setOpen(false);
-              }}
-            >
-              {category}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function CartSellerSelectAllCheckbox({ allChecked, someSelected, onChange, ariaLabel }) {
   const ref = useRef(null);
   useLayoutEffect(() => {
@@ -1699,7 +1597,7 @@ function App() {
     acceptedTerms: false,
   });
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(() => localStorage.getItem("quiz_token") || "");
+  const [token, setToken] = useState(() => readAuthToken());
   const authTokenRef = useRef("");
   authTokenRef.current = token;
   const navigate = useNavigate();
@@ -1714,14 +1612,14 @@ function App() {
       const accessToken = data?.session?.access_token;
       if (!mounted || !accessToken) return;
       setToken(accessToken);
-      localStorage.setItem("quiz_token", accessToken);
+      writeAuthToken(accessToken);
     });
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       const accessToken = session?.access_token || "";
       if (!accessToken) return;
       setToken(accessToken);
-      localStorage.setItem("quiz_token", accessToken);
+      writeAuthToken(accessToken);
     });
 
     return () => {
@@ -1733,12 +1631,12 @@ function App() {
   const [message, setMessage] = useState("");
   const [theme, setTheme] = useState(() => {
     try {
-      return typeof window !== "undefined" && localStorage.getItem("quiz_theme_v2") === "dark" ? "dark" : "light";
+      return typeof window !== "undefined" && readThemeMode() === "dark" ? "dark" : "light";
     } catch {
       return "light";
     }
   });
-  const [landingExamSlide, setLandingExamSlide] = useState(0);
+  const [landingDiscoverySlide, setLandingDiscoverySlide] = useState(0);
   const [usersList, setUsersList] = useState([]);
   const usersListRef = useRef([]);
   usersListRef.current = usersList;
@@ -2810,11 +2708,6 @@ function App() {
   const [communityProductsView, setCommunityProductsView] = useState("grid");
   /** Inline notice by “Upload product” on Profile (not the global marketplace banner). */
   const [profileUploadProductNotice, setProfileUploadProductNotice] = useState("");
-  const [categories, setCategories] = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState("");
-  const [quizzes, setQuizzes] = useState([]);
-  const [selectedQuiz, setSelectedQuiz] = useState(null);
-  const [activeQuiz, setActiveQuiz] = useState(null);
 
   const applyJoinedCommunity = useCallback((communityName) => {
     const normalized = String(communityName || "").trim();
@@ -2909,49 +2802,10 @@ function App() {
     };
   }, [token, user?.id, user?.community]);
 
-  const [answers, setAnswers] = useState({});
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [timedMode, setTimedMode] = useState(true);
-  const [secondsLeft, setSecondsLeft] = useState(0);
-  const [result, setResult] = useState(null);
-
-  const [attempts, setAttempts] = useState([]);
-  const [dashboard, setDashboard] = useState({ totalAttempts: 0, averageScore: 0, bestScore: 0, recentAttempts: [] });
-  const [browseLoading, setBrowseLoading] = useState(false);
-  const [browseError, setBrowseError] = useState("");
-  const [browseDeleteId, setBrowseDeleteId] = useState(null);
   const [mobileCommunityFiltersOpen, setMobileCommunityFiltersOpen] = useState(false);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState("");
-  const [historyClearLoading, setHistoryClearLoading] = useState(false);
-  const [historyRefreshTick, setHistoryRefreshTick] = useState(0);
-  const [dashboardLoading, setDashboardLoading] = useState(false);
-  const [dashboardError, setDashboardError] = useState("");
-  const [quizLoading, setQuizLoading] = useState(false);
-  const [createLoading, setCreateLoading] = useState(false);
-  const [submitLoading, setSubmitLoading] = useState(false);
-  const [submitError, setSubmitError] = useState("");
-  const [quizzesRefreshTick, setQuizzesRefreshTick] = useState(0);
-
-  const [createState, setCreateState] = useState({
-    title: "",
-    category: "",
-    description: "",
-    generatorProvider: "manual",
-    generatorQuestionCount: 5,
-    questions: [buildEmptyQuestion()],
-  });
-  const [createMessage, setCreateMessage] = useState("");
   const [publishFlash, setPublishFlash] = useState("");
   const [publishFlashExiting, setPublishFlashExiting] = useState(false);
   const publishFlashTimersRef = useRef({ fade: null, remove: null });
-  const [createGeneratorLoading, setCreateGeneratorLoading] = useState(false);
-  const [editState, setEditState] = useState({ quizId: "", title: "", category: "", description: "", questions: [] });
-  const [editRemovedQuestionIds, setEditRemovedQuestionIds] = useState([]);
-  const [editLoading, setEditLoading] = useState(false);
-  const [editSaving, setEditSaving] = useState(false);
-  const [editMessage, setEditMessage] = useState("");
-  const [quizMessage, setQuizMessage] = useState("");
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
     if (!mobileCommunityFiltersOpen) return undefined;
@@ -3221,7 +3075,7 @@ function App() {
   useEffect(() => {
     if (theme === "dark") document.documentElement.classList.add("dark");
     else document.documentElement.classList.remove("dark");
-    localStorage.setItem("quiz_theme_v2", theme);
+    writeThemeMode(theme);
   }, [theme]);
 
   useEffect(() => {
@@ -3375,46 +3229,6 @@ function App() {
     ensureIconLink('link[rel="apple-touch-icon"]', "apple-touch-icon");
   }, []);
 
-  const submitQuiz = useCallback(async () => {
-    if (!activeQuiz) return;
-    setSubmitError("");
-    setSubmitLoading(true);
-    const submissionAnswers = activeQuiz.questions.reduce((acc, question, index) => {
-      const questionId = getQuestionId(question);
-      if (!questionId) return acc;
-      const key = getQuestionKey(question, index);
-      if (question.kind === "fill") {
-        const typed = answers[key];
-        if (typeof typed === "string" && typed.trim()) acc[questionId] = typed.trim();
-        return acc;
-      }
-      const selectedOptionIndex = answers[key];
-      if (typeof selectedOptionIndex === "number" && question.options[selectedOptionIndex] !== undefined) {
-        acc[questionId] = question.options[selectedOptionIndex];
-      }
-      return acc;
-    }, {});
-    const activeQuizId = activeQuiz.id || activeQuiz._id;
-    if (!activeQuizId) {
-      setSubmitLoading(false);
-      return;
-    }
-    try {
-      const data = await apiRequest(`/quizzes/${activeQuizId}/submissions`, {
-        method: "POST",
-        token,
-        body: { answers: submissionAnswers },
-      });
-      setResult(data);
-      setActiveQuiz(null);
-      setActiveView(VIEWS.BROWSE);
-    } catch (error) {
-      setSubmitError(error.message || "Unable to submit quiz.");
-    } finally {
-      setSubmitLoading(false);
-    }
-  }, [activeQuiz, token, answers]);
-
   useEffect(() => {
     if (!token || user) return;
     (async () => {
@@ -3432,7 +3246,7 @@ function App() {
       } catch (error) {
         if (isUnauthorizedApiError(error)) {
           void flushOrderAttentionToServer(token).finally(() => {
-            localStorage.removeItem("quiz_token");
+            writeAuthToken("");
             setToken("");
           });
         }
@@ -3440,78 +3254,6 @@ function App() {
       }
     })();
   }, [token, user, flushOrderAttentionToServer]);
-
-  useEffect(() => {
-    if (!user) return;
-    // Browse is intentionally disabled for now.
-    setQuizzes([]);
-    setCategories([]);
-    setBrowseLoading(false);
-    setBrowseError("");
-    return;
-    setBrowseLoading(true);
-    setBrowseError("");
-    const query = selectedCategory ? `?category=${encodeURIComponent(selectedCategory)}` : "";
-    (async () => {
-      try {
-        const data = await apiRequest(`/quizzes${query}`);
-        const playableQuizzes = data.filter((quiz) => (quiz.questionCount || 0) > 0);
-        setQuizzes(playableQuizzes);
-        setCategories([...new Set(playableQuizzes.map((q) => q.category))]);
-      } catch (error) {
-        setBrowseError(error.message || "Unable to load quizzes.");
-      } finally {
-        setBrowseLoading(false);
-      }
-    })();
-  }, [user, selectedCategory, result, quizzesRefreshTick]);
-
-  useEffect(() => {
-    if (!user || !token) return;
-    // History/dashboard data fetch is intentionally disabled for now.
-    setAttempts([]);
-    setDashboard({ totalAttempts: 0, averageScore: 0, bestScore: 0, recentAttempts: [] });
-    setHistoryLoading(false);
-    setDashboardLoading(false);
-    setHistoryError("");
-    setDashboardError("");
-    return;
-    setHistoryLoading(true);
-    setDashboardLoading(true);
-    setHistoryError("");
-    setDashboardError("");
-    (async () => {
-      try {
-        const [historyData, dashboardData] = await Promise.all([
-          apiRequest("/users/me/history", { token }),
-          apiRequest("/users/me/dashboard", { token }),
-        ]);
-        setAttempts(historyData);
-        setDashboard(dashboardData);
-      } catch (error) {
-        const message = error.message || "Unable to load your data.";
-        setHistoryError(message);
-        setDashboardError(message);
-      } finally {
-        setHistoryLoading(false);
-        setDashboardLoading(false);
-      }
-    })();
-  }, [user, token, result, historyRefreshTick]);
-
-  useEffect(() => {
-    if (!activeQuiz || !timedMode || secondsLeft <= 0) return;
-    const timer = setTimeout(() => {
-      setSecondsLeft((prev) => {
-        if (prev <= 1) {
-          submitQuiz();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [activeQuiz, timedMode, secondsLeft, submitQuiz]);
 
   useEffect(() => {
     if (user || !GOOGLE_CLIENT_ID || !authPanelVisible || !googleBtnRef.current) return;
@@ -3527,7 +3269,7 @@ function App() {
             });
             setUser(data.user);
             setToken(data.token);
-            localStorage.setItem("quiz_token", data.token);
+            writeAuthToken(data.token);
             setMessage("");
             setActiveView(VIEWS.BROWSE);
             setAuthPanelVisible(false);
@@ -3547,14 +3289,6 @@ function App() {
     script.onload = initGoogle;
     document.body.appendChild(script);
   }, [authMode, user, authPanelVisible]);
-
-  const progress = useMemo(() => {
-    if (!activeQuiz) return 0;
-    return Math.round((Object.keys(answers).length / activeQuiz.questions.length) * 100);
-  }, [activeQuiz, answers]);
-
-  const streakDays = useMemo(() => getStreakDays(attempts), [attempts]);
-  const currentQuestion = activeQuiz?.questions[currentQuestionIndex];
 
   const openAuthPanel = useCallback((mode) => {
     setAuthMode(mode);
@@ -3603,7 +3337,7 @@ function App() {
       } catch (error) {
         if (!cancelled && isUnauthorizedApiError(error)) {
           void flushOrderAttentionToServer(token).finally(() => {
-            localStorage.removeItem("quiz_token");
+            writeAuthToken("");
             setToken("");
             setUser(null);
           });
@@ -3728,7 +3462,7 @@ function App() {
       const data = await apiRequest(endpoint, { method: "POST", body });
       setUser(data.user);
       setToken(data.token);
-      localStorage.setItem("quiz_token", data.token);
+      writeAuthToken(data.token);
       setActiveView(VIEWS.BROWSE);
       setAuthPanelVisible(false);
       setForm({
@@ -3749,42 +3483,13 @@ function App() {
     }
   };
 
-  const startQuiz = async () => {
-    if (!selectedQuiz) return;
-    setQuizMessage("");
-    if ((selectedQuiz.questionCount || 0) < 1) {
-      setQuizMessage("This quiz has no questions yet. Add at least one question in Create before starting.");
-      return;
-    }
-    setQuizLoading(true);
-    try {
-      const data = await apiRequest(`/quizzes/${selectedQuiz.id}`);
-      if (!data.questions?.length) {
-        setQuizMessage("This quiz has no playable questions yet.");
-        return;
-      }
-      setActiveQuiz(data);
-      setAnswers({});
-      setCurrentQuestionIndex(0);
-      setSecondsLeft(data.questions.length * 30);
-      setActiveView(VIEWS.BROWSE);
-    } catch (error) {
-      setQuizMessage(error.message || "Unable to load quiz.");
-    } finally {
-      setQuizLoading(false);
-    }
-  };
-
   const logout = () => {
     const t = token;
     void flushOrderAttentionToServer(t).finally(() => {
-      localStorage.removeItem("quiz_token");
+      writeAuthToken("");
       setToken("");
       setUser(null);
       setAuthPanelVisible(false);
-      setActiveQuiz(null);
-      setResult(null);
-      setSelectedQuiz(null);
       setShopCommunityId(null);
     });
   };
@@ -5686,7 +5391,7 @@ function App() {
       return;
     }
     setProfileFieldErrors({});
-    const effectiveToken = token || localStorage.getItem("quiz_token") || "";
+    const effectiveToken = token || readAuthToken() || "";
     if (!effectiveToken) {
       setProfileError("Your session expired. Please log in again.");
       return;
@@ -5779,7 +5484,7 @@ function App() {
       setProfileJoinedAt(data?.user?.joinedAt || data?.user?.createdAt || data?.user?.created_at || profileJoinedAt || "");
       if (data.token) {
         setToken(data.token);
-        localStorage.setItem("quiz_token", data.token);
+        writeAuthToken(data.token);
       }
       const listToken = data.token || effectiveToken;
       try {
@@ -5835,7 +5540,7 @@ function App() {
         <header className="landing-nav">
           <div className="app-container flex h-[4.25rem] items-center justify-between gap-4 px-6 sm:px-8 lg:px-10">
             <div className="flex min-w-0 items-center">
-              <QuizAppLogo />
+              <LinkMartLogo />
             </div>
             <nav className="flex shrink-0 items-center gap-3 sm:gap-4" aria-label="Sign in">
               <button type="button" className="landing-btn-nav-text" onClick={() => openAuthPanel("login")}>
@@ -5918,7 +5623,7 @@ function App() {
                 className="absolute left-0 top-[42%] z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-500 shadow-sm transition hover:border-neutral-300 hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500 sm:left-1 md:left-2"
                 aria-label="Previous categories"
                 onClick={() =>
-                  setLandingExamSlide((s) => (s - 1 + LANDING_EXAM_SLIDES.length) % LANDING_EXAM_SLIDES.length)
+                  setLandingDiscoverySlide((s) => (s - 1 + LANDING_DISCOVERY_SLIDES.length) % LANDING_DISCOVERY_SLIDES.length)
                 }
               >
                 <ChevronLeftIcon className="h-5 w-5" />
@@ -5927,36 +5632,36 @@ function App() {
                 type="button"
                 className="absolute right-0 top-[42%] z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-500 shadow-sm transition hover:border-neutral-300 hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500 sm:right-1 md:right-2"
                 aria-label="Next categories"
-                onClick={() => setLandingExamSlide((s) => (s + 1) % LANDING_EXAM_SLIDES.length)}
+                onClick={() => setLandingDiscoverySlide((s) => (s + 1) % LANDING_DISCOVERY_SLIDES.length)}
               >
                 <ChevronRightIcon className="h-5 w-5" />
               </button>
               <div className="mx-auto grid w-full max-w-5xl grid-cols-1 justify-items-center gap-12 px-4 sm:grid-cols-3 sm:gap-x-8 sm:gap-y-0 md:gap-x-12 md:px-6">
-                {LANDING_EXAM_SLIDES[landingExamSlide].map((exam) => (
-                  <div key={exam.title} className="flex w-full max-w-[20rem] flex-col items-center gap-3 text-center sm:max-w-none">
-                    {exam.logo ? (
+                {LANDING_DISCOVERY_SLIDES[landingDiscoverySlide].map((card) => (
+                  <div key={card.title} className="flex w-full max-w-[20rem] flex-col items-center gap-3 text-center sm:max-w-none">
+                    {card.logo ? (
                       <div className="flex h-[4.25rem] w-[4.25rem] shrink-0 items-center justify-center overflow-hidden rounded-2xl p-2">
-                        <img src={exam.logo} alt={`${exam.title} logo`} className="max-h-full max-w-full object-contain" />
+                        <img src={card.logo} alt={`${card.title} logo`} className="max-h-full max-w-full object-contain" />
                       </div>
                     ) : (
                       <div className="flex h-[4.25rem] w-[4.25rem] shrink-0 items-center justify-center rounded-2xl bg-brand-soft text-sm font-bold tracking-tight text-brand-primary shadow-sm dark:bg-slate-800 dark:text-brand-accent sm:text-base">
-                        {exam.badge}
+                        {card.badge}
                       </div>
                     )}
-                    <h3 className="px-1 text-[15px] font-semibold leading-snug text-brand-accent sm:text-base md:whitespace-nowrap md:text-lg">{exam.title}</h3>
-                    <p className="text-pretty text-sm leading-relaxed text-neutral-600 dark:text-slate-400">{exam.description}</p>
+                    <h3 className="px-1 text-[15px] font-semibold leading-snug text-brand-accent sm:text-base md:whitespace-nowrap md:text-lg">{card.title}</h3>
+                    <p className="text-pretty text-sm leading-relaxed text-neutral-600 dark:text-slate-400">{card.description}</p>
                   </div>
                 ))}
               </div>
               <div className="mt-10 flex justify-center gap-2.5">
-                {LANDING_EXAM_SLIDES.map((_, i) => (
+                {LANDING_DISCOVERY_SLIDES.map((_, i) => (
                   <button
                     key={i}
                     type="button"
-                    className={`h-2 w-2 rounded-full transition ${i === landingExamSlide ? "bg-neutral-700 dark:bg-slate-200" : "bg-neutral-300 dark:bg-slate-600"}`}
+                    className={`h-2 w-2 rounded-full transition ${i === landingDiscoverySlide ? "bg-neutral-700 dark:bg-slate-200" : "bg-neutral-300 dark:bg-slate-600"}`}
                     aria-label={`Category slide ${i + 1}`}
-                    aria-current={i === landingExamSlide}
-                    onClick={() => setLandingExamSlide(i)}
+                    aria-current={i === landingDiscoverySlide}
+                    onClick={() => setLandingDiscoverySlide(i)}
                   />
                 ))}
               </div>
