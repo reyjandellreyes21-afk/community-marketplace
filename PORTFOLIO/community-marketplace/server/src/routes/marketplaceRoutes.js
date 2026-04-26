@@ -31,6 +31,7 @@ import {
   listingsValidators,
   patchCourierModes,
   patchOrder,
+  upsertOrderReview,
   putMeOrderAttention,
   removeFavorite,
   removeCartItem,
@@ -108,7 +109,12 @@ marketplaceRouter.post(
   "/orders",
   requireAuth,
   writeLimiter,
-  [body("listingId").isUUID(), body("fulfillmentType").isIn(["pickup", "delivery"]), body("quantity").optional().isInt({ min: 1 })],
+  [
+    body("listingId").isUUID(),
+    body("fulfillmentType").isIn(["pickup", "delivery"]),
+    body("quantity").optional().isInt({ min: 1 }),
+    body("comment").optional().isString().isLength({ max: 2000 }),
+  ],
   validate,
   createOrder,
 );
@@ -117,9 +123,17 @@ marketplaceRouter.patch(
   "/orders/:id",
   requireAuth,
   writeLimiter,
-  [param("id").isUUID(), body("transition").isString().notEmpty()],
+  [param("id").isUUID(), body("transition").trim().isString().notEmpty()],
   validate,
   patchOrder,
+);
+marketplaceRouter.put(
+  "/orders/:id/review",
+  requireAuth,
+  writeLimiter,
+  [param("id").isUUID(), body("rating").isInt({ min: 1, max: 5 }), body("reviewText").optional({ checkFalsy: true }).isString().isLength({ max: 2000 })],
+  validate,
+  upsertOrderReview,
 );
 marketplaceRouter.get("/orders/:id/bids", requireAuth, [param("id").isUUID()], validate, listBidsForOrder);
 marketplaceRouter.post(
