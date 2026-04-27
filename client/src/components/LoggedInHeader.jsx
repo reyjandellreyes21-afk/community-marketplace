@@ -91,17 +91,6 @@ function HeartIcon({ filled = false, className = "", ...props }) {
   );
 }
 
-function GridIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <rect x="3" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect x="3" y="14" width="7" height="7" rx="1" />
-      <rect x="14" y="14" width="7" height="7" rx="1" />
-    </svg>
-  );
-}
-
 function MenuUserIcon(props) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
@@ -225,7 +214,7 @@ function navPillTrade(active, role) {
 /** Bottom bar: Marketplace + Cart share one visual segment. */
 function bottomNavShopClass(active, role) {
   const layout =
-    "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-0.5 py-1.5 text-[11px] font-semibold leading-tight transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-400/35 sm:px-1";
+    "flex min-h-[2.875rem] min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-[11px] font-semibold leading-tight transition touch-manipulation select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-400/35 sm:px-1";
   if (!active) {
     return `${layout} text-neutral-600 hover:bg-white/75 dark:text-slate-400 dark:hover:bg-slate-800/90`;
   }
@@ -238,7 +227,7 @@ function bottomNavShopClass(active, role) {
 /** Bottom bar: Buying / Selling share one visual segment. */
 function bottomNavTradeClass(active, role) {
   const layout =
-    "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-0.5 py-1.5 text-[11px] font-semibold leading-tight transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/35 sm:px-1";
+    "flex min-h-[2.875rem] min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-[11px] font-semibold leading-tight transition touch-manipulation select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/35 sm:px-1";
   if (!active) {
     return `${layout} text-neutral-600 hover:bg-white/75 dark:text-slate-400 dark:hover:bg-slate-800/90`;
   }
@@ -299,6 +288,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {number} [props.cartItemCount] Total cart quantity badge count
  * @param {number} [props.purchasesItemCount] Recent purchases badge count
  * @param {number} [props.ordersItemCount] Seller orders tab / new-order badge count
+ * @param {number} [props.notificationUnreadCount] Unread notification badge count
  * @param {() => void} [props.onNavigateHome] Clear SPA path (e.g. /l/…) when opening marketplace from the logo
  * @param {string | null} [props.communityShopName] When set, user is in a community-scoped shop (show context + leave control)
  * @param {() => void} [props.onLeaveCommunityShop] Navigate to global marketplace (all areas)
@@ -318,6 +308,7 @@ export function LoggedInHeader({
   cartItemCount = 0,
   purchasesItemCount = 0,
   ordersItemCount = 0,
+  notificationUnreadCount = 0,
   onNavigateHome,
   communityShopName = null,
   onLeaveCommunityShop,
@@ -325,11 +316,9 @@ export function LoggedInHeader({
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
-  const [settingsFlyoutOpen, setSettingsFlyoutOpen] = useState(false);
+  const [desktopSettingsOpen, setDesktopSettingsOpen] = useState(false);
 
   const accountMenuRef = useRef(null);
-  const settingsRowRef = useRef(null);
-  const settingsFlyoutRef = useRef(null);
   const mobileMenuButtonRef = useRef(null);
   const mobileMenuPanelRef = useRef(null);
   const mobileSheetCloseRef = useRef(null);
@@ -346,7 +335,7 @@ export function LoggedInHeader({
     }
     setMobileMenuOpen(false);
     setMobileSettingsOpen(false);
-    setSettingsFlyoutOpen(false);
+    setDesktopSettingsOpen(false);
   }, []);
 
   const goMarketplaceRoot = useCallback(() => {
@@ -413,18 +402,13 @@ export function LoggedInHeader({
   }, [mobileMenuOpen, mobileSheetEntered]);
 
   useEffect(() => {
-    if (!accountMenuOpen && !settingsFlyoutOpen && !mobileMenuOpen) return undefined;
+    if (!accountMenuOpen && !mobileMenuOpen) return undefined;
     const onPointerDown = (event) => {
       const t = event.target;
       if (accountMenuOpen && accountMenuRef.current && !accountMenuRef.current.contains(t)) {
         setAccountMenuOpen(false);
-        setSettingsFlyoutOpen(false);
+        setDesktopSettingsOpen(false);
         setMobileSettingsOpen(false);
-      }
-      if (settingsFlyoutOpen && settingsRowRef.current && settingsFlyoutRef.current) {
-        const inRow = settingsRowRef.current.contains(t);
-        const inFly = settingsFlyoutRef.current.contains(t);
-        if (!inRow && !inFly) setSettingsFlyoutOpen(false);
       }
       if (mobileMenuOpen) {
         const inBtn = mobileMenuButtonRef.current?.contains(t);
@@ -441,16 +425,19 @@ export function LoggedInHeader({
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [accountMenuOpen, settingsFlyoutOpen, mobileMenuOpen, closeMobileSheetAnimated, closeAllMenus]);
+  }, [accountMenuOpen, mobileMenuOpen, closeMobileSheetAnimated, closeAllMenus]);
 
   const openAccount = () => {
-    setSettingsFlyoutOpen(false);
+    setDesktopSettingsOpen(false);
     setAccountMenuOpen((o) => !o);
   };
 
   const accountLabel = user?.username || getDisplayNameFromUser(user) || "Account";
 
-  const browsePillActive = activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP;
+  const browsePillActive =
+    activeView === VIEWS.BROWSE ||
+    activeView === VIEWS.COMMUNITY_SHOP ||
+    activeView === VIEWS.FAVORITES;
 
   return (
     <>
@@ -481,7 +468,7 @@ export function LoggedInHeader({
           </div>
         ) : null}
 
-        <div className="hidden min-w-0 flex-1 items-center justify-center overflow-x-auto lg:flex">
+        <div className="hidden min-w-0 flex-1 items-center justify-center overflow-x-auto md:flex">
           <nav className="flex min-w-0 max-w-full items-center justify-center" aria-label="Main">
             <div
               className="flex max-w-full shrink-0 items-center gap-0.5 rounded-full border border-neutral-200/80 bg-neutral-100/85 p-0.5 shadow-[inset_0_1px_2px_rgba(15,23,42,0.05)] dark:border-slate-600 dark:bg-slate-800/55 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.2)]"
@@ -495,12 +482,12 @@ export function LoggedInHeader({
                 title="Browse listings"
                 onClick={() => {
                   setAccountMenuOpen(false);
-                  setSettingsFlyoutOpen(false);
+                  setDesktopSettingsOpen(false);
                   goBrowse();
                   closeAllMenus();
                 }}
               >
-                <GridIcon
+                <MenuStoreIcon
                   className={`h-[18px] w-[18px] shrink-0 ${browsePillActive ? "text-violet-600 dark:text-violet-300" : ""}`}
                 />
                 <span className="max-w-[5.5rem] truncate sm:max-w-none">Marketplace</span>
@@ -584,7 +571,7 @@ export function LoggedInHeader({
           </nav>
         </div>
 
-        <div className="hidden shrink-0 items-center gap-2 lg:flex">
+        <div className="hidden shrink-0 items-center gap-2 md:flex">
           <div className="flex items-center gap-1.5">
             <button
               type="button"
@@ -601,7 +588,7 @@ export function LoggedInHeader({
             </button>
             <button
               type="button"
-              className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
+              className={`relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
                 activeView === VIEWS.NOTIFICATIONS ? "ring-2 ring-brand-primary/40" : ""
               }`}
               aria-label="Notifications"
@@ -611,6 +598,11 @@ export function LoggedInHeader({
               }}
             >
               <NotificationsIcon />
+              {notificationUnreadCount > 0 ? (
+                <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm">
+                  {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -665,14 +657,14 @@ export function LoggedInHeader({
                   My Profile
                 </button>
                 <div role="none" className="mx-1 my-1.5 border-t border-neutral-200/90 dark:border-slate-700/90" />
-                <div className="relative" ref={settingsRowRef}>
+                <div className="relative">
                   <button
                     type="button"
                     role="menuitem"
                     className={`${accountMenuItemBase} justify-between gap-2`}
-                    aria-expanded={settingsFlyoutOpen}
-                    aria-controls="account-settings-flyout"
-                    onClick={() => setSettingsFlyoutOpen((v) => !v)}
+                    aria-expanded={desktopSettingsOpen}
+                    aria-controls="account-settings-panel"
+                    onClick={() => setDesktopSettingsOpen((v) => !v)}
                   >
                     <span className="flex min-w-0 flex-1 items-center gap-3">
                       <span className={accountMenuIconWrap} aria-hidden>
@@ -680,31 +672,20 @@ export function LoggedInHeader({
                       </span>
                       Settings
                     </span>
-                    <ChevronRightIcon
-                      className={`h-[18px] w-[18px] shrink-0 text-neutral-400 transition-transform dark:text-slate-500 ${settingsFlyoutOpen ? "rotate-90" : ""}`}
+                    <ChevronDownIcon
+                      className={`h-[18px] w-[18px] shrink-0 text-neutral-400 transition-transform dark:text-slate-500 ${desktopSettingsOpen ? "rotate-180" : ""}`}
                     />
                   </button>
-                  {settingsFlyoutOpen ? (
+                  {desktopSettingsOpen ? (
                     <div
-                      ref={settingsFlyoutRef}
-                      id="account-settings-flyout"
-                      role="menu"
-                      className="absolute right-full top-0 z-[60] mr-1.5 w-[min(calc(100vw-2rem),16rem)] min-w-[14rem] rounded-xl border border-neutral-200/90 bg-white p-3 shadow-[0_8px_30px_rgba(15,23,42,0.1),0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-600 dark:bg-slate-900 dark:shadow-[0_8px_30px_rgba(0,0,0,0.45)]"
+                      id="account-settings-panel"
+                      role="region"
+                      className="mx-0.5 mb-1 rounded-xl border border-neutral-200/90 bg-neutral-50/90 p-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-600 dark:bg-slate-800/70 dark:shadow-[0_1px_2px_rgba(0,0,0,0.2)]"
                     >
                       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Theme</p>
                       <ThemeToggleGroup theme={theme} setTheme={setTheme} />
                       <p className="mb-2 mt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Preferences</p>
                       <p className="text-xs text-neutral-500 dark:text-slate-400">Notification controls will appear here.</p>
-                      <button
-                        type="button"
-                        className="mt-3 w-full rounded-lg border border-neutral-200/90 px-3 py-2 text-left text-xs font-medium text-neutral-800 transition-colors hover:bg-neutral-100/90 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/90"
-                        onClick={() => {
-                          setActiveView(VIEWS.USERS);
-                          closeAllMenus();
-                        }}
-                      >
-                        Community directory
-                      </button>
                     </div>
                   ) : null}
                 </div>
@@ -756,7 +737,7 @@ export function LoggedInHeader({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5 lg:hidden">
+        <div className="flex shrink-0 items-center gap-1.5 md:hidden">
           <button
             type="button"
             className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
@@ -772,7 +753,7 @@ export function LoggedInHeader({
           </button>
           <button
             type="button"
-            className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
+            className={`relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
               activeView === VIEWS.NOTIFICATIONS ? "ring-2 ring-brand-primary/40" : ""
             }`}
             aria-label="Notifications"
@@ -782,6 +763,11 @@ export function LoggedInHeader({
             }}
           >
             <NotificationsIcon />
+            {notificationUnreadCount > 0 ? (
+              <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm">
+                {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
+              </span>
+            ) : null}
           </button>
           <button
             type="button"
@@ -817,7 +803,7 @@ export function LoggedInHeader({
         <>
           <button
             type="button"
-            className={`fixed inset-x-0 top-[4.25rem] z-[60] bg-slate-900/50 backdrop-blur-[3px] transition-opacity duration-300 ease-out motion-reduce:transition-none lg:hidden bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] ${
+            className={`fixed inset-x-0 top-[4.25rem] z-[60] bg-slate-900/50 backdrop-blur-[3px] transition-opacity duration-300 ease-out motion-reduce:transition-none md:hidden bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] ${
               mobileSheetEntered ? "opacity-100" : "opacity-0"
             }`}
             aria-label="Close menu"
@@ -829,7 +815,7 @@ export function LoggedInHeader({
             role="dialog"
             aria-modal="true"
             aria-labelledby="mobile-account-sheet-title"
-            className="fixed inset-x-0 z-[70] flex justify-center px-4 pt-2 lg:hidden bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] pointer-events-none"
+            className="fixed inset-x-0 z-[70] flex justify-center px-4 pt-2 md:hidden bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] pointer-events-none"
           >
             <div className="app-container flex w-full max-w-7xl justify-center pointer-events-auto">
               <div
@@ -902,16 +888,6 @@ export function LoggedInHeader({
                 <ThemeToggleGroup theme={theme} setTheme={setTheme} />
                 <p className="mb-2 mt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Preferences</p>
                 <p className="text-xs text-neutral-500 dark:text-slate-400">Notification controls will appear here.</p>
-                <button
-                  type="button"
-                  className="mt-3 w-full rounded-lg border border-neutral-200/90 bg-white px-3 py-2 text-left text-xs font-medium text-neutral-800 transition-colors hover:bg-neutral-100/90 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800/90"
-                  onClick={() => {
-                    setActiveView(VIEWS.USERS);
-                    finalizeMobileSheetClose();
-                  }}
-                >
-                  Community directory
-                </button>
               </div>
             ) : null}
             <button
@@ -961,7 +937,7 @@ export function LoggedInHeader({
         </>
       ) : null}
     <nav
-      className="fixed inset-x-0 bottom-0 z-[40] border-t border-neutral-200/90 bg-white/95 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-4px_24px_rgba(15,23,42,0.06)] backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95 lg:hidden"
+      className="fixed inset-x-0 bottom-0 z-[40] border-t border-neutral-200/90 bg-white/95 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-4px_24px_rgba(15,23,42,0.06)] backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95 md:hidden"
       aria-label="Main"
     >
       <div className="app-container flex items-stretch px-1">
@@ -973,11 +949,12 @@ export function LoggedInHeader({
           <button
             type="button"
             className={bottomNavShopClass(browsePillActive, "browse")}
-            aria-label="Marketplace"
+            aria-label="Shop — browse listings"
             title="Browse listings"
+            aria-current={browsePillActive ? "page" : undefined}
             onClick={() => {
               setAccountMenuOpen(false);
-              setSettingsFlyoutOpen(false);
+                  setDesktopSettingsOpen(false);
               goBrowse();
               closeAllMenus();
             }}
@@ -987,7 +964,7 @@ export function LoggedInHeader({
                 browsePillActive ? "text-violet-700 dark:text-violet-300" : "text-neutral-500 dark:text-slate-500"
               }`}
             >
-              <GridIcon className="shrink-0" />
+              <MenuStoreIcon className="h-5 w-5 shrink-0" />
             </span>
             <span className="text-center leading-snug">
               <span className="md:hidden">Shop</span>
@@ -999,6 +976,7 @@ export function LoggedInHeader({
             className={bottomNavShopClass(activeView === VIEWS.CART, "cart")}
             aria-label={cartItemCount > 0 ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} items` : "Shopping cart"}
             title="Review items before checkout"
+            aria-current={activeView === VIEWS.CART ? "page" : undefined}
             onClick={() => {
               goCart();
               closeAllMenus();
@@ -1009,7 +987,7 @@ export function LoggedInHeader({
                 activeView === VIEWS.CART ? "text-amber-700 dark:text-amber-300" : "text-neutral-500 dark:text-slate-500"
               }`}
             >
-              <MenuCartIcon className="shrink-0" />
+              <MenuCartIcon className="h-5 w-5 shrink-0" />
               {cartItemCount > 0 ? (
                 <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-amber-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-amber-500">
                   {cartItemCount > 99 ? "99+" : cartItemCount}
@@ -1030,6 +1008,7 @@ export function LoggedInHeader({
                 : "Buying — things you purchased"
             }
             title="Things you bought — track status, pickup, and COD"
+            aria-current={activeView === VIEWS.MY_PURCHASES ? "page" : undefined}
             onClick={() => {
               goMyPurchases();
               closeAllMenus();
@@ -1042,7 +1021,7 @@ export function LoggedInHeader({
                   : "text-neutral-500 dark:text-slate-500"
               }`}
             >
-              <MenuFileIcon className="shrink-0" />
+              <MenuFileIcon className="h-5 w-5 shrink-0" />
               {purchasesItemCount > 0 ? (
                 <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-sky-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-sky-500">
                   {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
@@ -1064,6 +1043,7 @@ export function LoggedInHeader({
                 ? `${ordersItemCount > 99 ? "99+" : ordersItemCount} pending or updated buyer order${ordersItemCount === 1 ? "" : "s"}`
                 : "Orders people placed with you"
             }
+            aria-current={activeView === VIEWS.ORDERS ? "page" : undefined}
             onClick={() => {
               goOrders();
               closeAllMenus();
@@ -1076,7 +1056,7 @@ export function LoggedInHeader({
                   : "text-neutral-500 dark:text-slate-500"
               }`}
             >
-              <MenuOrdersIcon className="shrink-0" />
+              <MenuOrdersIcon className="h-5 w-5 shrink-0" />
               {ordersItemCount > 0 ? (
                 <span
                   className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-emerald-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-emerald-500"

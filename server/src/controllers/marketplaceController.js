@@ -16,6 +16,128 @@ const isBuyerCommentMissingError = (error) => {
   return /buyer_comment/i.test(msg) && (error.code === "PGRST204" || /schema cache/i.test(msg));
 };
 
+/** PostgREST returns "Could not find the 'col' column of 'orders' in the schema cache" when migrations lag. */
+const ORDERS_MISSING_COLUMN_RE = /Could not find the '([^']+)' column of 'orders'/i;
+const ORDERS_MISSING_COLUMN_RE_DQ = /Could not find the "([^"]+)" column of "orders"/i;
+
+/** PATCH fields that may be absent before migrations; stripped in order if PostgREST still rejects the update. */
+const ORDER_UPDATE_OPTIONAL_COLUMNS = [
+  "processing_entered_at",
+  "completed_at",
+  "cancelled_at",
+  "buyer_receipt_acknowledged_at",
+  "buyer_comment",
+];
+
+function postgrestErrorText(error) {
+  if (!error) return "";
+  const nested =
+    typeof error === "object" && error.cause ? postgrestErrorText(error.cause) : "";
+  return [error.message, error.details, error.hint, nested].filter(Boolean).join(" ").trim();
+}
+
+/** Drop undefined so Supabase JSON does not send stray keys; omitted columns stay omitted. */
+function compactOrderPatchForWrite(patch) {
+  const out = {};
+  if (!patch || typeof patch !== "object") return out;
+  for (const [k, v] of Object.entries(patch)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * Emergency subset if milestone / optional columns are absent in PostgREST schema (unmigrated DB).
+ * Keeps transitions working; timeline falls back to `updated_at` on the client.
+ */
+function minimalOrdersWritePatchFallback(full) {
+  const allow = [
+    "updated_at",
+    "status",
+    "quantity",
+    "fulfillment_type",
+    "cod_goods_cents",
+    "cod_delivery_cents",
+    "accepted_bid_id",
+  ];
+  const out = {};
+  for (const k of allow) {
+    if (Object.prototype.hasOwnProperty.call(full, k)) out[k] = full[k];
+  }
+  return compactOrderPatchForWrite(out);
+}
+
+function isOrdersSchemaCacheColumnError(error) {
+  const t = postgrestErrorText(error);
+  return (
+    Boolean(error) &&
+    (error.code === "PGRST204" ||
+      /schema cache/i.test(t) ||
+      ORDERS_MISSING_COLUMN_RE.test(t) ||
+      ORDERS_MISSING_COLUMN_RE_DQ.test(t))
+  );
+}
+
+/**
+ * Update a row in `orders`, retrying without keys PostgREST reports as missing (older DBs without milestone columns).
+ * Uses UPDATE without chained RETURNING — some setups error on `select('*')` after PATCH if the schema cache lags.
+ */
+async function updateOrderRowRetryWithoutMissingColumns(id, patch) {
+  const original = compactOrderPatchForWrite(patch);
+  let attempt = { ...original };
+
+  const runUpdateAndFetch = async (p) => {
+    const body = compactOrderPatchForWrite(p);
+    const { error: uerr } = await supabaseAdmin.from("orders").update(body).eq("id", id);
+    if (uerr) return { data: null, error: uerr };
+    const { data: updated, error: rerr } = await supabaseAdmin.from("orders").select("*").eq("id", id).maybeSingle();
+    if (rerr) return { data: null, error: rerr };
+    return { data: updated, error: null };
+  };
+
+  for (let i = 0; i < 32; i++) {
+    const { data: updated, error: uerr } = await runUpdateAndFetch(attempt);
+    if (!uerr) return { data: updated, error: null };
+    const fullMsg = postgrestErrorText(uerr);
+    let m = fullMsg.match(ORDERS_MISSING_COLUMN_RE);
+    if (!m) m = fullMsg.match(ORDERS_MISSING_COLUMN_RE_DQ);
+    if (m && m[1] && Object.prototype.hasOwnProperty.call(attempt, m[1])) {
+      const next = { ...attempt };
+      delete next[m[1]];
+      attempt = next;
+      continue;
+    }
+    if (isOrdersSchemaCacheColumnError(uerr)) {
+      let stripped = false;
+      for (const col of ORDER_UPDATE_OPTIONAL_COLUMNS) {
+        if (Object.prototype.hasOwnProperty.call(attempt, col)) {
+          const next = { ...attempt };
+          delete next[col];
+          attempt = next;
+          stripped = true;
+          break;
+        }
+      }
+      if (stripped) continue;
+      const slim = minimalOrdersWritePatchFallback(original);
+      if (Object.keys(slim).length > 0) {
+        const r = await runUpdateAndFetch(slim);
+        if (!r.error) return r;
+      }
+      const bare = compactOrderPatchForWrite({
+        updated_at: original.updated_at,
+        ...(original.status !== undefined ? { status: original.status } : {}),
+      });
+      if (Object.keys(bare).length > 0) {
+        const r2 = await runUpdateAndFetch(bare);
+        if (!r2.error) return r2;
+      }
+    }
+    return { data: null, error: uerr };
+  }
+  return { data: null, error: new Error("orders update exceeded retry limit") };
+}
+
 const ALLOWED_LISTING_STATUSES = new Set(["active", "paused", "sold"]);
 const firstRow = (data) => (Array.isArray(data) && data.length > 0 ? data[0] : null);
 
@@ -556,7 +678,7 @@ export const addCartItem = async (req, res, next) => {
     if (!listing || listing.status !== "active") throw new AppError(404, "Listing not available.");
     if (listing.seller_id === req.user.id) throw new AppError(400, "You cannot add your own listing to the cart.");
     const maxStock = Math.max(0, Number(listing.quantity) || 0);
-    if (maxStock < 1) throw new AppError(400, "Not enough stock.");
+    if (maxStock < 1) throw new AppError(400, "Out of stock. Current stock: 0.");
     const { data: existing, error: cErr } = await supabaseAdmin
       .from("cart_items")
       .select("quantity,comment")
@@ -628,7 +750,7 @@ export const patchCartItem = async (req, res, next) => {
     if (!listing || listing.status !== "active") throw new AppError(400, "Listing no longer available.");
     if (listing.seller_id === req.user.id) throw new AppError(400, "Invalid cart item.");
     const maxStock = Math.max(0, Number(listing.quantity) || 0);
-    if (maxStock < 1) throw new AppError(400, "Not enough stock.");
+    if (maxStock < 1) throw new AppError(400, "Out of stock. Current stock: 0.");
     const capped = Math.min(newQty, maxStock);
     if (capped < 1) throw new AppError(400, "Invalid quantity.");
 
@@ -661,15 +783,8 @@ export const createOrder = async (req, res, next) => {
     if (!listing || listing.status !== "active") throw new AppError(404, "Listing not available.");
     if (listing.seller_id === req.user.id) throw new AppError(400, "You cannot order your own listing.");
     if (!listing.fulfillment_modes?.includes(fulfillmentType)) throw new AppError(400, "This listing does not support that fulfillment option.");
-    const { data: placedRows, error: perr } = await supabaseAdmin
-      .from("orders")
-      .select("quantity")
-      .eq("listing_id", listingId)
-      .eq("status", "placed");
-    if (perr && perr?.code !== "PGRST205") throw new AppError(500, perr.message);
-    const pendingReservedQty = (placedRows || []).reduce((sum, row) => sum + Math.max(0, Number(row?.quantity) || 0), 0);
-    const availableQty = Math.max(0, (Number(listing.quantity) || 0) - pendingReservedQty);
-    if (availableQty < quantity) throw new AppError(400, "Not enough stock.");
+    const maxStock = Math.max(0, Number(listing.quantity) || 0);
+    if (quantity > maxStock) throw new AppError(400, `Not enough stock. Requested: ${quantity}, available: ${maxStock}.`);
     const codGoodsCents = listing.price_cents * quantity;
     const initialStatus = "placed";
     const { data: existingPlacedOrders, error: existingErr } = await supabaseAdmin
@@ -698,22 +813,7 @@ export const createOrder = async (req, res, next) => {
         fulfillment_type: fulfillmentType,
         buyer_comment: mergedBuyerComment,
       };
-      let { data: updated, error: uerr } = await supabaseAdmin
-        .from("orders")
-        .update(patch)
-        .eq("id", primary.id)
-        .select("*")
-        .single();
-      if (isBuyerCommentMissingError(uerr)) {
-        const fallbackPatch = { ...patch };
-        delete fallbackPatch.buyer_comment;
-        ({ data: updated, error: uerr } = await supabaseAdmin
-          .from("orders")
-          .update(fallbackPatch)
-          .eq("id", primary.id)
-          .select("*")
-          .single());
-      }
+      const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(primary.id, patch);
       if (uerr) throw new AppError(400, uerr.message);
       preferredRowId = String(updated?.id || primary.id);
       const duplicateIds = ordered.slice(1).map((row) => row?.id).filter(Boolean);
@@ -799,17 +899,7 @@ const consolidateBuyerListingStatusOrders = async ({ buyerId, listingId, status,
     cod_delivery_cents: totalDelivery,
     buyer_comment: mergedBuyerComment,
   };
-  let { data: updated, error: uerr } = await supabaseAdmin.from("orders").update(patch).eq("id", primary.id).select("*").single();
-  if (isBuyerCommentMissingError(uerr)) {
-    const fallbackPatch = { ...patch };
-    delete fallbackPatch.buyer_comment;
-    ({ data: updated, error: uerr } = await supabaseAdmin
-      .from("orders")
-      .update(fallbackPatch)
-      .eq("id", primary.id)
-      .select("*")
-      .single());
-  }
+  const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(primary.id, patch);
   if (uerr) throw new AppError(500, uerr.message);
 
   const duplicateIds = others.map((r) => r?.id).filter(Boolean);
@@ -950,7 +1040,7 @@ export const patchOrder = async (req, res, next) => {
       );
     }
 
-    const { data: updated, error: uerr } = await supabaseAdmin.from("orders").update(patch).eq("id", id).select("*").single();
+    const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(id, patch);
     if (uerr) throw new AppError(500, uerr.message);
     if (patch.status === "completed") {
       const { data: listing } = await supabaseAdmin.from("listings").select("quantity").eq("id", order.listing_id).maybeSingle();
@@ -1006,7 +1096,7 @@ export const acceptBid = async (req, res, next) => {
       updated_at: bidTs,
       ...(!order.processing_entered_at ? { processing_entered_at: bidTs } : {}),
     };
-    const { data: updated, error: uerr } = await supabaseAdmin.from("orders").update(bidPatch).eq("id", orderId).select("*").single();
+    const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(orderId, bidPatch);
     if (uerr) throw new AppError(500, uerr.message);
     res.json({ order: orderRowToApi(updated) });
   } catch (e) {
@@ -1223,16 +1313,26 @@ export const sellerSummary = async (req, res, next) => {
 
 export const listUsersDirectory = async (req, res, next) => {
   try {
-    const { data, error } = await supabaseAdmin
+    let data = null;
+    let error = null;
+    ({ data, error } = await supabaseAdmin
       .from("profiles")
-      .select("id, username, first_name, middle_name, last_name, created_at")
+      .select("id, username, first_name, middle_name, last_name, community, created_at")
       .order("username", { ascending: true })
-      .limit(200);
+      .limit(200));
+    if (error && (error.code === "PGRST204" || /community/i.test(String(error.message || "")))) {
+      ({ data, error } = await supabaseAdmin
+        .from("profiles")
+        .select("id, username, first_name, middle_name, last_name, created_at")
+        .order("username", { ascending: true })
+        .limit(200));
+    }
     if (error) throw new AppError(500, error.message);
     const rows = (data || []).map((p) => ({
       id: p.id,
       username: p.username || "",
       name: [p.first_name, p.middle_name, p.last_name].filter(Boolean).join(" ").trim() || p.username || "Member",
+      community: String(p.community || "").trim(),
       joinedAt: p.created_at || null,
     }));
     res.json({ users: rows });
