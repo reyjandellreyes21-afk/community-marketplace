@@ -19,7 +19,7 @@
   }
 
   body {
-    @apply m-0 bg-app text-text-primary font-sans antialiased dark:bg-slate-950 dark:text-slate-100;
+    @apply m-0 bg-background text-text-primary font-sans antialiased dark:bg-slate-950 dark:text-slate-100;
   }
 
   #root {
@@ -66,23 +66,23 @@
   }
 
   .app-card {
-    @apply rounded-xl border border-neutral-200/90 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_4px_12px_rgba(15,23,42,0.04)] dark:border-slate-700/90 dark:bg-slate-900 dark:shadow-[0_1px_2px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15)] sm:p-5;
+    @apply rounded-2xl border border-border bg-surface p-4 shadow-sm transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56]/90 dark:bg-[#0f2234] dark:shadow-[0_1px_2px_rgba(0,0,0,0.22),0_8px_20px_rgba(0,0,0,0.22)] sm:p-5;
   }
 
   .app-card-interactive {
-    @apply app-card transition duration-200 ease-out hover:-translate-y-px hover:border-brand-border/80 hover:shadow-[0_4px_16px_rgba(30,27,75,0.08)] dark:hover:border-brand-border/50 dark:hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)];
+    @apply app-card transition duration-200 ease-in-out hover:-translate-y-px hover:scale-[1.01] hover:border-primary/35 dark:hover:border-[#2a5a7b] dark:hover:shadow-[0_8px_24px_rgba(0,0,0,0.3)];
   }
 
   .btn-base {
-    @apply h-11 rounded-xl px-4 py-2.5 text-sm font-semibold transition duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-brand-primary/35;
+    @apply h-11 rounded-xl px-4 py-2 text-sm font-semibold transition duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary/35;
   }
 
   .btn-primary {
-    @apply btn-base bg-brand-primary text-white shadow-sm shadow-brand-primary/20 hover:bg-brand-hover;
+    @apply btn-base bg-primary text-white shadow-sm shadow-primary/20 hover:bg-primary-hover;
   }
 
   .btn-secondary {
-    @apply btn-base border border-neutral-200 bg-white text-neutral-800 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800;
+    @apply btn-base border border-primary bg-surface text-primary hover:bg-primary-soft dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800;
   }
 
   .btn-ghost {
@@ -90,7 +90,23 @@
   }
 
   .btn-danger {
-    @apply btn-base border border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800;
+    @apply btn-base bg-danger text-white hover:bg-danger-hover;
+  }
+
+  .btn-accent {
+    @apply btn-base bg-accent text-white hover:bg-accent-hover;
+  }
+
+  .badge-success {
+    @apply rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-600;
+  }
+
+  .badge-sale {
+    @apply rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-semibold text-accent;
+  }
+
+  .badge-neutral {
+    @apply rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600;
   }
 
   .input-base {
@@ -137,7 +153,7 @@
   }
 
   .landing-card {
-    @apply rounded-2xl border border-neutral-200/90 bg-white p-8 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.12)] sm:p-10 dark:border-slate-700/90 dark:bg-slate-900 dark:shadow-[0_12px_40px_-12px_rgba(0,0,0,0.4)];
+    @apply rounded-2xl border border-neutral-200/90 bg-white p-8 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.12)] sm:p-10 dark:border-[#1f3c56]/90 dark:bg-[#0f2234] dark:shadow-[0_16px_46px_-16px_rgba(0,0,0,0.5)];
   }
 
   .landing-input {
@@ -197,11 +213,11 @@
   }
 
   .app-surface-muted {
-    @apply rounded-xl border border-neutral-200 bg-neutral-50 dark:border-slate-600 dark:bg-slate-800/70 dark:text-slate-100;
+    @apply rounded-xl border border-neutral-200 bg-neutral-50 dark:border-[#1f3c56] dark:bg-[#11283d]/80 dark:text-[#e9f7ff];
   }
 
   .app-history-row {
-    @apply rounded-xl border border-neutral-200 bg-neutral-50 p-3 dark:border-slate-600 dark:bg-slate-800/60;
+    @apply rounded-xl border border-neutral-200 bg-neutral-50 p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/70;
   }
 
   /* Marketing footer (logged-out landing): fixed navy palette independent of theme toggle */

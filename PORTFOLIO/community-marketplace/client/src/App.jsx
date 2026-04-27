@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import tabLogo from "./assets/new-icon-only.png";
 import heroStudyImage from "./assets/new-auth-landing.png";
+import communityEmptyBannerImage from "./assets/community-empty-banner.png";
 import { createSupabaseClient } from "./lib/supabaseClient";
 import {
   isLikelySameCommunityName,
@@ -421,8 +422,8 @@ function commerceFlowLineItemsClass(view, ctx = {}) {
 
   if (view === "list") {
     /** Order rows use bordered cards + gap like grid; cart list keeps slim `divide-y` rows. */
-    if (variant === "orders") return "flex flex-col gap-2 sm:gap-2.5";
-    return "divide-y divide-neutral-200/80 dark:divide-slate-700/80";
+    if (variant === "orders") return "flex flex-col gap-2 px-1 sm:gap-2.5 sm:px-1.5";
+    return "divide-y divide-neutral-200/80 px-1 dark:divide-slate-700/80 sm:px-1.5";
   }
 
   if (variant === "orders" || variant === "cart") {
@@ -927,8 +928,10 @@ function App() {
     const sid = String(shopCommunityId);
     if (String(listingCommunityFromProfile.id || "") === sid) return true;
     if (String(joinedShopCommunityId || "") === sid) return true;
+    const openCommunity = communities.find((c) => String(c.id || "") === sid);
+    if (openCommunity?.createdBy && String(openCommunity.createdBy) === String(user?.id || "")) return true;
     return false;
-  }, [joinedShopCommunityId, listingCommunityFromProfile.id, shopCommunityId]);
+  }, [communities, joinedShopCommunityId, listingCommunityFromProfile.id, shopCommunityId, user?.id]);
   const getDisplayedMemberCount = useCallback((community) => {
     const raw = community?.memberCount ?? community?.member_count ?? 0;
     const count = Number(raw);
@@ -3822,6 +3825,11 @@ function App() {
         nextCommunities = [createdCommunity, ...nextCommunities];
       }
       setCommunities(nextCommunities);
+      if (!communityEditingId && createdCommunity?.id) {
+        setShopCommunityId(String(createdCommunity.id));
+        setActiveView(VIEWS.COMMUNITY_SHOP);
+        void joinCommunityAndAttachListings(createdCommunity);
+      }
       pushMarketplaceToast(communityEditingId ? "Community updated." : "Community added.");
     } catch (e) {
       pushMarketplaceToast(e.message || "Could not create new community.");
@@ -3875,6 +3883,16 @@ function App() {
         if (prev.some((x) => String(x.id) === id)) return prev;
         return [candidate, ...prev];
       });
+      if (isUnauthorizedApiError(e)) {
+        writeAuthToken("");
+        setToken("");
+        setUser(null);
+        setMessage("Session expired. Please sign in again to update favorites.");
+        setAuthMode("login");
+        setAuthPanelVisible(true);
+        pushMarketplaceToast("Session expired. Please sign in again.");
+        return;
+      }
       pushMarketplaceToast(e.message || "Could not update favorites.");
     }
   };
@@ -5359,15 +5377,23 @@ function App() {
             <div className="space-y-4">
               {activeView === VIEWS.COMMUNITY_SHOP ? (
                 <div
-                  className={`${UI_KIT.surfaceRaised} border-0 p-3 transition-opacity duration-200 sm:p-4 lg:p-5 ${
+                  className={`${UI_KIT.surfaceRaised} relative overflow-hidden border border-[#7cded9]/60 bg-gradient-to-r from-[#e6fbfb] via-[#edf8ff] to-[#eaf2ff] p-3 transition-opacity duration-200 dark:border-[#1f3c56] dark:bg-gradient-to-r dark:from-[#0f2234] dark:via-[#11283d] dark:to-[#16324a] sm:p-4 lg:p-5 ${
                     mobileCommunityFiltersOpen ? "max-lg:pointer-events-none max-lg:opacity-40" : ""
                   }`}
                 >
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+                  <div className="pointer-events-none absolute inset-y-0 right-0 w-[75%] opacity-45 dark:opacity-35" aria-hidden>
+                    <img
+                      src={communityEmptyBannerImage}
+                      alt=""
+                      className="h-full w-full object-cover object-right"
+                      loading="lazy"
+                    />
+                  </div>
+                  <div className="relative z-10 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
                     <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-start sm:gap-4 lg:gap-5">
                       <button
                         type="button"
-                        className="hidden min-h-[44px] shrink-0 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-3.5 py-2.5 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 sm:min-h-0 sm:justify-start sm:py-2 lg:mt-0.5 lg:inline-flex lg:w-auto dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                        className="hidden min-h-[44px] shrink-0 items-center justify-center rounded-full bg-brand-primary px-3.5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-primary/90 sm:min-h-0 sm:justify-start sm:py-2 lg:mt-0.5 lg:inline-flex lg:w-auto dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
                         onClick={() => leaveCommunityToGlobalMarketplace()}
                       >
                         ← All communities
@@ -5375,11 +5401,11 @@ function App() {
                       <div className="min-w-0 flex-1 space-y-2 border-neutral-200 sm:space-y-2 lg:border-l lg:pl-5 dark:lg:border-slate-600">
                         <div className="flex items-start justify-between gap-2 lg:flex-col lg:items-stretch lg:justify-start lg:gap-2">
                           <div className="min-w-0 flex-1 lg:flex-none">
-                            <h2 className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100 lg:text-2xl">
+                            <h2 className="text-xl font-semibold tracking-tight text-[#123a5f] dark:text-[#e9f7ff] lg:text-2xl">
                               {toTitleCase(activeCommunity?.name?.trim()) || "Community"}
                             </h2>
                             {activeCommunityLocaleLine ? (
-                              <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">{activeCommunityLocaleLine}</p>
+                              <p className="mt-1 text-sm text-[#2a597f] dark:text-[#9fc3d9]">{activeCommunityLocaleLine}</p>
                             ) : null}
                           </div>
                           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-start pt-0.5 lg:w-full lg:justify-start lg:self-auto lg:pt-0">
@@ -5392,33 +5418,26 @@ function App() {
                                 ○ Not a member yet
                               </span>
                             )}
+                            {activeCommunity?.createdBy &&
+                            String(activeCommunity.createdBy) === String(user?.id || "") &&
+                            !activeCommunity?.imageUrl ? (
+                              <button
+                                type="button"
+                                className="inline-flex min-h-8 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                                onClick={() => openEditCommunityModal(activeCommunity)}
+                              >
+                                Add image
+                              </button>
+                            ) : null}
                           </div>
                         </div>
-                        <p className="hidden max-w-2xl text-sm leading-relaxed text-neutral-600 dark:text-slate-400 sm:block lg:text-xs lg:leading-relaxed">
-                          Listings here are only visible to members of this community. Orders, profile, and the wider app stay in the top navigation.
-                        </p>
-                        <details className="sm:hidden open:[&_summary_svg]:rotate-180">
-                          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-semibold text-brand-primary dark:text-brand-accent [&::-webkit-details-marker]:hidden">
-                            <span>How this shop works</span>
-                            <svg className="h-3.5 w-3.5 shrink-0 transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
-                            </svg>
-                          </summary>
-                          <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
-                            Listings here are only visible to members of this community. Orders, profile, and the wider app stay in the top navigation.
-                          </p>
-                        </details>
                         {/* Mobile: compact actions below "How this shop works" */}
                         <div className="flex flex-col gap-1.5 lg:hidden">
-                          <div
-                            className={`flex gap-1.5 ${!isMemberOfOpenCommunity ? "flex-col sm:flex-row sm:items-stretch" : "flex-row items-center"}`}
-                          >
+                          <div className="flex flex-row items-center gap-1.5">
                             <button
                               type="button"
-                              className={`inline-flex min-h-9 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
-                                !isMemberOfOpenCommunity
-                                  ? "w-full min-w-0 sm:flex-1 sm:truncate"
-                                  : activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "")
+                              className={`inline-flex min-h-9 items-center justify-center rounded-full bg-brand-primary px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90 ${
+                                activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "")
                                     ? "w-full"
                                     : "min-w-0 flex-1 truncate"
                               }`}
@@ -5431,7 +5450,7 @@ function App() {
                               <button
                                 type="button"
                                 title="Join community"
-                                className="inline-flex min-h-9 w-full shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-brand-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary/90 sm:w-auto sm:flex-1 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
+                                className="inline-flex min-h-9 min-w-0 flex-1 shrink-0 items-center justify-center truncate whitespace-nowrap rounded-full bg-brand-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
                                 onClick={() => {
                                   void joinCommunityAndAttachListings(activeCommunity, { notifySuccess: true });
                                   setShopCommunityId(activeCommunity?.id || null);
@@ -5445,7 +5464,7 @@ function App() {
                               <button
                                 type="button"
                                 aria-label="Leave this community"
-                                className="inline-flex min-h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-full border border-rose-300/80 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
+                                className="inline-flex min-h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400"
                                 onClick={() => {
                                   void leaveCommunityAndDetachListings(activeCommunity, { notifySuccess: true });
                                   leaveCommunityToGlobalMarketplace();
@@ -5466,7 +5485,7 @@ function App() {
                               </button>
                               <button
                                 type="button"
-                                className="inline-flex min-h-9 items-center justify-center rounded-full border border-rose-300/80 bg-white px-2 py-1.5 text-[11px] font-medium leading-tight text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
+                                className="inline-flex min-h-9 items-center justify-center rounded-full bg-rose-600 px-2 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-rose-700 dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400"
                                 onClick={() => {
                                   void leaveCommunityAndDetachListings(activeCommunity, { notifySuccess: true });
                                   leaveCommunityToGlobalMarketplace();
@@ -5477,11 +5496,6 @@ function App() {
                             </div>
                           ) : null}
                         </div>
-                        {!isMemberOfOpenCommunity ? (
-                          <p className="rounded-xl border border-sky-200/90 bg-sky-50/80 px-3.5 py-2.5 text-sm text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
-                            Since you are not a member yet, your products will not appear in this community yet.
-                          </p>
-                        ) : null}
                       </div>
                     </div>
                     <div className="hidden w-full flex-wrap gap-2 lg:mt-0.5 lg:flex lg:w-auto lg:shrink-0 lg:justify-end">
@@ -5510,7 +5524,7 @@ function App() {
                       ) : (
                         <button
                           type="button"
-                          className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-rose-300/80 bg-white px-3 py-2.5 text-xs font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 sm:min-h-0 sm:flex-none sm:px-4 sm:py-2 sm:text-sm dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
+                          className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-rose-600 px-3 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 sm:min-h-0 sm:flex-none sm:px-4 sm:py-2 sm:text-sm dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400"
                           onClick={() => {
                             void leaveCommunityAndDetachListings(activeCommunity, { notifySuccess: true });
                             leaveCommunityToGlobalMarketplace();
@@ -6889,10 +6903,10 @@ function App() {
                               key={item.listingId}
                               className={`flex gap-2 transition-opacity duration-[2000ms] sm:gap-3 ${
                                 cfList
-                                  ? "items-center rounded-xl py-2.5 first:pt-0 last:pb-0"
-                                  : "h-full min-h-0 flex-1 items-start rounded-xl border border-neutral-200/80 bg-white/85 p-2 shadow-sm sm:items-center sm:p-2.5 dark:border-slate-700/70 dark:bg-slate-900/50"
+                                  ? "items-center rounded-xl px-2 py-2.5 sm:px-2.5"
+                                  : "h-full min-h-0 flex-1 items-start rounded-xl border border-border bg-surface p-2 shadow-sm sm:items-center sm:p-2.5 dark:border-slate-700/70 dark:bg-slate-900/50"
                               } ${
-                                isRecentlyAdded ? "bg-emerald-100/75 dark:bg-emerald-500/15" : ""
+                                isRecentlyAdded ? "bg-primary-soft dark:bg-primary/15" : ""
                               } ${
                                 isRemoving ? "pointer-events-none opacity-0" : "opacity-100"
                               }`}
@@ -6907,7 +6921,7 @@ function App() {
                                 aria-label={`Select ${item.title || "product"}`}
                               />
                               <div
-                                className={`${thumbClass} shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800`}
+                                className={`${thumbClass} shrink-0 overflow-hidden rounded-xl border border-border bg-primary-soft/40 dark:border-slate-700 dark:bg-slate-800`}
                               >
                                 {item.imageUrl ? (
                                   <img src={item.imageUrl} alt={item.title || "Cart item"} className="h-full w-full object-cover" />
@@ -6919,7 +6933,7 @@ function App() {
                               </div>
                               <div className="min-w-0 flex-1">
                                 {isRecentlyAdded ? (
-                                  <span className="mb-1 inline-flex items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
+                                  <span className="mb-1 inline-flex items-center rounded-full border border-primary/40 bg-primary-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary dark:border-primary/55 dark:bg-primary/20 dark:text-primary-soft">
                                     Newly added
                                   </span>
                                 ) : null}
@@ -6977,11 +6991,11 @@ function App() {
                                   </button>
                                 </div>
                                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                                  <span className="text-xs text-neutral-600 dark:text-slate-400">Qty</span>
+                                  <span className="text-xs text-text-secondary dark:text-slate-400">Qty</span>
                                   <div className="inline-flex items-center gap-1.5">
                                     <button
                                       type="button"
-                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                      className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-primary/45 bg-surface text-sm font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                                       aria-label="Decrease quantity"
                                       disabled={cartQtySavingId === lid || (Number(item.quantity) || 0) <= 0}
                                       onClick={() => {
@@ -6995,7 +7009,7 @@ function App() {
                                       type="text"
                                       inputMode="numeric"
                                       pattern="[0-9]*"
-                                      className="input-base h-8 w-14 px-1 text-center text-xs"
+                                      className="input-base h-8 w-14 rounded-xl border-primary/45 bg-surface px-1 text-center text-xs text-text-primary focus:border-primary focus:ring-primary/25"
                                       value={cartQtyEdit.id === lid ? cartQtyEdit.str : String(Number(item.quantity) || 1)}
                                       disabled={cartQtySavingId === lid}
                                       aria-label={`Quantity for ${item.title || "product"}`}
@@ -7063,7 +7077,7 @@ function App() {
                                     />
                                     <button
                                       type="button"
-                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                      className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-primary/45 bg-surface text-sm font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                                       aria-label="Increase quantity"
                                       disabled={
                                         cartQtySavingId === lid ||
@@ -7081,7 +7095,7 @@ function App() {
                                       +
                                     </button>
                                   </div>
-                                  <span className="text-[11px] text-neutral-500 dark:text-slate-500">
+                                  <span className="text-[11px] text-text-secondary dark:text-slate-500">
                                     In stock: {Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : "—"}
                                   </span>
                                 </div>
@@ -7445,8 +7459,8 @@ function App() {
                           const completedDetailsKey = String(o.id || "");
                           const completedDetailsOpen = Boolean(completedTabOrderDetailsOpen[completedDetailsKey]);
                           const orderRowSurfaceBase = shouldHighlightRecent
-                            ? "rounded-xl border border-emerald-300/80 bg-emerald-100/80 p-2 shadow-sm ring-1 ring-emerald-400/25 sm:p-2.5 dark:border-emerald-500/45 dark:bg-emerald-500/18 dark:ring-emerald-400/15"
-                            : "rounded-xl border border-neutral-200/80 bg-white/85 p-2 shadow-sm sm:p-2.5 dark:border-slate-700/70 dark:bg-slate-900/50";
+                            ? "rounded-xl border border-primary/45 bg-primary-soft p-2 shadow-sm ring-1 ring-primary/25 sm:p-2.5 dark:border-primary/55 dark:bg-primary/20 dark:ring-primary/25"
+                            : "rounded-xl border border-border bg-surface p-2 shadow-sm sm:p-2.5 dark:border-slate-700/70 dark:bg-slate-900/50";
                           const orderRowListShell = orderRowSurfaceBase;
                           const orderRowGridShell = `h-full min-h-0 min-w-0 flex-1 ${orderRowSurfaceBase}`;
                           return (
@@ -7483,7 +7497,7 @@ function App() {
                                     />
                                   ) : null}
                                   <div
-                                    className={`${orderThumbClass} shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800`}
+                                    className={`${orderThumbClass} shrink-0 overflow-hidden rounded-xl border border-border bg-primary-soft/40 dark:border-slate-700 dark:bg-slate-800`}
                                   >
                                   {String(cardListing.imageUrl || "").trim() ? (
                                     <img src={cardListing.imageUrl} alt={cardListing.title || "Order item"} className="h-full w-full object-cover" />

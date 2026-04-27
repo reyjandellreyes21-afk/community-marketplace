@@ -31,18 +31,18 @@ export function MarketplaceProductDetailStack({
 
   const availabilityBlock = isCard ? (
     <div className="min-w-0">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500">Fulfillment</p>
-      <p className="mt-0.5 text-xs font-medium text-neutral-800 dark:text-slate-200">{availabilityLabel}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary dark:text-slate-500">Fulfillment</p>
+      <p className="mt-0.5 text-xs font-medium text-text-primary dark:text-slate-200">{availabilityLabel}</p>
     </div>
   ) : (
-    <p className="text-xs text-neutral-600 dark:text-slate-400">Availability: {availabilityLabel}</p>
+    <p className="text-xs text-text-secondary dark:text-slate-400">Availability: {availabilityLabel}</p>
   );
 
   const descriptionBlock = !hideDescription && descriptionPreview ? (
     isCard ? (
-      <div className="rounded-lg border border-neutral-100 bg-neutral-50/70 px-2.5 py-2 dark:border-slate-700 dark:bg-slate-800/40">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500">Details</p>
-        <p className="mt-1 line-clamp-3 text-pretty text-xs leading-relaxed text-neutral-700 dark:text-slate-300">{descriptionPreview}</p>
+      <div className="rounded-xl border border-border bg-background px-2.5 py-2 dark:border-slate-700 dark:bg-slate-800/40">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary dark:text-slate-500">Details</p>
+        <p className="mt-1 line-clamp-3 text-pretty text-xs leading-relaxed text-text-secondary dark:text-slate-300">{descriptionPreview}</p>
       </div>
     ) : frameDescriptionAsSellerNote ? (
       <div className="rounded-lg border border-amber-200/90 bg-amber-50/75 px-2.5 py-2 dark:border-amber-500/35 dark:bg-amber-500/10">
@@ -50,13 +50,13 @@ export function MarketplaceProductDetailStack({
         <p className="mt-1 line-clamp-4 text-pretty text-xs leading-relaxed text-amber-950 dark:text-amber-50">{descriptionPreview}</p>
       </div>
     ) : (
-      <p className="line-clamp-3 text-pretty text-xs leading-relaxed text-neutral-600 dark:text-slate-400">{descriptionPreview}</p>
+      <p className="line-clamp-3 text-pretty text-xs leading-relaxed text-text-secondary dark:text-slate-400">{descriptionPreview}</p>
     )
   ) : null;
 
   const metaStrip =
     isCard && (quantityRow || availabilityLabel) ? (
-      <div className="rounded-lg border border-neutral-100 bg-neutral-50/90 px-2.5 py-2 dark:border-slate-700 dark:bg-slate-800/50">
+      <div className="rounded-xl border border-border bg-background px-2.5 py-2 dark:border-slate-700 dark:bg-slate-800/50">
         <div className="flex flex-wrap items-start gap-x-5 gap-y-2">
           {qtyBlock}
           {availabilityLabel ? availabilityBlock : null}
@@ -65,12 +65,12 @@ export function MarketplaceProductDetailStack({
     ) : null;
 
   const titleClass = isCard
-    ? "truncate text-base font-semibold leading-snug tracking-tight text-neutral-900 dark:text-slate-100"
-    : "truncate text-sm font-semibold text-neutral-900 dark:text-slate-100";
+    ? "truncate text-base font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100"
+    : "truncate text-sm font-semibold text-text-primary dark:text-slate-100";
 
   const priceMainClass = isCard
-    ? "text-lg font-bold tabular-nums text-brand-primary dark:text-brand-accent"
-    : "text-sm font-semibold text-neutral-800 dark:text-slate-200";
+    ? "text-lg font-bold tabular-nums text-primary dark:text-brand-accent"
+    : "text-sm font-semibold text-text-primary dark:text-slate-200";
 
   return (
     <div className={`min-w-0 flex-1 ${isCard ? "space-y-2" : "space-y-1"}`}>
@@ -79,9 +79,9 @@ export function MarketplaceProductDetailStack({
         <p className={priceMainClass}>{formatPesoWhole(priceCents)}</p>
         {originalPesos != null && originalPesos > currentPesos ? (
           <div className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">₱{originalPesos}</span>
+            <span className="text-xs font-medium text-text-secondary line-through dark:text-slate-400">₱{originalPesos}</span>
             {saleMeta.percent ? (
-              <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+              <span className="rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] font-semibold text-accent dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300">
                 -{saleMeta.percent}%
               </span>
             ) : null}
