@@ -208,21 +208,21 @@ function LinkMartLogo({ className = "h-9 w-9 shrink-0 object-contain sm:h-10 sm:
 /** Desktop pills for Marketplace vs Cart — shop flow inside the shop segment. */
 function navPillShop(active, role) {
   const layout =
-    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition sm:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-offset-slate-900";
+    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition duration-200 ease-in-out sm:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-offset-slate-900";
   if (!active) {
-    return `${layout} text-neutral-600 hover:bg-white/90 hover:text-neutral-900 focus-visible:ring-violet-400/35 dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100 dark:focus-visible:ring-violet-500/30`;
+    return `${layout} text-text-primary/80 hover:bg-primary-soft/55 hover:text-text-primary focus-visible:ring-primary/35 dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100 dark:focus-visible:ring-primary/30`;
   }
-  return `${layout} bg-white text-neutral-900 shadow-sm ring-1 ring-emerald-300/80 focus-visible:ring-emerald-400/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-emerald-500/45`;
+  return `${layout} bg-primary-soft text-primary shadow-sm ring-1 ring-primary/35 focus-visible:ring-primary/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-primary/45`;
 }
 
 /** Desktop pills for Buying vs Selling — distinct active colors inside the trade group. */
 function navPillTrade(active, role) {
   const layout =
-    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition sm:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-sky-500/35 dark:focus-visible:ring-offset-slate-900";
+    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition duration-200 ease-in-out sm:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-primary/35 dark:focus-visible:ring-offset-slate-900";
   if (!active) {
-    return `${layout} text-neutral-600 hover:bg-white/90 hover:text-neutral-900 dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100`;
+    return `${layout} text-text-primary/80 hover:bg-primary-soft/55 hover:text-text-primary dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100`;
   }
-  return `${layout} bg-white text-neutral-900 shadow-sm ring-1 ring-emerald-300/80 dark:bg-slate-900 dark:text-slate-100 dark:ring-emerald-500/45`;
+  return `${layout} bg-primary-soft text-primary shadow-sm ring-1 ring-primary/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-primary/45`;
 }
 
 /** Bottom bar: Marketplace + Cart share one visual segment. */
@@ -502,7 +502,7 @@ export function LoggedInHeader({
                 }}
               >
                 <MenuStoreIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${browsePillActive ? "text-emerald-600 dark:text-emerald-300" : ""}`}
+                  className={`h-[18px] w-[18px] shrink-0 ${browsePillActive ? "text-primary dark:text-primary-soft" : ""}`}
                 />
                 <span className="max-w-[5.5rem] truncate sm:max-w-none">Marketplace</span>
               </button>
@@ -517,7 +517,7 @@ export function LoggedInHeader({
                 }}
               >
                 <MenuCartIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.CART ? "text-emerald-600 dark:text-emerald-300" : ""}`}
+                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.CART ? "text-primary dark:text-primary-soft" : ""}`}
                 />
                 <span className="max-w-[7rem] truncate sm:max-w-none">Add to cart</span>
                 {cartItemCount > 0 ? (
@@ -541,7 +541,7 @@ export function LoggedInHeader({
                 }}
               >
                 <MenuFileIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.MY_PURCHASES ? "text-emerald-600 dark:text-emerald-300" : ""}`}
+                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.MY_PURCHASES ? "text-primary dark:text-primary-soft" : ""}`}
                 />
                 <span className="max-w-[5.5rem] truncate sm:max-w-none">Buying</span>
                 {purchasesItemCount > 0 ? (
@@ -569,7 +569,7 @@ export function LoggedInHeader({
                 }}
               >
                 <MenuOrdersIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.ORDERS ? "text-emerald-600 dark:text-emerald-300" : ""}`}
+                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.ORDERS ? "text-primary dark:text-primary-soft" : ""}`}
                 />
                 <span className="max-w-[5.5rem] truncate sm:max-w-none">Selling</span>
                 {ordersItemCount > 0 ? (

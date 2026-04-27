@@ -71,13 +71,13 @@ export function SellerProductCard({
   const normalizedStatus = String(listing.status || "").toLowerCase();
   const statusClass =
     normalizedStatus === "active"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-      : "border-neutral-200 bg-neutral-100 text-neutral-700 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300";
+      ? "bg-green-100 text-green-600 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+      : "bg-gray-100 text-gray-600 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300";
   const listedQtyForBadge = Math.max(0, Number(listing?.quantity) || 0);
   const isOutOfStock = listedQtyForBadge === 0;
   const statusBadgeLabel = isOutOfStock ? "Out of stock" : normalizedStatus || "unknown";
   const statusBadgeClass = isOutOfStock
-    ? "border-amber-300/95 bg-amber-50 text-amber-950 dark:border-amber-500/45 dark:bg-amber-950/40 dark:text-amber-100"
+    ? "bg-gray-100 text-gray-600 dark:border-amber-500/45 dark:bg-amber-950/40 dark:text-amber-100"
     : statusClass;
   const imageUrl = String(listing.imageUrl || "").trim();
   const availabilityLabel = listingCodAvailabilityLabel(listing.fulfillmentModes);
@@ -109,10 +109,10 @@ export function SellerProductCard({
   const isListLayout = !gridMode;
   /** Shell styles: list = wide management row; grid = catalog card; dense = compact inventory tile. */
   const cardShellClass = isListLayout
-    ? "rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/60 sm:p-3.5"
+    ? "rounded-2xl border border-border bg-surface p-3 shadow-sm transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 sm:p-3.5"
     : compactGrid
-      ? "rounded-xl border border-neutral-300/85 bg-neutral-50/65 p-2.5 shadow-sm ring-1 ring-neutral-300/25 dark:border-slate-600 dark:bg-slate-900/80 dark:ring-slate-600/30 sm:p-3"
-      : "rounded-2xl border border-neutral-200/95 bg-white p-3 shadow-md ring-1 ring-neutral-200/50 dark:border-slate-700 dark:bg-slate-900/60 dark:ring-slate-700/45 sm:p-3.5";
+      ? "rounded-xl border border-border bg-background p-2.5 shadow-sm ring-1 ring-border/25 transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 dark:ring-[#1f3c56]/45 sm:p-3"
+      : "rounded-2xl border border-border bg-surface p-3 shadow-sm ring-1 ring-border/50 transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 dark:ring-[#1f3c56]/50 sm:p-3.5";
   /** List + comfortable grid: larger ± / input on small screens only. */
   const qtyTouchFriendly = isComfortableGrid || isListLayout;
   /** Dense: full-width cards on mobile — use comfortable touch/stacked qty below sm only. */
@@ -148,9 +148,9 @@ export function SellerProductCard({
     const base =
       "flex w-full min-w-0 items-center justify-center rounded-lg border font-semibold transition touch-manipulation max-sm:min-h-[44px] sm:min-h-0 max-sm:py-2.5 max-sm:px-3 max-sm:text-xs sm:py-2 sm:px-3 sm:text-xs";
     const neutral =
-      "border-slate-300/95 bg-white text-slate-900 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.65)] hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900/75 dark:text-slate-100 dark:shadow-none dark:hover:bg-slate-800";
+      "border-primary bg-surface text-primary shadow-[inset_0_1px_0_0_rgba(255,255,255,0.65)] hover:bg-primary-soft dark:border-slate-600 dark:bg-slate-900/75 dark:text-slate-100 dark:shadow-none dark:hover:bg-slate-800";
     const danger =
-      "border-rose-500/90 bg-rose-50 text-rose-950 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.55)] hover:bg-rose-100 dark:border-rose-500/55 dark:bg-rose-950/45 dark:text-rose-100 dark:shadow-none dark:hover:bg-rose-950/60";
+      "border-danger bg-danger text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.55)] hover:bg-danger-hover dark:border-rose-500/55 dark:bg-rose-950/45 dark:text-rose-100 dark:shadow-none dark:hover:bg-rose-950/60";
     return `${base} ${variant === "danger" ? danger : neutral}`;
   };
 
@@ -160,8 +160,8 @@ export function SellerProductCard({
       ? "max-sm:min-h-[44px] max-sm:touch-manipulation max-sm:py-2.5 px-2.5 py-1.5 text-[11px] sm:min-h-0 sm:py-1.5 md:px-2 md:py-1 md:text-[10px]"
       : "px-3 py-1.5 text-xs";
 
-  const gridNeutral = `rounded-lg border font-semibold transition ${gridActionPad} border-slate-300/95 bg-white text-slate-900 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-800`;
-  const gridDanger = `rounded-lg border font-semibold transition ${gridActionPad} border-rose-500/90 bg-rose-50 text-rose-950 hover:bg-rose-100 dark:border-rose-500/55 dark:bg-rose-950/40 dark:text-rose-100 dark:hover:bg-rose-950/55`;
+  const gridNeutral = `rounded-xl border font-semibold transition duration-200 ease-in-out ${gridActionPad} border-primary bg-surface text-primary hover:bg-primary-soft dark:border-slate-600 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-800`;
+  const gridDanger = `rounded-xl border font-semibold transition duration-200 ease-in-out ${gridActionPad} border-danger bg-danger text-white hover:bg-danger-hover dark:border-rose-500/55 dark:bg-rose-950/40 dark:text-rose-100 dark:hover:bg-rose-950/55`;
 
   const qtyRowClass = qtyMobileExpanded
     ? "flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5"
@@ -219,7 +219,7 @@ export function SellerProductCard({
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">₱{originalPesos}</span>
             {saleMeta.percent ? (
-              <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+              <span className="rounded-full border border-rose-300/90 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-800 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300">
                 -{saleMeta.percent}%
               </span>
             ) : null}
@@ -240,7 +240,7 @@ export function SellerProductCard({
               {quantityUpdating ? <span className="text-[10px] font-medium text-neutral-500 dark:text-slate-500">Saving…</span> : null}
             </div>
             <div className="flex min-w-0 items-stretch gap-1">
-              <div className="flex min-h-[40px] min-w-0 flex-1 overflow-hidden rounded-lg border border-neutral-300/95 bg-white shadow-sm ring-1 ring-neutral-200/70 dark:border-slate-600 dark:bg-slate-900 dark:ring-slate-700/55 sm:min-h-8">
+              <div className="flex min-h-[40px] min-w-0 flex-1 overflow-hidden rounded-lg border border-neutral-300/95 bg-white shadow-sm ring-1 ring-neutral-200/70 dark:border-[#1f3c56] dark:bg-[#11283d] dark:ring-[#1f3c56]/60 sm:min-h-8">
                 <button
                   type="button"
                   className={`${denseStepMinusPlus} rounded-none border-r border-neutral-200 dark:border-slate-700`}
@@ -421,7 +421,7 @@ export function SellerProductCard({
       {isListLayout ? (
         <div className="flex min-w-0 flex-col gap-3">
           <div className="flex min-w-0 gap-3">
-            <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 ${imgBox}`}>
+            <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-[#1f3c56] dark:bg-[#11283d] ${imgBox}`}>
               {imageUrl ? (
                 <img src={imageUrl} alt={listing.title || "Product"} className="h-full w-full object-cover" />
               ) : (
@@ -430,11 +430,11 @@ export function SellerProductCard({
             </div>
             <div className="min-w-0 flex-1 space-y-1.5">{innerBody}</div>
           </div>
-          <div className="grid w-full min-w-0 grid-cols-2 gap-2 border-t border-neutral-200/90 pt-3 dark:border-slate-700/70 sm:grid-cols-4 sm:gap-2">{sellerActionsExpanded}</div>
+          <div className="grid w-full min-w-0 grid-cols-2 gap-2 border-t border-neutral-200/90 pt-3 dark:border-[#1f3c56]/80 sm:grid-cols-4 sm:gap-2">{sellerActionsExpanded}</div>
         </div>
       ) : (
         <div className={`flex min-w-0 flex-col ${mainGap} ${isComfortableGrid || compactGrid ? "md:h-full" : ""}`}>
-          <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 ${imgBox}`}>
+          <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-[#1f3c56] dark:bg-[#11283d] ${imgBox}`}>
             {imageUrl ? (
               <img src={imageUrl} alt={listing.title || "Product"} className="h-full w-full object-cover" />
             ) : (

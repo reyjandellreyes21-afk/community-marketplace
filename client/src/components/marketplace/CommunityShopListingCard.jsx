@@ -23,10 +23,18 @@ export function CommunityShopListingCard({
   buyNowDisabledReason = "",
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
+  const [customSalePercent, setCustomSalePercent] = useState("");
+  const [showAllSaleOptions, setShowAllSaleOptions] = useState(false);
   const imageUrl = String(listing.imageUrl || "").trim();
   const isOwner = String(listing.sellerId || "") === String(currentUserId || "");
   const stockQty = Math.max(0, Number(listing.quantity) || 0);
   const isOutOfStock = stockQty <= 0;
+  const customSaleValue = Number(customSalePercent);
+  const customSaleValid =
+    Number.isFinite(customSaleValue) &&
+    Number.isInteger(customSaleValue) &&
+    customSaleValue >= 1 &&
+    customSaleValue <= 99;
 
   const pad = gridMode && compactGrid ? "p-2.5" : "p-3.5";
   const imgBox =
@@ -36,21 +44,28 @@ export function CommunityShopListingCard({
         ? "h-48 w-full"
         : "h-32 w-32";
   const mainGap = gridMode && compactGrid ? "gap-2" : gridMode ? "gap-2.5" : "gap-3";
+  const compactActionBtnClass = compactGrid
+    ? "flex h-10 items-center justify-center whitespace-nowrap px-2 text-[11px] leading-none"
+    : "min-h-[44px] px-3 py-2 text-sm sm:min-h-0 sm:py-1.5 sm:text-xs";
+  const compactActionRowClass = compactGrid
+    ? "grid w-full grid-cols-2 gap-2"
+    : "flex w-full flex-col gap-2 min-[380px]:flex-row min-[380px]:items-stretch";
+  const isListMode = !gridMode;
 
   return (
     <div
-      className={`group relative rounded-2xl border border-neutral-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-brand-primary/35 hover:shadow-md dark:border-slate-700 dark:bg-slate-900/75 ${pad} ${
+      className={`group relative rounded-2xl border border-border bg-surface shadow-sm transition duration-200 ease-in-out hover:-translate-y-0.5 hover:scale-[1.01] hover:border-primary/35 hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 ${pad} ${
         gridMode ? "flex h-full min-h-0 flex-col" : ""
       }`}
     >
       <div
         className={`flex min-h-0 ${gridMode ? `flex-1 flex-col ${mainGap}` : "flex-row items-start gap-3"}`}
       >
-        <div className={`relative shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 ${imgBox}`}>
+        <div className={`relative shrink-0 overflow-hidden rounded-xl border border-border bg-background dark:border-[#1f3c56] dark:bg-[#11283d] ${imgBox}`}>
           {!isOwner && showFavoriteIcon ? (
             <button
               type="button"
-              className="absolute right-2 top-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-md border border-neutral-200/90 bg-white text-rose-500 shadow-sm transition hover:scale-105 hover:text-rose-600 dark:border-slate-600 dark:bg-slate-900 dark:text-rose-400 dark:hover:text-rose-300"
+              className="absolute right-2 top-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-surface text-accent shadow-sm transition duration-200 ease-in-out hover:scale-105 hover:text-accent-hover dark:border-slate-600 dark:bg-slate-900 dark:text-rose-400 dark:hover:text-rose-300"
               aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
               onClick={(e) => {
                 e.stopPropagation();
@@ -63,7 +78,7 @@ export function CommunityShopListingCard({
           {imageUrl ? (
             <img src={imageUrl} alt={listing.title || "Product"} className="h-full w-full object-cover" />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">No image</div>
+            <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-text-secondary dark:text-slate-400">No image</div>
           )}
         </div>
         <div
@@ -77,11 +92,11 @@ export function CommunityShopListingCard({
             fulfillmentModes={listing.fulfillmentModes}
             quantityRow={
               <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500">Stock</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary dark:text-slate-500">Stock</p>
                 <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-semibold tabular-nums text-neutral-900 dark:text-slate-100">{stockQty}</p>
+                  <p className="text-sm font-semibold tabular-nums text-text-primary dark:text-slate-100">{stockQty}</p>
                   {isOutOfStock ? (
-                    <span className="rounded-full border border-rose-300 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
+                    <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600 dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
                       Out of stock
                     </span>
                   ) : null}
@@ -95,10 +110,12 @@ export function CommunityShopListingCard({
       </div>
       {showActions ? (
         <div className={`flex flex-col gap-2 ${gridMode ? "mt-auto pt-3" : "mt-3"}`}>
-          {onInspect ? (
+          {onInspect && !isListMode ? (
             <button
               type="button"
-              className="min-h-[44px] w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 sm:min-h-0 sm:py-1.5 sm:text-xs dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+              className={`rounded-lg border border-neutral-300 font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 ${
+                isListMode ? "h-10 flex-1 px-3 text-xs" : `w-full ${compactActionBtnClass}`
+              }`}
               title="Read full description and details"
               onClick={(e) => {
                 e.stopPropagation();
@@ -109,24 +126,54 @@ export function CommunityShopListingCard({
             </button>
           ) : null}
           {isOwner ? (
-            <div className="flex w-full flex-col gap-2 min-[380px]:flex-row min-[380px]:items-stretch">
+            <div
+              className={
+                isListMode
+                  ? "grid w-full grid-cols-3 gap-2"
+                  : compactActionRowClass
+              }
+            >
+              {isListMode && onInspect ? (
+                <button
+                  type="button"
+                  className="h-10 w-full rounded-xl border border-primary px-3 text-xs font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                  title="Read full description and details"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onInspect();
+                  }}
+                >
+                  View details
+                </button>
+              ) : null}
               <button
                 type="button"
-                className={`min-h-[44px] w-full min-w-0 flex-1 rounded-lg border border-amber-300 px-3 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-50 sm:min-h-0 sm:py-1.5 sm:text-xs dark:border-amber-500/50 dark:text-amber-200 dark:hover:bg-amber-950/35 ${
-                  saleOpen ? "bg-amber-50 ring-2 ring-amber-400/40 dark:bg-amber-500/15 dark:ring-amber-400/30" : ""
+                className={`min-w-0 rounded-xl bg-accent font-semibold text-white shadow-sm transition duration-200 ease-in-out hover:bg-accent-hover dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400 ${
+                  isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                } ${
+                  saleOpen ? "ring-2 ring-rose-300/60 dark:ring-rose-300/45" : ""
                 }`}
                 title={saleOpen ? "Hide discount options" : "Apply a sale discount"}
                 aria-expanded={saleOpen}
                 onClick={(e) => {
                   e.stopPropagation();
-                  setSaleOpen((prev) => !prev);
+                  setSaleOpen((prev) => {
+                    const next = !prev;
+                    if (!next) {
+                      setCustomSalePercent("");
+                      setShowAllSaleOptions(false);
+                    }
+                    return next;
+                  });
                 }}
               >
                 Sale
               </button>
               <button
                 type="button"
-                className="min-h-[44px] w-full min-w-0 flex-1 rounded-lg bg-brand-primary px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-primary/90 sm:min-h-0 sm:py-1.5 sm:text-xs dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
+                className={`min-w-0 rounded-xl bg-primary font-semibold text-white shadow-sm transition duration-200 ease-in-out hover:bg-primary-hover dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90 ${
+                  isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                }`}
                 title="Edit title, price, photos, and stock"
                 aria-label={`Edit listing: ${listing.title || "product"}`}
                 onClick={(e) => {
@@ -138,11 +185,32 @@ export function CommunityShopListingCard({
               </button>
             </div>
           ) : (
-            <div className="flex w-full flex-col gap-2 min-[380px]:flex-row min-[380px]:items-stretch">
+            <div
+              className={
+                isListMode
+                  ? "grid w-full grid-cols-3 gap-2"
+                  : compactActionRowClass
+              }
+            >
+              {isListMode && onInspect ? (
+                <button
+                  type="button"
+                  className="h-10 w-full rounded-xl border border-primary px-3 text-xs font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                  title="Read full description and details"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onInspect();
+                  }}
+                >
+                  View details
+                </button>
+              ) : null}
               <button
                 type="button"
                 title={isOutOfStock ? undefined : "Keep shopping — review cart anytime"}
-                className="min-h-[44px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-1.5 sm:text-xs dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                className={`rounded-xl border border-primary font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 ${
+                  isListMode ? "h-10 w-full px-3 text-xs" : `flex-1 ${compactActionBtnClass}`
+                }`}
                 disabled={isOutOfStock}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -161,10 +229,12 @@ export function CommunityShopListingCard({
                       : "Go to checkout — choose pickup or delivery"
                 }
                 aria-label={isOutOfStock ? "Out of stock" : "Buy now"}
-                className={`min-h-[44px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-sm font-semibold text-white transition sm:min-h-0 sm:py-1.5 sm:text-xs dark:bg-brand-accent dark:text-slate-900 ${
+                className={`rounded-xl bg-primary font-semibold text-white transition duration-200 ease-in-out dark:bg-brand-accent dark:text-slate-900 ${
+                  isListMode ? "h-10 w-full px-3 text-xs" : `flex-1 ${compactActionBtnClass}`
+                } ${
                   isOutOfStock
                     ? "cursor-not-allowed opacity-50"
-                    : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
+                    : "hover:bg-primary-hover dark:hover:bg-brand-accent/90"
                 } disabled:cursor-not-allowed disabled:opacity-50`}
                 disabled={isOutOfStock}
                 onClick={(e) => {
@@ -179,22 +249,76 @@ export function CommunityShopListingCard({
         </div>
       ) : null}
       {showActions && isOwner && saleOpen ? (
-        <div className={`overflow-x-auto ${gridMode ? "mt-2 shrink-0" : "mt-2"}`}>
-          <div className="flex min-w-max items-center gap-1.5 rounded-xl border border-amber-200/80 bg-amber-50/80 p-2 dark:border-amber-500/30 dark:bg-amber-500/10">
-            {SALE_PERCENT_OPTIONS.map((percent) => (
+        <div className={gridMode ? "mt-2 shrink-0" : "mt-2"}>
+          <div className="rounded-xl border border-rose-200/80 bg-rose-50/80 p-2 dark:border-rose-500/30 dark:bg-rose-500/10">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={99}
+                step={1}
+                inputMode="numeric"
+                placeholder="Custom %"
+                className="h-8 w-24 rounded-md border border-rose-300/90 bg-white px-2 text-xs font-semibold text-rose-900 outline-none transition placeholder:text-rose-500/80 focus:border-rose-400 focus:ring-2 focus:ring-rose-300/40 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-100 dark:placeholder:text-rose-300/70"
+                value={customSalePercent}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  const digits = String(e.target.value || "").replace(/[^\d]/g, "");
+                  if (digits === "") {
+                    setCustomSalePercent("");
+                    return;
+                  }
+                  setCustomSalePercent(String(Math.min(99, Number(digits))));
+                }}
+              />
               <button
-                key={percent}
                 type="button"
-                className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                className="h-8 rounded-md border border-rose-300/90 bg-white px-2.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-900/30"
+                disabled={!customSaleValid}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onSaleSelect?.(percent);
+                  if (!customSaleValid) return;
+                  onSaleSelect?.(customSaleValue);
+                  setCustomSalePercent("");
+                  setShowAllSaleOptions(false);
                   setSaleOpen(false);
                 }}
               >
-                {percent}%
+                Apply
               </button>
-            ))}
+              {SALE_PERCENT_OPTIONS.length > 0 ? (
+                <button
+                  type="button"
+                  className="h-8 rounded-md border border-rose-300/90 bg-white px-2.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-900/30"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowAllSaleOptions((prev) => !prev);
+                  }}
+                >
+                  {showAllSaleOptions ? "Less" : "More"}
+                </button>
+              ) : null}
+            </div>
+            {showAllSaleOptions ? (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {SALE_PERCENT_OPTIONS.map((percent) => (
+                  <button
+                    key={percent}
+                    type="button"
+                    className="min-h-8 rounded-md border border-rose-300/90 bg-white px-2 py-1 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-900/30"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSaleSelect?.(percent);
+                      setCustomSalePercent("");
+                      setShowAllSaleOptions(false);
+                      setSaleOpen(false);
+                    }}
+                  >
+                    {percent}%
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

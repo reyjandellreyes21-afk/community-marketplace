@@ -83,7 +83,7 @@ export function ProductInspectModal({
         onClick={onClose}
       />
       <div
-        className={`relative z-10 flex max-h-[min(88dvh,42rem)] w-full max-w-lg flex-col rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-slate-600 dark:bg-slate-900 sm:max-h-[min(90dvh,44rem)] sm:rounded-2xl sm:shadow-[0_20px_60px_rgba(15,23,42,0.22)] ${UI_KIT.surfaceFloating}`}
+        className={`relative z-10 flex max-h-[min(88dvh,42rem)] w-full max-w-lg flex-col rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-[#1f3c56] dark:bg-[#0f2234] sm:max-h-[min(90dvh,44rem)] sm:rounded-2xl sm:shadow-[0_20px_60px_rgba(15,23,42,0.22)] ${UI_KIT.surfaceFloating}`}
         onClick={(e) => e.stopPropagation()}
       >
         {showActionFooter ? (
@@ -91,7 +91,7 @@ export function ProductInspectModal({
             To dismiss without choosing an action, use the close control in the header, press Escape, or activate the dimmed area behind this dialog.
           </p>
         ) : null}
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-neutral-200/80 px-4 pb-2.5 pt-3 dark:border-slate-700/80 sm:px-5 sm:pb-3 sm:pt-4">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-neutral-200/80 px-4 pb-2.5 pt-3 dark:border-[#1f3c56]/85 sm:px-5 sm:pb-3 sm:pt-4">
           <div className="min-w-0 pr-2">
             <h2
               id="product-inspect-title"
@@ -113,7 +113,7 @@ export function ProductInspectModal({
 
         <div className="drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-3 sm:px-5 sm:py-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
-            <div className="mx-auto h-[8.5rem] w-full max-w-[12.5rem] shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 sm:mx-0 sm:h-36 sm:w-36 sm:max-w-none">
+            <div className="mx-auto h-[8.5rem] w-full max-w-[12.5rem] shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-[#1f3c56] dark:bg-[#11283d] sm:mx-0 sm:h-36 sm:w-36 sm:max-w-none">
               {String(imageUrl || "").trim() ? (
                 <img src={imageUrl} alt="" className="h-full w-full object-cover" />
               ) : (
@@ -154,7 +154,7 @@ export function ProductInspectModal({
 
           <div className="mt-4 space-y-3 sm:mt-5 sm:space-y-4">
             <section
-              className={`rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-slate-700 dark:bg-slate-800/50 sm:p-3.5`}
+              className={`rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/65 sm:p-3.5`}
             >
               <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                 From the seller
@@ -181,7 +181,7 @@ export function ProductInspectModal({
           </div>
         </div>
 
-        <div className="shrink-0 border-t border-neutral-200/80 px-4 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2.5 dark:border-slate-700/80 sm:px-5 sm:pb-4 sm:pt-3">
+        <div className="shrink-0 border-t border-neutral-200/80 px-4 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2.5 dark:border-[#1f3c56]/85 sm:px-5 sm:pb-4 sm:pt-3">
           {hasSellerHandlers ? (
             <div className="space-y-2">
               <div className="flex w-full flex-col gap-2 min-[340px]:flex-row min-[340px]:items-stretch min-[340px]:gap-2">
@@ -233,7 +233,7 @@ export function ProductInspectModal({
           {hasBuyerHandlers ? (
             <div
               className={
-                hasSellerHandlers ? "mt-2 border-t border-neutral-200/50 pt-2 dark:border-slate-700/40" : ""
+                hasSellerHandlers ? "mt-2 border-t border-neutral-200/50 pt-2 dark:border-[#1f3c56]/55" : ""
               }
             >
               <div className="flex w-full flex-col gap-2 min-[340px]:flex-row min-[340px]:items-stretch min-[340px]:gap-2">
