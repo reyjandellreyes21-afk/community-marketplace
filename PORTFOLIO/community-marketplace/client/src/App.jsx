@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import tabLogo from "./assets/logo-png.png";
-import heroStudyImage from "./assets/hero.png";
+import tabLogo from "./assets/new-icon-only.png";
+import heroStudyImage from "./assets/new-auth-landing.png";
 import { createSupabaseClient } from "./lib/supabaseClient";
 import {
   isLikelySameCommunityName,
@@ -172,6 +172,8 @@ const PUBLISH_TOAST_FADE_MS = 350;
 const SELLER_ORDERS_POLL_MS = 28_000;
 /** Coalesce bursty `orders` row events without delaying badge updates too much. */
 const ORDERS_REALTIME_DEBOUNCE_MS = 200;
+/** Coalesce bursty chat events for immediate but efficient conversation updates. */
+const CHAT_REALTIME_DEBOUNCE_MS = 220;
 
 /** Responsive browse layouts: list, comfortable auto-fill grid, or compact auto-fill grid. */
 function communityBrowseGridClass(view) {
@@ -180,6 +182,12 @@ function communityBrowseGridClass(view) {
     return "grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,10.25rem),1fr))] gap-2 sm:gap-3";
   }
   return "grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))] gap-3 sm:gap-4 lg:gap-5";
+}
+
+function favoritesGridClass(view) {
+  if (view === "list") return "grid grid-cols-1 items-stretch gap-3 sm:gap-4";
+  if (view === "compact") return "grid grid-cols-4 items-stretch gap-2 sm:gap-3";
+  return "grid grid-cols-2 items-stretch gap-3 sm:gap-4";
 }
 
 function sellerListingsGridClass(view) {
@@ -338,8 +346,10 @@ function readChatThreadsFromStorage(userId) {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map((thread) => ({
+        conversationId: String(thread?.conversationId || "").trim(),
         participantId: String(thread?.participantId || "").trim(),
         unread: Math.max(0, Number(thread?.unread || 0)),
+        messagesLoaded: !!thread?.messagesLoaded,
         messages: Array.isArray(thread?.messages)
           ? thread.messages
               .map((m) => ({
@@ -355,6 +365,33 @@ function readChatThreadsFromStorage(userId) {
   } catch {
     return [];
   }
+}
+
+function toChatMessageFromApi(msg) {
+  const createdAtMs = new Date(msg?.createdAt || msg?.created_at || 0).getTime();
+  return {
+    id: String(msg?.id || "").trim(),
+    senderId: String(msg?.senderId || msg?.sender_id || "").trim(),
+    text: String(msg?.body || msg?.text || "").trim(),
+    createdAt: Number.isFinite(createdAtMs) ? createdAtMs : Date.now(),
+  };
+}
+
+function toChatThreadFromConversation(conversation, currentUserId) {
+  const me = String(currentUserId || "").trim();
+  const participants = Array.isArray(conversation?.participants) ? conversation.participants : [];
+  const other = participants.find((p) => String(p?.userId || "") !== me) || null;
+  const participantId = String(other?.userId || "").trim();
+  const lastMessage = conversation?.lastMessage ? toChatMessageFromApi(conversation.lastMessage) : null;
+  const lastReadMessageId = String(conversation?.readState?.lastReadMessageId || "").trim();
+  const unread = lastMessage && lastMessage.senderId !== me && lastReadMessageId !== lastMessage.id ? 1 : 0;
+  return {
+    conversationId: String(conversation?.id || "").trim(),
+    participantId,
+    unread,
+    messages: lastMessage ? [lastMessage] : [],
+    messagesLoaded: false,
+  };
 }
 
 function normalizeCommerceFlowView(v) {
@@ -471,7 +508,14 @@ function App() {
   const [chatThreads, setChatThreads] = useState([]);
   const [activeChatUserId, setActiveChatUserId] = useState("");
   const [chatComposer, setChatComposer] = useState("");
+  const [chatSendPending, setChatSendPending] = useState(false);
+  const [chatDraftByUserId, setChatDraftByUserId] = useState({});
+  const [messagesMobilePane, setMessagesMobilePane] = useState("list");
+  const [messagesMobileListTab, setMessagesMobileListTab] = useState("conversations");
+  const chatThreadViewportRef = useRef(null);
+  const chatComposerInputRef = useRef(null);
   const [messagePeopleSearch, setMessagePeopleSearch] = useState("");
+  const lastReadSyncKeyRef = useRef("");
   const [messagePeopleCommunityFilter, setMessagePeopleCommunityFilter] = useState("all");
   const [messagePeopleSort, setMessagePeopleSort] = useState("name_asc");
   const [profileJoinedAt, setProfileJoinedAt] = useState("");
@@ -885,16 +929,11 @@ function App() {
     if (String(joinedShopCommunityId || "") === sid) return true;
     return false;
   }, [joinedShopCommunityId, listingCommunityFromProfile.id, shopCommunityId]);
-  const getDisplayedMemberCount = useCallback(
-    (communityId, baseCount) => {
-      const base = Number.isFinite(Number(baseCount)) ? Number(baseCount) : 0;
-      const cid = String(communityId || "");
-      const isJoinedHere =
-        String(listingCommunityFromProfile.id || "") === cid || String(joinedShopCommunityId || "") === cid;
-      return base + (isJoinedHere ? 1 : 0);
-    },
-    [joinedShopCommunityId, listingCommunityFromProfile.id],
-  );
+  const getDisplayedMemberCount = useCallback((community) => {
+    const raw = community?.memberCount ?? community?.member_count ?? 0;
+    const count = Number(raw);
+    return Number.isFinite(count) && count >= 0 ? count : 0;
+  }, []);
   const directoryCommunities = useMemo(() => {
     let rows = communities.slice();
     const q = communityDirectoryQuery.trim().toLowerCase();
@@ -907,7 +946,7 @@ function App() {
         return name.includes(q) || sub.includes(q) || city.includes(q) || prov.includes(q);
       });
     }
-    const countFor = (c) => getDisplayedMemberCount(c.id, c.memberCount);
+    const countFor = (c) => getDisplayedMemberCount(c);
     if (communityDirectorySort === "members") {
       rows.sort((a, b) => countFor(b) - countFor(a) || String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" }));
     } else {
@@ -1146,6 +1185,7 @@ function App() {
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
   const [sellerProductsView, setSellerProductsView] = useState("list");
   const [communityProductsView, setCommunityProductsView] = useState("grid");
+  const [favoriteProductsView, setFavoriteProductsView] = useState("list");
   /** Migrate legacy layout keys (2 / 4 / 8) to list | grid | compact. */
   useEffect(() => {
     setCommunityProductsView((v) => {
@@ -1154,6 +1194,12 @@ function App() {
       return "grid";
     });
     setSellerProductsView((v) => {
+      if (v === "list" || v === "grid" || v === "compact") return v;
+      if (v === "8") return "compact";
+      if (v === "2" || v === "4") return "grid";
+      return "list";
+    });
+    setFavoriteProductsView((v) => {
       if (v === "list" || v === "grid" || v === "compact") return v;
       if (v === "8") return "compact";
       if (v === "2" || v === "4") return "grid";
@@ -1215,7 +1261,7 @@ function App() {
           await apiRequest("/auth/me", {
             method: "PATCH",
             token,
-            body: { community: joinedName },
+            body: { community: joinedName, communityId: joinedId || null },
           });
           const listData = await apiRequest("/me/listings", { token });
           const mine = Array.isArray(listData?.listings) ? listData.listings : [];
@@ -1234,6 +1280,8 @@ function App() {
           }
           const refreshed = await apiRequest("/me/listings", { token });
           setSellerListings(refreshed.listings || []);
+          const communitiesRes = await apiRequest("/communities", { token });
+          setCommunities(communitiesRes?.communities || []);
           if (notifySuccess) {
             pushMarketplaceToast(`You joined ${joinedName || "the community"} successfully.`);
           }
@@ -1336,6 +1384,34 @@ function App() {
       }
     },
     [token],
+  );
+
+  const leaveCommunityAndDetachListings = useCallback(
+    (community, { notifySuccess = false } = {}) => {
+      const leftName = toTitleCase(String(community?.name || "").trim());
+      const leavingId = community?.id ? String(community.id) : "";
+      if (leavingId) void detachSellerListingsFromCommunity(leavingId);
+      applyJoinedCommunity("");
+      if (!token) {
+        if (notifySuccess) pushMarketplaceToast(`You left ${leftName || "the community"} successfully.`);
+        return Promise.resolve();
+      }
+      return (async () => {
+        try {
+          await apiRequest("/auth/me", {
+            method: "PATCH",
+            token,
+            body: { community: "", communityId: null },
+          });
+          const communitiesRes = await apiRequest("/communities", { token });
+          setCommunities(communitiesRes?.communities || []);
+          if (notifySuccess) pushMarketplaceToast(`You left ${leftName || "the community"} successfully.`);
+        } catch (error) {
+          pushMarketplaceToast(error?.message || "Left locally, but we could not sync your membership yet.");
+        }
+      })();
+    },
+    [applyJoinedCommunity, detachSellerListingsFromCommunity, token],
   );
 
   useEffect(() => {
@@ -1939,6 +2015,34 @@ function App() {
   }, [token, activeView]);
 
   useEffect(() => {
+    if (!token || user?.id) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiRequest("/auth/me", { token });
+        if (cancelled) return;
+        const incoming = data?.user || null;
+        if (!incoming) return;
+        setUser((prev) => {
+          const preservedJoined =
+            incoming.joinedAt || incoming.createdAt || incoming.created_at || prev?.joinedAt || prev?.createdAt || prev?.created_at || "";
+          return { ...(prev || {}), ...incoming, joinedAt: preservedJoined };
+        });
+      } catch (error) {
+        if (cancelled) return;
+        if (isUnauthorizedApiError(error)) {
+          writeAuthToken("");
+          setToken("");
+          setUser(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, user?.id]);
+
+  useEffect(() => {
     if (activeView !== VIEWS.PROFILE) {
       setProfileEditing(false);
       setProfileError("");
@@ -1976,6 +2080,88 @@ function App() {
     };
   }, [token, activeView]);
 
+  const refreshConversationsSnapshot = useCallback(
+    async ({ fallbackToLocal = false } = {}) => {
+      if (!token || !user?.id) return;
+      const data = await apiRequest("/conversations", { token });
+      const incoming = Array.isArray(data?.conversations) ? data.conversations : [];
+      const mapped = incoming
+        .map((conv) => toChatThreadFromConversation(conv, user.id))
+        .filter((thread) => thread.participantId);
+      setChatThreads((prev) => {
+        const prevByConversationId = new Map(
+          (Array.isArray(prev) ? prev : [])
+            .filter((thread) => String(thread?.conversationId || "").trim())
+            .map((thread) => [String(thread.conversationId), thread]),
+        );
+        const prevByParticipantId = new Map(
+          (Array.isArray(prev) ? prev : [])
+            .filter((thread) => String(thread?.participantId || "").trim())
+            .map((thread) => [String(thread.participantId), thread]),
+        );
+        const mappedThreads = mapped.map((thread) => {
+          const prevThread =
+            prevByConversationId.get(String(thread.conversationId || "")) ||
+            prevByParticipantId.get(String(thread.participantId || "")) ||
+            null;
+          if (!prevThread?.messagesLoaded) return thread;
+          const prevMessages = Array.isArray(prevThread.messages) ? prevThread.messages : [];
+          if (prevMessages.length === 0) return { ...thread, messagesLoaded: true, messages: [] };
+          const latestMapped = Array.isArray(thread.messages) && thread.messages.length > 0 ? thread.messages[thread.messages.length - 1] : null;
+          const hasLatest =
+            latestMapped && prevMessages.some((m) => String(m?.id || "") === String(latestMapped?.id || ""));
+          const mergedMessages = hasLatest
+            ? prevMessages
+            : [...prevMessages, latestMapped].filter(Boolean).slice(-CHAT_MESSAGES_MAX_PER_THREAD);
+          return {
+            ...thread,
+            messagesLoaded: true,
+            messages: mergedMessages,
+          };
+        });
+        const mappedParticipants = new Set(mappedThreads.map((thread) => String(thread?.participantId || "").trim()).filter(Boolean));
+        const optimisticOnlyThreads = (Array.isArray(prev) ? prev : []).filter((thread) => {
+          const participantId = String(thread?.participantId || "").trim();
+          if (!participantId || mappedParticipants.has(participantId)) return false;
+          return Array.isArray(thread?.messages) && thread.messages.length > 0;
+        });
+        return [...mappedThreads, ...optimisticOnlyThreads];
+      });
+
+      // Ensure message participants appear in users index for display names.
+      const conversationUsers = incoming
+        .flatMap((conv) => (Array.isArray(conv?.participants) ? conv.participants : []))
+        .map((participant) => {
+          const profile = participant?.profile || {};
+          const userId = String(participant?.userId || "").trim();
+          if (!userId || userId === String(user.id)) return null;
+          const fallbackName = String(profile?.displayName || profile?.username || "").trim();
+          return {
+            id: userId,
+            username: String(profile?.username || "").trim(),
+            name: fallbackName || "Member",
+            community: "",
+            joinedAt: participant?.joinedAt || null,
+          };
+        })
+        .filter(Boolean);
+      if (conversationUsers.length > 0) {
+        setUsersList((prev) => {
+          const byId = new Map((Array.isArray(prev) ? prev : []).map((u) => [String(u?.id || "").trim(), u]));
+          for (const u of conversationUsers) {
+            const id = String(u.id || "").trim();
+            if (!id) continue;
+            const existing = byId.get(id);
+            byId.set(id, existing ? { ...u, ...existing, id } : u);
+          }
+          return Array.from(byId.values());
+        });
+      }
+      return mapped;
+    },
+    [token, user?.id],
+  );
+
   useEffect(() => {
     if (!user?.id) {
       setChatThreads([]);
@@ -1983,8 +2169,21 @@ function App() {
       setChatComposer("");
       return;
     }
-    setChatThreads(readChatThreadsFromStorage(user.id));
-  }, [user?.id]);
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await refreshConversationsSnapshot();
+      } catch {
+        if (cancelled) return;
+        // Backward fallback: keep local cache readable if API is unavailable.
+        setChatThreads(readChatThreadsFromStorage(user.id));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, user?.id, refreshConversationsSnapshot]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -1995,6 +2194,53 @@ function App() {
       // ignore
     }
   }, [chatThreads, user?.id]);
+
+  useEffect(() => {
+    const supabase = createSupabaseClient();
+    if (!supabase || !token || !user?.id) return undefined;
+    let cancelled = false;
+    let debounceTimer = null;
+    const flush = () => {
+      debounceTimer = null;
+      if (cancelled) return;
+      void refreshConversationsSnapshot().catch(() => {});
+      // Force active thread message refetch on next render cycle.
+      setChatThreads((prev) =>
+        prev.map((thread) =>
+          String(thread.participantId) === String(activeChatUserId || "")
+            ? { ...thread, messagesLoaded: false }
+            : thread,
+        ),
+      );
+    };
+    const onChatChange = () => {
+      if (debounceTimer) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(flush, CHAT_REALTIME_DEBOUNCE_MS);
+    };
+    const channel = supabase
+      .channel(`lm-chat-rt:${String(user.id)}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversation_messages" }, onChatChange)
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, onChatChange)
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversation_reads" }, onChatChange)
+      .subscribe();
+
+    // Socket-independent safety net so users still get near-realtime updates.
+    const pollId = window.setInterval(() => {
+      void refreshConversationsSnapshot().catch(() => {});
+    }, 6000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refreshConversationsSnapshot().catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      if (debounceTimer) window.clearTimeout(debounceTimer);
+      window.clearInterval(pollId);
+      document.removeEventListener("visibilitychange", onVisibility);
+      void supabase.removeChannel(channel);
+    };
+  }, [token, user?.id, activeChatUserId, refreshConversationsSnapshot]);
 
   useEffect(
     () => () => {
@@ -2183,20 +2429,54 @@ function App() {
     return map;
   }, [usersList]);
 
+  const ensureDirectConversation = useCallback(
+    async (targetId) => {
+      if (!token || !user?.id) return null;
+      const targetUserId = String(targetId || "").trim();
+      if (!targetUserId || targetUserId === String(user.id)) return null;
+      const existing = chatThreads.find((thread) => String(thread.participantId) === targetUserId);
+      if (existing?.conversationId) return existing.conversationId;
+      const created = await apiRequest("/conversations", {
+        method: "POST",
+        token,
+        body: { type: "direct", targetUserId },
+      });
+      const conversationId = String(created?.conversation?.id || "").trim();
+      if (!conversationId) return null;
+      setChatThreads((prev) => {
+        const hit = prev.find((thread) => String(thread.participantId) === targetUserId);
+        if (hit) {
+          return prev.map((thread) =>
+            String(thread.participantId) === targetUserId ? { ...thread, conversationId } : thread,
+          );
+        }
+        return [{ conversationId, participantId: targetUserId, unread: 0, messages: [], messagesLoaded: false }, ...prev];
+      });
+      return conversationId;
+    },
+    [chatThreads, token, user?.id],
+  );
+
+  const openChatThread = useCallback((participantId) => {
+    const targetId = String(participantId || "").trim();
+    if (!targetId) return;
+    setActiveChatUserId(targetId);
+    setMessagesMobilePane("thread");
+    setActiveView(VIEWS.MESSAGES);
+  }, []);
+
   const openChatWithUser = useCallback(
-    (userId) => {
+    async (userId) => {
       const targetId = String(userId || "").trim();
       if (!targetId || !user?.id || targetId === String(user.id)) return;
-      setChatThreads((prev) => {
-        const existing = prev.find((thread) => String(thread.participantId) === targetId);
-        if (existing) return prev;
-        return [{ participantId: targetId, unread: 0, messages: [] }, ...prev];
-      });
-      setActiveChatUserId(targetId);
-      setChatComposer("");
-      setActiveView(VIEWS.MESSAGES);
+      try {
+        await ensureDirectConversation(targetId);
+      } catch {
+        // Keep UI navigable even if conversation creation fails.
+      }
+      openChatThread(targetId);
     },
-    [user?.id],
+    [ensureDirectConversation, openChatThread, user?.id],
   );
 
   const sortedChatThreads = useMemo(() => {
@@ -2213,12 +2493,45 @@ function App() {
     setActiveChatUserId(String(sortedChatThreads[0].participantId || ""));
   }, [activeChatUserId, sortedChatThreads]);
 
+  useEffect(() => {
+    if (activeView !== VIEWS.MESSAGES) {
+      setMessagesMobilePane("list");
+      setMessagesMobileListTab("conversations");
+    }
+  }, [activeView]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const isMobile = window.matchMedia("(max-width: 767px)").matches;
+    const lock = activeView === VIEWS.MESSAGES && messagesMobilePane === "thread" && isMobile;
+    if (!lock) return undefined;
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, [activeView, messagesMobilePane]);
+
   const activeChatThread = useMemo(
     () => sortedChatThreads.find((thread) => String(thread.participantId) === String(activeChatUserId)) || null,
     [sortedChatThreads, activeChatUserId],
   );
 
   const activeChatUser = useMemo(() => usersById.get(String(activeChatUserId || "")) || null, [usersById, activeChatUserId]);
+
+  useEffect(() => {
+    const viewport = chatThreadViewportRef.current;
+    if (!viewport || activeView !== VIEWS.MESSAGES || !activeChatThread) return;
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [activeView, activeChatUserId, activeChatThread?.messages?.length]);
+
+  useEffect(() => {
+    const key = String(activeChatUserId || "").trim();
+    setChatComposer(key ? String(chatDraftByUserId[key] || "") : "");
+  }, [activeChatUserId, chatDraftByUserId]);
 
   const messageCommunityFilterOptions = useMemo(() => {
     const set = new Set();
@@ -2229,6 +2542,33 @@ function App() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [communities]);
 
+  const resolveUserCommunity = useCallback(
+    (u) => {
+      const directCandidates = [
+        u?.community,
+        u?.communityName,
+        u?.community_name,
+        u?.barangay,
+        u?.brgy,
+        u?.user_metadata?.community,
+      ];
+      for (const candidate of directCandidates) {
+        const value = String(candidate || "").trim();
+        if (value) return value;
+      }
+      const address = String(u?.address || u?.user_metadata?.address || "").trim();
+      if (!address) return "";
+      const addressLower = address.toLowerCase();
+      const byAddress = communities.find((c) => {
+        const name = String(c?.name || "").trim();
+        if (!name) return false;
+        return addressLower.includes(name.toLowerCase()) || isLikelySameCommunityName(name, address);
+      });
+      return String(byAddress?.name || "").trim();
+    },
+    [communities],
+  );
+
   const filteredMessagePeople = useMemo(() => {
     const q = String(messagePeopleSearch || "").trim().toLowerCase();
     const existingConversationUserIds = new Set(
@@ -2237,7 +2577,7 @@ function App() {
     const rows = usersList.filter((u) => String(u?.id || "") !== String(user?.id || ""));
     const filtered = rows.filter((u) => {
       if (existingConversationUserIds.has(String(u?.id || "").trim())) return false;
-      const community = String(u?.community || "").trim();
+      const community = resolveUserCommunity(u);
       if (messagePeopleCommunityFilter !== "all") {
         if (messagePeopleCommunityFilter === "none") {
           if (community) return false;
@@ -2259,12 +2599,12 @@ function App() {
       return [...filtered].sort((a, b) => formatDisplayName(b?.name || b?.username || "").localeCompare(formatDisplayName(a?.name || a?.username || "")));
     }
     return [...filtered].sort((a, b) => formatDisplayName(a?.name || a?.username || "").localeCompare(formatDisplayName(b?.name || b?.username || "")));
-  }, [usersList, user?.id, sortedChatThreads, messagePeopleCommunityFilter, messagePeopleSearch, messagePeopleSort]);
+  }, [usersList, user?.id, sortedChatThreads, messagePeopleCommunityFilter, messagePeopleSearch, messagePeopleSort, resolveUserCommunity]);
 
   const communityLabelForUser = useCallback((u) => {
-    const community = String(u?.community || "").trim();
+    const community = resolveUserCommunity(u);
     return community || "No community set";
-  }, []);
+  }, [resolveUserCommunity]);
 
   const totalChatUnreadCount = useMemo(
     () => chatThreads.reduce((sum, thread) => sum + Math.max(0, Number(thread?.unread || 0)), 0),
@@ -2273,47 +2613,115 @@ function App() {
 
   useEffect(() => {
     if (activeView !== VIEWS.MESSAGES || !activeChatUserId) return;
-    setChatThreads((prev) =>
-      prev.map((thread) =>
-        String(thread.participantId) === String(activeChatUserId)
-          ? { ...thread, unread: 0 }
-          : thread,
-      ),
-    );
-  }, [activeView, activeChatUserId]);
+    setChatThreads((prev) => {
+      let changed = false;
+      const next = prev.map((thread) => {
+        if (String(thread.participantId) !== String(activeChatUserId)) return thread;
+        if (Number(thread?.unread || 0) <= 0) return thread;
+        changed = true;
+        return { ...thread, unread: 0 };
+      });
+      return changed ? next : prev;
+    });
+    const currentThread = chatThreads.find((thread) => String(thread.participantId) === String(activeChatUserId));
+    const conversationId = String(currentThread?.conversationId || "").trim();
+    const latest = Array.isArray(currentThread?.messages) && currentThread.messages.length > 0
+      ? currentThread.messages[currentThread.messages.length - 1]
+      : null;
+    if (!token || !conversationId || !latest?.id) return;
+    const syncKey = `${conversationId}:${String(latest.id)}`;
+    if (lastReadSyncKeyRef.current === syncKey) return;
+    lastReadSyncKeyRef.current = syncKey;
+    void apiRequest(`/conversations/${conversationId}/read`, {
+      method: "PATCH",
+      token,
+      body: { lastReadMessageId: latest.id },
+    }).catch(() => {
+      // Allow retry only if this exact key failed.
+      if (lastReadSyncKeyRef.current === syncKey) lastReadSyncKeyRef.current = "";
+    });
+  }, [activeView, activeChatUserId, chatThreads, token]);
 
-  const sendChatMessage = useCallback(() => {
+  useEffect(() => {
+    if (activeView !== VIEWS.MESSAGES || !activeChatUserId || !token) return;
+    const thread = chatThreads.find((t) => String(t.participantId) === String(activeChatUserId));
+    if (!thread?.conversationId || thread?.messagesLoaded) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiRequest(`/conversations/${thread.conversationId}/messages?limit=200`, { token });
+        if (cancelled) return;
+        const messages = Array.isArray(data?.messages) ? data.messages.map(toChatMessageFromApi).filter((m) => m.id && m.text) : [];
+        setChatThreads((prev) =>
+          prev.map((t) =>
+            String(t.participantId) === String(activeChatUserId)
+              ? { ...t, messages: messages.slice(-CHAT_MESSAGES_MAX_PER_THREAD), messagesLoaded: true }
+              : t,
+          ),
+        );
+      } catch {
+        if (!cancelled) {
+          setChatThreads((prev) =>
+            prev.map((t) =>
+              String(t.participantId) === String(activeChatUserId) ? { ...t, messagesLoaded: true } : t,
+            ),
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView, activeChatUserId, chatThreads, token]);
+
+  const sendChatMessage = useCallback(async () => {
     const senderId = String(user?.id || "").trim();
     const participantId = String(activeChatUserId || "").trim();
     const text = String(chatComposer || "").trim();
-    if (!senderId || !participantId || !text) return;
-    const now = Date.now();
-    const outgoing = { id: createChatMessageId(), senderId, text, createdAt: now };
-    const autoReply = {
-      id: createChatMessageId(),
-      senderId: participantId,
-      text: "Got your message. I will get back to you soon.",
-      createdAt: now + 1,
-    };
-    setChatThreads((prev) => {
-      const next = [];
-      let matched = false;
-      for (const thread of prev) {
-        if (String(thread.participantId) !== participantId) {
-          next.push(thread);
-          continue;
+    if (!senderId || !participantId || !token) return;
+    if (!text) {
+      if (chatComposerInputRef.current) chatComposerInputRef.current.focus();
+      return;
+    }
+    setChatSendPending(true);
+    try {
+      const conversationId = await ensureDirectConversation(participantId);
+      if (!conversationId) return;
+      const data = await apiRequest(`/conversations/${conversationId}/messages`, {
+        method: "POST",
+        token,
+        body: { body: text },
+      });
+      const outgoing = toChatMessageFromApi(data?.message || {});
+      if (!outgoing?.id) return;
+      setChatThreads((prev) => {
+        let matched = false;
+        const next = prev.map((thread) => {
+          if (String(thread.participantId) !== participantId) return thread;
+          matched = true;
+          const merged = [...(Array.isArray(thread.messages) ? thread.messages : []), outgoing].slice(-CHAT_MESSAGES_MAX_PER_THREAD);
+          return { ...thread, conversationId, unread: 0, messages: merged, messagesLoaded: true };
+        });
+        if (!matched) {
+          next.unshift({
+            conversationId,
+            participantId,
+            unread: 0,
+            messages: [outgoing],
+            messagesLoaded: true,
+          });
         }
-        matched = true;
-        const merged = [...(Array.isArray(thread.messages) ? thread.messages : []), outgoing, autoReply].slice(-CHAT_MESSAGES_MAX_PER_THREAD);
-        next.push({ ...thread, unread: activeView === VIEWS.MESSAGES ? 0 : 1, messages: merged });
-      }
-      if (!matched) {
-        next.push({ participantId, unread: activeView === VIEWS.MESSAGES ? 0 : 1, messages: [outgoing, autoReply] });
-      }
-      return next;
-    });
-    setChatComposer("");
-  }, [user?.id, activeChatUserId, chatComposer, activeView]);
+        return next;
+      });
+      setChatComposer("");
+      setChatDraftByUserId((prev) => ({ ...prev, [participantId]: "" }));
+      if (chatComposerInputRef.current) chatComposerInputRef.current.focus();
+    } catch {
+      // Keep composer text so user can retry if request fails.
+    } finally {
+      setChatSendPending(false);
+    }
+  }, [user?.id, activeChatUserId, chatComposer, token, ensureDirectConversation]);
 
   /** My purchases vs Sales inbox use separate saved list/grid/dense preferences. */
   const commerceFlowOrdersView = activeView === VIEWS.MY_PURCHASES ? commerceFlowViewBuyer : commerceFlowViewSeller;
@@ -4458,7 +4866,7 @@ function App() {
         <header className="landing-nav">
           <div className="app-container flex h-[4.25rem] items-center justify-between gap-4 px-6 sm:px-8 lg:px-10">
             <div className="flex min-w-0 items-center">
-              <LinkMartLogo />
+              <LinkMartLogo className="h-10 w-auto max-w-[13rem] shrink-0 object-contain sm:h-11 sm:max-w-[14rem]" />
             </div>
             <nav className="flex shrink-0 items-center gap-3 sm:gap-4" aria-label="Sign in">
               <button type="button" className="landing-btn-nav-text" onClick={() => openAuthPanel("login")}>
@@ -5039,11 +5447,7 @@ function App() {
                                 aria-label="Leave this community"
                                 className="inline-flex min-h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-full border border-rose-300/80 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
                                 onClick={() => {
-                                  const leftName = toTitleCase(String(activeCommunity?.name || "").trim());
-                                  const leavingId = activeCommunity?.id ? String(activeCommunity.id) : "";
-                                  if (leavingId) void detachSellerListingsFromCommunity(leavingId);
-                                  applyJoinedCommunity("");
-                                  pushMarketplaceToast(`You left ${leftName || "the community"} successfully.`);
+                                  void leaveCommunityAndDetachListings(activeCommunity, { notifySuccess: true });
                                   leaveCommunityToGlobalMarketplace();
                                 }}
                               >
@@ -5064,11 +5468,7 @@ function App() {
                                 type="button"
                                 className="inline-flex min-h-9 items-center justify-center rounded-full border border-rose-300/80 bg-white px-2 py-1.5 text-[11px] font-medium leading-tight text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
                                 onClick={() => {
-                                  const leftName = toTitleCase(String(activeCommunity?.name || "").trim());
-                                  const leavingId = activeCommunity?.id ? String(activeCommunity.id) : "";
-                                  if (leavingId) void detachSellerListingsFromCommunity(leavingId);
-                                  applyJoinedCommunity("");
-                                  pushMarketplaceToast(`You left ${leftName || "the community"} successfully.`);
+                                  void leaveCommunityAndDetachListings(activeCommunity, { notifySuccess: true });
                                   leaveCommunityToGlobalMarketplace();
                                 }}
                               >
@@ -5112,11 +5512,7 @@ function App() {
                           type="button"
                           className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-rose-300/80 bg-white px-3 py-2.5 text-xs font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 sm:min-h-0 sm:flex-none sm:px-4 sm:py-2 sm:text-sm dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
                           onClick={() => {
-                            const leftName = toTitleCase(String(activeCommunity?.name || "").trim());
-                            const leavingId = activeCommunity?.id ? String(activeCommunity.id) : "";
-                            if (leavingId) void detachSellerListingsFromCommunity(leavingId);
-                            applyJoinedCommunity("");
-                            pushMarketplaceToast(`You left ${leftName || "the community"} successfully.`);
+                            void leaveCommunityAndDetachListings(activeCommunity, { notifySuccess: true });
                             leaveCommunityToGlobalMarketplace();
                           }}
                         >
@@ -5252,7 +5648,7 @@ function App() {
                               <p className="mt-0.5 text-xs text-neutral-600 dark:text-slate-400 sm:text-sm">
                                 Members:{" "}
                                 <span className="font-medium text-neutral-800 dark:text-slate-200">
-                                  {getDisplayedMemberCount(c.id, c.memberCount)}
+                                  {getDisplayedMemberCount(c)}
                                 </span>
                               </p>
                             </div>
@@ -5534,20 +5930,29 @@ function App() {
                           Refresh
                         </button>
                       ) : null}
-                      <ProductViewDensityToggle value={communityProductsView} onChange={setCommunityProductsView} />
+                      <ProductViewDensityToggle
+                        value={activeView === VIEWS.FAVORITES ? favoriteProductsView : communityProductsView}
+                        onChange={activeView === VIEWS.FAVORITES ? setFavoriteProductsView : setCommunityProductsView}
+                      />
                     </div>
                   </div>
                 ) : null}
                 {(activeView === VIEWS.FAVORITES
                   ? !(favoritesLoading && strictFavoritesList.length === 0) && visibleFavoritesListings.length > 0
                   : !listingsError && visibleBrowseListings.length > 0) ? (
-                  <div className={communityBrowseGridClass(communityProductsView)}>
+                  <div
+                    className={
+                      activeView === VIEWS.FAVORITES
+                        ? favoritesGridClass(favoriteProductsView)
+                        : communityBrowseGridClass(communityProductsView)
+                    }
+                  >
                     {(activeView === VIEWS.FAVORITES ? visibleFavoritesListings : visibleBrowseListings).map((l) => (
                       <CommunityShopListingCard
                         key={l.id}
                         listing={l}
-                        gridMode={communityProductsView !== "list"}
-                        compactGrid={communityProductsView === "compact"}
+                        gridMode={(activeView === VIEWS.FAVORITES ? favoriteProductsView : communityProductsView) !== "list"}
+                        compactGrid={(activeView === VIEWS.FAVORITES ? favoriteProductsView : communityProductsView) === "compact"}
                         isFavorite={favoriteIds.has(l.id)}
                         showActions
                         currentUserId={user?.id || ""}
@@ -5629,17 +6034,63 @@ function App() {
         )}
 
         {activeView === VIEWS.MESSAGES && (
-          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <div>
-              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Messages</h2>
-              <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
-                Start a chat from Users, then continue conversations here.
-              </p>
-            </div>
-            <div className="grid gap-3 md:grid-cols-[minmax(14rem,20rem)_1fr]">
-              <aside className={`${UI_KIT.surfaceRaised} max-h-[70vh] space-y-3 overflow-y-auto p-2`}>
+          <section
+            className={`flex min-h-[calc(100dvh-8.5rem-env(safe-area-inset-bottom,0px))] flex-col ${
+              messagesMobilePane === "thread"
+                ? "-mx-3 h-[calc(100dvh-8.5rem-env(safe-area-inset-bottom,0px))] space-y-0 overflow-hidden rounded-none border-0 bg-transparent p-0 shadow-none ring-0"
+                : `${UI_KIT.viewSection} space-y-4`
+            } md:mx-0 md:min-h-0 md:space-y-6`}
+          >
+            {messagesMobilePane !== "thread" ? (
+              <div>
+                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Messages</h2>
+              </div>
+            ) : null}
+            <div
+              className={`grid md:h-auto md:min-h-0 md:grid-cols-[minmax(14rem,20rem)_1fr] ${
+                messagesMobilePane === "thread"
+                  ? "h-full min-h-0 gap-0 overflow-hidden"
+                  : "h-[calc(100dvh-15rem-env(safe-area-inset-bottom,0px))] min-h-[28rem] gap-3"
+              }`}
+            >
+              <aside
+                className={`${UI_KIT.surfaceRaised} no-scrollbar h-full space-y-3 overflow-y-auto p-2 md:max-h-[70vh] ${
+                  messagesMobilePane === "thread" ? "hidden md:block" : ""
+                }`}
+              >
+                <div className="grid grid-cols-2 gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-1 md:hidden dark:border-slate-700 dark:bg-slate-900/70">
+                  <button
+                    type="button"
+                    className={`rounded-md px-2 py-1.5 text-xs font-semibold transition ${
+                      messagesMobileListTab === "conversations"
+                        ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-800 dark:text-slate-100"
+                        : "text-neutral-600 hover:bg-white/70 dark:text-slate-300 dark:hover:bg-slate-800/70"
+                    }`}
+                    onClick={() => setMessagesMobileListTab("conversations")}
+                  >
+                    Conversations
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded-md px-2 py-1.5 text-xs font-semibold transition ${
+                      messagesMobileListTab === "people"
+                        ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-800 dark:text-slate-100"
+                        : "text-neutral-600 hover:bg-white/70 dark:text-slate-300 dark:hover:bg-slate-800/70"
+                    }`}
+                    onClick={() => setMessagesMobileListTab("people")}
+                  >
+                    People
+                  </button>
+                </div>
                 <div>
-                  <p className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Conversations</p>
+                  <p
+                    className={`px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400 ${
+                      messagesMobileListTab === "people" ? "hidden md:block" : ""
+                    }`}
+                  >
+                    Conversations
+                  </p>
+                  <div className={messagesMobileListTab === "people" ? "hidden md:block" : ""}>
                   {sortedChatThreads.length === 0 ? (
                     <p className="px-2 py-3 text-sm text-neutral-600 dark:text-slate-400">No chats yet. Start one from People below.</p>
                   ) : (
@@ -5657,9 +6108,8 @@ function App() {
                                   ? "bg-brand-soft text-brand-primary dark:bg-slate-800/80 dark:text-slate-100"
                                   : "hover:bg-neutral-100 dark:hover:bg-slate-800"
                               }`}
-                              onClick={() => {
-                                setActiveChatUserId(String(thread.participantId || ""));
-                              }}
+                              aria-current={selected ? "true" : undefined}
+                              onClick={() => openChatThread(thread.participantId)}
                             >
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-sm font-medium text-neutral-900 dark:text-slate-100">
@@ -5681,8 +6131,13 @@ function App() {
                       })}
                     </ul>
                   )}
+                  </div>
                 </div>
-                <div className="border-t border-neutral-200/90 pt-2 dark:border-slate-700/80">
+                <div
+                  className={`border-t border-neutral-200/90 pt-2 dark:border-slate-700/80 ${
+                    messagesMobileListTab === "conversations" ? "hidden md:block" : ""
+                  }`}
+                >
                   <div className="space-y-2 px-2 pb-2">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">People</p>
@@ -5763,27 +6218,44 @@ function App() {
                   ) : null}
                 </div>
               </aside>
-              <div className={`${UI_KIT.surfaceRaised} flex min-h-[24rem] flex-col`}>
+              <div
+                className={`${UI_KIT.surfaceRaised} min-h-[24rem] flex-col ${
+                  messagesMobilePane === "list"
+                    ? "hidden md:flex"
+                    : "grid h-[calc(100dvh-8.5rem-env(safe-area-inset-bottom,0px))] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-none border-x-0 border-b-0 shadow-none ring-0 md:flex md:h-full md:rounded-2xl md:border md:shadow-sm md:ring-1"
+                } h-full`}
+              >
                 {!activeChatThread ? (
                   <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-neutral-600 dark:text-slate-400">
                     Select a conversation from the left.
                   </div>
                 ) : (
                   <>
-                    <div className="border-b border-neutral-200 px-4 py-3 dark:border-slate-700">
+                    <div className="border-b border-neutral-200 px-4 py-2 dark:border-slate-700 md:py-3">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-brand-primary md:hidden"
+                        onClick={() => setMessagesMobilePane("list")}
+                      >
+                        <span aria-hidden>←</span>
+                        Back to chats
+                      </button>
                       <p className="text-sm font-semibold text-neutral-900 dark:text-slate-100">
                         {formatDisplayName(activeChatUser?.name || activeChatUser?.username || "Member")}
                       </p>
                       <p className="mt-0.5 text-xs text-neutral-500 dark:text-slate-400">{communityLabelForUser(activeChatUser)}</p>
                     </div>
-                    <div className="flex-1 space-y-2 overflow-y-auto p-4">
+                    <div
+                      ref={chatThreadViewportRef}
+                      className="min-h-0 overflow-x-hidden overflow-y-auto p-4 md:flex-1"
+                    >
                       {activeChatThread.messages.length === 0 ? (
                         <p className="text-sm text-neutral-500 dark:text-slate-400">No messages yet. Send the first one.</p>
                       ) : (
                         activeChatThread.messages.map((m) => {
                           const mine = String(m.senderId) === String(user?.id || "");
                           return (
-                            <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                            <div key={m.id} className={`mt-2 flex ${mine ? "justify-end" : "justify-start"}`}>
                               <div
                                 className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
                                   mine
@@ -5801,12 +6273,26 @@ function App() {
                         })
                       )}
                     </div>
-                    <div className="border-t border-neutral-200 p-3 dark:border-slate-700">
+                    <div
+                      className={`border-t border-neutral-200 p-3 dark:border-slate-700 ${
+                        messagesMobilePane === "thread"
+                          ? "mb-4 bg-white/95 backdrop-blur md:mb-0 md:bg-transparent md:backdrop-blur-0"
+                          : ""
+                      }`}
+                    >
                       <div className="flex gap-2">
                         <input
+                          ref={chatComposerInputRef}
                           type="text"
                           value={chatComposer}
-                          onChange={(e) => setChatComposer(e.target.value)}
+                          onChange={(e) => {
+                            const nextValue = e.target.value;
+                            const key = String(activeChatUserId || "").trim();
+                            setChatComposer(nextValue);
+                            if (key) {
+                              setChatDraftByUserId((prev) => ({ ...prev, [key]: nextValue }));
+                            }
+                          }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" && !e.shiftKey) {
                               e.preventDefault();
@@ -5820,7 +6306,7 @@ function App() {
                           type="button"
                           className="inline-flex h-11 items-center justify-center rounded-lg bg-brand-primary px-4 text-sm font-semibold text-white transition hover:bg-brand-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                           onClick={sendChatMessage}
-                          disabled={!String(chatComposer || "").trim()}
+                          disabled={chatSendPending}
                         >
                           Send
                         </button>
@@ -5930,15 +6416,15 @@ function App() {
             {strictFavoritesList.length > 0 ? (
               <>
                 <div className="flex justify-end">
-                  <ProductViewDensityToggle value={communityProductsView} onChange={setCommunityProductsView} />
+                  <ProductViewDensityToggle value={favoriteProductsView} onChange={setFavoriteProductsView} />
                 </div>
-                <div className={communityBrowseGridClass(communityProductsView)}>
+                <div className={favoritesGridClass(favoriteProductsView)}>
                   {strictFavoritesList.map((l) => (
                     <CommunityShopListingCard
                       key={l.id}
                       listing={l}
-                      gridMode={communityProductsView !== "list"}
-                      compactGrid={communityProductsView === "compact"}
+                      gridMode={favoriteProductsView !== "list"}
+                      compactGrid={favoriteProductsView === "compact"}
                       isFavorite={favoriteIds.has(l.id)}
                       showActions
                       currentUserId={user?.id || ""}

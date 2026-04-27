@@ -28,6 +28,17 @@
 }
 
 @layer components {
+  /* Hide scrollbar while keeping the area scrollable. */
+  .no-scrollbar {
+    -ms-overflow-style: none; /* IE and legacy Edge */
+    scrollbar-width: none; /* Firefox */
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none; /* Chrome, Safari, Opera */
+  }
+
   /* Mobile filter drawer: less intrusive scrollbar */
   .drawer-scroll {
     scrollbar-width: thin;

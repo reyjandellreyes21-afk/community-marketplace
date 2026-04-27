@@ -18,6 +18,9 @@ export function CommunityShopListingCard({
   onEdit,
   /** Opens read-only full description / details (browse, cart flow, favorites). */
   onInspect,
+  /** When true, Buy now is disabled (e.g. sign-in or profile incomplete). */
+  buyNowDisabled = false,
+  buyNowDisabledReason = "",
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
   const imageUrl = String(listing.imageUrl || "").trim();
@@ -40,23 +43,23 @@ export function CommunityShopListingCard({
         gridMode ? "flex h-full min-h-0 flex-col" : ""
       }`}
     >
-      {!isOwner && showFavoriteIcon ? (
-        <button
-          type="button"
-          className="absolute right-3 top-3 z-10 rounded-full border border-neutral-200/90 bg-white/95 p-1.5 text-rose-500 shadow-sm transition hover:bg-rose-50 dark:border-slate-600 dark:bg-slate-900/95 dark:hover:bg-rose-950/30"
-          aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleFavorite?.();
-          }}
-        >
-          <span className="text-base leading-none">{isFavorite ? "♥" : "♡"}</span>
-        </button>
-      ) : null}
       <div
         className={`flex min-h-0 ${gridMode ? `flex-1 flex-col ${mainGap}` : "flex-row items-start gap-3"}`}
       >
-        <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 ${imgBox}`}>
+        <div className={`relative shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-800 ${imgBox}`}>
+          {!isOwner && showFavoriteIcon ? (
+            <button
+              type="button"
+              className="absolute right-2 top-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-md border border-neutral-200/90 bg-white text-rose-500 shadow-sm transition hover:scale-105 hover:text-rose-600 dark:border-slate-600 dark:bg-slate-900 dark:text-rose-400 dark:hover:text-rose-300"
+              aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleFavorite?.();
+              }}
+            >
+              <span className="text-[1.45rem] leading-none">{isFavorite ? "♥" : "♡"}</span>
+            </button>
+          ) : null}
           {imageUrl ? (
             <img src={imageUrl} alt={listing.title || "Product"} className="h-full w-full object-cover" />
           ) : (
@@ -150,8 +153,19 @@ export function CommunityShopListingCard({
               </button>
               <button
                 type="button"
-                title={isOutOfStock ? undefined : "Go to checkout — choose pickup or delivery"}
-                className="min-h-[44px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-brand-primary/90 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-1.5 sm:text-xs dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
+                title={
+                  isOutOfStock
+                    ? undefined
+                    : buyNowDisabled && buyNowDisabledReason
+                      ? buyNowDisabledReason
+                      : "Go to checkout — choose pickup or delivery"
+                }
+                aria-label={isOutOfStock ? "Out of stock" : "Buy now"}
+                className={`min-h-[44px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-sm font-semibold text-white transition sm:min-h-0 sm:py-1.5 sm:text-xs dark:bg-brand-accent dark:text-slate-900 ${
+                  isOutOfStock
+                    ? "cursor-not-allowed opacity-50"
+                    : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
+                } disabled:cursor-not-allowed disabled:opacity-50`}
                 disabled={isOutOfStock}
                 onClick={(e) => {
                   e.stopPropagation();

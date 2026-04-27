@@ -1,16 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import navLogo from "../assets/LM-LIGHT.png";
+import navLogo from "../assets/new-brand-logo.png";
 import { VIEWS } from "../views.js";
-
-function MenuIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden {...props}>
-      <line x1="4" x2="20" y1="7" y2="7" />
-      <line x1="4" x2="20" y1="12" y2="12" />
-      <line x1="4" x2="20" y1="17" y2="17" />
-    </svg>
-  );
-}
 
 function ChevronDownIcon(props) {
   return (
@@ -53,17 +43,41 @@ function MoonIcon(props) {
   );
 }
 
-function MessagesIcon(props) {
+function MessagesIcon({ filled = false, ...props }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={20}
+      height={20}
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke={filled ? "none" : "currentColor"}
+      strokeWidth={filled ? 0 : 2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...props}
+    >
       <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
     </svg>
   );
 }
 
-function NotificationsIcon(props) {
+function NotificationsIcon({ filled = false, ...props }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={20}
+      height={20}
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke={filled ? "none" : "currentColor"}
+      strokeWidth={filled ? 0 : 2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...props}
+    >
       <path d="M18 8A6 6 0 0 0 6 8c0 7-3 7-3 7h18s-3 0-3-7" />
       <path d="M13.73 21a2 2 0 0 1-3.46 0" />
     </svg>
@@ -181,7 +195,13 @@ const accountMenuIconWrap =
 const accountMenuIconWrapDanger =
   "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-rose-200/80 bg-rose-50 text-rose-600 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-400";
 
-function LinkMartLogo({ className = "h-7 w-auto max-w-[11rem] shrink-0 object-contain sm:h-8 sm:max-w-[13rem]" }) {
+const headerUtilityButtonBase =
+  "relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-700 shadow-sm transition hover:-translate-y-px hover:border-neutral-400 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800";
+
+const headerUtilityButtonActive =
+  "border-emerald-400/60 bg-white text-emerald-600 ring-2 ring-emerald-400/20 dark:border-emerald-400/50 dark:bg-slate-900 dark:text-emerald-300 dark:ring-emerald-400/20";
+
+function LinkMartLogo({ className = "h-9 w-9 shrink-0 object-contain sm:h-10 sm:w-10" }) {
   return <img src={navLogo} alt="LinkMart logo" className={className} />;
 }
 
@@ -192,10 +212,7 @@ function navPillShop(active, role) {
   if (!active) {
     return `${layout} text-neutral-600 hover:bg-white/90 hover:text-neutral-900 focus-visible:ring-violet-400/35 dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100 dark:focus-visible:ring-violet-500/30`;
   }
-  if (role === "browse") {
-    return `${layout} bg-white text-violet-950 shadow-sm ring-1 ring-violet-300/90 focus-visible:ring-violet-400/40 dark:bg-slate-900 dark:text-violet-50 dark:ring-violet-500/50`;
-  }
-  return `${layout} bg-white text-amber-950 shadow-sm ring-1 ring-amber-300/90 focus-visible:ring-amber-400/40 dark:bg-slate-900 dark:text-amber-50 dark:ring-amber-500/50`;
+  return `${layout} bg-white text-neutral-900 shadow-sm ring-1 ring-emerald-300/80 focus-visible:ring-emerald-400/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-emerald-500/45`;
 }
 
 /** Desktop pills for Buying vs Selling — distinct active colors inside the trade group. */
@@ -205,10 +222,7 @@ function navPillTrade(active, role) {
   if (!active) {
     return `${layout} text-neutral-600 hover:bg-white/90 hover:text-neutral-900 dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100`;
   }
-  if (role === "buy") {
-    return `${layout} bg-white text-sky-900 shadow-sm ring-1 ring-sky-300/90 dark:bg-slate-900 dark:text-sky-50 dark:ring-sky-500/55`;
-  }
-  return `${layout} bg-white text-emerald-900 shadow-sm ring-1 ring-emerald-300/90 dark:bg-slate-900 dark:text-emerald-50 dark:ring-emerald-500/50`;
+  return `${layout} bg-white text-neutral-900 shadow-sm ring-1 ring-emerald-300/80 dark:bg-slate-900 dark:text-slate-100 dark:ring-emerald-500/45`;
 }
 
 /** Bottom bar: Marketplace + Cart share one visual segment. */
@@ -444,7 +458,7 @@ export function LoggedInHeader({
     <header className="sticky top-0 z-50 border-b border-neutral-200/80 bg-white/90 shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/95">
       <div className="app-container flex h-[4.25rem] items-center justify-between gap-2 sm:gap-3">
         <button type="button" className="rounded-xl px-1 py-1 focus:outline-none" onClick={goMarketplaceRoot} aria-label="Go to marketplace">
-          <LinkMartLogo className="h-7 w-auto max-w-[9rem] shrink-0 object-contain sm:h-8 sm:max-w-[11rem]" />
+          <LinkMartLogo className="h-9 w-auto max-w-[9.5rem] shrink-0 object-contain sm:h-10 sm:max-w-[10.5rem]" />
         </button>
 
         {communityShopName && onLeaveCommunityShop ? (
@@ -471,7 +485,7 @@ export function LoggedInHeader({
         <div className="hidden min-w-0 flex-1 items-center justify-center overflow-x-auto md:flex">
           <nav className="flex min-w-0 max-w-full items-center justify-center" aria-label="Main">
             <div
-              className="flex max-w-full shrink-0 items-center gap-0.5 rounded-full border border-neutral-200/80 bg-neutral-100/85 p-0.5 shadow-[inset_0_1px_2px_rgba(15,23,42,0.05)] dark:border-slate-600 dark:bg-slate-800/55 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.2)]"
+              className="flex max-w-full shrink-0 items-center gap-0.5 rounded-full p-0.5"
               role="group"
               aria-label="Marketplace, cart, and your orders"
             >
@@ -488,7 +502,7 @@ export function LoggedInHeader({
                 }}
               >
                 <MenuStoreIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${browsePillActive ? "text-violet-600 dark:text-violet-300" : ""}`}
+                  className={`h-[18px] w-[18px] shrink-0 ${browsePillActive ? "text-emerald-600 dark:text-emerald-300" : ""}`}
                 />
                 <span className="max-w-[5.5rem] truncate sm:max-w-none">Marketplace</span>
               </button>
@@ -503,7 +517,7 @@ export function LoggedInHeader({
                 }}
               >
                 <MenuCartIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.CART ? "text-amber-600 dark:text-amber-300" : ""}`}
+                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.CART ? "text-emerald-600 dark:text-emerald-300" : ""}`}
                 />
                 <span className="max-w-[7rem] truncate sm:max-w-none">Add to cart</span>
                 {cartItemCount > 0 ? (
@@ -527,7 +541,7 @@ export function LoggedInHeader({
                 }}
               >
                 <MenuFileIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.MY_PURCHASES ? "text-sky-600 dark:text-sky-300" : ""}`}
+                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.MY_PURCHASES ? "text-emerald-600 dark:text-emerald-300" : ""}`}
                 />
                 <span className="max-w-[5.5rem] truncate sm:max-w-none">Buying</span>
                 {purchasesItemCount > 0 ? (
@@ -575,29 +589,31 @@ export function LoggedInHeader({
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
-                activeView === VIEWS.MESSAGES ? "ring-2 ring-brand-primary/40" : ""
-              }`}
+              className={`${headerUtilityButtonBase} ${activeView === VIEWS.MESSAGES ? headerUtilityButtonActive : ""}`}
               aria-label="Messages"
               onClick={() => {
                 setActiveView(VIEWS.MESSAGES);
                 closeAllMenus();
               }}
             >
-              <MessagesIcon />
+              <MessagesIcon
+                filled={activeView === VIEWS.MESSAGES}
+                className={activeView === VIEWS.MESSAGES ? "text-emerald-600 dark:text-emerald-300" : ""}
+              />
             </button>
             <button
               type="button"
-              className={`relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
-                activeView === VIEWS.NOTIFICATIONS ? "ring-2 ring-brand-primary/40" : ""
-              }`}
+              className={`${headerUtilityButtonBase} ${activeView === VIEWS.NOTIFICATIONS ? headerUtilityButtonActive : ""}`}
               aria-label="Notifications"
               onClick={() => {
                 setActiveView(VIEWS.NOTIFICATIONS);
                 closeAllMenus();
               }}
             >
-              <NotificationsIcon />
+              <NotificationsIcon
+                filled={activeView === VIEWS.NOTIFICATIONS}
+                className={activeView === VIEWS.NOTIFICATIONS ? "text-emerald-600 dark:text-emerald-300" : ""}
+              />
               {notificationUnreadCount > 0 ? (
                 <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm">
                   {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
@@ -606,22 +622,25 @@ export function LoggedInHeader({
             </button>
             <button
               type="button"
-              className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
-                activeView === VIEWS.FAVORITES ? "ring-2 ring-brand-primary/40 text-brand-primary" : ""
-              }`}
+              className={`${headerUtilityButtonBase} ${activeView === VIEWS.FAVORITES ? headerUtilityButtonActive : ""}`}
               aria-label="My Favorites"
               onClick={() => {
                 setActiveView(VIEWS.FAVORITES);
                 closeAllMenus();
               }}
             >
-              <HeartIcon filled={activeView === VIEWS.FAVORITES} />
+              <HeartIcon
+                filled={activeView === VIEWS.FAVORITES}
+                className={activeView === VIEWS.FAVORITES ? "text-emerald-600 dark:text-emerald-300" : ""}
+              />
             </button>
           </div>
           <div className="relative" ref={accountMenuRef}>
             <button
               type="button"
-              className="inline-flex items-center gap-2 rounded-full border border-neutral-200/90 bg-white px-2 py-1.5 pl-1.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+              className={`inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:-translate-y-px hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
+                accountMenuOpen ? headerUtilityButtonActive : ""
+              }`}
               aria-expanded={accountMenuOpen}
               aria-haspopup="menu"
               aria-label="Account menu"
@@ -634,8 +653,6 @@ export function LoggedInHeader({
                   (String(user?.username || "").trim().charAt(0) || "?").toUpperCase()
                 )}
               </span>
-              <span className="max-w-[8rem] truncate lg:max-w-[10rem]">{accountLabel}</span>
-              <ChevronDownIcon className={`shrink-0 text-neutral-500 transition-transform dark:text-slate-400 ${accountMenuOpen ? "rotate-180" : ""}`} />
             </button>
             {accountMenuOpen ? (
               <div
@@ -740,29 +757,31 @@ export function LoggedInHeader({
         <div className="flex shrink-0 items-center gap-1.5 md:hidden">
           <button
             type="button"
-            className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
-              activeView === VIEWS.MESSAGES ? "ring-2 ring-brand-primary/40" : ""
-            }`}
+            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 ${activeView === VIEWS.MESSAGES ? headerUtilityButtonActive : ""}`}
             aria-label="Messages"
             onClick={() => {
               setActiveView(VIEWS.MESSAGES);
               closeAllMenus();
             }}
           >
-            <MessagesIcon />
+            <MessagesIcon
+              filled={activeView === VIEWS.MESSAGES}
+              className={activeView === VIEWS.MESSAGES ? "text-emerald-600 dark:text-emerald-300" : ""}
+            />
           </button>
           <button
             type="button"
-            className={`relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
-              activeView === VIEWS.NOTIFICATIONS ? "ring-2 ring-brand-primary/40" : ""
-            }`}
+            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 ${activeView === VIEWS.NOTIFICATIONS ? headerUtilityButtonActive : ""}`}
             aria-label="Notifications"
             onClick={() => {
               setActiveView(VIEWS.NOTIFICATIONS);
               closeAllMenus();
             }}
           >
-            <NotificationsIcon />
+            <NotificationsIcon
+              filled={activeView === VIEWS.NOTIFICATIONS}
+              className={activeView === VIEWS.NOTIFICATIONS ? "text-emerald-600 dark:text-emerald-300" : ""}
+            />
             {notificationUnreadCount > 0 ? (
               <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm">
                 {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
@@ -771,29 +790,36 @@ export function LoggedInHeader({
           </button>
           <button
             type="button"
-            className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
-              activeView === VIEWS.FAVORITES ? "ring-2 ring-brand-primary/40 text-brand-primary" : ""
-            }`}
+            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 ${activeView === VIEWS.FAVORITES ? headerUtilityButtonActive : ""}`}
             aria-label="My Favorites"
             onClick={() => {
               setActiveView(VIEWS.FAVORITES);
               closeAllMenus();
             }}
           >
-            <HeartIcon filled={activeView === VIEWS.FAVORITES} />
+            <HeartIcon
+              filled={activeView === VIEWS.FAVORITES}
+              className={activeView === VIEWS.FAVORITES ? "text-emerald-600 dark:text-emerald-300" : ""}
+            />
           </button>
           <button
             ref={mobileMenuButtonRef}
             type="button"
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 overflow-hidden p-0`}
             onClick={() => {
               setMobileMenuOpen((v) => !v);
             }}
             aria-expanded={mobileMenuOpen}
             aria-controls="mobile-nav-menu-panel"
-            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+            aria-label={mobileMenuOpen ? "Close account menu" : "Open account menu"}
           >
-            <MenuIcon />
+            {user?.avatarUrl ? (
+              <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <span className="inline-flex h-full w-full items-center justify-center bg-brand-soft text-sm font-bold text-brand-primary">
+                {(String(user?.username || "").trim().charAt(0) || "?").toUpperCase()}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -941,11 +967,7 @@ export function LoggedInHeader({
       aria-label="Main"
     >
       <div className="app-container flex items-stretch px-1">
-        <div
-          className="flex min-h-0 min-w-0 flex-1 items-stretch gap-px rounded-2xl border border-neutral-200/85 bg-neutral-100/90 p-px shadow-[inset_0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-600 dark:bg-slate-800/65 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.18)]"
-          role="group"
-          aria-label="Marketplace, cart, and your orders"
-        >
+        <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-px" role="group" aria-label="Marketplace, cart, and your orders">
           <button
             type="button"
             className={bottomNavShopClass(browsePillActive, "browse")}

@@ -8,6 +8,8 @@ import { splitGoogleDisplayName, userToClient } from "../utils/displayName.js";
 const googleClient = new OAuth2Client(config.googleClientId || undefined);
 const isMissingProfilesCommunityColumn = (error) =>
   /community/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
+const isMissingProfilesCommunityIdColumn = (error) =>
+  /community_id/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
 const USERNAME_RULE = /^[a-z][a-z0-9._]{2,19}$/;
 const USERNAME_DUPLICATE_SEPARATOR_RULE = /(\.\.|__)/;
 
@@ -173,6 +175,19 @@ const getProfileById = async (id) => {
   return Array.isArray(data) && data.length > 0 ? data[0] : null;
 };
 
+const resolveProfileCommunityId = async ({ community }) => {
+  try {
+    const { data: communityRows, error } = await supabaseAdmin.from("communities").select("*");
+    if (error) return null;
+    const label = String(community || "").trim().toLowerCase();
+    if (!label) return null;
+    const exact = (communityRows || []).find((c) => String(c?.name || "").trim().toLowerCase() === label);
+    return exact?.id ? String(exact.id) : null;
+  } catch {
+    return null;
+  }
+};
+
 const ensureProfile = async (user, partial = {}) => {
   const payload = normalizeProfilePayloadPhone({
     id: user.id,
@@ -332,7 +347,7 @@ export const updateMe = async (req, res, next) => {
   try {
     const existingProfile = await getProfileById(req.user.id);
     const {
-      firstName, middleName, lastName, username, avatarUrl, email, phone, birthday, community, address, addressUrl, age, gender, facebookUrl, twitterUrl, instagramUrl,
+      firstName, middleName, lastName, username, avatarUrl, email, phone, birthday, community, communityId, address, addressUrl, age, gender, facebookUrl, twitterUrl, instagramUrl,
     } = req.body || {};
 
     const updates = {};
@@ -379,18 +394,50 @@ export const updateMe = async (req, res, next) => {
     if (updates.phone !== undefined) {
       updates.phone = await ensureUniquePhoneOnWrite(updates.phone, req.user.id);
     }
+    if (communityId !== undefined) {
+      const rawCommunityId = communityId === null ? "" : String(communityId).trim();
+      if (!rawCommunityId) {
+        updates.community_id = null;
+      } else {
+        const { data: communityRow, error: communityErr } = await supabaseAdmin
+          .from("communities")
+          .select("id,name")
+          .eq("id", rawCommunityId)
+          .maybeSingle();
+        if (communityErr) throw new AppError(400, communityErr.message || "Invalid community.");
+        if (!communityRow?.id) throw new AppError(400, "Community not found.");
+        updates.community_id = String(communityRow.id);
+        if (community === undefined) updates.community = String(communityRow.name || "").trim();
+      }
+    }
+    if (updates.address !== undefined || updates.community !== undefined) {
+      const nextCommunity = updates.community !== undefined ? updates.community : String(existingProfile?.community || "");
+      updates.community_id = await resolveProfileCommunityId({ community: nextCommunity });
+    }
 
     if (existingProfile) {
       const { error } = await supabaseAdmin.from("profiles").update(updates).eq("id", req.user.id);
-      if (error && isMissingProfilesCommunityColumn(error)) {
-        const { community, ...updatesWithoutCommunity } = updates;
-        const retry = await supabaseAdmin.from("profiles").update(updatesWithoutCommunity).eq("id", req.user.id);
+      if (error && (isMissingProfilesCommunityColumn(error) || isMissingProfilesCommunityIdColumn(error))) {
+        const updatesWithoutMissingColumns = { ...updates };
+        if (isMissingProfilesCommunityColumn(error)) delete updatesWithoutMissingColumns.community;
+        if (isMissingProfilesCommunityIdColumn(error)) delete updatesWithoutMissingColumns.community_id;
+        const retry = await supabaseAdmin.from("profiles").update(updatesWithoutMissingColumns).eq("id", req.user.id);
         if (retry.error) throw new AppError(500, retry.error.message || "Failed to update profile.");
       } else if (error) {
         throw new AppError(500, error.message || "Failed to update profile.");
       }
       const data = await getProfileById(req.user.id);
       if (!data) throw new AppError(500, "Failed to load updated profile.");
+      if (updates.community !== undefined || updates.community_id !== undefined) {
+        const existingMeta = req.user?.user_metadata || {};
+        await supabaseAdmin.auth.admin.updateUserById(req.user.id, {
+          user_metadata: {
+            ...existingMeta,
+            ...(updates.community !== undefined ? { community: updates.community || "" } : {}),
+            ...(updates.community_id !== undefined ? { community_id: updates.community_id || null } : {}),
+          },
+        });
+      }
       if (updates.address !== undefined) {
         await syncSellerListingsCommunityId(supabaseAdmin, req.user.id, String(data?.address ?? ""));
       }
@@ -405,6 +452,7 @@ export const updateMe = async (req, res, next) => {
     if (updates.avatar_url !== undefined) userMetadata.avatar_url = updates.avatar_url;
     if (updates.phone !== undefined) userMetadata.phone = updates.phone;
     if (updates.community !== undefined) userMetadata.community = updates.community;
+    if (updates.community_id !== undefined) userMetadata.community_id = updates.community_id;
     if (updates.birthday !== undefined) userMetadata.birthday = updates.birthday;
     if (updates.address !== undefined) userMetadata.address = updates.address;
     if (updates.address_url !== undefined) userMetadata.address_url = updates.address_url;

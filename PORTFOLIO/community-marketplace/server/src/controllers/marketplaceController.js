@@ -247,70 +247,43 @@ const communityRowToApi = (row, memberCount) => {
   };
 };
 
-function countProfilesMatchingCommunity(communityRow, profileRows) {
-  let n = 0;
-  const communityName = String(communityRow?.name || "").trim().toLowerCase();
-  for (const p of profileRows || []) {
-    const profileCommunity = String(p?.community || "").trim().toLowerCase();
-    if (
-      communityName &&
-      profileCommunity &&
-      (profileCommunity === communityName || isLikelySameCommunityName(profileCommunity, communityName))
-    ) {
-      n += 1;
-      continue;
+/** Members are users whose profile `community_id` matches the community UUID. */
+async function loadProfileMemberCountsByCommunity() {
+  const { data, error } = await supabaseAdmin.from("profiles").select("id,community_id");
+  if (error) {
+    const counts = new Map();
+    try {
+      const authList = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      const users = authList?.data?.users || [];
+      const uniqueMembersByCommunity = new Map();
+      for (const user of users) {
+        const userId = String(user?.id || "").trim();
+        const communityId = String(user?.user_metadata?.community_id || "").trim();
+        if (!userId || !communityId) continue;
+        if (!uniqueMembersByCommunity.has(communityId)) uniqueMembersByCommunity.set(communityId, new Set());
+        uniqueMembersByCommunity.get(communityId).add(userId);
+      }
+      for (const [communityId, members] of uniqueMembersByCommunity.entries()) {
+        counts.set(communityId, members.size);
+      }
+    } catch {
+      // Ignore fallback failures and return empty counts.
     }
-    if (p?.address != null && doesProfileAddressMatchCommunity(communityRow, p.address)) n += 1;
+    return counts;
   }
-  return n;
-}
-
-/** Members = profiles whose saved `address` matches the community Brgy/name + city, province, postal (strict). */
-function computeCommunityMemberCountsByProfileAddress(communities, profileRows) {
+  const uniqueMembersByCommunity = new Map();
+  for (const row of data || []) {
+    const userId = String(row?.id || "").trim();
+    const communityId = String(row?.community_id || "").trim();
+    if (!userId || !communityId) continue;
+    if (!uniqueMembersByCommunity.has(communityId)) uniqueMembersByCommunity.set(communityId, new Set());
+    uniqueMembersByCommunity.get(communityId).add(userId);
+  }
   const counts = new Map();
-  for (const c of communities) {
-    counts.set(String(c.id), countProfilesMatchingCommunity(c, profileRows));
+  for (const [communityId, members] of uniqueMembersByCommunity.entries()) {
+    counts.set(communityId, members.size);
   }
   return counts;
-}
-
-/** Try `community` + `address`; gracefully fallback if `community` column is unavailable. */
-async function loadProfilesForCommunityCounts() {
-  const withCommunity = await supabaseAdmin.from("profiles").select("id, address, community");
-  const profileRows = withCommunity.error ? [] : withCommunity.data || [];
-
-  // Include auth users metadata as a fallback source so counts stay accurate
-  // even when some users don't have populated profile rows yet.
-  const merged = new Map();
-  for (const row of profileRows) {
-    const id = String(row?.id || "");
-    if (!id) continue;
-    merged.set(id, {
-      id,
-      address: String(row?.address || ""),
-      community: String(row?.community || ""),
-    });
-  }
-
-  try {
-    const authList = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    const users = authList?.data?.users || [];
-    for (const user of users) {
-      const id = String(user?.id || "");
-      if (!id) continue;
-      const meta = user?.user_metadata || {};
-      const existing = merged.get(id);
-      merged.set(id, {
-        id,
-        address: String(existing?.address || meta.address || ""),
-        community: String(existing?.community || meta.community || ""),
-      });
-    }
-  } catch {
-    // Fallback to profile rows only when auth listing is unavailable.
-  }
-
-  return Array.from(merged.values());
 }
 
 /** Count distinct active listing sellers per community. */
@@ -1315,26 +1288,112 @@ export const listUsersDirectory = async (req, res, next) => {
   try {
     let data = null;
     let error = null;
+    const { data: communityRows, error: communitiesErr } = await supabaseAdmin.from("communities").select("*");
+    const knownCommunities = communitiesErr ? [] : communityRows || [];
     ({ data, error } = await supabaseAdmin
       .from("profiles")
-      .select("id, username, first_name, middle_name, last_name, community, created_at")
+      .select("id, username, first_name, middle_name, last_name, address, community, created_at")
       .order("username", { ascending: true })
       .limit(200));
     if (error && (error.code === "PGRST204" || /community/i.test(String(error.message || "")))) {
       ({ data, error } = await supabaseAdmin
         .from("profiles")
-        .select("id, username, first_name, middle_name, last_name, created_at")
+        .select("id, username, first_name, middle_name, last_name, address, created_at")
         .order("username", { ascending: true })
         .limit(200));
     }
     if (error) throw new AppError(500, error.message);
-    const rows = (data || []).map((p) => ({
-      id: p.id,
-      username: p.username || "",
-      name: [p.first_name, p.middle_name, p.last_name].filter(Boolean).join(" ").trim() || p.username || "Member",
-      community: String(p.community || "").trim(),
-      joinedAt: p.created_at || null,
-    }));
+    const mergedById = new Map();
+    for (const p of data || []) {
+      const id = String(p?.id || "").trim();
+      if (!id) continue;
+      mergedById.set(id, {
+        id,
+        username: String(p?.username || "").trim(),
+        firstName: String(p?.first_name || "").trim(),
+        middleName: String(p?.middle_name || "").trim(),
+        lastName: String(p?.last_name || "").trim(),
+        address: String(p?.address || "").trim(),
+        community: String(p?.community || "").trim(),
+        joinedAt: p?.created_at || null,
+      });
+    }
+
+    // Some users only have community saved in auth metadata; merge as fallback.
+    try {
+      const authList = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      const authUsers = authList?.data?.users || [];
+      for (const authUser of authUsers) {
+        const id = String(authUser?.id || "").trim();
+        if (!id) continue;
+        const meta = authUser?.user_metadata || {};
+        const existing = mergedById.get(id);
+        mergedById.set(id, {
+          id,
+          username: String(existing?.username || meta.username || authUser?.email || "").trim(),
+          firstName: String(existing?.firstName || meta.first_name || meta.firstName || "").trim(),
+          middleName: String(existing?.middleName || meta.middle_name || meta.middleName || "").trim(),
+          lastName: String(existing?.lastName || meta.last_name || meta.lastName || "").trim(),
+          address: String(existing?.address || meta.address || "").trim(),
+          community: String(existing?.community || meta.community || "").trim(),
+          joinedAt: existing?.joinedAt || authUser?.created_at || null,
+        });
+      }
+    } catch {
+      // Keep directory usable even when auth list is unavailable.
+    }
+
+    const inferCommunityFromAddress = (address) => {
+      const addr = String(address || "").trim();
+      if (!addr) return "";
+      const byAddressMatch = knownCommunities.find((c) => doesProfileAddressMatchCommunity(c, addr));
+      if (byAddressMatch?.name) return String(byAddressMatch.name).trim();
+      const firstToken = addr.split(",")[0]?.trim() || "";
+      if (!firstToken) return "";
+      const byNameSimilarity = knownCommunities.find((c) =>
+        isLikelySameCommunityName(firstToken, String(c?.name || "").trim()),
+      );
+      return byNameSimilarity?.name ? String(byNameSimilarity.name).trim() : "";
+    };
+
+    const communitiesById = new Map(
+      knownCommunities.map((c) => [String(c?.id || "").trim(), String(c?.name || "").trim()]).filter(([id, name]) => id && name),
+    );
+    const userIds = Array.from(mergedById.keys());
+    const listingCommunityByUserId = new Map();
+    if (userIds.length > 0) {
+      const { data: listingRows, error: listingsErr } = await supabaseAdmin
+        .from("listings")
+        .select("seller_id,community_id,created_at")
+        .in("seller_id", userIds)
+        .not("community_id", "is", null)
+        .order("created_at", { ascending: false });
+      if (!listingsErr) {
+        for (const row of listingRows || []) {
+          const sellerId = String(row?.seller_id || "").trim();
+          const communityId = String(row?.community_id || "").trim();
+          if (!sellerId || !communityId) continue;
+          if (listingCommunityByUserId.has(sellerId)) continue; // keep latest listing's community
+          const communityName = communitiesById.get(communityId) || "";
+          if (communityName) listingCommunityByUserId.set(sellerId, communityName);
+        }
+      }
+    }
+
+    const rows = Array.from(mergedById.values())
+      .map((p) => ({
+        id: p.id,
+        username: p.username || "",
+        name: [p.firstName, p.middleName, p.lastName].filter(Boolean).join(" ").trim() || p.username || "Member",
+        community: p.community || listingCommunityByUserId.get(String(p.id || "").trim()) || inferCommunityFromAddress(p.address),
+        joinedAt: p.joinedAt || null,
+      }))
+      .sort((a, b) =>
+        String(a.username || a.name || "").localeCompare(String(b.username || b.name || ""), undefined, {
+          sensitivity: "base",
+        }),
+      )
+      .slice(0, 200);
     res.json({ users: rows });
   } catch (e) {
     next(e);
@@ -1347,15 +1406,12 @@ export const listCommunities = async (req, res, next) => {
     if (error?.code === "PGRST205") return res.json({ communities: [] });
     if (error) throw new AppError(500, error.message);
     const communities = data || [];
-    const profiles = await loadProfilesForCommunityCounts();
-    const counts = computeCommunityMemberCountsByProfileAddress(communities, profiles);
-    const sellerCounts = await loadActiveSellerCountsByCommunity();
+    const counts = await loadProfileMemberCountsByCommunity();
     res.json({
       communities: communities.map((row) => {
         const communityId = String(row.id);
         const profileCount = counts.get(communityId) ?? 0;
-        const sellerCount = sellerCounts.get(communityId) ?? 0;
-        return communityRowToApi(row, Math.max(profileCount, sellerCount));
+        return communityRowToApi(row, profileCount);
       }),
     });
   } catch (e) {
@@ -1371,11 +1427,9 @@ export const getCommunityById = async (req, res, next) => {
     if (error?.code === "PGRST205") throw new AppError(404, "Community not found.");
     if (error) throw new AppError(500, error.message);
     if (!data) throw new AppError(404, "Community not found.");
-    const profiles = await loadProfilesForCommunityCounts();
-    const sellerCounts = await loadActiveSellerCountsByCommunity();
-    const profileCount = countProfilesMatchingCommunity(data, profiles);
-    const sellerCount = sellerCounts.get(String(data.id)) ?? 0;
-    res.json({ community: communityPublicToApi(data, Math.max(profileCount, sellerCount)) });
+    const counts = await loadProfileMemberCountsByCommunity();
+    const profileCount = counts.get(String(data.id)) ?? 0;
+    res.json({ community: communityPublicToApi(data, profileCount) });
   } catch (e) {
     next(e);
   }
@@ -1448,11 +1502,9 @@ export const createCommunity = async (req, res, next) => {
       );
     }
     if (error) throw new AppError(400, error.message);
-    const profiles = await loadProfilesForCommunityCounts();
-    const sellerCounts = await loadActiveSellerCountsByCommunity();
-    const profileCount = countProfilesMatchingCommunity(data, profiles);
-    const sellerCount = sellerCounts.get(String(data.id)) ?? 0;
-    res.status(201).json({ community: communityRowToApi(data, Math.max(profileCount, sellerCount)) });
+    const counts = await loadProfileMemberCountsByCommunity();
+    const profileCount = counts.get(String(data.id)) ?? 0;
+    res.status(201).json({ community: communityRowToApi(data, profileCount) });
   } catch (e) {
     next(e);
   }
@@ -1499,11 +1551,9 @@ export const updateCommunity = async (req, res, next) => {
 
     const { data, error } = await supabaseAdmin.from("communities").update(patch).eq("id", id).select("*").single();
     if (error) throw new AppError(400, error.message);
-    const profiles = await loadProfilesForCommunityCounts();
-    const sellerCounts = await loadActiveSellerCountsByCommunity();
-    const profileCount = countProfilesMatchingCommunity(data, profiles);
-    const sellerCount = sellerCounts.get(String(data.id)) ?? 0;
-    res.json({ community: communityRowToApi(data, Math.max(profileCount, sellerCount)) });
+    const counts = await loadProfileMemberCountsByCommunity();
+    const profileCount = counts.get(String(data.id)) ?? 0;
+    res.json({ community: communityRowToApi(data, profileCount) });
   } catch (e) {
     next(e);
   }

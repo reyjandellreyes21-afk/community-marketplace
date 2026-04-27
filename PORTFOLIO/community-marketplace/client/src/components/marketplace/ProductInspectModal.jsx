@@ -36,6 +36,8 @@ export function ProductInspectModal({
   onBuyNow,
   onEditListing,
   onSaleSelect,
+  buyNowDisabled = false,
+  buyNowDisabledReason = "",
 }) {
   const [salePickerOpen, setSalePickerOpen] = useState(false);
 
@@ -248,7 +250,19 @@ export function ProductInspectModal({
                 {typeof onBuyNow === "function" ? (
                   <button
                     type="button"
-                    className="min-h-10 flex-1 rounded-lg bg-brand-primary px-3 py-2 text-sm font-semibold text-white shadow-sm shadow-brand-primary/15 transition hover:bg-brand-primary/90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-accent dark:text-slate-900 dark:shadow-none dark:hover:bg-brand-accent/90 sm:min-h-10"
+                    title={
+                      isOutOfStock
+                        ? undefined
+                        : buyNowDisabled && buyNowDisabledReason
+                          ? buyNowDisabledReason
+                          : undefined
+                    }
+                    aria-label={isOutOfStock ? "Out of stock" : "Buy now"}
+                    className={`min-h-10 flex-1 rounded-lg bg-brand-primary px-3 py-2 text-sm font-semibold text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none sm:min-h-10 ${
+                      isOutOfStock
+                        ? "cursor-not-allowed opacity-50"
+                        : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
+                    } disabled:cursor-not-allowed disabled:opacity-50`}
                     disabled={isOutOfStock}
                     onClick={() => onBuyNow()}
                   >
