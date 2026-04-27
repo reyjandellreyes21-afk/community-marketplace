@@ -1,4 +1,4 @@
-import navLogo from "../../assets/LM-LIGHT.png";
+import navLogo from "../../assets/new-brand-logo.png";
 import communityImage from "../../assets/community-image.png";
 
 export function LandingIllustration() {
@@ -15,7 +15,7 @@ export function LandingIllustration() {
   );
 }
 
-export function LinkMartLogo({ className = "h-7 w-auto max-w-[11rem] shrink-0 object-contain sm:h-8 sm:max-w-[13rem]" }) {
+export function LinkMartLogo({ className = "h-8 w-auto max-w-[12rem] shrink-0 object-contain sm:h-9 sm:max-w-[13.5rem]" }) {
   return <img src={navLogo} alt="LinkMart logo" className={className} />;
 }
 

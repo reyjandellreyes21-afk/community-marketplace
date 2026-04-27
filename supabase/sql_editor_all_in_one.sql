@@ -110,6 +110,12 @@ CREATE INDEX IF NOT EXISTS delivery_bids_order_idx ON public.delivery_bids (orde
 
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS accepted_bid_id uuid REFERENCES public.delivery_bids (id) ON DELETE SET NULL;
 
+-- Milestone timestamps (same as migrations; safe for installs that only run this script).
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS processing_entered_at timestamptz;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS completed_at timestamptz;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS cancelled_at timestamptz;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS buyer_receipt_acknowledged_at timestamptz;
+
 CREATE TABLE IF NOT EXISTS public.seller_expenses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   seller_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
