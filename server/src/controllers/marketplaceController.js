@@ -184,6 +184,39 @@ const listingRowToApi = (row) => ({
   updatedAt: row.updated_at,
 });
 
+async function enrichListingsWithSellerProfile(rows) {
+  const input = Array.isArray(rows) ? rows : [];
+  if (input.length === 0) return [];
+  const sellerIds = [...new Set(input.map((r) => String(r?.seller_id || "").trim()).filter(Boolean))];
+  let profileById = new Map();
+  if (sellerIds.length > 0) {
+    const { data: profiles, error } = await supabaseAdmin
+      .from("profiles")
+      .select("id,username,address")
+      .in("id", sellerIds);
+    if (!error) {
+      profileById = new Map(
+        (profiles || []).map((p) => [
+          String(p?.id || "").trim(),
+          {
+            username: String(p?.username || "").trim(),
+            address: String(p?.address || "").trim(),
+          },
+        ]),
+      );
+    }
+  }
+  return input.map((row) => {
+    const base = listingRowToApi(row);
+    const seller = profileById.get(String(row?.seller_id || "").trim()) || null;
+    return {
+      ...base,
+      sellerUsername: seller?.username || "",
+      sellerAddress: seller?.address || "",
+    };
+  });
+}
+
 const buyerReviewRowToApi = (row) => {
   if (!row) return null;
   return {
@@ -390,7 +423,8 @@ export const listListings = async (req, res, next) => {
         return d == null || d <= r;
       });
     }
-    res.json({ listings: rows.map(listingRowToApi) });
+    const listings = await enrichListingsWithSellerProfile(rows);
+    res.json({ listings });
   } catch (e) {
     next(e);
   }
@@ -405,7 +439,8 @@ export const getListing = async (req, res, next) => {
     if (error) throw new AppError(500, error.message);
     if (!data) throw new AppError(404, "Listing not found.");
     if (data.status !== "active" && data.seller_id !== req.user?.id) throw new AppError(404, "Listing not found.");
-    res.json({ listing: listingRowToApi(data) });
+    const [listing] = await enrichListingsWithSellerProfile([data]);
+    res.json({ listing: listing || listingRowToApi(data) });
   } catch (e) {
     next(e);
   }
@@ -1385,6 +1420,7 @@ export const listUsersDirectory = async (req, res, next) => {
         id: p.id,
         username: p.username || "",
         name: [p.firstName, p.middleName, p.lastName].filter(Boolean).join(" ").trim() || p.username || "Member",
+        address: p.address || "",
         community: p.community || listingCommunityByUserId.get(String(p.id || "").trim()) || inferCommunityFromAddress(p.address),
         joinedAt: p.joinedAt || null,
       }))

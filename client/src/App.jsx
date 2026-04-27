@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import tabLogo from "./assets/new-icon-only.png";
 import heroStudyImage from "./assets/new-auth-landing.png";
-import communityEmptyBannerImage from "./assets/community-empty-banner.png";
 import { createSupabaseClient } from "./lib/supabaseClient";
 import {
   isLikelySameCommunityName,
@@ -16,7 +15,15 @@ import { LoggedInHeader } from "./components/LoggedInHeader.jsx";
 import { PublicListingPage } from "./components/PublicListingPage.jsx";
 import { formatCents } from "./marketplace/money.js";
 import { SELLER_TABS, VIEWS } from "./views.js";
-import { readAuthToken, writeAuthToken, readThemeMode, writeThemeMode } from "./lib/appSession.js";
+import {
+  clearActiveView,
+  readActiveView,
+  readAuthToken,
+  readThemeMode,
+  writeActiveView,
+  writeAuthToken,
+  writeThemeMode,
+} from "./lib/appSession.js";
 import { apiRequest, isUnauthorizedApiError } from "./lib/appApi.js";
 import { UI_KIT } from "./lib/appUiKit.js";
 import {
@@ -522,7 +529,11 @@ function App() {
   const [profileJoinedAt, setProfileJoinedAt] = useState("");
   const [profileJoinedAtResolved, setProfileJoinedAtResolved] = useState(false);
 
-  const [activeView, setActiveView] = useState(VIEWS.BROWSE);
+  const [activeView, setActiveView] = useState(() => {
+    const savedView = readActiveView();
+    if (savedView && Object.values(VIEWS).includes(savedView)) return savedView;
+    return VIEWS.BROWSE;
+  });
   const isBrowseLikeView = useMemo(
     () => activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP || activeView === VIEWS.FAVORITES,
     [activeView],
@@ -572,10 +583,15 @@ function App() {
   useEffect(() => {
     if (ordersStatusTab !== "completed") setCompletedTabOrderDetailsOpen({});
   }, [ordersStatusTab]);
+  useEffect(() => {
+    writeActiveView(activeView);
+  }, [activeView]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   /** `orderId` -> selected (orders screen only). */
   const [orderSelection, setOrderSelection] = useState({});
   const [ordersBulkActionSubmitting, setOrdersBulkActionSubmitting] = useState(false);
+  const [buyerCancelConfirmOpen, setBuyerCancelConfirmOpen] = useState(false);
+  const [leaveCommunityConfirmOpen, setLeaveCommunityConfirmOpen] = useState(false);
   /** Order ids the user has marked “seen” per status tab (localStorage per user). Unseen rows drive badges + highlights. */
   const [buyerOrderDismissedIdsByTab, setBuyerOrderDismissedIdsByTab] = useState(() => emptyOrderAttentionByTab());
   const [sellerOrderDismissedIdsByTab, setSellerOrderDismissedIdsByTab] = useState(() => emptyOrderAttentionByTab());
@@ -972,6 +988,7 @@ function App() {
   const [bidsForOrder, setBidsForOrder] = useState([]);
   const [quickAddModalOpen, setQuickAddModalOpen] = useState(false);
   const [quickAddListing, setQuickAddListing] = useState(null);
+  const [quickAddImagePreviewOpen, setQuickAddImagePreviewOpen] = useState(false);
   const [quickActionType, setQuickActionType] = useState("cart");
   const [quickAddQuantity, setQuickAddQuantity] = useState("1");
   const [quickAddComment, setQuickAddComment] = useState("");
@@ -1488,6 +1505,8 @@ function App() {
   }, [mobileCommunityFiltersOpen]);
 
   const [profileEditing, setProfileEditing] = useState(false);
+  const [profileViewUserId, setProfileViewUserId] = useState("");
+  const [profileViewReturnView, setProfileViewReturnView] = useState("");
   const [profileDraft, setProfileDraft] = useState({
     avatarUrl: "",
     username: "",
@@ -2059,7 +2078,6 @@ function App() {
 
   useEffect(() => {
     const shouldLoadUsers =
-      activeView === VIEWS.USERS ||
       activeView === VIEWS.MESSAGES ||
       activeView === VIEWS.ORDERS ||
       activeView === VIEWS.MY_PURCHASES;
@@ -2347,10 +2365,12 @@ function App() {
 
   const logout = () => {
     writeAuthToken("");
+    clearActiveView();
     setToken("");
     setUser(null);
     setAuthPanelVisible(false);
     setShopCommunityId(null);
+    setActiveView(VIEWS.BROWSE);
   };
 
   const pickBrowseScope = useCallback(
@@ -2395,6 +2415,24 @@ function App() {
   const goCart = useCallback(() => {
     setActiveView(VIEWS.CART);
   }, []);
+  const goOwnProfile = useCallback(() => {
+    setProfileViewUserId("");
+    setProfileViewReturnView("");
+    setActiveView(VIEWS.PROFILE);
+  }, []);
+  const goBackFromSellerProfile = useCallback(() => {
+    const nextView = Object.values(VIEWS).includes(String(profileViewReturnView || ""))
+      ? profileViewReturnView
+      : VIEWS.BROWSE;
+    setProfileViewUserId("");
+    setProfileViewReturnView("");
+    setActiveView(nextView);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        window.scrollTo(0, 0);
+      });
+    }
+  }, [profileViewReturnView]);
 
   const leaveCommunityToGlobalMarketplace = useCallback(() => {
     skipAutoCommunityBrowseRef.current = true;
@@ -2406,6 +2444,10 @@ function App() {
     navigate("/", { replace: true });
     setActiveView(VIEWS.BROWSE);
   }, [navigate]);
+
+  const requestLeaveCommunityConfirmation = useCallback(() => {
+    setLeaveCommunityConfirmOpen(true);
+  }, []);
 
   const goBrowse = useCallback(() => {
     setBrowseVerticalId(null);
@@ -2431,6 +2473,45 @@ function App() {
     }
     return map;
   }, [usersList]);
+  const viewedProfileUser = useMemo(
+    () => (profileViewUserId ? usersById.get(String(profileViewUserId || "").trim()) || null : null),
+    [usersById, profileViewUserId],
+  );
+  const isViewingSellerProfile =
+    Boolean(viewedProfileUser) && String(viewedProfileUser?.id || "") !== String(user?.id || "");
+  const profileRenderUser = useMemo(() => {
+    if (!isViewingSellerProfile) return user;
+    const v = viewedProfileUser || {};
+    return {
+      id: v.id || "",
+      username: String(v.username || "").trim(),
+      name: String(v.name || "").trim(),
+      firstName: String(v.firstName || "").trim(),
+      middleName: String(v.middleName || "").trim(),
+      lastName: String(v.lastName || "").trim(),
+      avatarUrl: String(v.avatarUrl || "").trim(),
+      phone: String(v.phone || "").trim(),
+      address: String(v.address || "").trim(),
+      community: String(v.community || "").trim(),
+      joinedAt: v.joinedAt || null,
+      createdAt: v.createdAt || null,
+      email: "",
+      facebookUrl: "",
+      twitterUrl: "",
+      instagramUrl: "",
+      socialPlatform: "",
+      socialUrl: "",
+      url: "",
+    };
+  }, [isViewingSellerProfile, user, viewedProfileUser]);
+
+  useEffect(() => {
+    if (activeView !== VIEWS.PROFILE && profileViewUserId) setProfileViewUserId("");
+  }, [activeView, profileViewUserId]);
+
+  useEffect(() => {
+    if (isViewingSellerProfile && profileEditing) setProfileEditing(false);
+  }, [isViewingSellerProfile, profileEditing]);
 
   const ensureDirectConversation = useCallback(
     async (targetId) => {
@@ -3626,6 +3707,22 @@ function App() {
   }, [token, activeView, usersList.length]);
 
   useEffect(() => {
+    if (!token || !isBrowseLikeView || usersList.length > 0) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiRequest("/users", { token });
+        if (!cancelled) setUsersList(Array.isArray(data?.users) ? data.users : []);
+      } catch {
+        // Seller details in product modal can still fall back to listing payload.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, isBrowseLikeView, usersList.length]);
+
+  useEffect(() => {
     if (!token || activeView !== VIEWS.PROFILE) return undefined;
     let cancelled = false;
     (async () => {
@@ -4228,6 +4325,7 @@ function App() {
 
   const closeQuickAddModal = () => {
     if (quickAddSubmitting) return;
+    setQuickAddImagePreviewOpen(false);
     setQuickAddModalOpen(false);
     setQuickAddListing(null);
     setQuickActionType("cart");
@@ -4242,11 +4340,61 @@ function App() {
   const openProductInspect = useCallback((listingLike, extra = {}) => {
     if (!listingLike) return;
     const priceCents = Number(listingLike.priceCents ?? listingLike.unitPriceCents) || 0;
+    const sellerId = String(
+      extra.sellerId ??
+        listingLike.sellerId ??
+        listingLike.seller?.id ??
+        ""
+    ).trim();
+    const sellerFromDirectory = sellerId ? usersById.get(sellerId) : null;
+    const sellerUsername = String(
+      extra.sellerUsername ??
+        listingLike.sellerUsername ??
+        sellerFromDirectory?.username ??
+        listingLike.seller?.username ??
+        ""
+    ).trim();
+    const sellerAddressRaw = String(
+      extra.sellerAddress ??
+        listingLike.sellerAddress ??
+        sellerFromDirectory?.address ??
+        listingLike.seller?.address ??
+        ""
+    ).trim();
+    const sellerAddressParts = splitAddressParts(sellerAddressRaw);
+    const sellerBarangay = stripBrgyPrefixLabel(sellerAddressParts.addressBarangay);
+    const sellerCityMunicipality = formatPhCityMunicipalityName(sellerAddressParts.addressCity);
+    const sellerProvince = toTitleCase(sellerAddressParts.addressProvince);
+    const sellerAddressLine = [sellerBarangay, sellerCityMunicipality, sellerProvince]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .join(", ");
+    const sellerAddressFallback = String(
+      extra.sellerAddressLine ??
+        listingLike.cityLabel ??
+        ""
+    ).trim();
     setProductInspect({
       title: String(listingLike.title || "Product"),
       imageUrl: listingLike.imageUrl,
       priceCents,
       description: String(listingLike.description || ""),
+      sellerUsername,
+      sellerAddressLine: sellerAddressLine || sellerAddressFallback,
+      onViewSellerProfile:
+        sellerId && String(sellerId) !== String(user?.id || "")
+          ? () => {
+              closeProductInspect();
+              setProfileViewReturnView(activeView);
+              setProfileViewUserId(sellerId);
+              setActiveView(VIEWS.PROFILE);
+              if (typeof window !== "undefined") {
+                window.requestAnimationFrame(() => {
+                  window.scrollTo(0, 0);
+                });
+              }
+            }
+          : undefined,
       comment: String(extra.comment ?? "").trim(),
       commentSectionRequired: Boolean(extra.commentSectionRequired),
       commentHeading: extra.commentHeading || "Your note to the seller",
@@ -4268,7 +4416,7 @@ function App() {
       buyNowDisabled: Boolean(extra.buyNowDisabled),
       buyNowDisabledReason: String(extra.buyNowDisabledReason || ""),
     });
-  }, []);
+  }, [activeView, closeProductInspect, user?.id, usersById]);
 
   const submitQuickAddOrder = async () => {
     if (!quickAddListing?.id || quickAddSubmitting) return;
@@ -4559,7 +4707,7 @@ function App() {
       clearMarketplaceToasts();
       setPublishFlash("");
       setSellerTab(SELLER_TABS.PRODUCTS);
-      setActiveView(VIEWS.PROFILE);
+      goOwnProfile();
       navigate("/", { replace: true });
     } catch (e) {
       pushMarketplaceToast(e.message || "Could not publish listing.");
@@ -5310,6 +5458,7 @@ function App() {
         user={user}
         activeView={activeView}
         setActiveView={setActiveView}
+        goOwnProfile={goOwnProfile}
         goBrowse={goBrowse}
         goOrders={goOrders}
         goMyPurchases={goMyPurchases}
@@ -5381,14 +5530,6 @@ function App() {
                     mobileCommunityFiltersOpen ? "max-lg:pointer-events-none max-lg:opacity-40" : ""
                   }`}
                 >
-                  <div className="pointer-events-none absolute inset-y-0 right-0 w-[75%] opacity-45 dark:opacity-35" aria-hidden>
-                    <img
-                      src={communityEmptyBannerImage}
-                      alt=""
-                      className="h-full w-full object-cover object-right"
-                      loading="lazy"
-                    />
-                  </div>
                   <div className="relative z-10 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
                     <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-start sm:gap-4 lg:gap-5">
                       <button
@@ -5465,10 +5606,7 @@ function App() {
                                 type="button"
                                 aria-label="Leave this community"
                                 className="inline-flex min-h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400"
-                                onClick={() => {
-                                  void leaveCommunityAndDetachListings(activeCommunity, { notifySuccess: true });
-                                  leaveCommunityToGlobalMarketplace();
-                                }}
+                                onClick={requestLeaveCommunityConfirmation}
                               >
                                 Leave
                               </button>
@@ -5486,10 +5624,7 @@ function App() {
                               <button
                                 type="button"
                                 className="inline-flex min-h-9 items-center justify-center rounded-full bg-rose-600 px-2 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-rose-700 dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400"
-                                onClick={() => {
-                                  void leaveCommunityAndDetachListings(activeCommunity, { notifySuccess: true });
-                                  leaveCommunityToGlobalMarketplace();
-                                }}
+                                onClick={requestLeaveCommunityConfirmation}
                               >
                                 Leave
                               </button>
@@ -5525,10 +5660,7 @@ function App() {
                         <button
                           type="button"
                           className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-rose-600 px-3 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 sm:min-h-0 sm:flex-none sm:px-4 sm:py-2 sm:text-sm dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400"
-                          onClick={() => {
-                            void leaveCommunityAndDetachListings(activeCommunity, { notifySuccess: true });
-                            leaveCommunityToGlobalMarketplace();
-                          }}
+                          onClick={requestLeaveCommunityConfirmation}
                         >
                           Leave
                         </button>
@@ -6785,7 +6917,7 @@ function App() {
                       setEditingListingId(null);
                       clearMarketplaceToasts();
                       setSellerTab(SELLER_TABS.PRODUCTS);
-                      setActiveView(VIEWS.PROFILE);
+                      goOwnProfile();
                       navigate("/", { replace: true });
                     }}
                   >
@@ -7192,10 +7324,17 @@ function App() {
                       className="min-h-11 w-full touch-manipulation rounded-lg border border-rose-300 px-3 py-1.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 min-[360px]:w-auto min-[360px]:min-h-0 min-[480px]:shrink-0 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
                       disabled={ordersBulkActionSubmitting || !ordersDeclineEnabled}
                       onClick={() => {
-                        void applyTransitionToSelectedOrders("cancel", "Declined");
+                        if (ordersRole === "buyer") {
+                          setBuyerCancelConfirmOpen(true);
+                          return;
+                        }
+                        void applyTransitionToSelectedOrders(
+                          "cancel",
+                          ordersRole === "buyer" ? "Cancelled" : "Declined"
+                        );
                       }}
                     >
-                      {ordersBulkActionSubmitting ? "Working…" : "Decline"}
+                      {ordersBulkActionSubmitting ? "Working…" : ordersRole === "buyer" ? "Cancel" : "Decline"}
                     </button>
                   </div>
                 </div>
@@ -7787,6 +7926,8 @@ function App() {
                                         priceCents: base.priceCents,
                                         description: base.description,
                                         fulfillmentModes: base.fulfillmentModes,
+                                        sellerName: String(o.sellerName || "").trim(),
+                                        sellerUsername: String(o.sellerUsername || "").trim(),
                                       };
                                       const forQuick = {
                                         ...base,
@@ -8035,14 +8176,21 @@ function App() {
             <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start">
               <div className="space-y-4 rounded-2xl border border-neutral-200/90 bg-white p-4 shadow-sm md:space-y-6 dark:border-slate-600 dark:bg-slate-900/80">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My profile</h2>
-                  {user && !profileEditing ? (
+                  <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">
+                    {isViewingSellerProfile ? "Seller profile" : "My profile"}
+                  </h2>
+                  {isViewingSellerProfile ? (
+                    <button type="button" className="btn-secondary shrink-0" onClick={goBackFromSellerProfile}>
+                      ← Back
+                    </button>
+                  ) : null}
+                  {profileRenderUser && !profileEditing && !isViewingSellerProfile ? (
                     <button type="button" className="btn-secondary shrink-0" onClick={openProfileEdit}>
                       Edit profile
                     </button>
                   ) : null}
                 </div>
-                {user ? (
+                {profileRenderUser ? (
               profileEditing ? (
                 <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
                   <div className={`max-h-[90vh] w-full max-w-5xl overflow-y-auto p-5 ${UI_KIT.surfaceFloating}`}>
@@ -8886,17 +9034,23 @@ function App() {
                 <div className="space-y-6">
                   <div className={`flex flex-col items-center gap-4 p-5 text-center ${UI_KIT.surfaceRaised}`}>
                     <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-2xl font-bold text-brand-primary ring-1 ring-brand-border">
-                      {user.avatarUrl ? (
-                        <img src={user.avatarUrl} alt="Profile avatar" className="h-full w-full object-cover" />
+                      {profileRenderUser.avatarUrl ? (
+                        <img src={profileRenderUser.avatarUrl} alt="Profile avatar" className="h-full w-full object-cover" />
                       ) : (
-                        (String(user?.username || "").trim().charAt(0) || "?").toUpperCase()
+                        (String(profileRenderUser?.username || "").trim().charAt(0) || "?").toUpperCase()
                       )}
                     </div>
                     <div className="w-full">
-                      <p className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">{getProfileCardDisplayNameFromUser(user)}</p>
+                      <p className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">
+                        {getProfileCardDisplayNameFromUser(profileRenderUser)}
+                      </p>
                       <div className="mt-2 flex items-center justify-center gap-3">
                         {(() => {
-                          const facebookHref = user.facebookUrl || (user.socialPlatform === "facebook" ? user.socialUrl || user.url : "");
+                          const facebookHref =
+                            profileRenderUser.facebookUrl ||
+                            (profileRenderUser.socialPlatform === "facebook"
+                              ? profileRenderUser.socialUrl || profileRenderUser.url
+                              : "");
                           return facebookHref ? (
                             <a
                               href={facebookHref}
@@ -8918,7 +9072,7 @@ function App() {
                           );
                         })()}
                         {(() => {
-                          const twitterHref = user.twitterUrl || (user.socialPlatform === "x_twitter" ? user.socialUrl || user.url : "");
+                          const twitterHref = profileRenderUser.twitterUrl || (profileRenderUser.socialPlatform === "x_twitter" ? profileRenderUser.socialUrl || profileRenderUser.url : "");
                           return twitterHref ? (
                             <a
                               href={twitterHref}
@@ -8940,7 +9094,7 @@ function App() {
                           );
                         })()}
                         {(() => {
-                          const instagramHref = user.instagramUrl || (user.socialPlatform === "instagram" ? user.socialUrl || user.url : "");
+                          const instagramHref = profileRenderUser.instagramUrl || (profileRenderUser.socialPlatform === "instagram" ? profileRenderUser.socialUrl || profileRenderUser.url : "");
                           return instagramHref ? (
                             <a
                               href={instagramHref}
@@ -8979,8 +9133,8 @@ function App() {
                         </svg>
                         <span>Joined </span>
                         <span className="font-semibold">
-                          {user.joinedAt || user.createdAt || user.created_at || profileJoinedAt
-                            ? new Date(user.joinedAt || user.createdAt || user.created_at || profileJoinedAt).toLocaleDateString(undefined, {
+                          {profileRenderUser.joinedAt || profileRenderUser.createdAt || profileRenderUser.created_at || profileJoinedAt
+                            ? new Date(profileRenderUser.joinedAt || profileRenderUser.createdAt || profileRenderUser.created_at || profileJoinedAt).toLocaleDateString(undefined, {
                                 day: "numeric",
                                 month: "long",
                                 year: "numeric",
@@ -8988,23 +9142,23 @@ function App() {
                             : ""}
                         </span>
                       </li>
-                      {user.phone ? (
+                      {profileRenderUser.phone ? (
                         <li className="flex items-center gap-2">
                           <svg className="h-4 w-4 text-neutral-500 dark:text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                             <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.62 2.62a2 2 0 0 1-.45 2.11L8 9.71a16 16 0 0 0 6.29 6.29l1.26-1.28a2 2 0 0 1 2.11-.45c.84.29 1.72.5 2.62.62A2 2 0 0 1 22 16.92z" />
                           </svg>
                           <span>Phone: </span>
-                          <span className="font-semibold">{toPhilippinesLocal11Display(user.phone)}</span>
+                          <span className="font-semibold">{toPhilippinesLocal11Display(profileRenderUser.phone)}</span>
                         </li>
                       ) : null}
-                      {profileCommunityName ? (
+                      {String(profileRenderUser.community || "").trim() ? (
                         <li className="flex items-center gap-2">
                           <svg className="h-4 w-4 text-neutral-500 dark:text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                             <path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z" />
                             <circle cx="12" cy="10" r="3" />
                           </svg>
                           <span>Community: </span>
-                          <span className="font-semibold">{profileCommunityName}</span>
+                          <span className="font-semibold">{String(profileRenderUser.community || "").trim()}</span>
                         </li>
                       ) : null}
                     </ul>
@@ -9015,6 +9169,7 @@ function App() {
               <p className="app-alert-danger-text text-sm">Could not load your profile. Try signing in again.</p>
             )}
               </div>
+              {!isViewingSellerProfile ? (
               <aside className="min-w-0 space-y-4 rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-slate-900/80">
                 <div className="flex flex-wrap gap-2" role="tablist" aria-label="Seller hub sections">
                   {[
@@ -9153,48 +9308,8 @@ function App() {
                   </div>
                 )}
               </aside>
+              ) : null}
             </div>
-          </section>
-        )}
-
-        {activeView === VIEWS.USERS && (
-          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <div>
-              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Users</h2>
-              <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">People registered on this app (names only).</p>
-            </div>
-            {usersLoading && usersList.length === 0 ? (
-              <p className="text-sm text-neutral-600 dark:text-slate-400">Loading users…</p>
-            ) : null}
-            {usersError ? <p className="app-alert-danger-text text-sm">{usersError}</p> : null}
-            {!usersError ? (
-              <ul className="divide-y divide-neutral-200 rounded-xl border border-brand-primary/20 bg-white/85 shadow-sm dark:divide-slate-700 dark:border-slate-600 dark:bg-slate-900/70">
-                {!(usersLoading && usersList.length === 0) && usersList.length === 0 ? (
-                  <li className="px-4 py-6 text-sm text-neutral-500 dark:text-slate-400">No users yet.</li>
-                ) : null}
-                {usersList.map((u) => (
-                  <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-                    <div className="min-w-0">
-                      <span className="block truncate font-medium text-neutral-900 dark:text-slate-100">{formatDisplayName(u.name)}</span>
-                      {u.joinedAt ? (
-                        <span className="text-xs text-neutral-500 dark:text-slate-400">{new Date(u.joinedAt).toLocaleDateString()}</span>
-                      ) : null}
-                    </div>
-                    {String(u.id) !== String(user?.id || "") ? (
-                      <button
-                        type="button"
-                        className="rounded-lg border border-brand-primary/30 px-3 py-1.5 text-xs font-semibold text-brand-primary transition hover:bg-brand-soft dark:border-brand-primary/40"
-                        onClick={() => openChatWithUser(u.id)}
-                      >
-                        Chat
-                      </button>
-                    ) : (
-                      <span className="text-xs font-medium text-neutral-500 dark:text-slate-400">You</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
           </section>
         )}
 
@@ -9202,6 +9317,125 @@ function App() {
 
       {productInspect ? (
         <ProductInspectModal open onClose={closeProductInspect} {...productInspect} />
+      ) : null}
+
+      {buyerCancelConfirmOpen ? (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="buyer-cancel-confirm-title">
+          <button
+            type="button"
+            className="absolute inset-0 bg-neutral-900/45 backdrop-blur-[2px] dark:bg-black/55"
+            aria-label="Close cancel confirmation"
+            onClick={() => setBuyerCancelConfirmOpen(false)}
+          />
+          <div
+            className="relative z-10 w-full max-w-md rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="buyer-cancel-confirm-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
+              Cancel selected order{selectedOrders.length > 1 ? "s" : ""}?
+            </h2>
+            <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">
+              Are you sure you want to cancel {selectedOrders.length > 1 ? "these selected orders" : "this selected order"}?
+            </p>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="btn-secondary min-h-10 w-full sm:w-auto"
+                onClick={() => setBuyerCancelConfirmOpen(false)}
+              >
+                Keep order
+              </button>
+              <button
+                type="button"
+                className="min-h-10 w-full rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 sm:w-auto dark:bg-rose-500 dark:hover:bg-rose-400"
+                onClick={() => {
+                  setBuyerCancelConfirmOpen(false);
+                  void applyTransitionToSelectedOrders("cancel", "Cancelled");
+                }}
+              >
+                Yes, cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {leaveCommunityConfirmOpen ? (
+        <div
+          className="fixed inset-0 z-[95] flex items-center justify-center p-4 sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="leave-community-confirm-title"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-neutral-900/45 backdrop-blur-[2px] dark:bg-black/55"
+            aria-label="Close leave confirmation"
+            onClick={() => setLeaveCommunityConfirmOpen(false)}
+          />
+          <div
+            className="relative z-10 w-full max-w-md rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="leave-community-confirm-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
+              Leave this community?
+            </h2>
+            <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">
+              Are you sure you want to leave this community?
+            </p>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="btn-secondary min-h-10 w-full sm:w-auto"
+                onClick={() => setLeaveCommunityConfirmOpen(false)}
+              >
+                Stay
+              </button>
+              <button
+                type="button"
+                className="min-h-10 w-full rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 sm:w-auto dark:bg-rose-500 dark:hover:bg-rose-400"
+                onClick={() => {
+                  setLeaveCommunityConfirmOpen(false);
+                  void leaveCommunityAndDetachListings(activeCommunity, { notifySuccess: true });
+                  leaveCommunityToGlobalMarketplace();
+                }}
+              >
+                Yes, leave
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {quickAddImagePreviewOpen && quickAddListing && String(quickAddListing.imageUrl || "").trim() ? (
+        <div
+          className="fixed inset-0 z-[96] flex items-center justify-center p-3 sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Product image preview"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-neutral-900/70 backdrop-blur-[1px] dark:bg-black/75"
+            aria-label="Close image preview"
+            onClick={() => setQuickAddImagePreviewOpen(false)}
+          />
+          <div className="relative z-10 w-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={quickAddListing.imageUrl}
+              alt={quickAddListing.title || "Product image"}
+              className="max-h-[88vh] w-full rounded-2xl border border-white/30 object-contain shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
+            />
+            <button
+              type="button"
+              className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/35 bg-black/45 text-lg leading-none text-white transition hover:bg-black/60"
+              aria-label="Close image preview"
+              onClick={() => setQuickAddImagePreviewOpen(false)}
+            >
+              <span aria-hidden>×</span>
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {quickAddModalOpen && quickAddListing ? (
@@ -9241,7 +9475,18 @@ function App() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
                   <div className="h-36 w-full shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-white sm:h-32 sm:w-32 dark:border-slate-600 dark:bg-slate-900">
                     {String(quickAddListing.imageUrl || "").trim() ? (
-                      <img src={quickAddListing.imageUrl} alt={quickAddListing.title || "Product"} className="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        className="h-full w-full cursor-zoom-in"
+                        aria-label="View larger product image"
+                        onClick={() => setQuickAddImagePreviewOpen(true)}
+                      >
+                        <img
+                          src={quickAddListing.imageUrl}
+                          alt={quickAddListing.title || "Product"}
+                          className="h-full w-full object-cover transition duration-200 hover:scale-[1.02]"
+                        />
+                      </button>
                     ) : (
                       <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                         No image
