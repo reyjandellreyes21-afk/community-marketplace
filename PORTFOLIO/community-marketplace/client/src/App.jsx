@@ -142,6 +142,29 @@ function OrderCompletedMilestoneList({ order }) {
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 const COMMUNITY_MEMBERSHIP_KEY_PREFIX = "community_membership_v1:";
+/** Set when the user taps Join on a shop; profile+address matching alone misses sparse profiles. */
+const COMMUNITY_JOINED_SHOP_ID_KEY_PREFIX = "community_joined_shop_id_v1:";
+
+function readJoinedShopCommunityId(userId) {
+  if (typeof window === "undefined" || !userId) return "";
+  try {
+    return String(localStorage.getItem(`${COMMUNITY_JOINED_SHOP_ID_KEY_PREFIX}${userId}`) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function writeJoinedShopCommunityId(userId, communityId) {
+  if (typeof window === "undefined" || !userId) return;
+  try {
+    const cid = String(communityId || "").trim();
+    if (cid) localStorage.setItem(`${COMMUNITY_JOINED_SHOP_ID_KEY_PREFIX}${userId}`, cid);
+    else localStorage.removeItem(`${COMMUNITY_JOINED_SHOP_ID_KEY_PREFIX}${userId}`);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Success toast: full visible time before fade; fade length (should match CSS transition) */
 const PUBLISH_TOAST_DURATION_MS = 7500;
 const PUBLISH_TOAST_FADE_MS = 350;
@@ -162,9 +185,25 @@ function communityBrowseGridClass(view) {
 function sellerListingsGridClass(view) {
   if (view === "list") return "mt-3 space-y-3";
   if (view === "compact") {
-    return "mt-3 grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,10.25rem),1fr))] gap-2 sm:gap-3";
+    /** Dense: tighter gaps, more tiles per row than comfortable grid. */
+    return [
+      "mt-3 grid min-w-0 items-stretch",
+      "grid-cols-1",
+      "gap-1.5 sm:gap-2",
+      "sm:[grid-template-columns:repeat(auto-fill,minmax(min(100%,9rem),1fr))]",
+      "md:[grid-template-columns:repeat(auto-fill,minmax(min(100%,10.25rem),1fr))]",
+      "xl:[grid-template-columns:repeat(auto-fill,minmax(min(100%,11rem),1fr))]",
+    ].join(" ");
   }
-  return "mt-3 grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))] gap-3 sm:gap-4";
+  /** Comfortable grid: roomier cards vs dense; multi-column from sm+. */
+  return [
+    "mt-3 grid min-w-0 items-stretch",
+    "grid-cols-1",
+    "gap-4 sm:gap-5",
+    "sm:[grid-template-columns:repeat(auto-fill,minmax(min(100%,10.75rem),1fr))]",
+    "lg:[grid-template-columns:repeat(auto-fill,minmax(min(100%,15.5rem),1fr))]",
+    "xl:[grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))]",
+  ].join(" ");
 }
 
 function ProductViewDensityToggle({
@@ -242,6 +281,81 @@ const COMMERCE_FLOW_BUYER_STORAGE_KEY = "linkmart_commerce_flow_buyer_v1";
 const COMMERCE_FLOW_SELLER_STORAGE_KEY = "linkmart_commerce_flow_seller_v1";
 /** Legacy single key — migrated once into buyer/seller keys. */
 const COMMERCE_FLOW_VIEW_STORAGE_KEY_LEGACY = "linkmart_commerce_flow_view_v1";
+const NOTIFICATION_INBOX_STORAGE_KEY = "linkmart_notification_inbox_v1";
+const NOTIFICATION_INBOX_MAX_ITEMS = 80;
+const CHAT_THREADS_STORAGE_KEY = "linkmart_chat_threads_v1";
+const CHAT_MESSAGES_MAX_PER_THREAD = 250;
+const chatStorageKeyForUser = (userId) => `${CHAT_THREADS_STORAGE_KEY}:${String(userId || "").trim()}`;
+
+function createNotificationId() {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `notif-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function createChatMessageId() {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `chat-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function classifyNotificationType(text) {
+  const lower = String(text || "").toLowerCase();
+  if (lower.includes("delivery")) return "delivery";
+  if (lower.includes("order")) return "orders";
+  if (lower.includes("joined") || lower.includes("left") || lower.includes("community")) return "community";
+  if (lower.includes("error") || lower.includes("could not") || lower.includes("unavailable")) return "system";
+  return "marketplace";
+}
+
+function readNotificationInboxFromStorage() {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(NOTIFICATION_INBOX_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => ({
+        id: String(item?.id || "").trim(),
+        text: String(item?.text || "").trim(),
+        createdAt: Number(item?.createdAt || 0),
+        read: !!item?.read,
+        type: String(item?.type || "").trim() || "marketplace",
+      }))
+      .filter((item) => item.id && item.text && Number.isFinite(item.createdAt));
+  } catch {
+    return [];
+  }
+}
+
+function readChatThreadsFromStorage(userId) {
+  if (typeof window === "undefined" || !userId) return [];
+  try {
+    const raw = window.localStorage.getItem(chatStorageKeyForUser(userId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((thread) => ({
+        participantId: String(thread?.participantId || "").trim(),
+        unread: Math.max(0, Number(thread?.unread || 0)),
+        messages: Array.isArray(thread?.messages)
+          ? thread.messages
+              .map((m) => ({
+                id: String(m?.id || "").trim(),
+                senderId: String(m?.senderId || "").trim(),
+                text: String(m?.text || "").trim(),
+                createdAt: Number(m?.createdAt || 0),
+              }))
+              .filter((m) => m.id && m.senderId && m.text && Number.isFinite(m.createdAt))
+          : [],
+      }))
+      .filter((thread) => thread.participantId);
+  } catch {
+    return [];
+  }
+}
 
 function normalizeCommerceFlowView(v) {
   if (v === "list" || v === "grid" || v === "compact") return v;
@@ -268,7 +382,11 @@ function readCommerceFlowFromStorage(primaryKey) {
 function commerceFlowLineItemsClass(view, ctx = {}) {
   const variant = ctx.variant ?? "cart";
 
-  if (view === "list") return "divide-y divide-neutral-200/80 dark:divide-slate-700/80";
+  if (view === "list") {
+    /** Order rows use bordered cards + gap like grid; cart list keeps slim `divide-y` rows. */
+    if (variant === "orders") return "flex flex-col gap-2 sm:gap-2.5";
+    return "divide-y divide-neutral-200/80 dark:divide-slate-700/80";
+  }
 
   if (variant === "orders" || variant === "cart") {
     if (view === "compact") {
@@ -350,6 +468,12 @@ function App() {
   usersListRef.current = usersList;
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState("");
+  const [chatThreads, setChatThreads] = useState([]);
+  const [activeChatUserId, setActiveChatUserId] = useState("");
+  const [chatComposer, setChatComposer] = useState("");
+  const [messagePeopleSearch, setMessagePeopleSearch] = useState("");
+  const [messagePeopleCommunityFilter, setMessagePeopleCommunityFilter] = useState("all");
+  const [messagePeopleSort, setMessagePeopleSort] = useState("name_asc");
   const [profileJoinedAt, setProfileJoinedAt] = useState("");
   const [profileJoinedAtResolved, setProfileJoinedAtResolved] = useState(false);
 
@@ -371,7 +495,17 @@ function App() {
   const [sellerListingsLoading, setSellerListingsLoading] = useState(false);
   const [sellerListingQtySavingId, setSellerListingQtySavingId] = useState(null);
   const [listingsLoading, setListingsLoading] = useState(false);
+  /** True while refetching listings when we already show rows (manual refresh / pull-to-refresh). */
+  const [listingsRefreshing, setListingsRefreshing] = useState(false);
+  const listingsLengthRef = useRef(0);
+  const listingsBusyRef = useRef(false);
   const [listingsError, setListingsError] = useState("");
+  useEffect(() => {
+    listingsLengthRef.current = listings.length;
+  }, [listings.length]);
+  useEffect(() => {
+    listingsBusyRef.current = listingsLoading || listingsRefreshing;
+  }, [listingsLoading, listingsRefreshing]);
   const [favoriteIds, setFavoriteIds] = useState(() => new Set());
   const [favoritesLoading, setFavoritesLoading] = useState(false);
   const [favoritesList, setFavoritesList] = useState([]);
@@ -484,6 +618,18 @@ function App() {
       return { ...prev, [tabId]: Array.from(set) };
     });
   }, []);
+  const markBuyerOrderAsUnseenInTab = useCallback((tabId, orderId) => {
+    const id = String(orderId || "");
+    if (!id) return;
+    setBuyerOrderDismissedIdsByTab((prev) => {
+      const current = Array.isArray(prev?.[tabId]) ? prev[tabId] : [];
+      if (!current.includes(id)) return prev;
+      return {
+        ...prev,
+        [tabId]: current.filter((x) => String(x) !== id),
+      };
+    });
+  }, []);
 
   const [orderListingsById, setOrderListingsById] = useState({});
   const [sellerSummary, setSellerSummary] = useState(null);
@@ -508,7 +654,36 @@ function App() {
   const [listingFieldErrors, setListingFieldErrors] = useState({});
   /** Stacked marketplace toasts (e.g. multiple “Order placed” while prior toasts are still visible). */
   const [marketplaceToasts, setMarketplaceToasts] = useState([]);
+  const [notificationInbox, setNotificationInbox] = useState(() => readNotificationInboxFromStorage());
   const marketplaceToastTimeoutsRef = useRef({});
+  const unreadNotificationCount = useMemo(
+    () => notificationInbox.reduce((sum, item) => sum + (item.read ? 0 : 1), 0),
+    [notificationInbox],
+  );
+  const addNotification = useCallback((raw, { markRead = false } = {}) => {
+    const text = String(raw ?? "").trim();
+    if (!text) return;
+    const item = {
+      id: createNotificationId(),
+      text,
+      createdAt: Date.now(),
+      read: !!markRead,
+      type: classifyNotificationType(text),
+    };
+    setNotificationInbox((prev) => [item, ...prev].slice(0, NOTIFICATION_INBOX_MAX_ITEMS));
+  }, []);
+  const markNotificationRead = useCallback((id) => {
+    setNotificationInbox((prev) => prev.map((item) => (item.id === id ? { ...item, read: true } : item)));
+  }, []);
+  const markAllNotificationsRead = useCallback(() => {
+    setNotificationInbox((prev) => prev.map((item) => (item.read ? item : { ...item, read: true })));
+  }, []);
+  const dismissNotification = useCallback((id) => {
+    setNotificationInbox((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+  const clearNotificationInbox = useCallback(() => {
+    setNotificationInbox([]);
+  }, []);
   const dismissMarketplaceToast = useCallback((id) => {
     const tid = marketplaceToastTimeoutsRef.current[id];
     if (tid) window.clearTimeout(tid);
@@ -523,17 +698,29 @@ function App() {
   const pushMarketplaceToast = useCallback((raw) => {
     const text = String(raw ?? "").trim();
     if (!text) return;
-    const id =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `mkt-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    const id = createNotificationId();
     setMarketplaceToasts((prev) => [...prev, { id, text }]);
+    addNotification(text);
     const tid = window.setTimeout(() => {
       delete marketplaceToastTimeoutsRef.current[id];
       setMarketplaceToasts((prev) => prev.filter((t) => t.id !== id));
     }, 10000);
     marketplaceToastTimeoutsRef.current[id] = tid;
-  }, []);
+  }, [addNotification]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(NOTIFICATION_INBOX_STORAGE_KEY, JSON.stringify(notificationInbox));
+    } catch {
+      /* ignore */
+    }
+  }, [notificationInbox]);
+
+  useEffect(() => {
+    if (activeView === VIEWS.NOTIFICATIONS && unreadNotificationCount > 0) {
+      markAllNotificationsRead();
+    }
+  }, [activeView, unreadNotificationCount, markAllNotificationsRead]);
 
   useEffect(
     () => () => {
@@ -569,6 +756,11 @@ function App() {
   const [profileBrgySuggestOpen, setProfileBrgySuggestOpen] = useState(false);
   /** Community marketplace scope (same shell as global browse — not stored in the URL). */
   const [shopCommunityId, setShopCommunityId] = useState(null);
+  /** Join button / explicit membership (UUID); keeps buyer flows working when profile locale is incomplete. */
+  const [joinedShopCommunityId, setJoinedShopCommunityId] = useState("");
+  useEffect(() => {
+    setJoinedShopCommunityId(readJoinedShopCommunityId(user?.id));
+  }, [user?.id]);
   const activeCommunity = useMemo(
     () => (shopCommunityId ? communities.find((x) => x.id === shopCommunityId) ?? null : null),
     [communities, shopCommunityId],
@@ -613,6 +805,28 @@ function App() {
     const missing = checks.filter(([ok]) => !ok).map(([, label]) => label);
     return { ready: missing.length === 0, missing };
   }, [user]);
+  /** Marketplace “Buy now” requires contact + delivery/pickup details (lighter than seller upload checklist). */
+  const buyNowFromProfile = useMemo(() => {
+    const parsedAddress = splitAddressParts(user?.address);
+    const checks = [
+      [String(user?.username || "").trim().length >= 3, "Username"],
+      [toPhilippinesLocalPhone10(user?.phone).length === 10, "Phone number"],
+      [String(user?.firstName || "").trim().length >= 2, "First name"],
+      [String(user?.lastName || "").trim().length >= 2, "Last name"],
+      [String(parsedAddress.addressHouseStreet || "").trim().length > 0, "House number & street"],
+      [String(parsedAddress.addressBarangay || "").trim().length > 0, "Barangay"],
+      [String(parsedAddress.addressCity || "").trim().length > 0, "City or Municipality"],
+      [String(parsedAddress.addressProvince || "").trim().length > 0, "Province"],
+    ];
+    const missing = checks.filter(([ok]) => !ok).map(([, label]) => label);
+    return { ready: missing.length === 0, missing };
+  }, [user]);
+  const buyNowBlocked = !token || !buyNowFromProfile.ready;
+  const buyNowBlockedReason = useMemo(() => {
+    if (!token) return "Sign in to buy.";
+    if (!buyNowFromProfile.ready) return "Complete your profile to buy.";
+    return "";
+  }, [token, buyNowFromProfile]);
   /** Community row whose name matches profile community and city/province when set. */
   const listingCommunityFromProfile = useMemo(() => {
     const label = String(profileCommunityName || "").trim();
@@ -666,15 +880,20 @@ function App() {
   );
   const isMemberOfOpenCommunity = useMemo(() => {
     if (!shopCommunityId) return false;
-    return String(listingCommunityFromProfile.id || "") === String(shopCommunityId);
-  }, [listingCommunityFromProfile.id, shopCommunityId]);
+    const sid = String(shopCommunityId);
+    if (String(listingCommunityFromProfile.id || "") === sid) return true;
+    if (String(joinedShopCommunityId || "") === sid) return true;
+    return false;
+  }, [joinedShopCommunityId, listingCommunityFromProfile.id, shopCommunityId]);
   const getDisplayedMemberCount = useCallback(
     (communityId, baseCount) => {
       const base = Number.isFinite(Number(baseCount)) ? Number(baseCount) : 0;
-      const isJoinedHere = String(listingCommunityFromProfile.id || "") === String(communityId || "");
+      const cid = String(communityId || "");
+      const isJoinedHere =
+        String(listingCommunityFromProfile.id || "") === cid || String(joinedShopCommunityId || "") === cid;
       return base + (isJoinedHere ? 1 : 0);
     },
-    [listingCommunityFromProfile.id],
+    [joinedShopCommunityId, listingCommunityFromProfile.id],
   );
   const directoryCommunities = useMemo(() => {
     let rows = communities.slice();
@@ -701,6 +920,8 @@ function App() {
   const prevShopCommunityIdRef = useRef(null);
   /** Avoid clearing listings + duplicate fetch when only `communities` hydration updates `activeCommunity`. */
   const communityShopListingsQueryKeyRef = useRef(null);
+  /** Throttle pull-to-refresh triggers. */
+  const communityShopPtrLastTriggerRef = useRef(0);
   /** Clear orders when `ordersRole` changes; keep rows when re-entering Orders with the same role. */
   const ordersDataQueryKeyRef = useRef(null);
   const communityListingsSyncedRef = useRef(null);
@@ -714,6 +935,7 @@ function App() {
   const [quickAddComment, setQuickAddComment] = useState("");
   const [quickOrderFulfillmentType, setQuickOrderFulfillmentType] = useState("pickup");
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
+  const [quickAddInlineError, setQuickAddInlineError] = useState("");
   /** Read-only modal: full listing text + cart/order buyer note. */
   const [productInspect, setProductInspect] = useState(null);
   const [recentlyAddedCartListingIds, setRecentlyAddedCartListingIds] = useState(() => readStoredStringArray(CART_RECENT_BADGE_STORAGE_KEY));
@@ -969,49 +1191,151 @@ function App() {
       const key = `${COMMUNITY_MEMBERSHIP_KEY_PREFIX}${user.id}`;
       if (normalized) localStorage.setItem(key, normalized);
       else localStorage.removeItem(key);
+      if (!normalized) {
+        writeJoinedShopCommunityId(user.id, "");
+        setJoinedShopCommunityId("");
+      }
     }
   }, [user?.id]);
 
+  /** Syncs membership locally first; server sync + listing patches run in the background (instant UI). Returns a promise for callers that must wait (e.g. empty-shop retry). */
   const joinCommunityAndAttachListings = useCallback(
-    async (community, { notifySuccess = false } = {}) => {
+    (community, { notifySuccess = false } = {}) => {
       const joinedName = toTitleCase(String(community?.name || "").trim());
       applyJoinedCommunity(joinedName);
-      if (!token || !community?.id) return;
+      const joinedId = community?.id ? String(community.id) : "";
+      if (joinedId && user?.id) {
+        writeJoinedShopCommunityId(user.id, joinedId);
+        setJoinedShopCommunityId(joinedId);
+      }
+      if (!token || !community?.id) return Promise.resolve();
+
+      return (async () => {
+        try {
+          await apiRequest("/auth/me", {
+            method: "PATCH",
+            token,
+            body: { community: joinedName },
+          });
+          const listData = await apiRequest("/me/listings", { token });
+          const mine = Array.isArray(listData?.listings) ? listData.listings : [];
+          const targetCommunityId = String(community.id);
+          const toAttach = mine.filter((l) => String(l.communityId || "") !== targetCommunityId);
+          if (toAttach.length) {
+            await Promise.all(
+              toAttach.map((listing) =>
+                apiRequest(`/me/listings/${listing.id}`, {
+                  method: "PATCH",
+                  token,
+                  body: { communityId: targetCommunityId },
+                }),
+              ),
+            );
+          }
+          const refreshed = await apiRequest("/me/listings", { token });
+          setSellerListings(refreshed.listings || []);
+          if (notifySuccess) {
+            pushMarketplaceToast(`You joined ${joinedName || "the community"} successfully.`);
+          }
+        } catch (error) {
+          pushMarketplaceToast(error?.message || "Joined, but we could not attach your listings yet. Try Join again.");
+        }
+      })();
+    },
+    [applyJoinedCommunity, token, user?.id],
+  );
+
+  const loadCommunityShopListings = useCallback(
+    async ({ preserveExistingRows = false, cancelledRef } = {}) => {
+      if (!token || activeView !== VIEWS.COMMUNITY_SHOP) return;
+      const inCommunity = !!shopCommunityId;
+      const hasVertical = browseVerticalId != null;
+      setListingsError("");
+      const soft = preserveExistingRows && listingsLengthRef.current > 0;
+      if (soft) setListingsRefreshing(true);
+      else setListingsLoading(true);
       try {
-        await apiRequest("/auth/me", {
-          method: "PATCH",
-          token,
-          body: { community: joinedName },
-        });
-        const listData = await apiRequest("/me/listings", { token });
-        const mine = Array.isArray(listData?.listings) ? listData.listings : [];
-        const targetCommunityId = String(community.id);
-        const toAttach = mine.filter((l) => String(l.communityId || "") !== targetCommunityId);
-        if (toAttach.length) {
-          await Promise.all(
-            toAttach.map((listing) =>
-              apiRequest(`/me/listings/${listing.id}`, {
-                method: "PATCH",
-                token,
-                body: { communityId: targetCommunityId },
-              }),
-            ),
-          );
+        const qs = new URLSearchParams();
+        if (inCommunity) qs.set("communityId", shopCommunityId);
+        if (hasVertical) {
+          qs.set("verticalId", browseVerticalId);
+          if (browseSubId && browseSubId !== "all") qs.set("subId", browseSubId);
         }
-        const refreshed = await apiRequest("/me/listings", { token });
-        setSellerListings(refreshed.listings || []);
-        if (activeView === VIEWS.COMMUNITY_SHOP && String(shopCommunityId || "") === targetCommunityId) {
-          const scoped = await apiRequest(`/listings?communityId=${encodeURIComponent(targetCommunityId)}`, { token });
-          setListings(scoped.listings || []);
+        const data = await apiRequest(`/listings?${qs.toString()}`, { token });
+        if (cancelledRef?.()) return;
+        const rows = Array.isArray(data.listings) ? data.listings : [];
+        let nextRows =
+          inCommunity && !isMemberOfOpenCommunity
+            ? rows.filter((row) => String(row.sellerId || "") !== String(user?.id || ""))
+            : rows;
+        const communityRow =
+          inCommunity && shopCommunityId
+            ? communitiesRef.current.find((x) => String(x.id) === String(shopCommunityId))
+            : null;
+        if (inCommunity && isMemberOfOpenCommunity && nextRows.length === 0 && communityRow?.id) {
+          await joinCommunityAndAttachListings(communityRow);
+          if (cancelledRef?.()) return;
+          const retry = await apiRequest(`/listings?communityId=${encodeURIComponent(String(shopCommunityId))}`, { token });
+          if (cancelledRef?.()) return;
+          const retriedRows = Array.isArray(retry?.listings) ? retry.listings : [];
+          nextRows = retriedRows;
         }
-        if (notifySuccess) {
-          pushMarketplaceToast(`You joined ${joinedName || "the community"} successfully.`);
+        setListings(nextRows);
+      } catch (e) {
+        if (cancelledRef?.()) return;
+        if (!soft) {
+          setListingsError(e.message || "Could not load listings.");
+          setListings([]);
+        } else {
+          setListingsError(e.message || "Could not refresh listings.");
         }
-      } catch (error) {
-        pushMarketplaceToast(error?.message || "Joined, but we could not attach your listings yet. Try Join again.");
+      } finally {
+        setListingsLoading(false);
+        setListingsRefreshing(false);
       }
     },
-    [activeView, applyJoinedCommunity, shopCommunityId, token],
+    [
+      token,
+      activeView,
+      browseVerticalId,
+      browseSubId,
+      shopCommunityId,
+      user?.id,
+      isMemberOfOpenCommunity,
+      joinCommunityAndAttachListings,
+    ],
+  );
+
+  const refreshCommunityShopListings = useCallback(() => {
+    void loadCommunityShopListings({ preserveExistingRows: true });
+  }, [loadCommunityShopListings]);
+
+  /** Remove this seller's listings from a community shop when they leave (runs in background — do not await before navigation). */
+  const detachSellerListingsFromCommunity = useCallback(
+    async (communityId) => {
+      const cid = String(communityId || "").trim();
+      if (!token || !cid) return;
+      try {
+        const listData = await apiRequest("/me/listings", { token });
+        const mine = Array.isArray(listData?.listings) ? listData.listings : [];
+        const toDetach = mine.filter((l) => String(l.communityId || "") === cid);
+        if (!toDetach.length) return;
+        await Promise.all(
+          toDetach.map((listing) =>
+            apiRequest(`/me/listings/${listing.id}`, {
+              method: "PATCH",
+              token,
+              body: { communityId: null },
+            }),
+          ),
+        );
+        const refreshed = await apiRequest("/me/listings", { token });
+        setSellerListings(refreshed.listings || []);
+      } catch (e) {
+        pushMarketplaceToast(e?.message || "Could not remove your products from this community.");
+      }
+    },
+    [token],
   );
 
   useEffect(() => {
@@ -1627,7 +1951,12 @@ function App() {
   }, [profileCommunityName]);
 
   useEffect(() => {
-    if (!token || activeView !== VIEWS.USERS) return undefined;
+    const shouldLoadUsers =
+      activeView === VIEWS.USERS ||
+      activeView === VIEWS.MESSAGES ||
+      activeView === VIEWS.ORDERS ||
+      activeView === VIEWS.MY_PURCHASES;
+    if (!token || !shouldLoadUsers) return undefined;
     const hadUsers = usersListRef.current.length > 0;
     let cancelled = false;
     if (!hadUsers) setUsersLoading(true);
@@ -1646,6 +1975,26 @@ function App() {
       cancelled = true;
     };
   }, [token, activeView]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setChatThreads([]);
+      setActiveChatUserId("");
+      setChatComposer("");
+      return;
+    }
+    setChatThreads(readChatThreadsFromStorage(user.id));
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    try {
+      if (typeof window === "undefined") return;
+      window.localStorage.setItem(chatStorageKeyForUser(user.id), JSON.stringify(chatThreads));
+    } catch {
+      // ignore
+    }
+  }, [chatThreads, user?.id]);
 
   useEffect(
     () => () => {
@@ -1823,6 +2172,148 @@ function App() {
     setShopCommunityId(null);
     setActiveView(VIEWS.BROWSE);
   }, [navigate, listingCommunityFromProfile.id]);
+
+  const usersById = useMemo(() => {
+    const map = new Map();
+    for (const entry of usersList) {
+      const id = String(entry?.id || "").trim();
+      if (!id) continue;
+      map.set(id, entry);
+    }
+    return map;
+  }, [usersList]);
+
+  const openChatWithUser = useCallback(
+    (userId) => {
+      const targetId = String(userId || "").trim();
+      if (!targetId || !user?.id || targetId === String(user.id)) return;
+      setChatThreads((prev) => {
+        const existing = prev.find((thread) => String(thread.participantId) === targetId);
+        if (existing) return prev;
+        return [{ participantId: targetId, unread: 0, messages: [] }, ...prev];
+      });
+      setActiveChatUserId(targetId);
+      setChatComposer("");
+      setActiveView(VIEWS.MESSAGES);
+    },
+    [user?.id],
+  );
+
+  const sortedChatThreads = useMemo(() => {
+    return [...chatThreads].sort((a, b) => {
+      const aLast = Array.isArray(a?.messages) && a.messages.length > 0 ? Number(a.messages[a.messages.length - 1].createdAt || 0) : 0;
+      const bLast = Array.isArray(b?.messages) && b.messages.length > 0 ? Number(b.messages[b.messages.length - 1].createdAt || 0) : 0;
+      return bLast - aLast;
+    });
+  }, [chatThreads]);
+
+  useEffect(() => {
+    if (activeChatUserId) return;
+    if (sortedChatThreads.length < 1) return;
+    setActiveChatUserId(String(sortedChatThreads[0].participantId || ""));
+  }, [activeChatUserId, sortedChatThreads]);
+
+  const activeChatThread = useMemo(
+    () => sortedChatThreads.find((thread) => String(thread.participantId) === String(activeChatUserId)) || null,
+    [sortedChatThreads, activeChatUserId],
+  );
+
+  const activeChatUser = useMemo(() => usersById.get(String(activeChatUserId || "")) || null, [usersById, activeChatUserId]);
+
+  const messageCommunityFilterOptions = useMemo(() => {
+    const set = new Set();
+    for (const c of communities) {
+      const community = String(c?.name || "").trim();
+      if (community) set.add(community);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [communities]);
+
+  const filteredMessagePeople = useMemo(() => {
+    const q = String(messagePeopleSearch || "").trim().toLowerCase();
+    const existingConversationUserIds = new Set(
+      sortedChatThreads.map((thread) => String(thread?.participantId || "").trim()).filter(Boolean),
+    );
+    const rows = usersList.filter((u) => String(u?.id || "") !== String(user?.id || ""));
+    const filtered = rows.filter((u) => {
+      if (existingConversationUserIds.has(String(u?.id || "").trim())) return false;
+      const community = String(u?.community || "").trim();
+      if (messagePeopleCommunityFilter !== "all") {
+        if (messagePeopleCommunityFilter === "none") {
+          if (community) return false;
+        } else if (community !== messagePeopleCommunityFilter) {
+          return false;
+        }
+      }
+      if (!q) return true;
+      const hay = [u?.name, u?.username, community].map((v) => String(v || "").toLowerCase()).join(" ");
+      return hay.includes(q);
+    });
+    if (messagePeopleSort === "joined_desc") {
+      return [...filtered].sort((a, b) => new Date(b?.joinedAt || 0).getTime() - new Date(a?.joinedAt || 0).getTime());
+    }
+    if (messagePeopleSort === "joined_asc") {
+      return [...filtered].sort((a, b) => new Date(a?.joinedAt || 0).getTime() - new Date(b?.joinedAt || 0).getTime());
+    }
+    if (messagePeopleSort === "name_desc") {
+      return [...filtered].sort((a, b) => formatDisplayName(b?.name || b?.username || "").localeCompare(formatDisplayName(a?.name || a?.username || "")));
+    }
+    return [...filtered].sort((a, b) => formatDisplayName(a?.name || a?.username || "").localeCompare(formatDisplayName(b?.name || b?.username || "")));
+  }, [usersList, user?.id, sortedChatThreads, messagePeopleCommunityFilter, messagePeopleSearch, messagePeopleSort]);
+
+  const communityLabelForUser = useCallback((u) => {
+    const community = String(u?.community || "").trim();
+    return community || "No community set";
+  }, []);
+
+  const totalChatUnreadCount = useMemo(
+    () => chatThreads.reduce((sum, thread) => sum + Math.max(0, Number(thread?.unread || 0)), 0),
+    [chatThreads],
+  );
+
+  useEffect(() => {
+    if (activeView !== VIEWS.MESSAGES || !activeChatUserId) return;
+    setChatThreads((prev) =>
+      prev.map((thread) =>
+        String(thread.participantId) === String(activeChatUserId)
+          ? { ...thread, unread: 0 }
+          : thread,
+      ),
+    );
+  }, [activeView, activeChatUserId]);
+
+  const sendChatMessage = useCallback(() => {
+    const senderId = String(user?.id || "").trim();
+    const participantId = String(activeChatUserId || "").trim();
+    const text = String(chatComposer || "").trim();
+    if (!senderId || !participantId || !text) return;
+    const now = Date.now();
+    const outgoing = { id: createChatMessageId(), senderId, text, createdAt: now };
+    const autoReply = {
+      id: createChatMessageId(),
+      senderId: participantId,
+      text: "Got your message. I will get back to you soon.",
+      createdAt: now + 1,
+    };
+    setChatThreads((prev) => {
+      const next = [];
+      let matched = false;
+      for (const thread of prev) {
+        if (String(thread.participantId) !== participantId) {
+          next.push(thread);
+          continue;
+        }
+        matched = true;
+        const merged = [...(Array.isArray(thread.messages) ? thread.messages : []), outgoing, autoReply].slice(-CHAT_MESSAGES_MAX_PER_THREAD);
+        next.push({ ...thread, unread: activeView === VIEWS.MESSAGES ? 0 : 1, messages: merged });
+      }
+      if (!matched) {
+        next.push({ participantId, unread: activeView === VIEWS.MESSAGES ? 0 : 1, messages: [outgoing, autoReply] });
+      }
+      return next;
+    });
+    setChatComposer("");
+  }, [user?.id, activeChatUserId, chatComposer, activeView]);
 
   /** My purchases vs Sales inbox use separate saved list/grid/dense preferences. */
   const commerceFlowOrdersView = activeView === VIEWS.MY_PURCHASES ? commerceFlowViewBuyer : commerceFlowViewSeller;
@@ -2194,6 +2685,10 @@ function App() {
       pushMarketplaceToast("Please sign in to check out.");
       return;
     }
+    if (!buyNowFromProfile.ready) {
+      pushMarketplaceToast("Complete your profile to buy.");
+      return;
+    }
     setCartCheckoutSubmitting(true);
     let successCount = 0;
     let failedCount = 0;
@@ -2236,7 +2731,7 @@ function App() {
       return;
     }
     pushMarketplaceToast("Could not check out selected items.");
-  }, [cancelCartItemFadeOut, goMyPurchases, mergeCartItemsPreservingOrder, selectedCartItems, startCartItemFadeOut, token]);
+  }, [buyNowFromProfile.ready, cancelCartItemFadeOut, goMyPurchases, mergeCartItemsPreservingOrder, selectedCartItems, startCartItemFadeOut, token]);
 
   const applyTransitionToSelectedOrders = useCallback(
     async (transition, label) => {
@@ -2253,14 +2748,21 @@ function App() {
       setOrdersBulkActionSubmitting(true);
       let successCount = 0;
       let failedCount = 0;
-      const acceptedOrderIds = [];
+      let firstFailureMessage = "";
       for (const order of selectedOrders) {
-        try {
-          await apiRequest(`/orders/${order.id}`, { method: "PATCH", token, body: { transition: transitionNorm } });
-          successCount += 1;
-          if (transitionNorm === "seller_accept") acceptedOrderIds.push(String(order.id || ""));
-        } catch {
+        const oid = String(order?.id ?? "").trim();
+        if (!oid) {
           failedCount += 1;
+          if (!firstFailureMessage) firstFailureMessage = "Missing order id.";
+          continue;
+        }
+        try {
+          await apiRequest(`/orders/${oid}`, { method: "PATCH", token, body: { transition: transitionNorm } });
+          successCount += 1;
+        } catch (e) {
+          failedCount += 1;
+          const msg = typeof e?.message === "string" ? e.message.trim() : "";
+          if (!firstFailureMessage && msg) firstFailureMessage = msg;
         }
       }
       try {
@@ -2278,7 +2780,15 @@ function App() {
             : `${label} ${successCount} order${successCount > 1 ? "s" : ""}. ${failedCount} failed.`,
         );
       } else {
-        pushMarketplaceToast(`Could not ${label.toLowerCase()} selected orders.`);
+        const verb =
+          transitionNorm === "cancel"
+            ? "decline"
+            : transitionNorm === "seller_accept"
+              ? "accept"
+              : "update";
+        pushMarketplaceToast(
+          firstFailureMessage || `Could not ${verb} selected orders.`,
+        );
       }
     },
     [selectedOrders, token, ordersRole],
@@ -2391,46 +2901,8 @@ function App() {
       communityShopListingsQueryKeyRef.current = queryKey;
       setListings([]);
     }
-    setListingsError("");
     let cancelled = false;
-    (async () => {
-      setListingsLoading(true);
-      setListingsError("");
-      try {
-        const qs = new URLSearchParams();
-        if (inCommunity) qs.set("communityId", shopCommunityId);
-        if (hasVertical) {
-          qs.set("verticalId", browseVerticalId);
-          if (browseSubId && browseSubId !== "all") qs.set("subId", browseSubId);
-        }
-        const data = await apiRequest(`/listings?${qs.toString()}`, { token });
-        if (!cancelled) {
-          const rows = Array.isArray(data.listings) ? data.listings : [];
-          let nextRows =
-            inCommunity && !isMemberOfOpenCommunity
-              ? rows.filter((row) => String(row.sellerId || "") !== String(user?.id || ""))
-              : rows;
-          const communityRow =
-            inCommunity && shopCommunityId
-              ? communitiesRef.current.find((x) => String(x.id) === String(shopCommunityId))
-              : null;
-          if (inCommunity && isMemberOfOpenCommunity && nextRows.length === 0 && communityRow?.id) {
-            await joinCommunityAndAttachListings(communityRow);
-            const retry = await apiRequest(`/listings?communityId=${encodeURIComponent(String(shopCommunityId))}`, { token });
-            const retriedRows = Array.isArray(retry?.listings) ? retry.listings : [];
-            nextRows = retriedRows;
-          }
-          setListings(nextRows);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setListingsError(e.message || "Could not load listings.");
-          setListings([]);
-        }
-      } finally {
-        if (!cancelled) setListingsLoading(false);
-      }
-    })();
+    void loadCommunityShopListings({ cancelledRef: () => cancelled, preserveExistingRows: false });
     return () => {
       cancelled = true;
     };
@@ -2442,8 +2914,51 @@ function App() {
     shopCommunityId,
     user?.id,
     isMemberOfOpenCommunity,
-    joinCommunityAndAttachListings,
+    loadCommunityShopListings,
   ]);
+
+  /** Mobile: pull down from top of page to refetch listings (same as Refresh). */
+  useEffect(() => {
+    if (!token || activeView !== VIEWS.COMMUNITY_SHOP) return undefined;
+    if (typeof window === "undefined" || !("ontouchstart" in window)) return undefined;
+    let startY = 0;
+    let startScroll = 0;
+    let armed = false;
+    const PTR_COOLDOWN_MS = 2500;
+    const PULL_THRESHOLD_PX = 72;
+    const TOP_TOUCH_MAX_Y = 140;
+
+    const onTouchStart = (e) => {
+      if (listingsBusyRef.current) return;
+      if (window.scrollY > 6) return;
+      const y = e.touches[0]?.clientY ?? 0;
+      if (y > TOP_TOUCH_MAX_Y) return;
+      startY = y;
+      startScroll = window.scrollY;
+      armed = true;
+    };
+
+    const onTouchEnd = (e) => {
+      if (!armed) return;
+      armed = false;
+      if (listingsBusyRef.current) return;
+      if (startScroll > 6 || window.scrollY > 6) return;
+      const endY = e.changedTouches[0]?.clientY ?? startY;
+      const dy = endY - startY;
+      if (dy < PULL_THRESHOLD_PX) return;
+      const now = Date.now();
+      if (now - communityShopPtrLastTriggerRef.current < PTR_COOLDOWN_MS) return;
+      communityShopPtrLastTriggerRef.current = now;
+      void loadCommunityShopListings({ preserveExistingRows: true });
+    };
+
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [token, activeView, loadCommunityShopListings]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.FAVORITES) return undefined;
@@ -3225,6 +3740,16 @@ function App() {
       return;
     }
     const mode = actionType === "buy" ? "buy" : "cart";
+    if (mode === "buy") {
+      if (!token) {
+        pushMarketplaceToast("Sign in to buy.");
+        return;
+      }
+      if (!buyNowFromProfile.ready) {
+        pushMarketplaceToast("Complete your profile to buy.");
+        return;
+      }
+    }
     const listingModes = Array.isArray(listing.fulfillmentModes) && listing.fulfillmentModes.length ? listing.fulfillmentModes : ["pickup"];
     const defaultFulfillment = listingModes.includes("pickup") ? "pickup" : listingModes[0];
     const savedPref = readQuickOrderFulfillmentPref();
@@ -3234,6 +3759,7 @@ function App() {
     setQuickOrderFulfillmentType(initialFulfillment);
     setQuickAddQuantity("1");
     setQuickAddComment("");
+    setQuickAddInlineError("");
     setQuickAddModalOpen(true);
   };
 
@@ -3282,6 +3808,7 @@ function App() {
     setQuickOrderFulfillmentType("pickup");
     setQuickAddQuantity("1");
     setQuickAddComment("");
+    setQuickAddInlineError("");
   };
 
   const closeProductInspect = useCallback(() => setProductInspect(null), []);
@@ -3312,43 +3839,37 @@ function App() {
       onBuyNow: typeof extra.onBuyNow === "function" ? extra.onBuyNow : undefined,
       onEditListing: typeof extra.onEditListing === "function" ? extra.onEditListing : undefined,
       onSaleSelect: typeof extra.onSaleSelect === "function" ? extra.onSaleSelect : undefined,
+      buyNowDisabled: Boolean(extra.buyNowDisabled),
+      buyNowDisabledReason: String(extra.buyNowDisabledReason || ""),
     });
   }, []);
 
   const submitQuickAddOrder = async () => {
     if (!quickAddListing?.id || quickAddSubmitting) return;
+    const showQuickAddError = (message) => {
+      const nextMessage = String(message || "").trim();
+      if (!nextMessage) return;
+      setQuickAddInlineError(nextMessage);
+    };
+    setQuickAddInlineError("");
     const parsedQty = Number(quickAddQuantity);
     const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
     if (!Number.isFinite(parsedQty) || parsedQty < 1 || parsedQty > maxQty) {
-      pushMarketplaceToast(`Quantity must be between 1 and ${maxQty}.`);
+      showQuickAddError(`Quantity must be between 1 and ${maxQty}.`);
       return;
     }
     setQuickAddSubmitting(true);
     try {
       if (quickActionType === "buy") {
         if (!token) {
-          pushMarketplaceToast("Please sign in to place an order.");
+          showQuickAddError("Sign in to buy.");
+          return;
+        }
+        if (!buyNowFromProfile.ready) {
+          showQuickAddError("Complete your profile to buy.");
           return;
         }
         try {
-          const listingMaxQty = Math.max(0, Number(quickAddListing?.quantity) || 0);
-          const currentOrders = await apiRequest("/orders?role=buyer", { token });
-          const pendingQtyForListing = (Array.isArray(currentOrders?.orders) ? currentOrders.orders : [])
-            .filter(
-              (o) =>
-                String(o?.listingId || "") === String(quickAddListing?.id || "") &&
-                String(o?.status || "").toLowerCase() === "placed",
-            )
-            .reduce((sum, o) => sum + Math.max(0, Number(o?.quantity) || 0), 0);
-          const availableQty = Math.max(0, listingMaxQty - pendingQtyForListing);
-          if (availableQty < parsedQty) {
-            pushMarketplaceToast(
-              availableQty > 0
-                ? `Only ${availableQty} item${availableQty > 1 ? "s" : ""} left for pending orders.`
-                : "Maximum available quantity is already in pending orders.",
-            );
-            return;
-          }
           const created = await apiRequest("/orders", {
             method: "POST",
             token,
@@ -3359,8 +3880,9 @@ function App() {
               comment: String(quickAddComment || "").trim(),
             },
           });
+          markBuyerOrderAsUnseenInTab("pending", created?.order?.id);
         } catch (e) {
-          pushMarketplaceToast(e.message || "Could not place order.");
+          showQuickAddError(e.message || "Could not place order.");
           return;
         }
         setQuickAddModalOpen(false);
@@ -3369,6 +3891,7 @@ function App() {
         setQuickOrderFulfillmentType("pickup");
         setQuickAddQuantity("1");
         setQuickAddComment("");
+        setQuickAddInlineError("");
         // Keep user in current marketplace/community view after successful buy.
         setOrdersRole("buyer");
         setOrdersStatusTab("pending");
@@ -3406,7 +3929,7 @@ function App() {
             pushMarketplaceToast(`Added to cart: ${shortTitle} ×${parsedQty}.`);
           }
         } catch (e) {
-          pushMarketplaceToast(e.message || "Could not save to cart.");
+          showQuickAddError(e.message || "Could not save to cart.");
           return;
         }
       } else {
@@ -3468,6 +3991,7 @@ function App() {
       setQuickAddListing(null);
       setQuickAddQuantity("1");
       setQuickAddComment("");
+      setQuickAddInlineError("");
     } finally {
       setQuickAddSubmitting(false);
     }
@@ -4367,6 +4891,7 @@ function App() {
         cartItemCount={recentlyAddedCartListingIds.length}
         purchasesItemCount={purchaseNavBadgeCount}
         ordersItemCount={sellerNavBadgeCount}
+        notificationUnreadCount={unreadNotificationCount}
         theme={theme}
         setTheme={setTheme}
         onLogout={logout}
@@ -4416,13 +4941,17 @@ function App() {
         </div>
       ) : null}
 
-      <main className="app-container space-y-4 py-5 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] max-sm:pt-4 md:space-y-6 md:py-8 md:pb-24 lg:pb-12">
+      <main className="app-container space-y-4 py-5 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] max-sm:pt-4 md:space-y-6 md:py-8 md:pb-12">
         {isBrowseLikeView && activeView !== VIEWS.FAVORITES && (
-          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
+          <section
+            className={`${UI_KIT.viewSection} space-y-4 md:space-y-6 ${
+              activeView === VIEWS.COMMUNITY_SHOP ? "border-0 ring-0" : ""
+            }`}
+          >
             <div className="space-y-4">
               {activeView === VIEWS.COMMUNITY_SHOP ? (
                 <div
-                  className={`${UI_KIT.surfaceRaised} p-3 transition-opacity duration-200 sm:p-4 lg:p-5 ${
+                  className={`${UI_KIT.surfaceRaised} border-0 p-3 transition-opacity duration-200 sm:p-4 lg:p-5 ${
                     mobileCommunityFiltersOpen ? "max-lg:pointer-events-none max-lg:opacity-40" : ""
                   }`}
                 >
@@ -4430,30 +4959,32 @@ function App() {
                     <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-start sm:gap-4 lg:gap-5">
                       <button
                         type="button"
-                        className="inline-flex w-full min-h-[44px] shrink-0 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-3.5 py-2.5 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 sm:w-auto sm:min-h-0 sm:justify-start sm:py-2 lg:mt-0.5 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                        className="hidden min-h-[44px] shrink-0 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-3.5 py-2.5 text-sm font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 sm:min-h-0 sm:justify-start sm:py-2 lg:mt-0.5 lg:inline-flex lg:w-auto dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
                         onClick={() => leaveCommunityToGlobalMarketplace()}
                       >
                         ← All communities
                       </button>
                       <div className="min-w-0 flex-1 space-y-2 border-neutral-200 sm:space-y-2 lg:border-l lg:pl-5 dark:lg:border-slate-600">
-                        <div className="min-w-0">
-                          <h2 className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100 lg:text-2xl">
-                            {toTitleCase(activeCommunity?.name?.trim()) || "Community"}
-                          </h2>
-                          {activeCommunityLocaleLine ? (
-                            <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">{activeCommunityLocaleLine}</p>
-                          ) : null}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          {isMemberOfOpenCommunity ? (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/80 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300">
-                              ● Joined member
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-neutral-300/80 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                              ○ Not a member yet
-                            </span>
-                          )}
+                        <div className="flex items-start justify-between gap-2 lg:flex-col lg:items-stretch lg:justify-start lg:gap-2">
+                          <div className="min-w-0 flex-1 lg:flex-none">
+                            <h2 className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100 lg:text-2xl">
+                              {toTitleCase(activeCommunity?.name?.trim()) || "Community"}
+                            </h2>
+                            {activeCommunityLocaleLine ? (
+                              <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">{activeCommunityLocaleLine}</p>
+                            ) : null}
+                          </div>
+                          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-start pt-0.5 lg:w-full lg:justify-start lg:self-auto lg:pt-0">
+                            {isMemberOfOpenCommunity ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/80 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300">
+                                ● Joined member
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-neutral-300/80 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                                ○ Not a member yet
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <p className="hidden max-w-2xl text-sm leading-relaxed text-neutral-600 dark:text-slate-400 sm:block lg:text-xs lg:leading-relaxed">
                           Listings here are only visible to members of this community. Orders, profile, and the wider app stay in the top navigation.
@@ -4469,6 +5000,83 @@ function App() {
                             Listings here are only visible to members of this community. Orders, profile, and the wider app stay in the top navigation.
                           </p>
                         </details>
+                        {/* Mobile: compact actions below "How this shop works" */}
+                        <div className="flex flex-col gap-1.5 lg:hidden">
+                          <div
+                            className={`flex gap-1.5 ${!isMemberOfOpenCommunity ? "flex-col sm:flex-row sm:items-stretch" : "flex-row items-center"}`}
+                          >
+                            <button
+                              type="button"
+                              className={`inline-flex min-h-9 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
+                                !isMemberOfOpenCommunity
+                                  ? "w-full min-w-0 sm:flex-1 sm:truncate"
+                                  : activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "")
+                                    ? "w-full"
+                                    : "min-w-0 flex-1 truncate"
+                              }`}
+                              onClick={() => leaveCommunityToGlobalMarketplace()}
+                            >
+                              <span className="sm:hidden">← Communities</span>
+                              <span className="hidden sm:inline">← All communities</span>
+                            </button>
+                            {!isMemberOfOpenCommunity ? (
+                              <button
+                                type="button"
+                                title="Join community"
+                                className="inline-flex min-h-9 w-full shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-brand-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary/90 sm:w-auto sm:flex-1 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
+                                onClick={() => {
+                                  void joinCommunityAndAttachListings(activeCommunity, { notifySuccess: true });
+                                  setShopCommunityId(activeCommunity?.id || null);
+                                  setActiveView(VIEWS.COMMUNITY_SHOP);
+                                  navigate("/", { replace: true });
+                                }}
+                              >
+                                Join community
+                              </button>
+                            ) : activeCommunity?.createdBy && String(activeCommunity.createdBy) !== String(user?.id || "") ? (
+                              <button
+                                type="button"
+                                aria-label="Leave this community"
+                                className="inline-flex min-h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-full border border-rose-300/80 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
+                                onClick={() => {
+                                  const leftName = toTitleCase(String(activeCommunity?.name || "").trim());
+                                  const leavingId = activeCommunity?.id ? String(activeCommunity.id) : "";
+                                  if (leavingId) void detachSellerListingsFromCommunity(leavingId);
+                                  applyJoinedCommunity("");
+                                  pushMarketplaceToast(`You left ${leftName || "the community"} successfully.`);
+                                  leaveCommunityToGlobalMarketplace();
+                                }}
+                              >
+                                Leave
+                              </button>
+                            ) : null}
+                          </div>
+                          {isMemberOfOpenCommunity && activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "") ? (
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <button
+                                type="button"
+                                className="inline-flex min-h-9 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-2 py-1.5 text-[11px] font-medium leading-tight text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                                onClick={() => openEditCommunityModal(activeCommunity)}
+                              >
+                                Edit community
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex min-h-9 items-center justify-center rounded-full border border-rose-300/80 bg-white px-2 py-1.5 text-[11px] font-medium leading-tight text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
+                                onClick={() => {
+                                  const leftName = toTitleCase(String(activeCommunity?.name || "").trim());
+                                  const leavingId = activeCommunity?.id ? String(activeCommunity.id) : "";
+                                  if (leavingId) void detachSellerListingsFromCommunity(leavingId);
+                                  applyJoinedCommunity("");
+                                  pushMarketplaceToast(`You left ${leftName || "the community"} successfully.`);
+                                  leaveCommunityToGlobalMarketplace();
+                                }}
+                              >
+                                Leave
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                         {!isMemberOfOpenCommunity ? (
                           <p className="rounded-xl border border-sky-200/90 bg-sky-50/80 px-3.5 py-2.5 text-sm text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
                             Since you are not a member yet, your products will not appear in this community yet.
@@ -4476,7 +5084,7 @@ function App() {
                         ) : null}
                       </div>
                     </div>
-                    <div className="flex w-full flex-wrap gap-2 lg:mt-0.5 lg:w-auto lg:shrink-0 lg:justify-end">
+                    <div className="hidden w-full flex-wrap gap-2 lg:mt-0.5 lg:flex lg:w-auto lg:shrink-0 lg:justify-end">
                       {activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "") ? (
                         <button
                           type="button"
@@ -4490,8 +5098,8 @@ function App() {
                         <button
                           type="button"
                           className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-brand-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-primary/90 sm:min-h-0 sm:flex-none sm:py-2 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
-                          onClick={async () => {
-                            await joinCommunityAndAttachListings(activeCommunity, { notifySuccess: true });
+                          onClick={() => {
+                            void joinCommunityAndAttachListings(activeCommunity, { notifySuccess: true });
                             setShopCommunityId(activeCommunity?.id || null);
                             setActiveView(VIEWS.COMMUNITY_SHOP);
                             navigate("/", { replace: true });
@@ -4505,6 +5113,8 @@ function App() {
                           className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-rose-300/80 bg-white px-3 py-2.5 text-xs font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 sm:min-h-0 sm:flex-none sm:px-4 sm:py-2 sm:text-sm dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/30"
                           onClick={() => {
                             const leftName = toTitleCase(String(activeCommunity?.name || "").trim());
+                            const leavingId = activeCommunity?.id ? String(activeCommunity.id) : "";
+                            if (leavingId) void detachSellerListingsFromCommunity(leavingId);
                             applyJoinedCommunity("");
                             pushMarketplaceToast(`You left ${leftName || "the community"} successfully.`);
                             leaveCommunityToGlobalMarketplace();
@@ -4656,8 +5266,8 @@ function App() {
                               <button
                                 type="button"
                                 className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                                onClick={async () => {
-                                  await joinCommunityAndAttachListings(c, { notifySuccess: true });
+                                onClick={() => {
+                                  void joinCommunityAndAttachListings(c, { notifySuccess: true });
                                   setShopCommunityId(c.id);
                                   setActiveView(VIEWS.COMMUNITY_SHOP);
                                   navigate("/", { replace: true });
@@ -4890,9 +5500,40 @@ function App() {
                           Listings
                         </h3>
                         <p className="mt-0.5 text-xs text-neutral-500 dark:text-slate-400">Posted in this community</p>
+                        {listingsRefreshing ? (
+                          <p className="mt-1 text-xs font-medium text-brand-primary dark:text-brand-accent" aria-live="polite">
+                            Updating listings…
+                          </p>
+                        ) : null}
                       </div>
                     ) : null}
-                    <div className="shrink-0">
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      {activeView === VIEWS.COMMUNITY_SHOP ? (
+                        <button
+                          type="button"
+                          className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-neutral-300/90 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                          aria-busy={listingsLoading || listingsRefreshing}
+                          disabled={listingsLoading || listingsRefreshing}
+                          title="Reload listings from the server"
+                          onClick={() => refreshCommunityShopListings()}
+                        >
+                          <svg
+                            className={`h-3.5 w-3.5 shrink-0 ${listingsLoading || listingsRefreshing ? "animate-spin" : ""}`}
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            aria-hidden
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                            />
+                          </svg>
+                          Refresh
+                        </button>
+                      ) : null}
                       <ProductViewDensityToggle value={communityProductsView} onChange={setCommunityProductsView} />
                     </div>
                   </div>
@@ -4910,6 +5551,8 @@ function App() {
                         isFavorite={favoriteIds.has(l.id)}
                         showActions
                         currentUserId={user?.id || ""}
+                        buyNowDisabled={buyNowBlocked}
+                        buyNowDisabledReason={buyNowBlockedReason}
                         onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
                         onEdit={() => beginEditSellerListing(l)}
                         onBuy={() => openQuickAddModal(l, "buy")}
@@ -4937,6 +5580,8 @@ function App() {
                                   closeProductInspect();
                                   openQuickAddModal(l, "buy");
                                 },
+                            buyNowDisabled: !isOwn && buyNowBlocked,
+                            buyNowDisabledReason: !isOwn ? buyNowBlockedReason : "",
                             onEditListing: isOwn
                               ? () => {
                                   closeProductInspect();
@@ -4985,29 +5630,288 @@ function App() {
 
         {activeView === VIEWS.MESSAGES && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Messages</h2>
-            <p className="text-sm text-neutral-600 dark:text-slate-400">
-              Chat with buyers and sellers in one inbox. Threading, attachments, and read receipts will ship when messaging is connected to the backend.
-            </p>
-            <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-center md:p-10`}>
-              <p className="text-sm font-medium text-neutral-700 dark:text-slate-300">Messaging — coming soon</p>
-              <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">
-                You will see conversations and new-message alerts here once the feature is live.
+            <div>
+              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Messages</h2>
+              <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400">
+                Start a chat from Users, then continue conversations here.
               </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-[minmax(14rem,20rem)_1fr]">
+              <aside className={`${UI_KIT.surfaceRaised} max-h-[70vh] space-y-3 overflow-y-auto p-2`}>
+                <div>
+                  <p className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Conversations</p>
+                  {sortedChatThreads.length === 0 ? (
+                    <p className="px-2 py-3 text-sm text-neutral-600 dark:text-slate-400">No chats yet. Start one from People below.</p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {sortedChatThreads.map((thread) => {
+                        const participant = usersById.get(String(thread.participantId || ""));
+                        const latest = Array.isArray(thread.messages) && thread.messages.length > 0 ? thread.messages[thread.messages.length - 1] : null;
+                        const selected = String(activeChatUserId) === String(thread.participantId);
+                        return (
+                          <li key={thread.participantId}>
+                            <button
+                              type="button"
+                              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition ${
+                                selected
+                                  ? "bg-brand-soft text-brand-primary dark:bg-slate-800/80 dark:text-slate-100"
+                                  : "hover:bg-neutral-100 dark:hover:bg-slate-800"
+                              }`}
+                              onClick={() => {
+                                setActiveChatUserId(String(thread.participantId || ""));
+                              }}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-medium text-neutral-900 dark:text-slate-100">
+                                  {formatDisplayName(participant?.name || participant?.username || "Member")}
+                                </span>
+                                <span className="mt-0.5 block truncate text-xs text-neutral-500 dark:text-slate-400">
+                                  {communityLabelForUser(participant)}
+                                  {latest?.text ? ` · ${latest.text}` : " · No messages yet"}
+                                </span>
+                              </span>
+                              {thread.unread > 0 ? (
+                                <span className="ml-2 inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-brand-primary px-1.5 py-0.5 text-[10px] font-bold text-white">
+                                  {thread.unread > 99 ? "99+" : thread.unread}
+                                </span>
+                              ) : null}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+                <div className="border-t border-neutral-200/90 pt-2 dark:border-slate-700/80">
+                  <div className="space-y-2 px-2 pb-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">People</p>
+                      <span className="text-[11px] text-neutral-500 dark:text-slate-400">
+                        {filteredMessagePeople.length} result{filteredMessagePeople.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    <input
+                      type="search"
+                      value={messagePeopleSearch}
+                      onChange={(e) => setMessagePeopleSearch(e.target.value)}
+                      className="input-base h-9 w-full text-xs"
+                      placeholder="Search name, username, or community"
+                      aria-label="Search people"
+                    />
+                    <div className="grid grid-cols-1 gap-1.5">
+                      <select
+                        value={messagePeopleCommunityFilter}
+                        onChange={(e) => setMessagePeopleCommunityFilter(e.target.value)}
+                        className="input-base h-9 w-full text-xs"
+                        aria-label="Filter by community"
+                      >
+                        <option value="all">All communities</option>
+                        <option value="none">No community set</option>
+                        {messageCommunityFilterOptions.map((name) => (
+                          <option key={`community-filter-${name}`} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={messagePeopleSort}
+                        onChange={(e) => setMessagePeopleSort(e.target.value)}
+                        className="input-base h-9 w-full text-xs"
+                        aria-label="Sort people"
+                      >
+                        <option value="name_asc">Sort: Name A-Z</option>
+                        <option value="name_desc">Sort: Name Z-A</option>
+                        <option value="joined_desc">Sort: Newest joined</option>
+                        <option value="joined_asc">Sort: Oldest joined</option>
+                      </select>
+                    </div>
+                  </div>
+                  {usersLoading && usersList.length === 0 ? (
+                    <p className="px-2 py-2 text-xs text-neutral-500 dark:text-slate-400">Loading users…</p>
+                  ) : null}
+                  {usersError ? <p className="px-2 py-2 text-xs text-rose-600 dark:text-rose-400">{usersError}</p> : null}
+                  {!usersError ? (
+                    <ul className="space-y-1">
+                      {filteredMessagePeople.map((u) => (
+                          <li key={`messages-user-${u.id}`}>
+                            <button
+                              type="button"
+                              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition hover:bg-neutral-100 dark:hover:bg-slate-800"
+                              onClick={() => openChatWithUser(u.id)}
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate text-sm font-medium text-neutral-900 dark:text-slate-100">
+                                  {formatDisplayName(u.name || u.username || "Member")}
+                                </span>
+                                <span className="block truncate text-[11px] text-neutral-500 dark:text-slate-400">
+                                  {communityLabelForUser(u)}
+                                  {u.joinedAt ? ` · Joined ${new Date(u.joinedAt).toLocaleDateString()}` : ""}
+                                </span>
+                              </span>
+                              <span className="rounded-md border border-brand-primary/35 px-2 py-1 text-[11px] font-semibold text-brand-primary dark:border-brand-primary/45">
+                                Chat
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      {!(usersLoading && usersList.length === 0) && filteredMessagePeople.length === 0 ? (
+                        <li className="px-2 py-2 text-xs text-neutral-500 dark:text-slate-400">
+                          No people match your search/filter.
+                        </li>
+                      ) : null}
+                    </ul>
+                  ) : null}
+                </div>
+              </aside>
+              <div className={`${UI_KIT.surfaceRaised} flex min-h-[24rem] flex-col`}>
+                {!activeChatThread ? (
+                  <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-neutral-600 dark:text-slate-400">
+                    Select a conversation from the left.
+                  </div>
+                ) : (
+                  <>
+                    <div className="border-b border-neutral-200 px-4 py-3 dark:border-slate-700">
+                      <p className="text-sm font-semibold text-neutral-900 dark:text-slate-100">
+                        {formatDisplayName(activeChatUser?.name || activeChatUser?.username || "Member")}
+                      </p>
+                      <p className="mt-0.5 text-xs text-neutral-500 dark:text-slate-400">{communityLabelForUser(activeChatUser)}</p>
+                    </div>
+                    <div className="flex-1 space-y-2 overflow-y-auto p-4">
+                      {activeChatThread.messages.length === 0 ? (
+                        <p className="text-sm text-neutral-500 dark:text-slate-400">No messages yet. Send the first one.</p>
+                      ) : (
+                        activeChatThread.messages.map((m) => {
+                          const mine = String(m.senderId) === String(user?.id || "");
+                          return (
+                            <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                              <div
+                                className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
+                                  mine
+                                    ? "bg-brand-primary text-white"
+                                    : "bg-neutral-100 text-neutral-900 dark:bg-slate-800 dark:text-slate-100"
+                                }`}
+                              >
+                                <p className="whitespace-pre-wrap break-words">{m.text}</p>
+                                <p className={`mt-1 text-[10px] ${mine ? "text-white/80" : "text-neutral-500 dark:text-slate-400"}`}>
+                                  {new Date(m.createdAt).toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                    <div className="border-t border-neutral-200 p-3 dark:border-slate-700">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={chatComposer}
+                          onChange={(e) => setChatComposer(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              sendChatMessage();
+                            }
+                          }}
+                          placeholder={`Message ${formatDisplayName(activeChatUser?.name || activeChatUser?.username || "member")}...`}
+                          className="input-base h-11 flex-1"
+                        />
+                        <button
+                          type="button"
+                          className="inline-flex h-11 items-center justify-center rounded-lg bg-brand-primary px-4 text-sm font-semibold text-white transition hover:bg-brand-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={sendChatMessage}
+                          disabled={!String(chatComposer || "").trim()}
+                        >
+                          Send
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </section>
         )}
 
         {activeView === VIEWS.NOTIFICATIONS && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Notifications</h2>
-            <p className="text-sm text-neutral-600 dark:text-slate-400">
-              Order updates, delivery status, and marketplace alerts will appear here once notifications are wired to the backend.
-            </p>
-            <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-center md:p-10`}>
-              <p className="text-sm font-medium text-neutral-700 dark:text-slate-300">No notifications yet</p>
-              <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">You are all caught up for now.</p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Notifications</h2>
+                <p className="text-sm text-neutral-600 dark:text-slate-400">
+                  Order updates, delivery status, and marketplace alerts from your session appear here.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-neutral-300/80 px-3 py-1.5 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                  onClick={markAllNotificationsRead}
+                  disabled={unreadNotificationCount === 0}
+                >
+                  Mark all read
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border border-neutral-300/80 px-3 py-1.5 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                  onClick={clearNotificationInbox}
+                  disabled={notificationInbox.length === 0}
+                >
+                  Clear all
+                </button>
+              </div>
             </div>
+            {notificationInbox.length === 0 ? (
+              <div className={`${UI_KIT.surfaceMuted} border-dashed p-8 text-center md:p-10`}>
+                <p className="text-sm font-medium text-neutral-700 dark:text-slate-300">No notifications yet</p>
+                <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">You are all caught up for now.</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {notificationInbox.map((item) => {
+                  const createdLabel = new Date(item.createdAt).toLocaleString();
+                  return (
+                    <article
+                      key={item.id}
+                      className={`${UI_KIT.surfaceRaised} flex items-start justify-between gap-3 p-3 sm:p-3.5 ${
+                        item.read ? "opacity-80" : ""
+                      }`}
+                    >
+                      <div className="min-w-0 space-y-1">
+                        <p className="text-sm font-medium leading-relaxed text-neutral-800 dark:text-slate-100">{item.text}</p>
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-neutral-500 dark:text-slate-400">
+                          <span className="rounded-full border border-neutral-300/80 px-2 py-0.5 uppercase tracking-wide dark:border-slate-600">
+                            {item.type}
+                          </span>
+                          <span>{createdLabel}</span>
+                          {!item.read ? (
+                            <span className="rounded-full bg-brand-primary/15 px-2 py-0.5 font-semibold text-brand-primary">Unread</span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {!item.read ? (
+                          <button
+                            type="button"
+                            className="rounded-md border border-neutral-300/80 px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                            onClick={() => markNotificationRead(item.id)}
+                          >
+                            Mark read
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="rounded-md border border-neutral-300/80 px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                          onClick={() => dismissNotification(item.id)}
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </section>
         )}
 
@@ -5038,6 +5942,8 @@ function App() {
                       isFavorite={favoriteIds.has(l.id)}
                       showActions
                       currentUserId={user?.id || ""}
+                      buyNowDisabled={buyNowBlocked}
+                      buyNowDisabledReason={buyNowBlockedReason}
                       onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
                       onEdit={() => beginEditSellerListing(l)}
                       onBuy={() => openQuickAddModal(l, "buy")}
@@ -5065,6 +5971,8 @@ function App() {
                                 closeProductInspect();
                                 openQuickAddModal(l, "buy");
                               },
+                          buyNowDisabled: !isOwn && buyNowBlocked,
+                          buyNowDisabledReason: !isOwn ? buyNowBlockedReason : "",
                           onEditListing: isOwn
                             ? () => {
                                 closeProductInspect();
@@ -5838,13 +6746,18 @@ function App() {
               <div className="space-y-3">
                 {Object.entries(
                   ordersForStatusTab.reduce((acc, order) => {
-                    const sellerKey = String(order.sellerId || "unknown");
-                    if (!acc[sellerKey]) acc[sellerKey] = [];
-                    acc[sellerKey].push(order);
+                    const groupKey =
+                      ordersRole === "seller"
+                        ? String(order.buyerId || "unknown")
+                        : String(order.sellerId || "unknown");
+                    if (!acc[groupKey]) acc[groupKey] = [];
+                    acc[groupKey].push(order);
                     return acc;
                   }, {}),
-                ).map(([sellerId, sellerOrders]) => {
-                  const orderedSellerOrders = [...sellerOrders].sort((a, b) => {
+                ).map(([groupPartyId, groupedOrders]) => {
+                  const partyRoleLabel = ordersRole === "seller" ? "Buyer" : "Seller";
+                  const groupUser = usersList.find((u) => String(u?.id || "") === String(groupPartyId || ""));
+                  const orderedSellerOrders = [...groupedOrders].sort((a, b) => {
                     const aId = String(a?.id || "");
                     const bId = String(b?.id || "");
                     const aIdx = ordersTabRecentPendingIds.indexOf(aId);
@@ -5856,43 +6769,45 @@ function App() {
                     if (bRecent) return 1;
                     return 0;
                   });
-                  const sellerUser = usersList.find((u) => String(u?.id || "") === String(sellerId || ""));
-                  const usernameLabel = String(sellerUser?.username || "").trim()
-                    ? `@${String(sellerUser.username).trim()}`
+                  const usernameLabel = String(groupUser?.username || "").trim()
+                    ? `@${String(groupUser.username).trim()}`
                     : "";
                   const orderUsernameLabel =
-                    sellerOrders
+                    groupedOrders
                       .map((order) => {
                         const raw =
-                          order?.sellerUsername ||
-                          order?.seller?.username ||
-                          order?.sellerName ||
-                          "";
+                          ordersRole === "seller"
+                            ? order?.buyerUsername || order?.buyer?.username || order?.buyerName || ""
+                            : order?.sellerUsername || order?.seller?.username || order?.sellerName || "";
                         const normalized = String(raw || "").trim();
                         if (!normalized) return "";
                         return normalized.startsWith("@") ? normalized : `@${normalized}`;
                       })
                       .find((label) => String(label || "").trim().length > 0) || "";
-                  const isCurrentUserSeller = String(sellerId || "") === String(user?.id || "");
+                  const isCurrentUserParty = String(groupPartyId || "") === String(user?.id || "");
                   const currentUserUsernameLabel = String(user?.username || "").trim()
                     ? `@${String(user.username).trim()}`
                     : "";
-                  const listingSellerLabel =
-                    sellerOrders
-                      .map((order) => orderListingsById[String(order.listingId)]?.sellerLabel)
+                  const listingPartyLabel =
+                    groupedOrders
+                      .map((order) =>
+                        ordersRole === "seller"
+                          ? orderListingsById[String(order.listingId)]?.buyerLabel
+                          : orderListingsById[String(order.listingId)]?.sellerLabel,
+                      )
                       .find((label) => String(label || "").trim().length > 0) || "";
-                  const looksLikeFallbackIdLabel = /^seller\s+[a-f0-9]{6,}$/i.test(String(listingSellerLabel || "").trim());
+                  const looksLikeFallbackIdLabel = /^(seller|buyer)\s+[a-f0-9]{6,}$/i.test(String(listingPartyLabel || "").trim());
                   const sellerLabel = usernameLabel
                     ? usernameLabel
                     : orderUsernameLabel
                       ? orderUsernameLabel
-                    : isCurrentUserSeller && currentUserUsernameLabel
+                    : isCurrentUserParty && currentUserUsernameLabel
                       ? currentUserUsernameLabel
-                    : listingSellerLabel && !looksLikeFallbackIdLabel
-                      ? listingSellerLabel
-                      : sellerId && sellerId !== "unknown"
-                        ? `Seller ${sellerId.slice(0, 8)}`
-                        : "Unknown seller";
+                    : listingPartyLabel && !looksLikeFallbackIdLabel
+                      ? listingPartyLabel
+                      : groupPartyId && groupPartyId !== "unknown"
+                        ? `${partyRoleLabel} ${groupPartyId.slice(0, 8)}`
+                        : `Unknown ${partyRoleLabel.toLowerCase()}`;
                   const shouldMergeBuyerRows =
                     ordersRole === "buyer" && !["completed", "cancelled"].includes(String(ordersStatusTab || ""));
                   const mergedSellerOrders =
@@ -5972,14 +6887,14 @@ function App() {
                   const sellerAllSelected = sellerOrderIds.length > 0 && sellerSelectedCount === sellerOrderIds.length;
                   const sellerSomeSelected = sellerSelectedCount > 0 && !sellerAllSelected;
                   return (
-                    <div key={sellerId} className={`${UI_KIT.surfaceCard} p-3 sm:p-3.5`}>
+                    <div key={groupPartyId} className={`${UI_KIT.surfaceCard} p-3 sm:p-3.5`}>
                       <div className="mb-1.5 flex items-center gap-2 border-b border-neutral-200/80 pb-1.5 sm:mb-2 sm:pb-2 dark:border-slate-700/80">
                         {ordersStatusTab === "pending" ? (
                           <CartSellerSelectAllCheckbox
                             allChecked={sellerAllSelected}
                             someSelected={sellerSomeSelected}
                             onChange={() => toggleOrderSellerSelectAll(orderedSellerOrders)}
-                            ariaLabel={`Select all orders from ${sellerLabel}`}
+                            ariaLabel={`Select all orders for ${sellerLabel}`}
                           />
                         ) : null}
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-600 sm:text-xs dark:text-slate-300">
@@ -6043,16 +6958,15 @@ function App() {
                             ordersStatusTab === "completed" && String(o.status || "") === "completed";
                           const completedDetailsKey = String(o.id || "");
                           const completedDetailsOpen = Boolean(completedTabOrderDetailsOpen[completedDetailsKey]);
+                          const orderRowSurfaceBase = shouldHighlightRecent
+                            ? "rounded-xl border border-emerald-300/80 bg-emerald-100/80 p-2 shadow-sm ring-1 ring-emerald-400/25 sm:p-2.5 dark:border-emerald-500/45 dark:bg-emerald-500/18 dark:ring-emerald-400/15"
+                            : "rounded-xl border border-neutral-200/80 bg-white/85 p-2 shadow-sm sm:p-2.5 dark:border-slate-700/70 dark:bg-slate-900/50";
+                          const orderRowListShell = orderRowSurfaceBase;
+                          const orderRowGridShell = `h-full min-h-0 min-w-0 flex-1 ${orderRowSurfaceBase}`;
                           return (
                             <div
-                              key={`${sellerId}:${entry.mergeKey}`}
-                              className={`${
-                                cfList
-                                  ? "rounded-xl py-2 first:pt-0 last:pb-0 sm:py-2.5"
-                                  : "h-full min-h-0 min-w-0 flex-1 rounded-xl border border-neutral-200/80 bg-white/85 p-2 shadow-sm sm:p-2.5 dark:border-slate-700/70 dark:bg-slate-900/50"
-                              } ${
-                                shouldHighlightRecent ? "bg-emerald-100/75 dark:bg-emerald-500/15" : ""
-                              }`}
+                              key={`${groupPartyId}:${entry.mergeKey}`}
+                              className={cfList ? orderRowListShell : orderRowGridShell}
                             >
                               <div
                                 className={`flex flex-col sm:flex-row sm:items-start ${
@@ -6441,6 +7355,28 @@ function App() {
                                   >
                                     View details
                                   </button>
+                                  {ordersRole === "buyer" &&
+                                  String(o.status || "") === "ready_for_pickup" &&
+                                  o.fulfillmentType === "pickup" &&
+                                  !pickupBuyerAcknowledgedAll &&
+                                  pickupBuyerAckOrderIds.length > 0 ? (
+                                    <button
+                                      type="button"
+                                      className={`btn-secondary w-full touch-manipulation whitespace-nowrap min-[400px]:w-auto min-[400px]:min-h-0 ${
+                                        multicolOrderCard
+                                          ? "min-h-9 shrink-0 px-2.5 py-1.5 text-[11px] sm:min-h-0"
+                                          : "min-h-10 shrink-0 px-3 text-xs sm:min-h-0"
+                                      }`}
+                                      onClick={() =>
+                                        patchOrderTransition(pickupBuyerAckOrderIds[0], "buyer_ack_receipt", {
+                                          orderIds: pickupBuyerAckOrderIds,
+                                          successMessage: "Thanks — seller will mark pickup complete when handoff is done.",
+                                        })
+                                      }
+                                    >
+                                      Mark as received
+                                    </button>
+                                  ) : null}
                                   {ordersRole === "seller" && o.status === "placed" ? (
                                     <button
                                       type="button"
@@ -6487,44 +7423,19 @@ function App() {
                                     </button>
                                   ) : null}
                                   </div>
-                                  {ordersRole === "seller" && o.status === "ready_for_pickup" ? (
+                                  {ordersRole === "seller" && o.status === "ready_for_pickup" && pickupBuyerAcknowledgedAny ? (
                                     <div className="max-w-xl space-y-1 text-[11px] leading-snug text-neutral-500 dark:text-slate-400">
-                                      <p>
-                                        Close the order when the buyer has picked up the item and you have collected COD. LinkMart does not process in-app
-                                        payments.
+                                      <p className="text-emerald-800 dark:text-emerald-200/90">
+                                        The buyer marked this pickup as received (optional). You still need to mark pickup complete to close the order.
                                       </p>
-                                      {pickupBuyerAcknowledgedAny ? (
-                                        <p className="text-emerald-800 dark:text-emerald-200/90">
-                                          The buyer marked this pickup as received (optional). You still need to mark pickup complete to close the order.
-                                        </p>
-                                      ) : null}
                                     </div>
                                   ) : null}
-                                  {ordersRole === "buyer" && o.status === "ready_for_pickup" && o.fulfillmentType === "pickup" ? (
-                                    <div className="max-w-xl space-y-1.5">
-                                      {pickupBuyerAcknowledgedAll ? (
-                                        <p className="text-[11px] text-neutral-600 dark:text-slate-400">You marked this pickup as received.</p>
-                                      ) : (
-                                        <>
-                                          <p className="text-pretty text-[11px] leading-snug text-neutral-500 dark:text-slate-400">
-                                            Optional: confirm when you have the item in hand. The seller still marks pickup complete to close the order.
-                                          </p>
-                                          {pickupBuyerAckOrderIds.length > 0 ? (
-                                            <button
-                                              type="button"
-                                              className="btn-secondary min-h-11 w-full max-w-md touch-manipulation text-xs sm:w-auto sm:min-h-0"
-                                              onClick={() =>
-                                                patchOrderTransition(pickupBuyerAckOrderIds[0], "buyer_ack_receipt", {
-                                                  orderIds: pickupBuyerAckOrderIds,
-                                                  successMessage: "Thanks — seller will mark pickup complete when handoff is done.",
-                                                })
-                                              }
-                                            >
-                                              Mark as received
-                                            </button>
-                                          ) : null}
-                                        </>
-                                      )}
+                                  {ordersRole === "buyer" &&
+                                  o.status === "ready_for_pickup" &&
+                                  o.fulfillmentType === "pickup" &&
+                                  pickupBuyerAcknowledgedAll ? (
+                                    <div className="max-w-xl space-y-1">
+                                      <p className="text-[11px] text-neutral-600 dark:text-slate-400">You marked this pickup as received.</p>
                                     </div>
                                   ) : null}
                                 </div>
@@ -7604,7 +8515,7 @@ function App() {
               <p className="app-alert-danger-text text-sm">Could not load your profile. Try signing in again.</p>
             )}
               </div>
-              <aside className="space-y-4 rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-slate-900/80">
+              <aside className="min-w-0 space-y-4 rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-slate-900/80">
                 <div className="flex flex-wrap gap-2" role="tablist" aria-label="Seller hub sections">
                   {[
                     { id: SELLER_TABS.PRODUCTS, label: "Products" },
@@ -7627,7 +8538,12 @@ function App() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">Listings & quantity</p>
                       <div className="flex items-center gap-2">
-                        <ProductViewDensityToggle value={sellerProductsView} onChange={setSellerProductsView} />
+                        <ProductViewDensityToggle
+                          value={sellerProductsView}
+                          onChange={setSellerProductsView}
+                          gridTitle="Grid — large photos, full details on each card"
+                          compactTitle="Dense — small tiles; use View for long descriptions"
+                        />
                         <button
                           type="button"
                           className="btn-primary shrink-0 text-sm"
@@ -7682,6 +8598,9 @@ function App() {
                               onSetQuantity={(qty) => {
                                 void setSellerListingQuantityById(l.id, qty);
                               }}
+                              onNotifyQuantityRequired={() =>
+                                pushMarketplaceToast("Enter a quantity before tapping Set.")
+                              }
                               quantityUpdating={sellerListingQtySavingId === String(l.id)}
                               onView={() => {
                                 const stockListed = Math.max(0, Number(l.quantity) || 0);
@@ -7755,9 +8674,22 @@ function App() {
                 ) : null}
                 {usersList.map((u) => (
                   <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-                    <span className="font-medium text-neutral-900 dark:text-slate-100">{formatDisplayName(u.name)}</span>
-                    {u.joinedAt && (
-                      <span className="text-xs text-neutral-500 dark:text-slate-400">{new Date(u.joinedAt).toLocaleDateString()}</span>
+                    <div className="min-w-0">
+                      <span className="block truncate font-medium text-neutral-900 dark:text-slate-100">{formatDisplayName(u.name)}</span>
+                      {u.joinedAt ? (
+                        <span className="text-xs text-neutral-500 dark:text-slate-400">{new Date(u.joinedAt).toLocaleDateString()}</span>
+                      ) : null}
+                    </div>
+                    {String(u.id) !== String(user?.id || "") ? (
+                      <button
+                        type="button"
+                        className="rounded-lg border border-brand-primary/30 px-3 py-1.5 text-xs font-semibold text-brand-primary transition hover:bg-brand-soft dark:border-brand-primary/40"
+                        onClick={() => openChatWithUser(u.id)}
+                      >
+                        Chat
+                      </button>
+                    ) : (
+                      <span className="text-xs font-medium text-neutral-500 dark:text-slate-400">You</span>
                     )}
                   </li>
                 ))}
@@ -8003,6 +8935,11 @@ function App() {
                     ? "Place order"
                     : "Add to cart"}
               </button>
+              {quickAddInlineError ? (
+                <p className="app-alert-error text-sm" role="alert">
+                  {quickAddInlineError}
+                </p>
+              ) : null}
             </div>
           </div>
         </div>
