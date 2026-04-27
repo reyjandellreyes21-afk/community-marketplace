@@ -20,6 +20,8 @@ export function ProductInspectModal({
   imageUrl = "",
   priceCents = 0,
   description = "",
+  sellerUsername = "",
+  sellerAddressLine = "",
   comment = "",
   /** When true, show the note section even if empty (e.g. cart / orders). */
   commentSectionRequired = false,
@@ -36,10 +38,12 @@ export function ProductInspectModal({
   onBuyNow,
   onEditListing,
   onSaleSelect,
+  onViewSellerProfile,
   buyNowDisabled = false,
   buyNowDisabledReason = "",
 }) {
   const [salePickerOpen, setSalePickerOpen] = useState(false);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -54,15 +58,28 @@ export function ProductInspectModal({
     if (!open) setSalePickerOpen(false);
   }, [open]);
 
+  useEffect(() => {
+    if (!open) setImagePreviewOpen(false);
+  }, [open]);
+
   if (!open) return null;
 
   const descPlain = removeSaleMetaLines(description);
+  const sellerUsernameTrim = String(sellerUsername || "").trim();
+  const sellerAddressLineTrim = String(sellerAddressLine || "").trim();
+  const hasSellerDetails = sellerUsernameTrim.length > 0 || sellerAddressLineTrim.length > 0;
   const commentTrim = String(comment || "").trim();
   const showCommentBlock = commentSectionRequired || commentTrim.length > 0;
   const availabilityLabel = fulfillmentModes ? listingCodAvailabilityLabel(fulfillmentModes) : "";
   const stock =
     listingStockQty != null && Number.isFinite(Number(listingStockQty)) ? Math.max(0, Number(listingStockQty)) : null;
   const isOutOfStock = stock != null && stock <= 0;
+  const quantityNumber = quantity != null && Number.isFinite(Number(quantity)) ? Number(quantity) : null;
+  const showQuantityLine = quantityNumber != null;
+  const quantityLabelNorm = String(quantityLabel || "").trim().toLowerCase();
+  const isQuantityStockLine =
+    quantityLabelNorm === "stock listed" || quantityLabelNorm === "stock available" || quantityLabelNorm === "stock";
+  const hideStockAvailableAsDuplicate = showQuantityLine && stock != null && isQuantityStockLine && quantityNumber === stock;
   const hasBuyerHandlers = showBuyerCommerceActions && (typeof onAddToCart === "function" || typeof onBuyNow === "function");
   const hasSellerHandlers =
     showSellerCommerceActions && (typeof onEditListing === "function" || typeof onSaleSelect === "function");
@@ -86,6 +103,37 @@ export function ProductInspectModal({
         className={`relative z-10 flex max-h-[min(88dvh,42rem)] w-full max-w-lg flex-col rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-[#1f3c56] dark:bg-[#0f2234] sm:max-h-[min(90dvh,44rem)] sm:rounded-2xl sm:shadow-[0_20px_60px_rgba(15,23,42,0.22)] ${UI_KIT.surfaceFloating}`}
         onClick={(e) => e.stopPropagation()}
       >
+        {imagePreviewOpen && String(imageUrl || "").trim() ? (
+          <div
+            className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl p-3 sm:p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Product image preview"
+          >
+            <button
+              type="button"
+              className="absolute inset-0 rounded-2xl bg-neutral-950/80 backdrop-blur-[1px]"
+              aria-label="Close image preview"
+              onClick={() => setImagePreviewOpen(false)}
+            />
+            <div className="relative z-10 w-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
+              <img
+                src={imageUrl}
+                alt={title || "Product image"}
+                className="max-h-[88vh] w-full rounded-2xl border border-white/30 object-contain shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
+              />
+              <button
+                type="button"
+                className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/35 bg-black/45 text-lg leading-none text-white transition hover:bg-black/60"
+                aria-label="Close image preview"
+                onClick={() => setImagePreviewOpen(false)}
+              >
+                <span aria-hidden>×</span>
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {showActionFooter ? (
           <p id="product-inspect-dismiss-hint" className="sr-only">
             To dismiss without choosing an action, use the close control in the header, press Escape, or activate the dimmed area behind this dialog.
@@ -115,7 +163,14 @@ export function ProductInspectModal({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
             <div className="mx-auto h-[8.5rem] w-full max-w-[12.5rem] shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-[#1f3c56] dark:bg-[#11283d] sm:mx-0 sm:h-36 sm:w-36 sm:max-w-none">
               {String(imageUrl || "").trim() ? (
-                <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  className="h-full w-full cursor-zoom-in"
+                  aria-label="View larger product image"
+                  onClick={() => setImagePreviewOpen(true)}
+                >
+                  <img src={imageUrl} alt="" className="h-full w-full object-cover transition duration-200 hover:scale-[1.02]" />
+                </button>
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                   No image
@@ -132,13 +187,13 @@ export function ProductInspectModal({
                   {availabilityLabel}
                 </p>
               ) : null}
-              {quantity != null && Number.isFinite(Number(quantity)) ? (
+              {showQuantityLine ? (
                 <p className="text-xs text-neutral-600 dark:text-slate-400">
                   <span className="font-semibold text-neutral-700 dark:text-slate-300">{quantityLabel}:</span>{" "}
-                  <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{Number(quantity)}</span>
+                  <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{quantityNumber}</span>
                 </p>
               ) : null}
-              {stock != null ? (
+              {stock != null && !hideStockAvailableAsDuplicate ? (
                 <p className="text-xs text-neutral-600 dark:text-slate-400">
                   <span className="font-semibold text-neutral-700 dark:text-slate-300">Stock available:</span>{" "}
                   <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{stock}</span>
@@ -167,6 +222,39 @@ export function ProductInspectModal({
                 <p className="mt-1.5 text-sm text-neutral-500 dark:text-slate-400 sm:mt-2">No description was provided.</p>
               )}
             </section>
+
+            {hasSellerDetails ? (
+              <section className="rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/65 sm:p-3.5">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                  Seller details
+                </h3>
+                <div className="mt-1.5 space-y-1.5 text-sm leading-relaxed sm:mt-2">
+                  {sellerUsernameTrim ? (
+                    <p className="text-neutral-800 dark:text-slate-200">
+                      <span className="font-semibold text-neutral-700 dark:text-slate-300">Username:</span>{" "}
+                      {sellerUsernameTrim.startsWith("@") ? sellerUsernameTrim : `@${sellerUsernameTrim}`}
+                    </p>
+                  ) : null}
+                  {sellerAddressLineTrim ? (
+                    <p className="text-neutral-800 dark:text-slate-200">
+                      <span className="font-semibold text-neutral-700 dark:text-slate-300">
+                        Address:
+                      </span>{" "}
+                      {sellerAddressLineTrim}
+                    </p>
+                  ) : null}
+                  {typeof onViewSellerProfile === "function" ? (
+                    <button
+                      type="button"
+                      className="inline-flex min-h-8 items-center justify-center rounded-lg border border-neutral-300/90 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                      onClick={() => onViewSellerProfile()}
+                    >
+                      View profile
+                    </button>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
 
             {showCommentBlock ? (
               <section className="rounded-xl border border-sky-200/80 bg-sky-50/80 p-3 dark:border-sky-500/35 dark:bg-sky-950/25 sm:p-3.5">

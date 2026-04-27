@@ -291,6 +291,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {object | null} props.user
  * @param {string} props.activeView
  * @param {(v: string) => void} props.setActiveView
+ * @param {() => void} [props.goOwnProfile]
  * @param {() => void} props.goBrowse
  * @param {() => void} props.goOrders
  * @param {() => void} props.goMyPurchases
@@ -311,6 +312,7 @@ export function LoggedInHeader({
   user,
   activeView,
   setActiveView,
+  goOwnProfile = () => {},
   goBrowse = () => {},
   goOrders = () => {},
   goMyPurchases = () => {},
@@ -487,12 +489,12 @@ export function LoggedInHeader({
             <div
               className="flex max-w-full shrink-0 items-center gap-0.5 rounded-full p-0.5"
               role="group"
-              aria-label="Marketplace, cart, and your orders"
+              aria-label="Shop, cart, and your orders"
             >
               <button
                 type="button"
                 className={navPillShop(browsePillActive, "browse")}
-                aria-label="Marketplace"
+                aria-label="Shop"
                 title="Browse listings"
                 onClick={() => {
                   setAccountMenuOpen(false);
@@ -504,7 +506,7 @@ export function LoggedInHeader({
                 <MenuStoreIcon
                   className={`h-[18px] w-[18px] shrink-0 ${browsePillActive ? "text-primary dark:text-primary-soft" : ""}`}
                 />
-                <span className="max-w-[5.5rem] truncate sm:max-w-none">Marketplace</span>
+                <span className="max-w-[5.5rem] truncate sm:max-w-none">Shop</span>
               </button>
               <button
                 type="button"
@@ -519,7 +521,7 @@ export function LoggedInHeader({
                 <MenuCartIcon
                   className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.CART ? "text-primary dark:text-primary-soft" : ""}`}
                 />
-                <span className="max-w-[7rem] truncate sm:max-w-none">Add to cart</span>
+                <span className="max-w-[7rem] truncate sm:max-w-none">Cart</span>
                 {cartItemCount > 0 ? (
                   <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-amber-500">
                     {cartItemCount > 99 ? "99+" : cartItemCount}
@@ -664,7 +666,7 @@ export function LoggedInHeader({
                   role="menuitem"
                   className={accountMenuItemBase}
                   onClick={() => {
-                    setActiveView(VIEWS.PROFILE);
+                    goOwnProfile();
                     closeAllMenus();
                   }}
                 >
@@ -879,7 +881,7 @@ export function LoggedInHeader({
               type="button"
               className={`${accountMenuItemBase} rounded-xl`}
               onClick={() => {
-                setActiveView(VIEWS.PROFILE);
+                goOwnProfile();
                 finalizeMobileSheetClose();
               }}
             >
@@ -967,7 +969,7 @@ export function LoggedInHeader({
       aria-label="Main"
     >
       <div className="app-container flex items-stretch px-1">
-        <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-px" role="group" aria-label="Marketplace, cart, and your orders">
+        <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-px" role="group" aria-label="Shop, cart, and your orders">
           <button
             type="button"
             className={bottomNavShopClass(browsePillActive, "browse")}
@@ -990,7 +992,7 @@ export function LoggedInHeader({
             </span>
             <span className="text-center leading-snug">
               <span className="md:hidden">Shop</span>
-              <span className="hidden md:inline">Marketplace</span>
+              <span className="hidden md:inline">Shop</span>
             </span>
           </button>
           <button
@@ -1018,7 +1020,7 @@ export function LoggedInHeader({
             </span>
             <span className="text-center leading-snug">
               <span className="md:hidden">Cart</span>
-              <span className="hidden md:inline">Add to cart</span>
+              <span className="hidden md:inline">Cart</span>
             </span>
           </button>
           <button
