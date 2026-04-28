@@ -7,6 +7,7 @@ import { formatPesoWhole, listingCodAvailabilityLabel, parseSaleMetaFromDescript
  * @param {"default" | "card"} [props.variant] — `card` uses stronger hierarchy for browse / community grids.
  * @param {boolean} [props.frameDescriptionAsSellerNote] — when true, description is shown in a labeled disclosure box (modal / detail).
  * @param {boolean} [props.hideAvailability] — omit the availability row (e.g. when the parent shows a compact fulfillment line on mobile).
+ * @param {import("react").ReactNode} [props.titleEnd] — e.g. favorite control aligned with the title row (keeps imagery unobstructed).
  */
 export function MarketplaceProductDetailStack({
   title,
@@ -19,6 +20,7 @@ export function MarketplaceProductDetailStack({
   hideAvailability = false,
   variant = "default",
   frameDescriptionAsSellerNote = false,
+  titleEnd = null,
 }) {
   const saleMeta = parseSaleMetaFromDescription(description);
   const currentPesos = Math.floor((Number(priceCents) || 0) / 100);
@@ -74,7 +76,16 @@ export function MarketplaceProductDetailStack({
 
   return (
     <div className={`min-w-0 flex-1 ${isCard ? "space-y-2" : "space-y-1"}`}>
-      {title ? <p className={titleClass}>{title}</p> : null}
+      {title ? (
+        titleEnd ? (
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <p className={`${titleClass} min-w-0 flex-1`}>{title}</p>
+            <div className="shrink-0 pt-0.5">{titleEnd}</div>
+          </div>
+        ) : (
+          <p className={titleClass}>{title}</p>
+        )
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <p className={priceMainClass}>{formatPesoWhole(priceCents)}</p>
         {originalPesos != null && originalPesos > currentPesos ? (

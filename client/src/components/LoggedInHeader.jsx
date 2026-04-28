@@ -251,6 +251,16 @@ function bottomNavTradeClass(active, role) {
   return `${layout} bg-white text-emerald-900 shadow-sm ring-1 ring-emerald-200/95 dark:bg-slate-900 dark:text-emerald-50 dark:ring-emerald-600/45`;
 }
 
+/** Bottom bar: Profile / account — distinct from shop + trade segments. */
+function bottomNavProfileClass(active) {
+  const layout =
+    "flex min-h-[2.875rem] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 py-2 text-[10px] font-semibold leading-tight transition touch-manipulation select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/35 sm:text-[11px] sm:px-1";
+  if (!active) {
+    return `${layout} text-neutral-600 hover:bg-white/75 dark:text-slate-400 dark:hover:bg-slate-800/90`;
+  }
+  return `${layout} bg-white text-primary shadow-sm ring-1 ring-primary/35 dark:bg-slate-900 dark:text-brand-accent dark:ring-primary/45`;
+}
+
 function ThemeToggleGroup({ theme, setTheme }) {
   return (
     <div className="flex w-full rounded-lg bg-neutral-100 p-0.5 dark:bg-slate-800" role="group" aria-label="Theme">
@@ -304,6 +314,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {number} [props.purchasesItemCount] Recent purchases badge count
  * @param {number} [props.ordersItemCount] Seller orders tab / new-order badge count
  * @param {number} [props.notificationUnreadCount] Unread notification badge count
+ * @param {number} [props.favoriteCount] Saved favorites count (shop / community product hearts)
  * @param {() => void} [props.onNavigateHome] Clear SPA path (e.g. /l/…) when opening marketplace from the logo
  * @param {string | null} [props.communityShopName] When set, user is in a community-scoped shop (show context + leave control)
  * @param {() => void} [props.onLeaveCommunityShop] Navigate to global marketplace (all areas)
@@ -325,6 +336,7 @@ export function LoggedInHeader({
   purchasesItemCount = 0,
   ordersItemCount = 0,
   notificationUnreadCount = 0,
+  favoriteCount = 0,
   onNavigateHome,
   communityShopName = null,
   onLeaveCommunityShop,
@@ -489,7 +501,7 @@ export function LoggedInHeader({
             <div
               className="flex max-w-full shrink-0 items-center gap-0.5 rounded-full p-0.5"
               role="group"
-              aria-label="Shop, cart, and your orders"
+              aria-label="Shop, cart, buying, and selling"
             >
               <button
                 type="button"
@@ -625,7 +637,12 @@ export function LoggedInHeader({
             <button
               type="button"
               className={`${headerUtilityButtonBase} ${activeView === VIEWS.FAVORITES ? headerUtilityButtonActive : ""}`}
-              aria-label="My Favorites"
+              aria-label={
+                favoriteCount > 0
+                  ? `My Favorites, ${favoriteCount > 99 ? "99 plus" : favoriteCount} saved`
+                  : "My Favorites"
+              }
+              title={favoriteCount > 0 ? `${favoriteCount > 99 ? "99+" : favoriteCount} saved listings` : "Saved listings"}
               onClick={() => {
                 setActiveView(VIEWS.FAVORITES);
                 closeAllMenus();
@@ -635,17 +652,24 @@ export function LoggedInHeader({
                 filled={activeView === VIEWS.FAVORITES}
                 className={activeView === VIEWS.FAVORITES ? "text-emerald-600 dark:text-emerald-300" : ""}
               />
+              {favoriteCount > 0 ? (
+                <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
+                  {favoriteCount > 99 ? "99+" : favoriteCount}
+                </span>
+              ) : null}
             </button>
           </div>
           <div className="relative" ref={accountMenuRef}>
             <button
               type="button"
-              className={`inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-neutral-200/90 bg-white text-neutral-700 shadow-sm transition hover:-translate-y-px hover:border-neutral-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500 dark:hover:bg-slate-800 ${
-                accountMenuOpen ? headerUtilityButtonActive : ""
-              }`}
+              className={`inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border bg-white text-neutral-700 shadow-sm transition hover:-translate-y-px hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 ${
+                activeView === VIEWS.PROFILE
+                  ? "border-primary/55 ring-2 ring-primary/25 hover:border-primary/65 dark:border-brand-accent/55 dark:ring-brand-accent/20"
+                  : "border-neutral-200/90 hover:border-neutral-300 dark:border-slate-600 dark:hover:border-slate-500"
+              } ${accountMenuOpen ? headerUtilityButtonActive : ""}`}
               aria-expanded={accountMenuOpen}
               aria-haspopup="menu"
-              aria-label="Account menu"
+              aria-label={activeView === VIEWS.PROFILE ? "Account menu (viewing profile)" : "Account menu"}
               onClick={openAccount}
             >
               <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-soft text-xs font-bold text-brand-primary">
@@ -673,7 +697,7 @@ export function LoggedInHeader({
                   <span className={accountMenuIconWrap} aria-hidden>
                     <MenuUserIcon />
                   </span>
-                  My Profile
+                  Profile
                 </button>
                 <div role="none" className="mx-1 my-1.5 border-t border-neutral-200/90 dark:border-slate-700/90" />
                 <div className="relative">
@@ -793,7 +817,12 @@ export function LoggedInHeader({
           <button
             type="button"
             className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 ${activeView === VIEWS.FAVORITES ? headerUtilityButtonActive : ""}`}
-            aria-label="My Favorites"
+            aria-label={
+              favoriteCount > 0
+                ? `My Favorites, ${favoriteCount > 99 ? "99 plus" : favoriteCount} saved`
+                : "My Favorites"
+            }
+            title={favoriteCount > 0 ? `${favoriteCount > 99 ? "99+" : favoriteCount} saved listings` : "Saved listings"}
             onClick={() => {
               setActiveView(VIEWS.FAVORITES);
               closeAllMenus();
@@ -803,17 +832,30 @@ export function LoggedInHeader({
               filled={activeView === VIEWS.FAVORITES}
               className={activeView === VIEWS.FAVORITES ? "text-emerald-600 dark:text-emerald-300" : ""}
             />
+            {favoriteCount > 0 ? (
+              <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
+                {favoriteCount > 99 ? "99+" : favoriteCount}
+              </span>
+            ) : null}
           </button>
           <button
             ref={mobileMenuButtonRef}
             type="button"
-            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 overflow-hidden p-0`}
+            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 overflow-hidden p-0 ${
+              activeView === VIEWS.PROFILE ? "ring-2 ring-primary/30 dark:ring-brand-accent/25" : ""
+            }`}
             onClick={() => {
               setMobileMenuOpen((v) => !v);
             }}
             aria-expanded={mobileMenuOpen}
             aria-controls="mobile-nav-menu-panel"
-            aria-label={mobileMenuOpen ? "Close account menu" : "Open account menu"}
+            aria-label={
+              mobileMenuOpen
+                ? "Close account menu"
+                : activeView === VIEWS.PROFILE
+                  ? "Open account menu (viewing profile)"
+                  : "Open account menu"
+            }
           >
             {user?.avatarUrl ? (
               <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
@@ -888,7 +930,7 @@ export function LoggedInHeader({
               <span className={accountMenuIconWrap} aria-hidden>
                 <MenuUserIcon />
               </span>
-              My Profile
+              Profile
             </button>
             <button
               type="button"
@@ -968,8 +1010,12 @@ export function LoggedInHeader({
       className="fixed inset-x-0 bottom-0 z-[40] border-t border-neutral-200/90 bg-white/95 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-4px_24px_rgba(15,23,42,0.06)] backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95 md:hidden"
       aria-label="Main"
     >
-      <div className="app-container flex items-stretch px-1">
-        <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-px" role="group" aria-label="Shop, cart, and your orders">
+      <div className="app-container flex items-stretch px-0.5 sm:px-1">
+        <div
+          className="flex min-h-0 min-w-0 flex-1 items-stretch gap-px"
+          role="group"
+          aria-label="Shop, cart, profile, and your orders"
+        >
           <button
             type="button"
             className={bottomNavShopClass(browsePillActive, "browse")}
@@ -1091,6 +1137,26 @@ export function LoggedInHeader({
               ) : null}
             </span>
             <span className="text-center leading-snug">Selling</span>
+          </button>
+          <button
+            type="button"
+            className={bottomNavProfileClass(activeView === VIEWS.PROFILE)}
+            aria-label="Profile — account and settings"
+            title="Profile, avatar, and sign out"
+            aria-current={activeView === VIEWS.PROFILE ? "page" : undefined}
+            onClick={() => {
+              goOwnProfile();
+              closeAllMenus();
+            }}
+          >
+            <span
+              className={`relative inline-flex shrink-0 ${
+                activeView === VIEWS.PROFILE ? "text-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
+              }`}
+            >
+              <MenuUserIcon className="h-5 w-5 shrink-0" />
+            </span>
+            <span className="max-w-full truncate text-center leading-snug">Profile</span>
           </button>
         </div>
       </div>
