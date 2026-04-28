@@ -201,14 +201,14 @@ const headerUtilityButtonBase =
 const headerUtilityButtonActive =
   "border-emerald-400/60 bg-white text-emerald-600 ring-2 ring-emerald-400/20 dark:border-emerald-400/50 dark:bg-slate-900 dark:text-emerald-300 dark:ring-emerald-400/20";
 
-function LinkMartLogo({ className = "h-9 w-9 shrink-0 object-contain sm:h-10 sm:w-10" }) {
+function LinkMartLogo({ className = "h-9 w-9 shrink-0 object-contain md:h-10 md:w-10" }) {
   return <img src={navLogo} alt="LinkMart logo" className={className} />;
 }
 
 /** Desktop pills for Marketplace vs Cart — shop flow inside the shop segment. */
 function navPillShop(active, role) {
   const layout =
-    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition duration-200 ease-in-out sm:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-offset-slate-900";
+    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition duration-200 ease-in-out md:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-offset-slate-900";
   if (!active) {
     return `${layout} text-text-primary/80 hover:bg-primary-soft/55 hover:text-text-primary focus-visible:ring-primary/35 dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100 dark:focus-visible:ring-primary/30`;
   }
@@ -218,47 +218,49 @@ function navPillShop(active, role) {
 /** Desktop pills for Buying vs Selling — distinct active colors inside the trade group. */
 function navPillTrade(active, role) {
   const layout =
-    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition duration-200 ease-in-out sm:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-primary/35 dark:focus-visible:ring-offset-slate-900";
+    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition duration-200 ease-in-out md:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-primary/35 dark:focus-visible:ring-offset-slate-900";
   if (!active) {
     return `${layout} text-text-primary/80 hover:bg-primary-soft/55 hover:text-text-primary dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100`;
   }
   return `${layout} bg-primary-soft text-primary shadow-sm ring-1 ring-primary/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-primary/45`;
 }
 
-/** Bottom bar: Marketplace + Cart share one visual segment. */
-function bottomNavShopClass(active, role) {
-  const layout =
-    "flex min-h-[2.875rem] min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-[11px] font-semibold leading-tight transition touch-manipulation select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-400/35 sm:px-1";
+/** Mobile bottom tab: clear active state (indicator + fill). */
+function mobileBottomTabClass(active) {
+  const indicator =
+    "before:pointer-events-none before:absolute before:top-1 before:left-1/2 before:h-0.5 before:w-7 before:-translate-x-1/2 before:rounded-full before:bg-brand-primary before:transition-opacity before:duration-200 dark:before:bg-brand-accent";
+  const base = `${indicator} group relative flex min-h-[2.75rem] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 py-1.5 text-[10px] font-semibold leading-tight transition touch-manipulation select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/40 md:text-[11px]`;
   if (!active) {
-    return `${layout} text-neutral-600 hover:bg-white/75 dark:text-slate-400 dark:hover:bg-slate-800/90`;
+    return `${base} before:opacity-0 text-neutral-500 hover:bg-neutral-100/90 hover:text-neutral-800 dark:text-slate-500 dark:hover:bg-slate-800/85 dark:hover:text-slate-200`;
   }
-  if (role === "browse") {
-    return `${layout} bg-white text-violet-950 shadow-sm ring-1 ring-violet-200/95 dark:bg-slate-900 dark:text-violet-50 dark:ring-violet-600/45`;
-  }
-  return `${layout} bg-white text-amber-950 shadow-sm ring-1 ring-amber-200/95 dark:bg-slate-900 dark:text-amber-50 dark:ring-amber-600/45`;
+  return `${base} before:opacity-100 bg-brand-soft/90 text-brand-primary shadow-[inset_0_0_0_1px_rgba(59,130,246,0.12)] dark:bg-slate-800/95 dark:text-brand-accent dark:shadow-[inset_0_0_0_1px_rgba(148,163,184,0.25)]`;
 }
 
-/** Bottom bar: Buying / Selling share one visual segment. */
-function bottomNavTradeClass(active, role) {
-  const layout =
-    "flex min-h-[2.875rem] min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-[11px] font-semibold leading-tight transition touch-manipulation select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/35 sm:px-1";
-  if (!active) {
-    return `${layout} text-neutral-600 hover:bg-white/75 dark:text-slate-400 dark:hover:bg-slate-800/90`;
-  }
-  if (role === "buy") {
-    return `${layout} bg-white text-sky-900 shadow-sm ring-1 ring-sky-200/95 dark:bg-slate-900 dark:text-sky-50 dark:ring-sky-600/45`;
-  }
-  return `${layout} bg-white text-emerald-900 shadow-sm ring-1 ring-emerald-200/95 dark:bg-slate-900 dark:text-emerald-50 dark:ring-emerald-600/45`;
+function HomeNavIcon(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <path d="M3 9.5 12 3l9 6.5" />
+      <path d="M5 10v10h14V10" />
+    </svg>
+  );
 }
 
-/** Bottom bar: Profile / account — distinct from shop + trade segments. */
-function bottomNavProfileClass(active) {
-  const layout =
-    "flex min-h-[2.875rem] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 py-2 text-[10px] font-semibold leading-tight transition touch-manipulation select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/35 sm:text-[11px] sm:px-1";
-  if (!active) {
-    return `${layout} text-neutral-600 hover:bg-white/75 dark:text-slate-400 dark:hover:bg-slate-800/90`;
-  }
-  return `${layout} bg-white text-primary shadow-sm ring-1 ring-primary/35 dark:bg-slate-900 dark:text-brand-accent dark:ring-primary/45`;
+function SearchNavIcon(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M20 20l-3-3" />
+    </svg>
+  );
+}
+
+function CreateSellNavIcon(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v8M8 12h8" />
+    </svg>
+  );
 }
 
 function ThemeToggleGroup({ theme, setTheme }) {
@@ -306,6 +308,12 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {() => void} props.goOrders
  * @param {() => void} props.goMyPurchases
  * @param {() => void} props.goCart
+ * @param {() => void} [props.goMobileHome] Mobile: Home tab — browse feed, closes filter sheet
+ * @param {() => void} [props.goMobileSearch] Mobile: Search tab — browse + open filters
+ * @param {() => void} [props.goCreateSell] Mobile: Create / sell hub
+ * @param {() => void} [props.goInbox] Mobile: Inbox (messages, orders, notifications)
+ * @param {boolean} [props.browseFiltersOpen] Mobile search tab active when filter sheet is open on browse views
+ * @param {number} [props.inboxBadgeCount] Badge total for inbox tab (messages + orders attention + notifications)
  * @param {"light"|"dark"} props.theme
  * @param {(t: "light"|"dark") => void} props.setTheme
  * @param {() => void} props.onLogout
@@ -321,6 +329,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {() => void} [props.onNavigateHome] Clear SPA path (e.g. /l/…) when opening marketplace from the logo
  * @param {string | null} [props.communityShopName] When set, user is in a community-scoped shop (show context + leave control)
  * @param {() => void} [props.onLeaveCommunityShop] Navigate to global marketplace (all areas)
+ * @param {import('react').ReactNode} [props.children] Main scroll region (placed between header and mobile bottom nav)
  */
 export function LoggedInHeader({
   user,
@@ -331,6 +340,12 @@ export function LoggedInHeader({
   goOrders = () => {},
   goMyPurchases = () => {},
   goCart = () => {},
+  goMobileHome,
+  goMobileSearch,
+  goCreateSell,
+  goInbox,
+  browseFiltersOpen = false,
+  inboxBadgeCount = 0,
   theme,
   setTheme,
   onLogout,
@@ -346,6 +361,7 @@ export function LoggedInHeader({
   onNavigateHome,
   communityShopName = null,
   onLeaveCommunityShop,
+  children,
 }) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -473,25 +489,34 @@ export function LoggedInHeader({
     activeView === VIEWS.COMMUNITY_SHOP ||
     activeView === VIEWS.FAVORITES;
 
+  const homeTabActive = browsePillActive && !browseFiltersOpen;
+  const searchTabActive = browsePillActive && browseFiltersOpen;
+  const createSellTabActive = activeView === VIEWS.SELLER || activeView === VIEWS.MY_LISTINGS;
+  const inboxTabActive =
+    activeView === VIEWS.MESSAGES ||
+    activeView === VIEWS.NOTIFICATIONS ||
+    activeView === VIEWS.MY_PURCHASES ||
+    activeView === VIEWS.ORDERS;
+
   return (
-    <>
-    <header className="sticky top-0 z-50 border-b border-neutral-200/80 bg-white/90 shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/95">
-      <div className="app-container flex h-[4.25rem] items-center justify-between gap-2 sm:gap-3">
+    <div className="flex w-full min-h-0 flex-1 flex-col overflow-hidden md:contents">
+    <header className="relative z-50 shrink-0 pt-[env(safe-area-inset-top,0px)] md:sticky md:top-0 md:shrink border-b border-neutral-200/80 bg-white/90 shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/95">
+      <div className="app-container flex h-[4.25rem] items-center justify-between gap-2 md:gap-3">
         <button type="button" className="rounded-xl px-1 py-1 focus:outline-none" onClick={goMarketplaceRoot} aria-label="Go to marketplace">
-          <LinkMartLogo className="h-9 w-auto max-w-[9.5rem] shrink-0 object-contain sm:h-10 sm:max-w-[10.5rem]" />
+          <LinkMartLogo className="h-9 w-auto max-w-[9.5rem] shrink-0 object-contain md:h-10 md:max-w-[10.5rem]" />
         </button>
 
         {communityShopName && onLeaveCommunityShop ? (
-          <div className="flex min-w-0 max-w-[min(46vw,10.5rem)] flex-1 flex-col items-stretch justify-center gap-0.5 sm:max-w-[min(14rem,32vw)] lg:max-w-[min(18rem,22vw)] lg:flex-none lg:shrink-0">
+          <div className="flex min-w-0 max-w-[min(46vw,10.5rem)] flex-1 flex-col items-stretch justify-center gap-0.5 md:max-w-[min(14rem,32vw)] lg:max-w-[min(18rem,22vw)] lg:flex-none lg:shrink-0">
             <span
-              className="truncate text-[10px] font-semibold leading-tight text-brand-primary dark:text-brand-accent sm:text-[11px]"
+              className="truncate text-[10px] font-semibold leading-tight text-brand-primary dark:text-brand-accent md:text-[11px]"
               title={communityShopName}
             >
               In {communityShopName}
             </span>
             <button
               type="button"
-              className="truncate text-left text-[10px] font-medium text-neutral-500 underline decoration-neutral-300 underline-offset-2 transition hover:text-neutral-800 sm:text-[11px] dark:text-slate-400 dark:decoration-slate-600 dark:hover:text-slate-200"
+              className="truncate text-left text-[10px] font-medium text-neutral-500 underline decoration-neutral-300 underline-offset-2 transition hover:text-neutral-800 md:text-[11px] dark:text-slate-400 dark:decoration-slate-600 dark:hover:text-slate-200"
               onClick={() => {
                 onLeaveCommunityShop();
                 closeAllMenus();
@@ -524,7 +549,7 @@ export function LoggedInHeader({
                 <MenuStoreIcon
                   className={`h-[18px] w-[18px] shrink-0 ${browsePillActive ? "text-primary dark:text-primary-soft" : ""}`}
                 />
-                <span className="max-w-[5.5rem] truncate sm:max-w-none">Shop</span>
+                <span className="max-w-[5.5rem] truncate md:max-w-none">Shop</span>
               </button>
               <button
                 type="button"
@@ -545,7 +570,7 @@ export function LoggedInHeader({
                 <MenuCartIcon
                   className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.CART ? "text-primary dark:text-primary-soft" : ""}`}
                 />
-                <span className="max-w-[7rem] truncate sm:max-w-none">Cart</span>
+                <span className="max-w-[7rem] truncate md:max-w-none">Cart</span>
                 {cartItemCount > 0 ? (
                   <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-amber-500">
                     {cartItemCount > 99 ? "99+" : cartItemCount}
@@ -575,7 +600,7 @@ export function LoggedInHeader({
                 <MenuFileIcon
                   className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.MY_PURCHASES ? "text-primary dark:text-primary-soft" : ""}`}
                 />
-                <span className="max-w-[5.5rem] truncate sm:max-w-none">Buying</span>
+                <span className="max-w-[5.5rem] truncate md:max-w-none">Buying</span>
                 {purchasesItemCount > 0 ? (
                   <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-sky-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-sky-500">
                     {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
@@ -611,7 +636,7 @@ export function LoggedInHeader({
                 <MenuOrdersIcon
                   className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.ORDERS ? "text-primary dark:text-primary-soft" : ""}`}
                 />
-                <span className="max-w-[5.5rem] truncate sm:max-w-none">Selling</span>
+                <span className="max-w-[5.5rem] truncate md:max-w-none">Selling</span>
                 {ordersItemCount > 0 ? (
                   <span
                     className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-emerald-500"
@@ -813,6 +838,35 @@ export function LoggedInHeader({
         <div className="flex shrink-0 items-center gap-1.5 md:hidden">
           <button
             type="button"
+            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 ${activeView === VIEWS.CART ? headerUtilityButtonActive : ""}`}
+            aria-label={
+              cartItemCount > 0
+                ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} new item${cartItemCount === 1 ? "" : "s"}`
+                : totalCartCount > 0
+                  ? `Cart, ${totalCartCount > 99 ? "99 plus" : totalCartCount} item${totalCartCount === 1 ? "" : "s"}`
+                  : "Shopping cart"
+            }
+            title="Cart"
+            onClick={() => {
+              goCart();
+              closeAllMenus();
+            }}
+          >
+            <span className="relative inline-flex">
+              <MenuCartIcon className="h-5 w-5 shrink-0" />
+              {cartItemCount > 0 ? (
+                <span className="absolute -right-2 -top-1.5 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-amber-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-amber-500">
+                  {cartItemCount > 99 ? "99+" : cartItemCount}
+                </span>
+              ) : totalCartCount > 0 ? (
+                <span className="absolute -right-2 -top-1.5 inline-flex min-w-[1rem] items-center justify-center rounded-full border border-neutral-300 bg-white px-1 py-[1px] text-[9px] font-semibold leading-none text-neutral-600 shadow-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                  {totalCartCount > 99 ? "99+" : totalCartCount}
+                </span>
+              ) : null}
+            </span>
+          </button>
+          <button
+            type="button"
             className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 ${activeView === VIEWS.MESSAGES ? headerUtilityButtonActive : ""}`}
             aria-label="Messages"
             onClick={() => {
@@ -903,7 +957,7 @@ export function LoggedInHeader({
         <>
           <button
             type="button"
-            className={`fixed inset-x-0 top-[4.25rem] z-[60] bg-slate-900/50 backdrop-blur-[3px] transition-opacity duration-300 ease-out motion-reduce:transition-none md:hidden bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] ${
+            className={`fixed inset-x-0 top-[4.25rem] z-[60] bg-slate-900/50 backdrop-blur-[3px] transition-opacity duration-300 ease-out motion-reduce:transition-none md:hidden bottom-[calc(var(--mobile-bottom-nav)+env(safe-area-inset-bottom,0px)+0.5rem)] ${
               mobileSheetEntered ? "opacity-100" : "opacity-0"
             }`}
             aria-label="Close menu"
@@ -915,7 +969,7 @@ export function LoggedInHeader({
             role="dialog"
             aria-modal="true"
             aria-labelledby="mobile-account-sheet-title"
-            className="fixed inset-x-0 z-[70] flex justify-center px-4 pt-2 md:hidden bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] pointer-events-none"
+            className="fixed inset-x-0 z-[70] flex justify-center px-4 pt-2 md:hidden bottom-[calc(var(--mobile-bottom-nav)+env(safe-area-inset-bottom,0px)+0.5rem)] pointer-events-none"
           >
             <div className="app-container flex w-full max-w-7xl justify-center pointer-events-auto">
               <div
@@ -961,6 +1015,46 @@ export function LoggedInHeader({
                 <MenuUserIcon />
               </span>
               Profile
+            </button>
+            <button
+              type="button"
+              className={`${accountMenuItemBase} justify-between gap-2 rounded-xl`}
+              onClick={() => {
+                goMyPurchases();
+                finalizeMobileSheetClose();
+              }}
+            >
+              <span className="flex min-w-0 flex-1 items-center gap-3">
+                <span className={accountMenuIconWrap} aria-hidden>
+                  <MenuFileIcon />
+                </span>
+                <span className="truncate">My purchases</span>
+              </span>
+              {purchasesItemCount > 0 ? (
+                <span className="inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-sky-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white dark:bg-sky-500">
+                  {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              className={`${accountMenuItemBase} justify-between gap-2 rounded-xl`}
+              onClick={() => {
+                goOrders();
+                finalizeMobileSheetClose();
+              }}
+            >
+              <span className="flex min-w-0 flex-1 items-center gap-3">
+                <span className={accountMenuIconWrap} aria-hidden>
+                  <MenuOrdersIcon />
+                </span>
+                <span className="truncate">Sales inbox</span>
+              </span>
+              {ordersItemCount > 0 ? (
+                <span className="inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white dark:bg-emerald-500">
+                  {ordersItemCount > 99 ? "99+" : ordersItemCount}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -1036,167 +1130,141 @@ export function LoggedInHeader({
           </div>
         </>
       ) : null}
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col md:contents">
+      {children}
+    </div>
     <nav
-      className="fixed inset-x-0 bottom-0 z-[40] border-t border-neutral-200/90 bg-white/95 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-4px_24px_rgba(15,23,42,0.06)] backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95 md:hidden"
+      className="relative z-[40] shrink-0 border-t border-neutral-200/90 bg-white/95 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))] pt-1.5 shadow-[0_-4px_24px_rgba(15,23,42,0.06)] backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95 md:hidden"
       aria-label="Main"
     >
-      <div className="app-container flex items-stretch px-0.5 sm:px-1">
+      <div className="app-container flex items-stretch px-1">
         <div
-          className="flex min-h-0 min-w-0 flex-1 items-stretch gap-px"
-          role="group"
-          aria-label="Shop, cart, profile, and your orders"
+          className="flex min-h-0 min-w-0 flex-1 items-stretch gap-0.5"
+          role="tablist"
+          aria-label="Home, search, sell, inbox, profile"
         >
           <button
             type="button"
-            className={bottomNavShopClass(browsePillActive, "browse")}
-            aria-label="Shop — browse listings"
-            title="Browse listings"
-            aria-current={browsePillActive ? "page" : undefined}
+            role="tab"
+            aria-selected={homeTabActive}
+            className={mobileBottomTabClass(homeTabActive)}
+            aria-label="Home — marketplace feed"
+            title="Home"
+            aria-current={homeTabActive ? "page" : undefined}
             onClick={() => {
               setAccountMenuOpen(false);
-                  setDesktopSettingsOpen(false);
-              goBrowse();
+              setDesktopSettingsOpen(false);
+              if (goMobileHome) goMobileHome();
+              else goBrowse();
               closeAllMenus();
             }}
           >
             <span
               className={`relative inline-flex shrink-0 ${
-                browsePillActive ? "text-violet-700 dark:text-violet-300" : "text-neutral-500 dark:text-slate-500"
+                homeTabActive ? "text-brand-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
               }`}
             >
-              <MenuStoreIcon className="h-5 w-5 shrink-0" />
+              <HomeNavIcon className="h-[22px] w-[22px] shrink-0" />
             </span>
-            <span className="text-center leading-snug">
-              <span className="md:hidden">Shop</span>
-              <span className="hidden md:inline">Shop</span>
+            <span className="max-w-full truncate text-center leading-snug">Home</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={searchTabActive}
+            className={mobileBottomTabClass(searchTabActive)}
+            aria-label="Search and filters"
+            title="Search categories and filters"
+            aria-current={searchTabActive ? "page" : undefined}
+            onClick={() => {
+              setAccountMenuOpen(false);
+              setDesktopSettingsOpen(false);
+              if (goMobileSearch) goMobileSearch();
+              else {
+                goBrowse();
+                closeAllMenus();
+              }
+            }}
+          >
+            <span
+              className={`relative inline-flex shrink-0 ${
+                searchTabActive ? "text-brand-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
+              }`}
+            >
+              <SearchNavIcon className="h-[22px] w-[22px] shrink-0" />
+            </span>
+            <span className="max-w-full truncate text-center leading-snug">Search</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={createSellTabActive}
+            className={mobileBottomTabClass(createSellTabActive)}
+            aria-label="Create listing or manage selling"
+            title="Sell"
+            aria-current={createSellTabActive ? "page" : undefined}
+            onClick={() => {
+              setAccountMenuOpen(false);
+              setDesktopSettingsOpen(false);
+              if (goCreateSell) goCreateSell();
+              closeAllMenus();
+            }}
+          >
+            <span
+              className={`relative inline-flex shrink-0 ${
+                createSellTabActive ? "text-brand-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
+              }`}
+            >
+              <CreateSellNavIcon className="h-[22px] w-[22px] shrink-0" />
+            </span>
+            <span className="max-w-full text-[9px] font-semibold leading-tight text-center md:text-[10px]">
+              <span className="block">Create /</span>
+              <span className="block">Sell</span>
             </span>
           </button>
           <button
             type="button"
-            className={bottomNavShopClass(activeView === VIEWS.CART, "cart")}
+            role="tab"
+            aria-selected={inboxTabActive}
+            className={mobileBottomTabClass(inboxTabActive)}
             aria-label={
-              cartItemCount > 0
-                ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} new item${cartItemCount === 1 ? "" : "s"}`
-                : totalCartCount > 0
-                  ? `Cart, ${totalCartCount > 99 ? "99 plus" : totalCartCount} item${totalCartCount === 1 ? "" : "s"}`
-                  : "Shopping cart"
+              inboxBadgeCount > 0
+                ? `Inbox, ${inboxBadgeCount > 99 ? "99 plus" : inboxBadgeCount} unread or updates`
+                : "Inbox — messages and orders"
             }
-            title="Review items before checkout"
-            aria-current={activeView === VIEWS.CART ? "page" : undefined}
+            title="Messages, notifications, and orders"
+            aria-current={inboxTabActive ? "page" : undefined}
             onClick={() => {
-              goCart();
-              closeAllMenus();
+              setAccountMenuOpen(false);
+              setDesktopSettingsOpen(false);
+              if (goInbox) goInbox();
+              else {
+                setActiveView(VIEWS.MESSAGES);
+                closeAllMenus();
+              }
             }}
           >
             <span
               className={`relative inline-flex shrink-0 ${
-                activeView === VIEWS.CART ? "text-amber-700 dark:text-amber-300" : "text-neutral-500 dark:text-slate-500"
+                inboxTabActive ? "text-brand-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
               }`}
             >
-              <MenuCartIcon className="h-5 w-5 shrink-0" />
-              {cartItemCount > 0 ? (
-                <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-amber-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-amber-500">
-                  {cartItemCount > 99 ? "99+" : cartItemCount}
-                </span>
-              ) : totalCartCount > 0 ? (
-                <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full border border-neutral-300 bg-white px-1 py-[1px] text-[9px] font-semibold leading-none text-neutral-600 shadow-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                  {totalCartCount > 99 ? "99+" : totalCartCount}
+              <MessagesIcon filled={inboxTabActive} className="h-[22px] w-[22px]" />
+              {inboxBadgeCount > 0 ? (
+                <span className="absolute -right-2 -top-1.5 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm">
+                  {inboxBadgeCount > 99 ? "99+" : inboxBadgeCount}
                 </span>
               ) : null}
             </span>
-            <span className="text-center leading-snug">
-              <span className="md:hidden">Cart</span>
-              <span className="hidden md:inline">Cart</span>
-            </span>
+            <span className="max-w-full truncate text-center leading-snug">Inbox</span>
           </button>
           <button
             type="button"
-            className={bottomNavTradeClass(activeView === VIEWS.MY_PURCHASES, "buy")}
-            aria-label={
-              purchasesItemCount > 0
-                ? `Buying, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
-                : totalPurchasesCount > 0
-                  ? `Buying, ${totalPurchasesCount > 99 ? "99 plus" : totalPurchasesCount} order${totalPurchasesCount === 1 ? "" : "s"}`
-                  : "Buying — things you purchased"
-            }
-            title="Things you bought — track status, pickup, and COD"
-            aria-current={activeView === VIEWS.MY_PURCHASES ? "page" : undefined}
-            onClick={() => {
-              goMyPurchases();
-              closeAllMenus();
-            }}
-          >
-            <span
-              className={`relative inline-flex shrink-0 ${
-                activeView === VIEWS.MY_PURCHASES
-                  ? "text-sky-700 dark:text-sky-300"
-                  : "text-neutral-500 dark:text-slate-500"
-              }`}
-            >
-              <MenuFileIcon className="h-5 w-5 shrink-0" />
-              {purchasesItemCount > 0 ? (
-                <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-sky-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-sky-500">
-                  {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
-                </span>
-              ) : totalPurchasesCount > 0 ? (
-                <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full border border-neutral-300 bg-white px-1 py-[1px] text-[9px] font-semibold leading-none text-neutral-600 shadow-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                  {totalPurchasesCount > 99 ? "99+" : totalPurchasesCount}
-                </span>
-              ) : null}
-            </span>
-            <span className="text-center leading-snug">Buying</span>
-          </button>
-          <button
-            type="button"
-            className={bottomNavTradeClass(activeView === VIEWS.ORDERS, "sell")}
-            aria-label={
-              ordersItemCount > 0
-                ? `Selling, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} buyer order alerts`
-                : totalOrdersCount > 0
-                  ? `Selling, ${totalOrdersCount > 99 ? "99 plus" : totalOrdersCount} order${totalOrdersCount === 1 ? "" : "s"}`
-                  : "Selling — orders from your buyers"
-            }
-            title={
-              ordersItemCount > 0
-                ? `${ordersItemCount > 99 ? "99+" : ordersItemCount} pending or updated buyer order${ordersItemCount === 1 ? "" : "s"}`
-                : totalOrdersCount > 0
-                  ? `${totalOrdersCount > 99 ? "99+" : totalOrdersCount} total buyer order${totalOrdersCount === 1 ? "" : "s"}`
-                  : "Orders people placed with you"
-            }
-            aria-current={activeView === VIEWS.ORDERS ? "page" : undefined}
-            onClick={() => {
-              goOrders();
-              closeAllMenus();
-            }}
-          >
-            <span
-              className={`relative inline-flex shrink-0 ${
-                activeView === VIEWS.ORDERS
-                  ? "text-emerald-700 dark:text-emerald-300"
-                  : "text-neutral-500 dark:text-slate-500"
-              }`}
-            >
-              <MenuOrdersIcon className="h-5 w-5 shrink-0" />
-              {ordersItemCount > 0 ? (
-                <span
-                  className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-emerald-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-emerald-500"
-                  aria-hidden
-                >
-                  {ordersItemCount > 99 ? "99+" : ordersItemCount}
-                </span>
-              ) : totalOrdersCount > 0 ? (
-                <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full border border-neutral-300 bg-white px-1 py-[1px] text-[9px] font-semibold leading-none text-neutral-600 shadow-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                  {totalOrdersCount > 99 ? "99+" : totalOrdersCount}
-                </span>
-              ) : null}
-            </span>
-            <span className="text-center leading-snug">Selling</span>
-          </button>
-          <button
-            type="button"
-            className={bottomNavProfileClass(activeView === VIEWS.PROFILE)}
+            role="tab"
+            aria-selected={activeView === VIEWS.PROFILE}
+            className={mobileBottomTabClass(activeView === VIEWS.PROFILE)}
             aria-label="Profile — account and settings"
-            title="Profile, avatar, and sign out"
+            title="Profile"
             aria-current={activeView === VIEWS.PROFILE ? "page" : undefined}
             onClick={() => {
               goOwnProfile();
@@ -1205,7 +1273,7 @@ export function LoggedInHeader({
           >
             <span
               className={`relative inline-flex shrink-0 ${
-                activeView === VIEWS.PROFILE ? "text-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
+                activeView === VIEWS.PROFILE ? "text-brand-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
               }`}
             >
               <MenuUserIcon className="h-5 w-5 shrink-0" />
@@ -1215,6 +1283,6 @@ export function LoggedInHeader({
         </div>
       </div>
     </nav>
-    </>
+    </div>
   );
 }

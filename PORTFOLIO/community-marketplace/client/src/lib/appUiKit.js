@@ -21,6 +21,7 @@ export const UI_KIT = {
   chipMuted:
     "inline-flex items-center rounded-full border border-border bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
   tabActive:
-    "bg-primary-soft text-primary ring-2 ring-primary/30 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-accent/30",
-  tabIdle: "border border-border text-text-secondary hover:bg-background dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800",
+    "bg-primary-soft text-primary ring-2 ring-primary/30 active:scale-[0.98] motion-reduce:active:scale-100 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-accent/30",
+  tabIdle:
+    "border border-border text-text-secondary touch-manipulation transition hover:bg-background active:scale-[0.98] motion-reduce:active:scale-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800",
 };

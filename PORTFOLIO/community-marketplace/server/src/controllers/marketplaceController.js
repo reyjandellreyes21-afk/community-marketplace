@@ -36,6 +36,31 @@ function postgrestErrorText(error) {
   return [error.message, error.details, error.hint, nested].filter(Boolean).join(" ").trim();
 }
 
+function normalizeListingImageUrlKey(url) {
+  const s = String(url || "").trim();
+  if (!s) return "";
+  try {
+    return new URL(s).href;
+  } catch {
+    return s;
+  }
+}
+
+/** Preserve order; drop duplicate URLs (same resource after normalization). */
+function dedupeListingImageUrlsOrdered(urls) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of urls || []) {
+    const trimmed = String(raw || "").trim();
+    if (!trimmed) continue;
+    const key = normalizeListingImageUrlKey(trimmed);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+}
+
 /** Drop undefined so Supabase JSON does not send stray keys; omitted columns stay omitted. */
 function compactOrderPatchForWrite(patch) {
   const out = {};
@@ -139,6 +164,15 @@ async function updateOrderRowRetryWithoutMissingColumns(id, patch) {
 }
 
 const ALLOWED_LISTING_STATUSES = new Set(["active", "paused", "sold"]);
+const LISTINGS_OPTIONAL_PRODUCT_COLUMNS = [
+  "image_urls",
+  "option_name_a",
+  "option_values_a",
+  "option_name_b",
+  "option_values_b",
+  "order_type",
+  "processing_time",
+];
 const firstRow = (data) => (Array.isArray(data) && data.length > 0 ? data[0] : null);
 
 /** Last three comma-separated segments of `address`: city, province, postal (Express create format). */
@@ -467,10 +501,12 @@ export const createListing = async (req, res, next) => {
     const modes = Array.isArray(req.body.fulfillmentModes) && req.body.fulfillmentModes.length
       ? req.body.fulfillmentModes.map(String)
       : ["pickup", "delivery"];
-    const imageUrls = Array.isArray(req.body.imageUrls)
-      ? req.body.imageUrls.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 6)
+    const rawImageUrls = Array.isArray(req.body.imageUrls)
+      ? req.body.imageUrls.map((x) => String(x || "").trim()).filter(Boolean)
       : [];
-    const imageUrl = String(req.body.imageUrl ?? imageUrls[0] ?? "").trim();
+    const primaryFromBody = String(req.body.imageUrl ?? "").trim();
+    const imageUrls = dedupeListingImageUrlsOrdered(primaryFromBody ? [primaryFromBody, ...rawImageUrls] : rawImageUrls).slice(0, 6);
+    const imageUrl = imageUrls[0] || "";
     const optionValuesA = Array.isArray(req.body.optionValuesA)
       ? req.body.optionValuesA.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 30)
       : [];
@@ -478,6 +514,16 @@ export const createListing = async (req, res, next) => {
       ? req.body.optionValuesB.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 30)
       : [];
     const orderType = String(req.body.orderType || "in_stock").trim() === "pre_order" ? "pre_order" : "in_stock";
+    const processingTime = String(req.body.processingTime ?? "").trim().slice(0, 120);
+    if (orderType === "pre_order" && !processingTime) {
+      throw new AppError(400, "Processing time is required for pre-order listings.");
+    }
+    if (optionValuesA.length > 0 && !String(req.body.optionNameA ?? "").trim()) {
+      throw new AppError(400, "Variant type is required when first variant choices are provided.");
+    }
+    if (optionValuesB.length > 0 && !String(req.body.optionNameB ?? "").trim()) {
+      throw new AppError(400, "Second variant type is required when second variant choices are provided.");
+    }
     const row = {
       seller_id: req.user.id,
       title: String(req.body.title).trim(),
@@ -497,7 +543,7 @@ export const createListing = async (req, res, next) => {
       option_name_b: String(req.body.optionNameB ?? "").trim().slice(0, 120),
       option_values_b: optionValuesB,
       order_type: orderType,
-      processing_time: String(req.body.processingTime ?? "").trim().slice(0, 120),
+      processing_time: processingTime,
       // Keep insert compatible with DB constraint: active|paused|sold.
       status: "active",
     };
@@ -509,11 +555,23 @@ export const createListing = async (req, res, next) => {
       if (!comm) throw new AppError(400, "Unknown community.");
       row.community_id = cid;
     }
-    const { data, error } = await supabaseAdmin.from("listings").insert(row).select("*").single();
+    let { data, error } = await supabaseAdmin.from("listings").insert(row).select("*").single();
+    if (error?.code === "PGRST204" || /schema cache/i.test(String(error?.message || ""))) {
+      // Backward-compatible fallback for environments where new product columns are not migrated yet.
+      const fallback = { ...row };
+      for (const col of LISTINGS_OPTIONAL_PRODUCT_COLUMNS) delete fallback[col];
+      ({ data, error } = await supabaseAdmin.from("listings").insert(fallback).select("*").single());
+    }
     if (error?.code === "PGRST205") {
       throw new AppError(
         500,
         "Listings table missing (products are stored here). In Supabase: SQL Editor → paste and run repo file supabase/sql_editor_all_in_one.sql → Run. Then try Publish again.",
+      );
+    }
+    if (error?.code === "PGRST204" || /schema cache/i.test(String(error?.message || ""))) {
+      throw new AppError(
+        503,
+        "Listings product fields are not ready in DB yet. Apply migration `supabase/migrations/20260430235900_listings_add_product_fields.sql` and run `NOTIFY pgrst, 'reload schema';`.",
       );
     }
     if (error) throw new AppError(400, error.message);
@@ -542,13 +600,22 @@ export const updateListing = async (req, res, next) => {
     if (req.body.cityLabel != null) patch.city_label = String(req.body.cityLabel).trim();
     if (req.body.lat !== undefined) patch.lat = req.body.lat == null ? null : Number(req.body.lat);
     if (req.body.lng !== undefined) patch.lng = req.body.lng == null ? null : Number(req.body.lng);
-    if (req.body.imageUrl != null) patch.image_url = String(req.body.imageUrl).trim();
-    if (req.body.imageUrls != null) {
-      const imageUrls = Array.isArray(req.body.imageUrls)
-        ? req.body.imageUrls.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 6)
+    if (req.body.imageUrl != null && req.body.imageUrls != null) {
+      const primary = String(req.body.imageUrl).trim();
+      const rawUrls = Array.isArray(req.body.imageUrls)
+        ? req.body.imageUrls.map((x) => String(x || "").trim()).filter(Boolean)
         : [];
+      const imageUrls = dedupeListingImageUrlsOrdered(primary ? [primary, ...rawUrls] : rawUrls).slice(0, 6);
       patch.image_urls = imageUrls;
       if (imageUrls.length > 0) patch.image_url = imageUrls[0];
+    } else if (req.body.imageUrls != null) {
+      const imageUrls = dedupeListingImageUrlsOrdered(
+        Array.isArray(req.body.imageUrls) ? req.body.imageUrls.map((x) => String(x || "").trim()).filter(Boolean) : [],
+      ).slice(0, 6);
+      patch.image_urls = imageUrls;
+      if (imageUrls.length > 0) patch.image_url = imageUrls[0];
+    } else if (req.body.imageUrl != null) {
+      patch.image_url = String(req.body.imageUrl).trim();
     }
     if (req.body.optionNameA != null) patch.option_name_a = String(req.body.optionNameA).trim().slice(0, 120);
     if (req.body.optionValuesA != null) {
@@ -564,6 +631,29 @@ export const updateListing = async (req, res, next) => {
     }
     if (req.body.orderType != null) patch.order_type = String(req.body.orderType) === "pre_order" ? "pre_order" : "in_stock";
     if (req.body.processingTime != null) patch.processing_time = String(req.body.processingTime).trim().slice(0, 120);
+    const effectiveOrderType = String(patch.order_type ?? existing.order_type ?? "in_stock");
+    const effectiveProcessingTime = String(patch.processing_time ?? existing.processing_time ?? "").trim();
+    const effectiveOptionNameA = String(patch.option_name_a ?? existing.option_name_a ?? "").trim();
+    const effectiveOptionNameB = String(patch.option_name_b ?? existing.option_name_b ?? "").trim();
+    const effectiveOptionValuesA = Array.isArray(patch.option_values_a)
+      ? patch.option_values_a
+      : Array.isArray(existing.option_values_a)
+        ? existing.option_values_a
+        : [];
+    const effectiveOptionValuesB = Array.isArray(patch.option_values_b)
+      ? patch.option_values_b
+      : Array.isArray(existing.option_values_b)
+        ? existing.option_values_b
+        : [];
+    if (effectiveOrderType === "pre_order" && !effectiveProcessingTime) {
+      throw new AppError(400, "Processing time is required for pre-order listings.");
+    }
+    if (effectiveOptionValuesA.length > 0 && !effectiveOptionNameA) {
+      throw new AppError(400, "Variant type is required when first variant choices are provided.");
+    }
+    if (effectiveOptionValuesB.length > 0 && !effectiveOptionNameB) {
+      throw new AppError(400, "Second variant type is required when second variant choices are provided.");
+    }
     if (req.body.communityId !== undefined) {
       if (req.body.communityId == null || req.body.communityId === "") {
         patch.community_id = null;
@@ -584,7 +674,12 @@ export const updateListing = async (req, res, next) => {
       patch.status = nextStatus;
     }
     patch.updated_at = new Date().toISOString();
-    const { data, error } = await supabaseAdmin.from("listings").update(patch).eq("id", id).select("*").single();
+    let { data, error } = await supabaseAdmin.from("listings").update(patch).eq("id", id).select("*").single();
+    if (error?.code === "PGRST204" || /schema cache/i.test(String(error?.message || ""))) {
+      const fallbackPatch = { ...patch };
+      for (const col of LISTINGS_OPTIONAL_PRODUCT_COLUMNS) delete fallbackPatch[col];
+      ({ data, error } = await supabaseAdmin.from("listings").update(fallbackPatch).eq("id", id).select("*").single());
+    }
     if (error) throw new AppError(400, error.message);
     res.json({ listing: listingRowToApi(data) });
   } catch (e) {

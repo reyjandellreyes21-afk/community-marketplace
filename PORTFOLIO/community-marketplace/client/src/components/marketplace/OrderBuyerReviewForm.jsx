@@ -64,7 +64,7 @@ export function OrderBuyerReviewForm({ orderId, initialReview, onSubmit, disable
 
       className={`rounded-lg border border-neutral-200/90 bg-neutral-50/80 dark:border-slate-600 dark:bg-slate-900/40 ${
 
-        compact ? "p-2 sm:p-2.5" : "p-2.5 sm:p-3"
+        compact ? "p-2 md:p-2.5" : "p-2.5 md:p-3"
 
       }`}
 
@@ -86,7 +86,7 @@ export function OrderBuyerReviewForm({ orderId, initialReview, onSubmit, disable
 
       <div
 
-        className={`flex flex-wrap items-center gap-0.5 sm:justify-start ${compact ? "mt-1 justify-center" : "mt-2 justify-center gap-1"}`}
+        className={`flex flex-wrap items-center gap-0.5 md:justify-start ${compact ? "mt-1 justify-center" : "mt-2 justify-center gap-1"}`}
 
         role="group"
 
@@ -110,9 +110,9 @@ export function OrderBuyerReviewForm({ orderId, initialReview, onSubmit, disable
 
               compact
 
-                ? "min-h-8 min-w-8 text-base sm:min-h-9 sm:min-w-9 sm:text-lg"
+                ? "min-h-8 min-w-8 text-base md:min-h-9 md:min-w-9 md:text-lg"
 
-                : "min-h-10 min-w-10 text-lg sm:min-h-11 sm:min-w-11 sm:text-xl"
+                : "min-h-10 min-w-10 text-lg md:min-h-11 md:min-w-11 md:text-xl"
 
             } ${
 
@@ -136,9 +136,9 @@ export function OrderBuyerReviewForm({ orderId, initialReview, onSubmit, disable
 
           <span
 
-            className={`w-full basis-full text-center text-neutral-600 sm:ml-1 sm:w-auto sm:basis-auto sm:text-left dark:text-slate-400 ${
+            className={`w-full basis-full text-center text-neutral-600 md:ml-1 md:w-auto md:basis-auto md:text-left dark:text-slate-400 ${
 
-              compact ? "text-[10px] sm:text-xs" : "text-xs"
+              compact ? "text-[10px] md:text-xs" : "text-xs"
 
             }`}
 
@@ -180,7 +180,7 @@ export function OrderBuyerReviewForm({ orderId, initialReview, onSubmit, disable
 
       </label>
 
-      <div className={`flex justify-stretch sm:justify-end ${compact ? "mt-2 sm:mt-1.5" : "mt-3 sm:mt-2"}`}>
+      <div className={`flex justify-stretch md:justify-end ${compact ? "mt-2 md:mt-1.5" : "mt-3 md:mt-2"}`}>
 
         <button
 
@@ -188,9 +188,9 @@ export function OrderBuyerReviewForm({ orderId, initialReview, onSubmit, disable
 
           disabled={!rating || disabled || saving}
 
-          className={`btn-secondary w-full touch-manipulation text-xs disabled:opacity-50 sm:w-auto ${
+          className={`btn-secondary w-full touch-manipulation text-xs disabled:opacity-50 md:w-auto ${
 
-            compact ? "min-h-9 py-1.5 sm:min-h-0" : "min-h-10 sm:min-h-0"
+            compact ? "min-h-9 py-1.5 md:min-h-0" : "min-h-10 md:min-h-0"
 
           }`}
 
