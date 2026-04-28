@@ -179,6 +179,13 @@ const listingRowToApi = (row) => ({
   lat: row.lat,
   lng: row.lng,
   imageUrl: row.image_url,
+  imageUrls: Array.isArray(row.image_urls) ? row.image_urls.map(String) : [],
+  optionNameA: String(row.option_name_a ?? "").trim(),
+  optionValuesA: Array.isArray(row.option_values_a) ? row.option_values_a.map(String) : [],
+  optionNameB: String(row.option_name_b ?? "").trim(),
+  optionValuesB: Array.isArray(row.option_values_b) ? row.option_values_b.map(String) : [],
+  orderType: String(row.order_type ?? "in_stock").trim() || "in_stock",
+  processingTime: String(row.processing_time ?? "").trim(),
   communityId: row.community_id ?? null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -398,6 +405,13 @@ export const listingsValidators = {
     body("lat").optional().isFloat(),
     body("lng").optional().isFloat(),
     body("imageUrl").optional().isString(),
+    body("imageUrls").optional().isArray(),
+    body("optionNameA").optional().isString().isLength({ max: 120 }),
+    body("optionValuesA").optional().isArray(),
+    body("optionNameB").optional().isString().isLength({ max: 120 }),
+    body("optionValuesB").optional().isArray(),
+    body("orderType").optional().isIn(["in_stock", "pre_order"]),
+    body("processingTime").optional().isString().isLength({ max: 120 }),
   ],
   idParam: [param("id").isUUID()],
 };
@@ -453,6 +467,17 @@ export const createListing = async (req, res, next) => {
     const modes = Array.isArray(req.body.fulfillmentModes) && req.body.fulfillmentModes.length
       ? req.body.fulfillmentModes.map(String)
       : ["pickup", "delivery"];
+    const imageUrls = Array.isArray(req.body.imageUrls)
+      ? req.body.imageUrls.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 6)
+      : [];
+    const imageUrl = String(req.body.imageUrl ?? imageUrls[0] ?? "").trim();
+    const optionValuesA = Array.isArray(req.body.optionValuesA)
+      ? req.body.optionValuesA.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 30)
+      : [];
+    const optionValuesB = Array.isArray(req.body.optionValuesB)
+      ? req.body.optionValuesB.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 30)
+      : [];
+    const orderType = String(req.body.orderType || "in_stock").trim() === "pre_order" ? "pre_order" : "in_stock";
     const row = {
       seller_id: req.user.id,
       title: String(req.body.title).trim(),
@@ -465,7 +490,14 @@ export const createListing = async (req, res, next) => {
       city_label: String(req.body.cityLabel ?? "").trim(),
       lat: req.body.lat != null ? Number(req.body.lat) : null,
       lng: req.body.lng != null ? Number(req.body.lng) : null,
-      image_url: String(req.body.imageUrl ?? "").trim(),
+      image_url: imageUrl,
+      image_urls: imageUrls.length ? imageUrls : imageUrl ? [imageUrl] : [],
+      option_name_a: String(req.body.optionNameA ?? "").trim().slice(0, 120),
+      option_values_a: optionValuesA,
+      option_name_b: String(req.body.optionNameB ?? "").trim().slice(0, 120),
+      option_values_b: optionValuesB,
+      order_type: orderType,
+      processing_time: String(req.body.processingTime ?? "").trim().slice(0, 120),
       // Keep insert compatible with DB constraint: active|paused|sold.
       status: "active",
     };
@@ -511,6 +543,27 @@ export const updateListing = async (req, res, next) => {
     if (req.body.lat !== undefined) patch.lat = req.body.lat == null ? null : Number(req.body.lat);
     if (req.body.lng !== undefined) patch.lng = req.body.lng == null ? null : Number(req.body.lng);
     if (req.body.imageUrl != null) patch.image_url = String(req.body.imageUrl).trim();
+    if (req.body.imageUrls != null) {
+      const imageUrls = Array.isArray(req.body.imageUrls)
+        ? req.body.imageUrls.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 6)
+        : [];
+      patch.image_urls = imageUrls;
+      if (imageUrls.length > 0) patch.image_url = imageUrls[0];
+    }
+    if (req.body.optionNameA != null) patch.option_name_a = String(req.body.optionNameA).trim().slice(0, 120);
+    if (req.body.optionValuesA != null) {
+      patch.option_values_a = Array.isArray(req.body.optionValuesA)
+        ? req.body.optionValuesA.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 30)
+        : [];
+    }
+    if (req.body.optionNameB != null) patch.option_name_b = String(req.body.optionNameB).trim().slice(0, 120);
+    if (req.body.optionValuesB != null) {
+      patch.option_values_b = Array.isArray(req.body.optionValuesB)
+        ? req.body.optionValuesB.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 30)
+        : [];
+    }
+    if (req.body.orderType != null) patch.order_type = String(req.body.orderType) === "pre_order" ? "pre_order" : "in_stock";
+    if (req.body.processingTime != null) patch.processing_time = String(req.body.processingTime).trim().slice(0, 120);
     if (req.body.communityId !== undefined) {
       if (req.body.communityId == null || req.body.communityId === "") {
         patch.community_id = null;

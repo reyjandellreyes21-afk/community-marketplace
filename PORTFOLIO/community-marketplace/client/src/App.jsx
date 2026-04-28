@@ -183,6 +183,65 @@ const SELLER_ORDERS_POLL_MS = 28_000;
 const ORDERS_REALTIME_DEBOUNCE_MS = 200;
 /** Coalesce bursty chat events for immediate but efficient conversation updates. */
 const CHAT_REALTIME_DEBOUNCE_MS = 220;
+const LISTING_OPTION_NAME_SUGGESTIONS = ["Condition", "Size", "Color", "Material"];
+const LISTING_OPTION_VALUE_SUGGESTIONS = {
+  condition: ["Brand New", "Like New", "Used - Good", "Used - Fair"],
+  size: ["XS", "S", "M", "L", "XL"],
+  color: ["Black", "White", "Blue", "Red", "Gray"],
+  material: ["Cotton", "Wood", "Metal", "Plastic"],
+};
+const LISTING_PROCESSING_TIME_PRESETS = ["1 day", "2-3 days", "5-7 days", "2 weeks"];
+const LISTING_MAX_IMAGES = 6;
+
+function splitOptionValuesCsv(raw) {
+  return String(raw || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function getListingOptionValueSuggestions(optionName) {
+  const key = String(optionName || "").trim().toLowerCase();
+  return LISTING_OPTION_VALUE_SUGGESTIONS[key] || [];
+}
+
+function loadImageElementFromFile(file) {
+  return new Promise((resolve, reject) => {
+    try {
+      const src = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(src);
+        resolve(img);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(src);
+        reject(new Error("Could not read image."));
+      };
+      img.src = src;
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+async function cropImageFileToSquare(file) {
+  const img = await loadImageElementFromFile(file);
+  const side = Math.max(1, Math.min(img.naturalWidth || 0, img.naturalHeight || 0));
+  const sx = Math.max(0, Math.floor(((img.naturalWidth || side) - side) / 2));
+  const sy = Math.max(0, Math.floor(((img.naturalHeight || side) - side) / 2));
+  const canvas = document.createElement("canvas");
+  canvas.width = side;
+  canvas.height = side;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas not supported.");
+  ctx.drawImage(img, sx, sy, side, side, 0, 0, side, side);
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Crop failed."))), "image/jpeg", 0.92);
+  });
+  const baseName = String(file?.name || "listing-image").replace(/\.[^.]+$/, "");
+  return new File([blob], `${baseName}-square.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+}
 
 /** Responsive browse layouts: list, comfortable auto-fill grid, or compact auto-fill grid. */
 function communityBrowseGridClass(view) {
@@ -703,14 +762,25 @@ function App() {
     quantity: "",
     categories: "",
     subId: "all",
+    optionNameA: "",
+    optionValuesA: "",
+    optionNameB: "",
+    optionValuesB: "",
+    orderType: "in_stock",
+    processingTime: "",
     pickup: false,
     delivery: false,
   });
   const [listingImageFile, setListingImageFile] = useState(null);
   const [listingImagePreviewUrl, setListingImagePreviewUrl] = useState("");
+  const [listingExtraImages, setListingExtraImages] = useState([]);
   const [editingListingId, setEditingListingId] = useState(null);
   const [listingImageDragActive, setListingImageDragActive] = useState(false);
   const listingImageInputRef = useRef(null);
+  const [listingAdvancedOpen, setListingAdvancedOpen] = useState(false);
+  const [listingOptionValueDraftA, setListingOptionValueDraftA] = useState("");
+  const [listingOptionValueDraftB, setListingOptionValueDraftB] = useState("");
+  const [listingSecondOptionOpen, setListingSecondOptionOpen] = useState(false);
   const [listingSaving, setListingSaving] = useState(false);
   const [listingFieldErrors, setListingFieldErrors] = useState({});
   /** Stacked marketplace toasts (e.g. multiple “Order placed” while prior toasts are still visible). */
@@ -847,25 +917,6 @@ function App() {
       postalCode: String(p.addressPostalCode || "").trim(),
     };
   }, [user?.address]);
-  const canUploadProductFromProfile = useMemo(() => {
-    const parsedAddress = splitAddressParts(user?.address);
-    const checks = [
-      [String(user?.username || "").trim().length >= 3, "Username"],
-      [toPhilippinesLocalPhone10(user?.phone).length === 10, "Phone number"],
-      [String(user?.firstName || "").trim().length >= 2, "First name"],
-      [String(user?.middleName || "").trim().length >= 2, "Middle name"],
-      [String(user?.lastName || "").trim().length >= 2, "Last name"],
-      [String(user?.gender || "").trim().length > 0, "Gender"],
-      [String(user?.birthday || "").trim().length > 0, "Birthday"],
-      [String(parsedAddress.addressHouseStreet || "").trim().length > 0, "House Number & Street"],
-      [String(parsedAddress.addressSubdivision || "").trim().length > 0, "Subdivision"],
-      [String(parsedAddress.addressBarangay || "").trim().length > 0, "Barangay"],
-      [String(parsedAddress.addressCity || "").trim().length > 0, "City or Municipality"],
-      [String(parsedAddress.addressProvince || "").trim().length > 0, "Province"],
-    ];
-    const missing = checks.filter(([ok]) => !ok).map(([, label]) => label);
-    return { ready: missing.length === 0, missing };
-  }, [user]);
   /** Marketplace “Buy now” requires contact + delivery/pickup details (lighter than seller upload checklist). */
   const buyNowFromProfile = useMemo(() => {
     const parsedAddress = splitAddressParts(user?.address);
@@ -2954,6 +3005,19 @@ function App() {
   }, [orders, ordersTabBadgeIdsByTab.pending]);
 
   const listingDescriptionCount = useMemo(() => String(listingForm.description || "").length, [listingForm.description]);
+  const listingQuantityNumber = useMemo(() => {
+    const n = Number.parseInt(String(listingForm.quantity || "").trim(), 10);
+    return Number.isFinite(n) ? n : null;
+  }, [listingForm.quantity]);
+  const listingRequiredCompletedCount = useMemo(() => {
+    let done = 0;
+    if (String(listingForm.title || "").trim()) done += 1;
+    if (String(listingForm.categories || "").trim()) done += 1;
+    if (String(listingForm.pricePesos || "").trim()) done += 1;
+    if (String(listingForm.quantity || "").trim()) done += 1;
+    return done;
+  }, [listingForm.title, listingForm.categories, listingForm.pricePesos, listingForm.quantity]);
+  const listingRequiredTotalCount = 4;
   const listingFormDirty = useMemo(() => {
     return Boolean(
       String(listingForm.title || "").trim() ||
@@ -2961,13 +3025,20 @@ function App() {
         String(listingForm.pricePesos || "").trim() ||
         String(listingForm.quantity || "").trim() ||
         String(listingForm.categories || "").trim() ||
+      String(listingForm.optionNameA || "").trim() ||
+      String(listingForm.optionValuesA || "").trim() ||
+      String(listingForm.optionNameB || "").trim() ||
+      String(listingForm.optionValuesB || "").trim() ||
+      String(listingForm.processingTime || "").trim() ||
+      String(listingForm.orderType || "in_stock") !== "in_stock" ||
         listingForm.pickup ||
         listingForm.delivery ||
         listingImageFile ||
         listingImagePreviewUrl ||
+        listingExtraImages.length > 0 ||
         editingListingId,
     );
-  }, [editingListingId, listingForm, listingImageFile, listingImagePreviewUrl]);
+  }, [editingListingId, listingExtraImages.length, listingForm, listingImageFile, listingImagePreviewUrl]);
   const profileConnectedSocialCount = useMemo(() => {
     let count = 0;
     if (String(profileDraft.facebookUrl || "").trim()) count += 1;
@@ -4098,6 +4169,12 @@ function App() {
           quantity: "",
           categories: "",
           subId: "all",
+          optionNameA: "",
+          optionValuesA: "",
+          optionNameB: "",
+          optionValuesB: "",
+          orderType: "in_stock",
+          processingTime: "",
           pickup: false,
           delivery: false,
         });
@@ -4105,6 +4182,11 @@ function App() {
         setListingImageFile(null);
         if (listingImagePreviewUrl) URL.revokeObjectURL(listingImagePreviewUrl);
         setListingImagePreviewUrl("");
+        clearListingExtraImages();
+        setListingAdvancedOpen(false);
+        setListingOptionValueDraftA("");
+        setListingOptionValueDraftB("");
+        setListingSecondOptionOpen(false);
       }
       pushMarketplaceToast("Listing deleted.");
     } catch (e) {
@@ -4559,6 +4641,9 @@ function App() {
 
   const beginEditSellerListing = (listing) => {
     if (!listing?.id) return;
+    const normalizedImageUrls = Array.isArray(listing.imageUrls)
+      ? listing.imageUrls.map((url) => String(url || "").trim()).filter(Boolean)
+      : [];
     setEditingListingId(String(listing.id));
     setListingForm({
       title: String(listing.title || ""),
@@ -4567,6 +4652,12 @@ function App() {
       quantity: Number.isFinite(Number(listing.quantity)) ? String(Number(listing.quantity)) : "",
       categories: String(listing.categories || listing.verticalId || ""),
       subId: String(listing.subId || "all"),
+      optionNameA: String(listing.optionNameA || "").trim(),
+      optionValuesA: Array.isArray(listing.optionValuesA) ? listing.optionValuesA.map((v) => String(v || "").trim()).filter(Boolean).join(", ") : "",
+      optionNameB: String(listing.optionNameB || "").trim(),
+      optionValuesB: Array.isArray(listing.optionValuesB) ? listing.optionValuesB.map((v) => String(v || "").trim()).filter(Boolean).join(", ") : "",
+      orderType: String(listing.orderType || "in_stock").trim() === "pre_order" ? "pre_order" : "in_stock",
+      processingTime: String(listing.processingTime || "").trim(),
       pickup: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("pickup") : true,
       delivery: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("delivery") : true,
     });
@@ -4575,7 +4666,30 @@ function App() {
     if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) {
       URL.revokeObjectURL(listingImagePreviewUrl);
     }
-    setListingImagePreviewUrl(String(listing.imageUrl || "").trim());
+    setListingImagePreviewUrl(String(normalizedImageUrls[0] || listing.imageUrl || "").trim());
+    clearListingExtraImages();
+    if (normalizedImageUrls.length > 1) {
+      setListingExtraImages(
+        normalizedImageUrls.slice(1, LISTING_MAX_IMAGES).map((url, idx) => ({
+          id: `existing-${String(listing.id)}-${idx}`,
+          file: null,
+          previewUrl: url,
+          name: `Image ${idx + 2}`,
+        })),
+      );
+    }
+    setListingOptionValueDraftA("");
+    setListingOptionValueDraftB("");
+    setListingSecondOptionOpen(
+      Boolean(String(listing.optionNameB || "").trim()) ||
+      (Array.isArray(listing.optionValuesB) && listing.optionValuesB.length > 0),
+    );
+    setListingAdvancedOpen(
+      Boolean(String(listing.optionNameA || "").trim()) ||
+      (Array.isArray(listing.optionValuesA) && listing.optionValuesA.length > 0) ||
+      String(listing.orderType || "in_stock").trim() === "pre_order" ||
+      Boolean(String(listing.processingTime || "").trim()),
+    );
     clearMarketplaceToasts();
     setActiveView(VIEWS.MY_LISTINGS);
     navigate("/", { replace: true });
@@ -4589,6 +4703,9 @@ function App() {
     if (!String(listingForm.categories || "").trim()) nextErrors.categories = "Category is required.";
     if (String(listingForm.quantity ?? "").trim() === "") nextErrors.quantity = "Quantity is required.";
     if (String(listingForm.pricePesos ?? "").trim() === "") nextErrors.pricePesos = "Price is required.";
+    if (String(listingForm.orderType || "in_stock") === "pre_order" && !String(listingForm.processingTime || "").trim()) {
+      nextErrors.processingTime = "Processing time is required for pre-order.";
+    }
     if (!listingForm.pickup && !listingForm.delivery) nextErrors.fulfillment = "Choose at least one fulfillment method.";
 
     const hasImage = Boolean(String(listingImagePreviewUrl || "").trim() || listingImageFile);
@@ -4644,6 +4761,22 @@ function App() {
       } else if (listingImagePreviewUrl) {
         imageUrl = String(listingImagePreviewUrl).trim();
       }
+      const splitOptionValuesCsv = (raw) =>
+        String(raw || "")
+          .split(",")
+          .map((v) => v.trim())
+          .filter(Boolean);
+      const extraImageUrls = (
+        await Promise.all(
+          listingExtraImages.map(async (item) => {
+            if (item?.file) return fileToDataUrl(item.file);
+            const rawUrl = String(item?.previewUrl || "").trim();
+            if (!rawUrl || rawUrl.startsWith("blob:")) return "";
+            return rawUrl;
+          }),
+        )
+      ).filter(Boolean);
+      const imageUrls = [imageUrl, ...extraImageUrls].filter(Boolean).slice(0, LISTING_MAX_IMAGES);
       const payload = {
         title: listingForm.title.trim(),
         description: listingForm.description.trim(),
@@ -4655,6 +4788,13 @@ function App() {
         fulfillmentModes: modes,
         cityLabel: "",
         imageUrl,
+        imageUrls,
+        optionNameA: String(listingForm.optionNameA || "").trim(),
+        optionValuesA: splitOptionValuesCsv(listingForm.optionValuesA),
+        optionNameB: String(listingForm.optionNameB || "").trim(),
+        optionValuesB: splitOptionValuesCsv(listingForm.optionValuesB),
+        orderType: String(listingForm.orderType || "in_stock").trim() === "pre_order" ? "pre_order" : "in_stock",
+        processingTime: String(listingForm.processingTime || "").trim(),
         ...(shopCommunityId && isMemberOfOpenCommunity ? { communityId: String(shopCommunityId) } : {}),
       };
       const createRes = editingListingId
@@ -4678,6 +4818,12 @@ function App() {
         quantity: "",
         categories: "",
         subId: "all",
+        optionNameA: "",
+        optionValuesA: "",
+        optionNameB: "",
+        optionValuesB: "",
+        orderType: "in_stock",
+        processingTime: "",
         pickup: false,
         delivery: false,
       });
@@ -4685,6 +4831,11 @@ function App() {
       setListingImageFile(null);
       if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
       setListingImagePreviewUrl("");
+      clearListingExtraImages();
+      setListingAdvancedOpen(false);
+      setListingOptionValueDraftA("");
+      setListingOptionValueDraftB("");
+      setListingSecondOptionOpen(false);
       setEditingListingId(null);
       clearMarketplaceToasts();
       setPublishFlash("");
@@ -4714,6 +4865,90 @@ function App() {
     setListingImagePreviewUrl(URL.createObjectURL(file));
     clearMarketplaceToasts();
   };
+
+  const clearListingExtraImages = useCallback(() => {
+    setListingExtraImages((prev) => {
+      for (const item of prev) {
+        if (String(item?.previewUrl || "").startsWith("blob:")) URL.revokeObjectURL(item.previewUrl);
+      }
+      return [];
+    });
+  }, []);
+
+  const addListingImages = useCallback(
+    (filesLike) => {
+      const incoming = Array.from(filesLike || []);
+      if (!incoming.length) return;
+      const remaining = Math.max(0, LISTING_MAX_IMAGES - ((listingImageFile ? 1 : 0) + listingExtraImages.length));
+      if (!remaining) {
+        pushMarketplaceToast(`You can upload up to ${LISTING_MAX_IMAGES} images.`);
+        return;
+      }
+      const accepted = incoming
+        .slice(0, remaining)
+        .filter((f) => String(f?.type || "").startsWith("image/") && f.size <= 5 * 1024 * 1024);
+      if (!accepted.length) {
+        pushMarketplaceToast("Please choose valid image files up to 5MB each.");
+        return;
+      }
+      if (!listingImageFile && !listingImagePreviewUrl && accepted.length > 0) {
+        const [first, ...rest] = accepted;
+        const coverUrl = URL.createObjectURL(first);
+        setListingImageFile(first);
+        setListingImagePreviewUrl((prev) => {
+          if (String(prev || "").startsWith("blob:")) URL.revokeObjectURL(prev);
+          return coverUrl;
+        });
+        if (rest.length > 0) {
+          setListingExtraImages((prev) => [
+            ...prev,
+            ...rest.map((file) => ({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              file,
+              previewUrl: URL.createObjectURL(file),
+              name: file.name || "Image",
+            })),
+          ]);
+        }
+      } else {
+        setListingExtraImages((prev) => [
+          ...prev,
+          ...accepted.map((file) => ({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            file,
+            previewUrl: URL.createObjectURL(file),
+            name: file.name || "Image",
+          })),
+        ]);
+      }
+      clearMarketplaceToasts();
+    },
+    [listingExtraImages.length, listingImageFile, listingImagePreviewUrl, pushMarketplaceToast],
+  );
+
+  const addListingOptionValue = useCallback((key, rawValue) => {
+    const value = String(rawValue || "").trim();
+    if (!value) return;
+    if (key === "A") {
+      const next = [...new Set([...splitOptionValuesCsv(listingForm.optionValuesA), value])];
+      setListingForm((p) => ({ ...p, optionValuesA: next.join(", ") }));
+      setListingOptionValueDraftA("");
+    } else {
+      const next = [...new Set([...splitOptionValuesCsv(listingForm.optionValuesB), value])];
+      setListingForm((p) => ({ ...p, optionValuesB: next.join(", ") }));
+      setListingOptionValueDraftB("");
+    }
+  }, [listingForm.optionValuesA, listingForm.optionValuesB]);
+
+  const removeListingOptionValue = useCallback((key, valueToRemove) => {
+    if (key === "A") {
+      const next = splitOptionValuesCsv(listingForm.optionValuesA).filter((v) => v !== valueToRemove);
+      setListingForm((p) => ({ ...p, optionValuesA: next.join(", ") }));
+    } else {
+      const next = splitOptionValuesCsv(listingForm.optionValuesB).filter((v) => v !== valueToRemove);
+      setListingForm((p) => ({ ...p, optionValuesB: next.join(", ") }));
+    }
+  }, [listingForm.optionValuesA, listingForm.optionValuesB]);
 
   const openProfileEdit = () => {
     if (!user) return;
@@ -6611,18 +6846,15 @@ function App() {
         )}
 
         {activeView === VIEWS.MY_LISTINGS && (
-          <section className={`${UI_KIT.viewSection} space-y-6 md:space-y-8`}>
-            <SectionHeading
-              title="My listings"
-              subtitle="Sell to your local community. Buyers pay COD via pickup or delivery."
-            />
-            <form noValidate onSubmit={handleCreateListing} className={`grid gap-4 p-4 md:grid-cols-2 ${UI_KIT.surfaceMuted}`}>
-              <div className="md:col-span-2">
+          <section className="space-y-6 md:space-y-8">
+            <form noValidate onSubmit={handleCreateListing} className="grid gap-4 md:grid-cols-2">
+              <div id="listing-section-photos" className="md:col-span-2">
+                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Upload Product</h2>
                 <div className="mb-2 flex items-end justify-between gap-2">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Photos *</p>
                   </div>
-                  <p className="text-[11px] text-neutral-500 dark:text-slate-400">JPG/PNG/WebP up to 5MB</p>
+                  <p className="text-[11px] text-neutral-500 dark:text-slate-400">Up to 6 images · JPG/PNG/WebP up to 5MB each</p>
                 </div>
                 <div
                   className={`rounded-xl border border-dashed bg-white/80 transition dark:bg-slate-900/60 ${
@@ -6631,11 +6863,7 @@ function App() {
                       : listingFieldErrors.image
                         ? "border-rose-400 text-neutral-500 dark:border-rose-500 dark:text-slate-400"
                         : "border-neutral-300 text-neutral-500 dark:border-slate-600 dark:text-slate-400"
-                  } ${
-                    listingImagePreviewUrl
-                      ? "p-3 sm:p-4"
-                      : "flex min-h-[10rem] cursor-pointer flex-col items-center justify-center gap-1.5 px-4 py-6 text-center text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-900"
-                  }`}
+                  } ${listingImagePreviewUrl ? "p-3 sm:p-4" : "flex min-h-[9.5rem] cursor-pointer items-center justify-center px-4 py-5 text-center text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-900"}`}
                   role={listingImagePreviewUrl ? undefined : "button"}
                   tabIndex={listingImagePreviewUrl ? undefined : 0}
                   aria-label={listingImagePreviewUrl ? undefined : "Upload listing photo"}
@@ -6664,84 +6892,123 @@ function App() {
                   onDrop={(e) => {
                     e.preventDefault();
                     setListingImageDragActive(false);
-                    const file = e.dataTransfer?.files?.[0];
-                    if (file) setListingImage(file);
+                    const files = Array.from(e.dataTransfer?.files || []);
+                    if (files.length) addListingImages(files);
                   }}
                 >
                   <input
                     ref={listingImageInputRef}
                     type="file"
                     accept="image/*"
+                    multiple
                     className="hidden"
                     onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) setListingImage(file);
+                      const files = Array.from(e.target.files || []);
+                      if (files.length) addListingImages(files);
                       e.target.value = "";
                     }}
                   />
                   {listingImagePreviewUrl ? (
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-                      <button
-                        type="button"
-                        className="group relative mx-auto shrink-0 overflow-hidden rounded-xl ring-1 ring-neutral-200/90 transition hover:ring-brand-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:ring-slate-600 dark:hover:ring-brand-accent/40 dark:focus-visible:ring-brand-accent/50 sm:mx-0"
-                        aria-label="Replace listing photo"
-                        onClick={() => listingImageInputRef.current?.click()}
-                      >
-                        <img
-                          src={listingImagePreviewUrl}
-                          alt=""
-                          className="h-32 w-full max-w-[14rem] object-cover object-center sm:h-36 sm:w-36 sm:max-w-none"
-                        />
-                        <span className="pointer-events-none absolute inset-0 flex items-end justify-center bg-gradient-to-t from-black/55 to-transparent pb-2 text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
-                          Replace
-                        </span>
-                      </button>
-                      <div className="min-w-0 flex-1 space-y-2 text-center sm:text-left">
-                        <p className="truncate text-sm font-medium text-neutral-800 dark:text-slate-200" title={listingImageFile?.name || "Selected image"}>
-                          {listingImageFile?.name || "Selected image"}
-                        </p>
-                        <p className="text-xs text-neutral-500 dark:text-slate-400">Tip: click the photo or use Replace to choose a different image.</p>
-                        <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+                    <div className="flex flex-col gap-3">
+                      <div className="flex flex-wrap items-start gap-3">
+                        <div className="flex flex-col items-start gap-1.5">
+                          <div className="group relative shrink-0 overflow-hidden rounded-xl ring-1 ring-neutral-200/90 transition hover:ring-brand-primary/50 dark:ring-slate-600 dark:hover:ring-brand-accent/40">
+                            <button type="button" className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:focus-visible:ring-brand-accent/50" aria-label="Replace listing photo" onClick={() => listingImageInputRef.current?.click()}>
+                              <img src={listingImagePreviewUrl} alt="" className="h-32 w-32 object-cover object-center sm:h-36 sm:w-36" />
+                              <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-brand-primary/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white dark:bg-brand-accent/80">Cover photo</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-xs font-semibold text-white transition hover:bg-rose-600"
+                              aria-label="Remove cover image"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (listingExtraImages.length > 0) {
+                                  const [nextCover, ...rest] = listingExtraImages;
+                                  setListingImageFile(nextCover.file || null);
+                                  setListingImagePreviewUrl(nextCover.previewUrl);
+                                  setListingExtraImages(rest);
+                                  return;
+                                }
+                                setListingImageFile(null);
+                                if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+                                setListingImagePreviewUrl("");
+                                if (listingImageInputRef.current) listingImageInputRef.current.value = "";
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                          <p className="text-xs font-medium text-neutral-600 dark:text-slate-300">
+                            {(listingImageFile ? 1 : 0) + listingExtraImages.length}/{LISTING_MAX_IMAGES} images
+                          </p>
+                        </div>
+                        {listingExtraImages.map((item) => (
+                          <div key={item.id} className="group relative shrink-0 overflow-hidden rounded-xl ring-1 ring-neutral-200/90 transition hover:ring-brand-primary/50 dark:ring-slate-600 dark:hover:ring-brand-accent/40">
+                            <button type="button" className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:focus-visible:ring-brand-accent/50" aria-label="Set as cover photo" onClick={() => {
+                              const prevCover = listingImageFile
+                                ? { id: `cover-${Date.now()}`, file: listingImageFile, previewUrl: listingImagePreviewUrl, name: listingImageFile?.name || "Cover" }
+                                : null;
+                              setListingImageFile(item.file || null);
+                              setListingImagePreviewUrl(item.previewUrl);
+                              setListingExtraImages((prev) => {
+                                const next = prev.filter((x) => x.id !== item.id);
+                                if (prevCover) next.unshift(prevCover);
+                                return next;
+                              });
+                            }}>
+                              <img src={item.previewUrl} alt="" className="h-32 w-32 object-cover object-center sm:h-36 sm:w-36" />
+                            </button>
+                            <button
+                              type="button"
+                              className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-xs font-semibold text-white transition hover:bg-rose-600"
+                              aria-label="Remove image"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setListingExtraImages((prev) => {
+                                  const target = prev.find((x) => x.id === item.id);
+                                  if (target?.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(target.previewUrl);
+                                  return prev.filter((x) => x.id !== item.id);
+                                });
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                        {(listingImageFile ? 1 : 0) + listingExtraImages.length < LISTING_MAX_IMAGES ? (
                           <button
                             type="button"
-                            className="btn-secondary text-xs"
-                            onClick={() => {
-                              setListingImageFile(null);
-                              if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
-                              setListingImagePreviewUrl("");
-                              if (listingImageInputRef.current) listingImageInputRef.current.value = "";
-                            }}
+                            className="group relative inline-flex h-32 w-32 shrink-0 items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white/60 text-center text-xs font-semibold text-neutral-500 transition hover:border-brand-primary/50 hover:text-brand-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:border-brand-accent/45 dark:hover:text-slate-100 dark:focus-visible:ring-brand-accent/50 sm:h-36 sm:w-36"
+                            onClick={() => listingImageInputRef.current?.click()}
                           >
-                            Remove
+                            <span className="pointer-events-none flex flex-col items-center gap-1">
+                              <span aria-hidden className="text-base leading-none">+</span>
+                              <span>Add image</span>
+                            </span>
                           </button>
-                          <button type="button" className="btn-secondary text-xs" onClick={() => listingImageInputRef.current?.click()}>
-                            Replace
-                          </button>
-                        </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : (
-                    <>
-                      <p className="font-medium text-neutral-800 dark:text-slate-200">Drag and drop a photo here</p>
-                      <p className="max-w-sm text-xs text-neutral-500 dark:text-slate-400">
-                        or click this area to browse — square or 4:3 looks best. JPG, PNG, or WebP up to 5MB.
-                      </p>
-                      <button
-                        type="button"
-                        className="btn-secondary mt-1 text-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          listingImageInputRef.current?.click();
-                        }}
-                      >
-                        Choose photo
-                      </button>
-                    </>
+                    <button
+                      type="button"
+                      className="group relative inline-flex h-28 w-28 items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white/60 text-center text-xs font-semibold text-neutral-500 transition hover:border-brand-primary/50 hover:text-brand-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:border-brand-accent/45 dark:hover:text-slate-100 dark:focus-visible:ring-brand-accent/50"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        listingImageInputRef.current?.click();
+                      }}
+                    >
+                      <span className="pointer-events-none flex flex-col items-center gap-1">
+                        <span aria-hidden className="text-base leading-none">+</span>
+                        <span>Add image</span>
+                      </span>
+                    </button>
                   )}
                 </div>
                 {listingFieldErrors.image ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.image}</p> : null}
               </div>
-              <div className="md:col-span-2">
+              <div id="listing-section-details" className="md:col-span-2">
                 <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Details *</p>
                 <input
                   className={`input-base w-full ${listingFieldErrors.title ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
@@ -6767,7 +7034,7 @@ function App() {
                 {listingFieldErrors.categories ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.categories}</p> : null}
               </div>
               <div className="md:col-span-2">
-                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Description (optional)</label>
+                <label className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Description (optional)</label>
                 <textarea
                   className="input-base min-h-[5rem] w-full"
                   value={listingForm.description}
@@ -6778,8 +7045,9 @@ function App() {
                 />
                 <p className="mt-1 text-right text-[11px] text-neutral-500 dark:text-slate-400">{listingDescriptionCount}/500</p>
               </div>
-              <div className="md:col-span-2 grid grid-cols-1 gap-4 rounded-xl border border-neutral-200/80 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-900/65 sm:grid-cols-2">
-                <div className="min-w-0">
+              <div className="md:col-span-2 overflow-hidden divide-y divide-neutral-200/80 dark:divide-slate-700">
+                <div id="listing-section-pricing" className="grid grid-cols-1 gap-4 border-t border-neutral-200/80 p-3 sm:grid-cols-2 dark:border-slate-700">
+                  <div className="min-w-0">
                   <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Pricing *</p>
                   <div
                     className={`flex min-w-0 overflow-hidden rounded-xl border bg-white transition dark:bg-slate-950 ${
@@ -6810,11 +7078,11 @@ function App() {
                     />
                   </div>
                   {listingFieldErrors.pricePesos ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.pricePesos}</p> : null}
-                </div>
+                  </div>
                 <div className="min-w-0">
-                  <label className="mb-1 block text-xs font-semibold text-neutral-700 dark:text-slate-300">Quantity *</label>
+                  <label className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Quantity *</label>
                   <input
-                    className={`input-base w-full ${listingFieldErrors.quantity ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
+                    className={`input-base w-full text-left ${listingFieldErrors.quantity ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
                     type="number"
                     min={0}
                     step={1}
@@ -6824,11 +7092,39 @@ function App() {
                       setListingForm((p) => ({ ...p, quantity: e.target.value }));
                       if (listingFieldErrors.quantity) setListingFieldErrors((prev) => ({ ...prev, quantity: "" }));
                     }}
+                    onBlur={(e) => {
+                      const parsed = Number.parseInt(String(e.target.value || "").trim(), 10);
+                      const normalized = Number.isFinite(parsed) && parsed >= 0 ? String(parsed) : "";
+                      setListingForm((p) => ({ ...p, quantity: normalized }));
+                    }}
                   />
+                  {String(listingForm.quantity || "").trim() === "" ? (
+                    <div className="mt-2">
+                      <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                        Quick picks
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[1, 5, 10].map((qty) => (
+                        <button
+                          key={`qty-${qty}`}
+                          type="button"
+                          className={`rounded-full border px-2.5 py-1 text-xs transition ${
+                            listingQuantityNumber === qty
+                              ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                              : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
+                          }`}
+                          onClick={() => setListingForm((p) => ({ ...p, quantity: String(qty) }))}
+                        >
+                          {qty}
+                        </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   {listingFieldErrors.quantity ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.quantity}</p> : null}
                 </div>
               </div>
-              <div className="md:col-span-2 rounded-xl border border-neutral-200/80 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-900/65">
+              <div id="listing-section-fulfillment" className="p-3">
                 <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Fulfillment *</p>
                 <div className="mt-2 flex flex-wrap items-center gap-4">
                   <button
@@ -6836,37 +7132,153 @@ function App() {
                     aria-pressed={listingForm.delivery}
                     className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium transition ${
                       listingForm.delivery
-                        ? "border-brand-primary/45 bg-brand-soft text-brand-primary dark:border-brand-accent/45 dark:bg-slate-800 dark:text-slate-100"
-                        : "border-neutral-300 text-neutral-700 hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                        ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                        : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
                     }`}
                     onClick={() => {
                       setListingForm((p) => ({ ...p, delivery: !p.delivery }));
                       if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
                     }}
                   >
-                    COD Delivery
+                    <span className="mr-1" aria-hidden>🚚</span> COD Delivery
                   </button>
                   <button
                     type="button"
                     aria-pressed={listingForm.pickup}
                     className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium transition ${
                       listingForm.pickup
-                        ? "border-brand-primary/45 bg-brand-soft text-brand-primary dark:border-brand-accent/45 dark:bg-slate-800 dark:text-slate-100"
-                        : "border-neutral-300 text-neutral-700 hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                        ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                        : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
                     }`}
                     onClick={() => {
                       setListingForm((p) => ({ ...p, pickup: !p.pickup }));
                       if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
                     }}
                   >
-                    Pick-up
+                    <span className="mr-1" aria-hidden>📍</span> Pick-up
                   </button>
                 </div>
                 <p className="mt-2 text-xs text-neutral-500 dark:text-slate-400">Choose how buyers can receive the item.</p>
                 {listingFieldErrors.fulfillment ? <p className="mt-2 text-xs font-medium text-rose-600 dark:text-rose-400">{listingFieldErrors.fulfillment}</p> : null}
               </div>
-              <div className="md:col-span-2 sticky bottom-2 z-10 rounded-xl border border-neutral-200/80 bg-white/95 px-3 py-2.5 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/90">
-                <div className="flex flex-wrap items-center gap-2">
+              <div className="p-3">
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className="flex cursor-pointer items-center justify-between gap-3 rounded-md px-2 py-1"
+                  onClick={() => setListingAdvancedOpen((prev) => !prev)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setListingAdvancedOpen((prev) => !prev);
+                    }
+                  }}
+                >
+                  <p className="text-xs font-bold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Advanced settings</p>
+                  <span className={`inline-flex items-center text-neutral-700 transition-transform dark:text-slate-200 ${listingAdvancedOpen ? "rotate-180" : "rotate-0"}`} aria-hidden>
+                    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2">
+                      <path d="M5 7.5l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </span>
+                </div>
+                {listingAdvancedOpen ? (
+                  <div className="mt-3 space-y-3 border-t border-neutral-200/80 pt-3 dark:border-slate-700">
+                    <div id="listing-section-variants" className="p-3">
+                      <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Variants</p>
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="min-w-0">
+                          <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Variant type</label>
+                          <input className="input-base w-full" placeholder="e.g. Condition" value={listingForm.optionNameA} onChange={(e) => setListingForm((p) => ({ ...p, optionNameA: e.target.value }))} />
+                          {String(listingForm.optionNameA || "").trim() === "" ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {LISTING_OPTION_NAME_SUGGESTIONS.map((name) => (
+                                <button key={`quick-a-${name}`} type="button" className="rounded-full border border-brand-primary/35 px-2.5 py-1 text-xs font-medium text-brand-primary transition hover:bg-brand-soft/50 dark:border-brand-accent/35 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => setListingForm((p) => ({ ...p, optionNameA: name }))}>{name}</button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="min-w-0">
+                          <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Variant choices</label>
+                          <input className="input-base w-full" placeholder="Type value then Enter (e.g. M)" value={listingOptionValueDraftA} onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addListingOptionValue("A", listingOptionValueDraftA); } }} onChange={(e) => setListingOptionValueDraftA(e.target.value)} />
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {splitOptionValuesCsv(listingForm.optionValuesA).map((value) => (
+                              <button key={`a-tag-${value}`} type="button" className="inline-flex min-h-8 items-center gap-1 rounded-full border border-brand-primary bg-brand-primary px-2.5 py-0.5 text-xs text-white transition hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900" onClick={() => removeListingOptionValue("A", value)}>{value}<span aria-hidden>×</span></button>
+                            ))}
+                          </div>
+                          {getListingOptionValueSuggestions(listingForm.optionNameA).filter((value) => !splitOptionValuesCsv(listingForm.optionValuesA).includes(value)).length ? (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {getListingOptionValueSuggestions(listingForm.optionNameA).filter((value) => !splitOptionValuesCsv(listingForm.optionValuesA).includes(value)).map((value) => (
+                                <button key={`a-preset-${value}`} type="button" className="rounded-full border border-brand-primary/30 px-2 py-0.5 text-xs text-brand-primary transition hover:bg-brand-soft/45 dark:border-brand-accent/30 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => addListingOptionValue("A", value)}>{value}</button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                        {listingSecondOptionOpen ? (
+                          <>
+                            <div className="min-w-0">
+                              <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Second variant type</label>
+                              <input className="input-base w-full" placeholder="e.g. Size" value={listingForm.optionNameB} onChange={(e) => setListingForm((p) => ({ ...p, optionNameB: e.target.value }))} />
+                              {String(listingForm.optionNameB || "").trim() === "" ? (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {LISTING_OPTION_NAME_SUGGESTIONS.filter((name) => name.toLowerCase() !== String(listingForm.optionNameA || "").trim().toLowerCase()).map((name) => (
+                                    <button key={`quick-b-${name}`} type="button" className="rounded-full border border-brand-primary/35 px-2.5 py-1 text-xs font-medium text-brand-primary transition hover:bg-brand-soft/50 dark:border-brand-accent/35 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => setListingForm((p) => ({ ...p, optionNameB: name }))}>{name}</button>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <button type="button" className="mt-3 text-sm font-semibold text-rose-600 underline decoration-rose-300 underline-offset-2 transition hover:text-rose-700 dark:text-rose-400 dark:decoration-rose-500/60 dark:hover:text-rose-300" onClick={() => { setListingForm((p) => ({ ...p, optionNameB: "", optionValuesB: "" })); setListingOptionValueDraftB(""); setListingSecondOptionOpen(false); }}>Remove second option</button>
+                            </div>
+                            <div className="min-w-0">
+                              <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Second variant choices</label>
+                              <input className="input-base w-full" placeholder="Type value then Enter (e.g. New)" value={listingOptionValueDraftB} onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addListingOptionValue("B", listingOptionValueDraftB); } }} onChange={(e) => setListingOptionValueDraftB(e.target.value)} />
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {splitOptionValuesCsv(listingForm.optionValuesB).map((value) => (
+                                  <button key={`b-tag-${value}`} type="button" className="inline-flex min-h-8 items-center gap-1 rounded-full border border-brand-primary bg-brand-primary px-2.5 py-0.5 text-xs text-white transition hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900" onClick={() => removeListingOptionValue("B", value)}>{value}<span aria-hidden>×</span></button>
+                                ))}
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="min-w-0 sm:col-span-2">
+                            <button type="button" className="btn-secondary text-xs" onClick={() => setListingSecondOptionOpen(true)}>+ Add another option</button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div id="listing-section-processing" className="border-t border-neutral-200/80 p-3 dark:border-slate-700">
+                      <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Processing (Order type)</p>
+                      <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {[
+                              ["in_stock", "In stock"],
+                              ["pre_order", "Pre-order"],
+                            ].map(([value, label]) => (
+                              <button key={value} type="button" className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium transition ${listingForm.orderType === value ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900" : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"}`} onClick={() => setListingForm((p) => ({ ...p, orderType: value }))}>{label}</button>
+                            ))}
+                          </div>
+                        </div>
+                        {listingForm.orderType === "pre_order" ? (
+                          <div className="min-w-0">
+                            <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Lead / processing time</label>
+                            <input className={`input-base w-full ${listingFieldErrors.processingTime ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`} placeholder="e.g. 7 days" value={listingForm.processingTime} onChange={(e) => setListingForm((p) => ({ ...p, processingTime: e.target.value }))} />
+                            {String(listingForm.processingTime || "").trim() === "" ? (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {LISTING_PROCESSING_TIME_PRESETS.map((preset) => (
+                                  <button key={preset} type="button" className="rounded-full border border-brand-primary/30 px-2 py-0.5 text-xs text-brand-primary transition hover:bg-brand-soft/45 dark:border-brand-accent/30 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => setListingForm((p) => ({ ...p, processingTime: preset }))}>{preset}</button>
+                                ))}
+                              </div>
+                            ) : null}
+                            {listingFieldErrors.processingTime ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.processingTime}</p> : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              </div>
+              <div id="listing-section-publish" className="md:col-span-2 border-t border-neutral-200/80 px-3 py-2.5 dark:border-slate-700">
+                <div className="flex w-fit items-center justify-start gap-2">
                   <button
                     type="submit"
                     className="btn-primary"
@@ -6890,6 +7302,12 @@ function App() {
                         quantity: "",
                         categories: "",
                         subId: "all",
+                        optionNameA: "",
+                        optionValuesA: "",
+                        optionNameB: "",
+                        optionValuesB: "",
+                        orderType: "in_stock",
+                        processingTime: "",
                         pickup: false,
                         delivery: false,
                       });
@@ -6897,6 +7315,11 @@ function App() {
                       setListingImageFile(null);
                       if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
                       setListingImagePreviewUrl("");
+                      clearListingExtraImages();
+                      setListingAdvancedOpen(false);
+                      setListingOptionValueDraftA("");
+                      setListingOptionValueDraftB("");
+                      setListingSecondOptionOpen(false);
                       setEditingListingId(null);
                       clearMarketplaceToasts();
                       setSellerTab(SELLER_TABS.PRODUCTS);
@@ -6908,6 +7331,9 @@ function App() {
                   </button>
                 </div>
               </div>
+              <p className="md:col-span-2 text-left text-xs text-neutral-600 dark:text-slate-300">
+                Required complete: <span className="font-semibold text-neutral-800 dark:text-slate-100">{listingRequiredCompletedCount}/{listingRequiredTotalCount}</span>
+              </p>
             </form>
           </section>
         )}
@@ -9198,12 +9624,6 @@ function App() {
                           type="button"
                           className="btn-primary shrink-0 text-sm"
                           onClick={() => {
-                            if (!canUploadProductFromProfile.ready) {
-                              setProfileUploadProductNotice(
-                                `Complete required Edit Profile fields first: ${canUploadProductFromProfile.missing.join(", ")}.`,
-                              );
-                              return;
-                            }
                             setProfileUploadProductNotice("");
                             setActiveView(VIEWS.MY_LISTINGS);
                           }}
