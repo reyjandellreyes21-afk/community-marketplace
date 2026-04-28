@@ -310,9 +310,12 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {(t: "light"|"dark") => void} props.setTheme
  * @param {() => void} props.onLogout
  * @param {(u: object) => string} props.getDisplayNameFromUser
- * @param {number} [props.cartItemCount] Total cart quantity badge count
+ * @param {number} [props.cartItemCount] Unseen cart badge count
+ * @param {number} [props.totalCartCount] Total cart line-item count
  * @param {number} [props.purchasesItemCount] Recent purchases badge count
+ * @param {number} [props.totalPurchasesCount] Total buyer orders count
  * @param {number} [props.ordersItemCount] Seller orders tab / new-order badge count
+ * @param {number} [props.totalOrdersCount] Total seller orders count
  * @param {number} [props.notificationUnreadCount] Unread notification badge count
  * @param {number} [props.favoriteCount] Saved favorites count (shop / community product hearts)
  * @param {() => void} [props.onNavigateHome] Clear SPA path (e.g. /l/…) when opening marketplace from the logo
@@ -333,8 +336,11 @@ export function LoggedInHeader({
   onLogout,
   getDisplayNameFromUser,
   cartItemCount = 0,
+  totalCartCount = 0,
   purchasesItemCount = 0,
+  totalPurchasesCount = 0,
   ordersItemCount = 0,
+  totalOrdersCount = 0,
   notificationUnreadCount = 0,
   favoriteCount = 0,
   onNavigateHome,
@@ -523,7 +529,13 @@ export function LoggedInHeader({
               <button
                 type="button"
                 className={navPillShop(activeView === VIEWS.CART, "cart")}
-                aria-label={cartItemCount > 0 ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} items` : "Shopping cart"}
+                aria-label={
+                  cartItemCount > 0
+                    ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} new item${cartItemCount === 1 ? "" : "s"}`
+                    : totalCartCount > 0
+                      ? `Cart, ${totalCartCount > 99 ? "99 plus" : totalCartCount} item${totalCartCount === 1 ? "" : "s"}`
+                      : "Shopping cart"
+                }
                 title="Review items before checkout"
                 onClick={() => {
                   goCart();
@@ -538,6 +550,10 @@ export function LoggedInHeader({
                   <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-amber-500">
                     {cartItemCount > 99 ? "99+" : cartItemCount}
                   </span>
+                ) : totalCartCount > 0 ? (
+                  <span className="ml-1 text-[11px] font-semibold leading-none text-neutral-500 dark:text-slate-400">
+                    {totalCartCount > 99 ? "99+" : totalCartCount}
+                  </span>
                 ) : null}
               </button>
               <button
@@ -546,7 +562,9 @@ export function LoggedInHeader({
                 aria-label={
                   purchasesItemCount > 0
                     ? `Buying, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
-                    : "Buying — things you purchased"
+                    : totalPurchasesCount > 0
+                      ? `Buying, ${totalPurchasesCount > 99 ? "99 plus" : totalPurchasesCount} order${totalPurchasesCount === 1 ? "" : "s"}`
+                      : "Buying — things you purchased"
                 }
                 title="Things you bought — track status, pickup, and COD"
                 onClick={() => {
@@ -562,6 +580,10 @@ export function LoggedInHeader({
                   <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-sky-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-sky-500">
                     {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
                   </span>
+                ) : totalPurchasesCount > 0 ? (
+                  <span className="ml-1 text-[11px] font-semibold leading-none text-neutral-500 dark:text-slate-400">
+                    {totalPurchasesCount > 99 ? "99+" : totalPurchasesCount}
+                  </span>
                 ) : null}
               </button>
               <button
@@ -570,12 +592,16 @@ export function LoggedInHeader({
                 aria-label={
                   ordersItemCount > 0
                     ? `Selling, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} buyer order alerts`
-                    : "Selling — orders from your buyers"
+                    : totalOrdersCount > 0
+                      ? `Selling, ${totalOrdersCount > 99 ? "99 plus" : totalOrdersCount} order${totalOrdersCount === 1 ? "" : "s"}`
+                      : "Selling — orders from your buyers"
                 }
                 title={
                   ordersItemCount > 0
                     ? `${ordersItemCount > 99 ? "99+" : ordersItemCount} pending or updated buyer order${ordersItemCount === 1 ? "" : "s"}`
-                    : "Orders people placed with you"
+                    : totalOrdersCount > 0
+                      ? `${totalOrdersCount > 99 ? "99+" : totalOrdersCount} total buyer order${totalOrdersCount === 1 ? "" : "s"}`
+                      : "Orders people placed with you"
                 }
                 onClick={() => {
                   goOrders();
@@ -592,6 +618,10 @@ export function LoggedInHeader({
                     aria-hidden
                   >
                     {ordersItemCount > 99 ? "99+" : ordersItemCount}
+                  </span>
+                ) : totalOrdersCount > 0 ? (
+                  <span className="ml-1 text-[11px] font-semibold leading-none text-neutral-500 dark:text-slate-400">
+                    {totalOrdersCount > 99 ? "99+" : totalOrdersCount}
                   </span>
                 ) : null}
               </button>
@@ -1044,7 +1074,13 @@ export function LoggedInHeader({
           <button
             type="button"
             className={bottomNavShopClass(activeView === VIEWS.CART, "cart")}
-            aria-label={cartItemCount > 0 ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} items` : "Shopping cart"}
+            aria-label={
+              cartItemCount > 0
+                ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} new item${cartItemCount === 1 ? "" : "s"}`
+                : totalCartCount > 0
+                  ? `Cart, ${totalCartCount > 99 ? "99 plus" : totalCartCount} item${totalCartCount === 1 ? "" : "s"}`
+                  : "Shopping cart"
+            }
             title="Review items before checkout"
             aria-current={activeView === VIEWS.CART ? "page" : undefined}
             onClick={() => {
@@ -1062,6 +1098,10 @@ export function LoggedInHeader({
                 <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-amber-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-amber-500">
                   {cartItemCount > 99 ? "99+" : cartItemCount}
                 </span>
+              ) : totalCartCount > 0 ? (
+                <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full border border-neutral-300 bg-white px-1 py-[1px] text-[9px] font-semibold leading-none text-neutral-600 shadow-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                  {totalCartCount > 99 ? "99+" : totalCartCount}
+                </span>
               ) : null}
             </span>
             <span className="text-center leading-snug">
@@ -1075,7 +1115,9 @@ export function LoggedInHeader({
             aria-label={
               purchasesItemCount > 0
                 ? `Buying, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
-                : "Buying — things you purchased"
+                : totalPurchasesCount > 0
+                  ? `Buying, ${totalPurchasesCount > 99 ? "99 plus" : totalPurchasesCount} order${totalPurchasesCount === 1 ? "" : "s"}`
+                  : "Buying — things you purchased"
             }
             title="Things you bought — track status, pickup, and COD"
             aria-current={activeView === VIEWS.MY_PURCHASES ? "page" : undefined}
@@ -1096,6 +1138,10 @@ export function LoggedInHeader({
                 <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-sky-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-sky-500">
                   {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
                 </span>
+              ) : totalPurchasesCount > 0 ? (
+                <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full border border-neutral-300 bg-white px-1 py-[1px] text-[9px] font-semibold leading-none text-neutral-600 shadow-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                  {totalPurchasesCount > 99 ? "99+" : totalPurchasesCount}
+                </span>
               ) : null}
             </span>
             <span className="text-center leading-snug">Buying</span>
@@ -1106,12 +1152,16 @@ export function LoggedInHeader({
             aria-label={
               ordersItemCount > 0
                 ? `Selling, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} buyer order alerts`
-                : "Selling — orders from your buyers"
+                : totalOrdersCount > 0
+                  ? `Selling, ${totalOrdersCount > 99 ? "99 plus" : totalOrdersCount} order${totalOrdersCount === 1 ? "" : "s"}`
+                  : "Selling — orders from your buyers"
             }
             title={
               ordersItemCount > 0
                 ? `${ordersItemCount > 99 ? "99+" : ordersItemCount} pending or updated buyer order${ordersItemCount === 1 ? "" : "s"}`
-                : "Orders people placed with you"
+                : totalOrdersCount > 0
+                  ? `${totalOrdersCount > 99 ? "99+" : totalOrdersCount} total buyer order${totalOrdersCount === 1 ? "" : "s"}`
+                  : "Orders people placed with you"
             }
             aria-current={activeView === VIEWS.ORDERS ? "page" : undefined}
             onClick={() => {
@@ -1133,6 +1183,10 @@ export function LoggedInHeader({
                   aria-hidden
                 >
                   {ordersItemCount > 99 ? "99+" : ordersItemCount}
+                </span>
+              ) : totalOrdersCount > 0 ? (
+                <span className="absolute -right-2.5 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full border border-neutral-300 bg-white px-1 py-[1px] text-[9px] font-semibold leading-none text-neutral-600 shadow-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                  {totalOrdersCount > 99 ? "99+" : totalOrdersCount}
                 </span>
               ) : null}
             </span>

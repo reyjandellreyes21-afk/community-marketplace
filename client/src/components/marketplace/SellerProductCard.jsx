@@ -79,7 +79,8 @@ export function SellerProductCard({
   const statusBadgeClass = isOutOfStock
     ? "bg-gray-100 text-gray-600 dark:border-amber-500/45 dark:bg-amber-950/40 dark:text-amber-100"
     : statusClass;
-  const imageUrl = String(listing.imageUrl || "").trim();
+  const imageUrlFromGallery = Array.isArray(listing.imageUrls) ? String(listing.imageUrls[0] || "").trim() : "";
+  const imageUrl = String(imageUrlFromGallery || listing.imageUrl || "").trim();
   const availabilityLabel = listingCodAvailabilityLabel(listing.fulfillmentModes);
   const saleMeta = parseSaleMetaFromDescription(listing.description);
   const currentPesos = Math.floor((Number(listing.priceCents) || 0) / 100);

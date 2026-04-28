@@ -37,6 +37,15 @@ export function PublicListingPage({ listingId, onBack, onOpenLogin }) {
           <div className="app-card space-y-4">
             <h1 className="text-xl font-semibold text-neutral-900 dark:text-slate-100">{listing.title}</h1>
             <p className="text-2xl font-bold text-brand-primary">{formatCents(listing.priceCents)}</p>
+            {String((Array.isArray(listing.imageUrls) ? listing.imageUrls[0] : listing.imageUrl) || "").trim() ? (
+              <div className="overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-slate-700 dark:bg-slate-900/60">
+                <img
+                  src={String((Array.isArray(listing.imageUrls) ? listing.imageUrls[0] : listing.imageUrl) || "").trim()}
+                  alt={listing.title || "Product"}
+                  className="h-64 w-full object-cover"
+                />
+              </div>
+            ) : null}
             {listing.cityLabel ? (
               <p className="text-sm text-neutral-600 dark:text-slate-400">{listing.cityLabel}</p>
             ) : null}

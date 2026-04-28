@@ -25,7 +25,8 @@ export function CommunityShopListingCard({
   const [saleOpen, setSaleOpen] = useState(false);
   const [customSalePercent, setCustomSalePercent] = useState("");
   const [showAllSaleOptions, setShowAllSaleOptions] = useState(false);
-  const imageUrl = String(listing.imageUrl || "").trim();
+  const imageUrlFromGallery = Array.isArray(listing.imageUrls) ? String(listing.imageUrls[0] || "").trim() : "";
+  const imageUrl = String(imageUrlFromGallery || listing.imageUrl || "").trim();
   const isOwner = String(listing.sellerId || "") === String(currentUserId || "");
   const stockQty = Math.max(0, Number(listing.quantity) || 0);
   const isOutOfStock = stockQty <= 0;
@@ -105,7 +106,7 @@ export function CommunityShopListingCard({
 
   return (
     <div
-      className={`group relative rounded-2xl border border-border bg-surface shadow-sm transition duration-200 ease-in-out hover:-translate-y-0.5 hover:scale-[1.01] hover:border-primary/35 hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 ${pad} ${
+      className={`group relative transition duration-200 ease-in-out ${pad} ${
         gridMode ? "flex h-full min-h-0 flex-col" : ""
       }`}
     >
