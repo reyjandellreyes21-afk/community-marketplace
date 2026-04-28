@@ -1,9 +1,17 @@
 /** @type {import('tailwindcss').Config} */
+/**
+ * Responsive policy: mobile-first — unprefixed utilities target phones; `md:` / `lg:` add desktop behavior.
+ * Avoid `max-md:` / `max-lg:` (desktop-first). Validate at 360 / 390 / 430; shell baseline `max-w-mobile-baseline` (390px). No `sm:` tier.
+ */
 export default {
   darkMode: "class",
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
+      maxWidth: {
+        /** Primary mobile shell width — design at 390px; scales down on 360, centers on 430+ */
+        "mobile-baseline": "390px",
+      },
       colors: {
         primary: "#1FA6A6",
         "primary-hover": "#178585",

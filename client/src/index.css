@@ -7,6 +7,29 @@
 @layer base {
   :root {
     color-scheme: light;
+    /* Core UI primitives — radius / rhythm / touch (see components/ui) */
+    --ui-touch-target: 44px;
+    --ui-radius: 0.75rem;
+    --ui-radius-lg: 1rem;
+    --ui-radius-full: 9999px;
+    --ui-space-1: 0.25rem;
+    --ui-space-2: 0.5rem;
+    --ui-space-3: 0.75rem;
+    --ui-space-4: 1rem;
+    --ui-space-6: 1.5rem;
+    --ui-text-body: 0.875rem;
+    --ui-text-body-lg: 1rem;
+    --ui-leading-snug: 1.375;
+    --ui-leading-normal: 1.5;
+    /* iOS / Android: use with arbitrary values, e.g. h-[var(--mobile-bottom-ui)] */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    /* Logged-in mobile: bottom tab bar row height (5 tabs + safe area padding on nav) */
+    --mobile-bottom-nav: 4rem;
+    /* Align with tailwind max-w-mobile-baseline — validate layouts at 360 / 390 / 430 */
+    --mobile-baseline-width: 390px;
   }
 
   .dark {
@@ -23,7 +46,7 @@
   }
 
   #root {
-    @apply min-h-screen;
+    @apply min-h-screen min-h-[100dvh];
   }
 }
 
@@ -62,19 +85,20 @@
   }
 
   .app-container {
-    @apply mx-auto w-full max-w-7xl px-3 sm:px-4 md:px-6;
+    @apply mx-auto w-full max-w-7xl px-3 md:px-6;
   }
 
   .app-card {
-    @apply rounded-2xl border border-border bg-surface p-4 shadow-sm transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56]/90 dark:bg-[#0f2234] dark:shadow-[0_1px_2px_rgba(0,0,0,0.22),0_8px_20px_rgba(0,0,0,0.22)] sm:p-5;
+    @apply rounded-[var(--ui-radius-lg)] border border-border bg-surface p-4 text-sm leading-relaxed shadow-sm transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56]/90 dark:bg-[#0f2234] dark:shadow-[0_1px_2px_rgba(0,0,0,0.22),0_8px_20px_rgba(0,0,0,0.22)] md:p-5;
   }
 
   .app-card-interactive {
     @apply app-card transition duration-200 ease-in-out hover:-translate-y-px hover:scale-[1.01] hover:border-primary/35 dark:hover:border-[#2a5a7b] dark:hover:shadow-[0_8px_24px_rgba(0,0,0,0.3)];
   }
 
+  /* Buttons: min 44×44pt touch target on mobile; compact tightens from md up only */
   .btn-base {
-    @apply h-11 rounded-xl px-4 py-2 text-sm font-semibold transition duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary/35;
+    @apply inline-flex min-h-[44px] min-w-0 touch-manipulation items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold leading-snug transition duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary/35 active:scale-[0.97] motion-reduce:active:scale-100 disabled:active:scale-100;
   }
 
   .btn-primary {
@@ -98,23 +122,50 @@
   }
 
   .badge-success {
-    @apply rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-600;
+    @apply inline-flex min-h-[1.375rem] items-center rounded-[var(--ui-radius-full)] bg-green-100 px-2.5 py-0.5 text-[11px] font-semibold leading-tight text-green-600;
   }
 
   .badge-sale {
-    @apply rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-semibold text-accent;
+    @apply inline-flex min-h-[1.375rem] items-center rounded-[var(--ui-radius-full)] bg-accent/10 px-2.5 py-0.5 text-[11px] font-semibold leading-tight text-accent;
   }
 
   .badge-neutral {
-    @apply rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600;
+    @apply inline-flex min-h-[1.375rem] items-center rounded-[var(--ui-radius-full)] bg-gray-100 px-2.5 py-0.5 text-[11px] font-semibold leading-tight text-gray-600;
   }
 
+  .badge-primary {
+    @apply inline-flex min-h-[1.375rem] items-center rounded-[var(--ui-radius-full)] border border-primary/30 bg-primary-soft px-2.5 py-0.5 text-[11px] font-semibold leading-tight text-primary dark:border-brand-accent/35 dark:bg-slate-800 dark:text-slate-100;
+  }
+
+  /* Optional: pill used as a control — meets 44px touch height */
+  .badge-touch {
+    @apply inline-flex min-h-[44px] items-center rounded-[var(--ui-radius-full)] px-4 text-sm font-semibold;
+  }
+
+  /* Inputs: 44px min height on small screens; dense layouts can override with h-9 etc. */
   .input-base {
-    @apply w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/25 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500;
+    @apply box-border min-h-[44px] w-full touch-manipulation rounded-[var(--ui-radius)] border border-neutral-200 bg-white px-3 py-2.5 text-sm leading-snug text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/25 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 md:min-h-10;
   }
 
   .label-base {
-    @apply mb-1.5 block text-sm text-neutral-700 dark:text-slate-300;
+    @apply mb-1.5 block text-sm font-medium leading-snug text-neutral-700 dark:text-slate-300;
+  }
+
+  /* Screen sections — stack rhythm + type scale */
+  .ui-section {
+    @apply space-y-4 md:space-y-5;
+  }
+
+  .ui-section-eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-wide text-primary dark:text-brand-accent;
+  }
+
+  .ui-section-title {
+    @apply text-lg font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 md:text-xl;
+  }
+
+  .ui-section-subtitle {
+    @apply mt-1 text-sm leading-relaxed text-text-secondary dark:text-slate-400;
   }
 
   .meta-label {
@@ -123,7 +174,8 @@
 
   /* Landing page: flat white below hero — matches “Choose your target exam” card surface */
   .landing-shell {
-    @apply min-h-screen bg-white text-neutral-900 antialiased [color-scheme:light] dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark];
+    @apply min-h-screen min-h-[100dvh] bg-white text-neutral-900 antialiased [color-scheme:light] dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark];
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
   /* Hero strip only — brighter wash + grid (contrasts with body below) */
@@ -149,11 +201,11 @@
   }
 
   .landing-nav {
-    @apply sticky top-0 z-40 border-b border-neutral-200/80 bg-white/90 shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/90;
+    @apply sticky top-0 z-40 border-b border-neutral-200/80 bg-white/90 pt-[env(safe-area-inset-top,0px)] shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/90;
   }
 
   .landing-card {
-    @apply rounded-2xl border border-neutral-200/90 bg-white p-8 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.12)] sm:p-10 dark:border-[#1f3c56]/90 dark:bg-[#0f2234] dark:shadow-[0_16px_46px_-16px_rgba(0,0,0,0.5)];
+    @apply rounded-2xl border border-neutral-200/90 bg-white p-8 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.12)] md:p-10 dark:border-[#1f3c56]/90 dark:bg-[#0f2234] dark:shadow-[0_16px_46px_-16px_rgba(0,0,0,0.5)];
   }
 
   .landing-input {
@@ -161,7 +213,7 @@
   }
 
   .landing-btn-primary {
-    @apply inline-flex h-12 w-full items-center justify-center rounded-full bg-brand-primary text-sm font-semibold text-white shadow-md shadow-brand-primary/25 transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-55;
+    @apply inline-flex h-12 w-full touch-manipulation items-center justify-center rounded-full bg-brand-primary text-sm font-semibold text-white shadow-md shadow-brand-primary/25 transition hover:bg-brand-hover active:scale-[0.98] motion-reduce:active:scale-100 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100;
   }
 
   .landing-btn-nav-text {
@@ -206,6 +258,10 @@
   /* Status / alert strips — readable on dark backgrounds */
   .app-alert-error {
     @apply rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-900/55 dark:bg-rose-950/45 dark:text-rose-100;
+  }
+
+  .app-alert-success {
+    @apply rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100;
   }
 
   .app-alert-danger-text {

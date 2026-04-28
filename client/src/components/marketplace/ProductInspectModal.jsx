@@ -87,7 +87,7 @@ export function ProductInspectModal({
 
   return (
     <div
-      className="fixed inset-0 z-[95] flex items-end justify-center p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-[95] flex items-end justify-center p-0 md:items-center md:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="product-inspect-title"
@@ -100,12 +100,12 @@ export function ProductInspectModal({
         onClick={onClose}
       />
       <div
-        className={`relative z-10 flex max-h-[min(88dvh,42rem)] w-full max-w-lg flex-col rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-[#1f3c56] dark:bg-[#0f2234] sm:max-h-[min(90dvh,44rem)] sm:rounded-2xl sm:shadow-[0_20px_60px_rgba(15,23,42,0.22)] ${UI_KIT.surfaceFloating}`}
+        className={`relative z-10 flex max-h-[min(88dvh,42rem)] w-full max-w-lg flex-col rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-[#1f3c56] dark:bg-[#0f2234] md:max-h-[min(90dvh,44rem)] md:rounded-2xl md:shadow-[0_20px_60px_rgba(15,23,42,0.22)] ${UI_KIT.surfaceFloating}`}
         onClick={(e) => e.stopPropagation()}
       >
         {imagePreviewOpen && String(imageUrl || "").trim() ? (
           <div
-            className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl p-3 sm:p-4"
+            className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl p-3 md:p-4"
             role="dialog"
             aria-modal="true"
             aria-label="Product image preview"
@@ -139,11 +139,11 @@ export function ProductInspectModal({
             To dismiss without choosing an action, use the close control in the header, press Escape, or activate the dimmed area behind this dialog.
           </p>
         ) : null}
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-neutral-200/80 px-4 pb-2.5 pt-3 dark:border-[#1f3c56]/85 sm:px-5 sm:pb-3 sm:pt-4">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-neutral-200/80 px-4 pb-2.5 pt-3 dark:border-[#1f3c56]/85 md:px-5 md:pb-3 md:pt-4">
           <div className="min-w-0 pr-2">
             <h2
               id="product-inspect-title"
-              className="text-base font-semibold leading-snug text-neutral-900 dark:text-slate-100 sm:text-lg"
+              className="text-base font-semibold leading-snug text-neutral-900 dark:text-slate-100 md:text-lg"
             >
               {title || "Product"}
             </h2>
@@ -159,9 +159,9 @@ export function ProductInspectModal({
           </button>
         </div>
 
-        <div className="drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-3 sm:px-5 sm:py-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
-            <div className="mx-auto h-[8.5rem] w-full max-w-[12.5rem] shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-[#1f3c56] dark:bg-[#11283d] sm:mx-0 sm:h-36 sm:w-36 sm:max-w-none">
+        <div className="drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-3 md:px-5 md:py-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:gap-4">
+            <div className="mx-auto h-[8.5rem] w-full max-w-[12.5rem] shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-[#1f3c56] dark:bg-[#11283d] md:mx-0 md:h-36 md:w-36 md:max-w-none">
               {String(imageUrl || "").trim() ? (
                 <button
                   type="button"
@@ -177,8 +177,8 @@ export function ProductInspectModal({
                 </div>
               )}
             </div>
-            <div className="min-w-0 flex-1 space-y-1.5 sm:space-y-2">
-              <p className="text-lg font-bold tabular-nums text-brand-primary dark:text-brand-accent sm:text-xl">
+            <div className="min-w-0 flex-1 space-y-1.5 md:space-y-2">
+              <p className="text-lg font-bold tabular-nums text-brand-primary dark:text-brand-accent md:text-xl">
                 {formatPesoWhole(priceCents)}
               </p>
               {availabilityLabel ? (
@@ -207,28 +207,28 @@ export function ProductInspectModal({
             </div>
           </div>
 
-          <div className="mt-4 space-y-3 sm:mt-5 sm:space-y-4">
+          <div className="mt-4 space-y-3 md:mt-5 md:space-y-4">
             <section
-              className={`rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/65 sm:p-3.5`}
+              className={`rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/65 md:p-3.5`}
             >
               <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                 From the seller
               </h3>
               {descPlain ? (
-                <p className="mt-1.5 whitespace-pre-wrap break-words text-pretty text-sm leading-relaxed text-neutral-800 dark:text-slate-200 sm:mt-2">
+                <p className="mt-1.5 whitespace-pre-wrap break-words text-pretty text-sm leading-relaxed text-neutral-800 dark:text-slate-200 md:mt-2">
                   {descPlain}
                 </p>
               ) : (
-                <p className="mt-1.5 text-sm text-neutral-500 dark:text-slate-400 sm:mt-2">No description was provided.</p>
+                <p className="mt-1.5 text-sm text-neutral-500 dark:text-slate-400 md:mt-2">No description was provided.</p>
               )}
             </section>
 
             {hasSellerDetails ? (
-              <section className="rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/65 sm:p-3.5">
+              <section className="rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/65 md:p-3.5">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                   Seller details
                 </h3>
-                <div className="mt-1.5 space-y-1.5 text-sm leading-relaxed sm:mt-2">
+                <div className="mt-1.5 space-y-1.5 text-sm leading-relaxed md:mt-2">
                   {sellerUsernameTrim ? (
                     <p className="text-neutral-800 dark:text-slate-200">
                       <span className="font-semibold text-neutral-700 dark:text-slate-300">Username:</span>{" "}
@@ -257,11 +257,11 @@ export function ProductInspectModal({
             ) : null}
 
             {showCommentBlock ? (
-              <section className="rounded-xl border border-sky-200/80 bg-sky-50/80 p-3 dark:border-sky-500/35 dark:bg-sky-950/25 sm:p-3.5">
+              <section className="rounded-xl border border-sky-200/80 bg-sky-50/80 p-3 dark:border-sky-500/35 dark:bg-sky-950/25 md:p-3.5">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wide text-sky-800 dark:text-sky-200">
                   {commentHeading}
                 </h3>
-                <p className="mt-1.5 whitespace-pre-wrap break-words text-pretty text-sm leading-relaxed text-sky-950 dark:text-sky-50 sm:mt-2">
+                <p className="mt-1.5 whitespace-pre-wrap break-words text-pretty text-sm leading-relaxed text-sky-950 dark:text-sky-50 md:mt-2">
                   {commentTrim && !/^n\/a$/i.test(commentTrim) ? commentTrim : "No note was left."}
                 </p>
               </section>
@@ -269,14 +269,14 @@ export function ProductInspectModal({
           </div>
         </div>
 
-        <div className="shrink-0 border-t border-neutral-200/80 px-4 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2.5 dark:border-[#1f3c56]/85 sm:px-5 sm:pb-4 sm:pt-3">
+        <div className="shrink-0 border-t border-neutral-200/80 px-4 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2.5 dark:border-[#1f3c56]/85 md:px-5 md:pb-4 md:pt-3">
           {hasSellerHandlers ? (
             <div className="space-y-2">
-              <div className="flex w-full flex-col gap-2 min-[340px]:flex-row min-[340px]:items-stretch min-[340px]:gap-2">
+              <div className="flex w-full flex-col gap-2 md:flex-row md:items-stretch md:gap-2">
                 {typeof onSaleSelect === "function" ? (
                   <button
                     type="button"
-                    className="min-h-10 flex-1 rounded-lg border border-amber-300 px-3 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-50 dark:border-amber-500/50 dark:text-amber-200 dark:hover:bg-amber-950/35 sm:min-h-10"
+                    className="min-h-10 flex-1 rounded-lg border border-amber-300 px-3 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-50 dark:border-amber-500/50 dark:text-amber-200 dark:hover:bg-amber-950/35 md:min-h-10"
                     aria-expanded={salePickerOpen}
                     onClick={() => setSalePickerOpen((v) => !v)}
                   >
@@ -286,7 +286,7 @@ export function ProductInspectModal({
                 {typeof onEditListing === "function" ? (
                   <button
                     type="button"
-                    className="min-h-10 flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 sm:min-h-10"
+                    className="min-h-10 flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-10"
                     onClick={() => onEditListing()}
                   >
                     Edit listing
@@ -324,11 +324,11 @@ export function ProductInspectModal({
                 hasSellerHandlers ? "mt-2 border-t border-neutral-200/50 pt-2 dark:border-[#1f3c56]/55" : ""
               }
             >
-              <div className="flex w-full flex-col gap-2 min-[340px]:flex-row min-[340px]:items-stretch min-[340px]:gap-2">
+              <div className="flex w-full flex-col gap-2 md:flex-row md:items-stretch md:gap-2">
                 {typeof onAddToCart === "function" ? (
                   <button
                     type="button"
-                    className="min-h-10 flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 sm:min-h-10"
+                    className="min-h-10 flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-10"
                     disabled={isOutOfStock}
                     onClick={() => onAddToCart()}
                   >
@@ -346,7 +346,7 @@ export function ProductInspectModal({
                           : undefined
                     }
                     aria-label={isOutOfStock ? "Out of stock" : "Buy now"}
-                    className={`min-h-10 flex-1 rounded-lg bg-brand-primary px-3 py-2 text-sm font-semibold text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none sm:min-h-10 ${
+                    className={`min-h-10 flex-1 rounded-lg bg-brand-primary px-3 py-2 text-sm font-semibold text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-10 ${
                       isOutOfStock
                         ? "cursor-not-allowed opacity-50"
                         : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
@@ -362,8 +362,8 @@ export function ProductInspectModal({
           ) : null}
 
           {!showActionFooter ? (
-            <div className="flex justify-stretch sm:justify-end">
-              <button type="button" className="btn-primary touch-manipulation w-full sm:w-auto sm:min-w-[7rem]" onClick={onClose}>
+            <div className="flex justify-stretch md:justify-end">
+              <button type="button" className="btn-primary touch-manipulation w-full md:w-auto md:min-w-[7rem]" onClick={onClose}>
                 Done
               </button>
             </div>

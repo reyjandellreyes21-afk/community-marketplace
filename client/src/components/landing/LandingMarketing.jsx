@@ -15,7 +15,7 @@ export function LandingIllustration() {
   );
 }
 
-export function LinkMartLogo({ className = "h-8 w-auto max-w-[12rem] shrink-0 object-contain sm:h-9 sm:max-w-[13.5rem]" }) {
+export function LinkMartLogo({ className = "h-8 w-auto max-w-[12rem] shrink-0 object-contain md:h-9 md:max-w-[13.5rem]" }) {
   return <img src={navLogo} alt="LinkMart logo" className={className} />;
 }
 
@@ -86,7 +86,7 @@ export function LandingSiteFooter() {
       <svg className="block h-11 w-full shrink-0" viewBox="0 0 1440 48" preserveAspectRatio="none" aria-hidden>
         <path fill="#2d3748" d="M0 48V16Q720 0 1440 16V48H0z" />
       </svg>
-      <div className="-mt-px bg-[#2d3748] px-6 pb-8 pt-0 sm:px-8 lg:px-12">
+      <div className="-mt-px bg-[#2d3748] px-6 pb-8 pt-0 md:px-8 lg:px-12">
         <div className="app-container mx-auto grid max-w-7xl grid-cols-1 gap-12 pb-14 md:grid-cols-2 md:gap-10 lg:grid-cols-3 lg:gap-8 lg:pb-16">
           <div className="text-left">
             <h2 className="text-base font-bold tracking-tight text-white">Why LinkMart</h2>
@@ -135,7 +135,7 @@ export function LandingSiteFooter() {
         <div className="app-container mx-auto max-w-7xl border-t border-white/15 pt-10">
           <div className="flex flex-col items-center gap-8 lg:flex-row lg:items-end lg:justify-between">
             <div className="flex flex-col items-center gap-1 lg:items-start">
-              <LinkMartLogo className="h-9 w-auto max-w-[12rem] shrink-0 object-contain brightness-0 invert sm:h-10 sm:max-w-[13rem]" />
+              <LinkMartLogo className="h-9 w-auto max-w-[12rem] shrink-0 object-contain brightness-0 invert md:h-10 md:max-w-[13rem]" />
               <p className="text-xs font-medium tracking-wide text-white/55">Local marketplace for every community</p>
             </div>
             <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-sm text-white/85" aria-label="Legal">
@@ -143,7 +143,7 @@ export function LandingSiteFooter() {
               <a href="#">Copyright</a>
               <a href="#">Terms of Service</a>
             </nav>
-            <div className="flex items-center justify-center gap-2 sm:gap-3">
+            <div className="flex items-center justify-center gap-2 md:gap-3">
               <a href="#" className="landing-footer-social" aria-label="Facebook">
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                   <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />

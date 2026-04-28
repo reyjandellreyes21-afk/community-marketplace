@@ -97,7 +97,9 @@ export function ListingCategoryPicker({ value, onChange, invalid }) {
           value={query}
           onFocus={() => setOpen(true)}
           onChange={(e) => {
-            setQuery(e.target.value);
+            const next = e.target.value;
+            setQuery(next);
+            if (!next.trim() && value) onChange("");
             if (!open) setOpen(true);
           }}
           onKeyDown={(e) => {
@@ -140,7 +142,7 @@ export function ListingCategoryPicker({ value, onChange, invalid }) {
             {filtered.length === 0 ? (
               <p className="px-2 py-6 text-center text-sm text-neutral-500 dark:text-slate-400">No categories match your search.</p>
             ) : (
-              <div className="grid grid-cols-1 gap-0 sm:grid-cols-2 sm:gap-x-4">
+              <div className="grid grid-cols-1 gap-0 md:grid-cols-2 md:gap-x-4">
                 {filtered.map((v) => {
                   const active = value === v.id;
                   return (
@@ -158,7 +160,6 @@ export function ListingCategoryPicker({ value, onChange, invalid }) {
                         onChange(v.id);
                         setQuery(v.label);
                         setOpen(false);
-                        inputRef.current?.focus();
                       }}
                     >
                       <span className="shrink-0 text-base leading-none" aria-hidden>

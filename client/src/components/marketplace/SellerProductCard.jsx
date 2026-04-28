@@ -110,44 +110,44 @@ export function SellerProductCard({
   const isListLayout = !gridMode;
   /** Shell styles: list = wide management row; grid = catalog card; dense = compact inventory tile. */
   const cardShellClass = isListLayout
-    ? "rounded-2xl border border-border bg-surface p-3 shadow-sm transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 sm:p-3.5"
+    ? "rounded-2xl border border-border bg-surface p-3 shadow-sm transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 md:p-3.5"
     : compactGrid
-      ? "rounded-xl border border-border bg-background p-2.5 shadow-sm ring-1 ring-border/25 transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 dark:ring-[#1f3c56]/45 sm:p-3"
-      : "rounded-2xl border border-border bg-surface p-3 shadow-sm ring-1 ring-border/50 transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 dark:ring-[#1f3c56]/50 sm:p-3.5";
+      ? "rounded-xl border border-border bg-background p-2.5 shadow-sm ring-1 ring-border/25 transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 dark:ring-[#1f3c56]/45 md:p-3"
+      : "rounded-2xl border border-border bg-surface p-3 shadow-sm ring-1 ring-border/50 transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 dark:ring-[#1f3c56]/50 md:p-3.5";
   /** List + comfortable grid: larger ± / input on small screens only. */
   const qtyTouchFriendly = isComfortableGrid || isListLayout;
   /** Dense: full-width cards on mobile — use comfortable touch/stacked qty below sm only. */
   const qtyMobileExpanded = (qtyTouchFriendly && !compactGrid) || compactGrid;
   const imgBox =
     gridMode && compactGrid
-      ? "h-28 w-full sm:h-24 md:h-[5.75rem]"
+      ? "h-28 w-full md:h-24 md:h-[5.75rem]"
       : gridMode
         ? isComfortableGrid
-          ? "h-44 w-full sm:h-48 md:h-52"
-          : "h-36 w-full sm:h-44 md:h-48"
-        : "h-24 w-24 shrink-0 sm:h-32 sm:w-32";
-  const mainGap = gridMode && compactGrid ? "gap-1 sm:gap-1.5" : gridMode ? "gap-3 sm:gap-3.5" : "gap-3";
+          ? "h-44 w-full md:h-48 md:h-52"
+          : "h-36 w-full md:h-44 md:h-48"
+        : "h-24 w-24 shrink-0 md:h-32 md:w-32";
+  const mainGap = gridMode && compactGrid ? "gap-1 md:gap-1.5" : gridMode ? "gap-3 md:gap-3.5" : "gap-3";
   /** Comfortable grid & list: 44px ± on mobile; dense uses 44px below sm then compact sizes. */
   const qtyBtn =
     qtyTouchFriendly && !compactGrid
-      ? "inline-flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-lg border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:h-7 sm:w-7 sm:rounded-md sm:text-xs"
-      : "inline-flex h-8 w-8 shrink-0 touch-manipulation items-center justify-center rounded-md border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:h-7 sm:w-7 sm:text-xs";
+      ? "inline-flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-lg border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-7 md:w-7 md:rounded-md md:text-xs"
+      : "inline-flex h-8 w-8 shrink-0 touch-manipulation items-center justify-center rounded-md border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-7 md:w-7 md:text-xs";
 
   const denseStepMinusPlus =
-    "inline-flex min-h-[40px] min-w-[2rem] shrink-0 touch-manipulation items-center justify-center border-0 bg-neutral-50/95 text-[15px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-100 active:bg-neutral-200/80 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-slate-800/90 dark:text-slate-100 dark:hover:bg-slate-700 dark:active:bg-slate-700 sm:min-h-0 sm:h-8 sm:w-8 sm:text-sm";
+    "inline-flex min-h-[40px] min-w-[2rem] shrink-0 touch-manipulation items-center justify-center border-0 bg-neutral-50/95 text-[15px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-100 active:bg-neutral-200/80 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-slate-800/90 dark:text-slate-100 dark:hover:bg-slate-700 dark:active:bg-slate-700 md:min-h-0 md:h-8 md:w-8 md:text-sm";
   const denseQtyInput =
-    "input-base min-h-[40px] min-w-0 flex-1 border-0 bg-transparent px-1.5 text-center text-[13px] font-semibold tabular-nums text-neutral-900 outline-none ring-0 focus:ring-0 dark:text-slate-100 sm:h-8 sm:min-h-0 sm:px-1 sm:text-[12px]";
+    "input-base min-h-[40px] min-w-0 flex-1 border-0 bg-transparent px-1.5 text-center text-[13px] font-semibold tabular-nums text-neutral-900 outline-none ring-0 focus:ring-0 dark:text-slate-100 md:h-8 md:min-h-0 md:px-1 md:text-[12px]";
   const denseApplyBtn =
-    "inline-flex min-h-[40px] min-w-[40px] shrink-0 touch-manipulation items-center justify-center rounded-lg border border-slate-400/90 bg-white text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:opacity-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 sm:min-h-8 sm:min-w-8";
+    "inline-flex min-h-[40px] min-w-[40px] shrink-0 touch-manipulation items-center justify-center rounded-lg border border-slate-400/90 bg-white text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:opacity-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 md:min-h-8 md:min-w-8";
 
   const denseIconNeutral =
-    "inline-flex h-8 w-full max-sm:min-h-[40px] touch-manipulation items-center justify-center rounded-md border border-slate-300/90 bg-white px-0 py-0 text-slate-800 shadow-sm transition hover:bg-slate-100 active:scale-[0.98] dark:border-slate-600 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-800 sm:h-7 sm:min-h-0 [&_svg]:h-[14px] [&_svg]:w-[14px]";
+    "inline-flex h-8 w-full min-h-[40px] touch-manipulation items-center justify-center rounded-md border border-slate-300/90 bg-white px-0 py-0 text-slate-800 shadow-sm transition hover:bg-slate-100 active:scale-[0.98] dark:border-slate-600 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-800 md:h-7 md:min-h-0 [&_svg]:h-[14px] [&_svg]:w-[14px]";
   const denseIconDanger =
-    "inline-flex h-8 w-full max-sm:min-h-[40px] touch-manipulation items-center justify-center rounded-md border border-rose-500/90 bg-rose-50 px-0 py-0 text-rose-800 shadow-sm transition hover:bg-rose-100 active:scale-[0.98] dark:border-rose-500/55 dark:bg-rose-950/45 dark:text-rose-100 dark:hover:bg-rose-950/70 sm:h-7 sm:min-h-0 [&_svg]:h-[14px] [&_svg]:w-[14px]";
+    "inline-flex h-8 w-full min-h-[40px] touch-manipulation items-center justify-center rounded-md border border-rose-500/90 bg-rose-50 px-0 py-0 text-rose-800 shadow-sm transition hover:bg-rose-100 active:scale-[0.98] dark:border-rose-500/55 dark:bg-rose-950/45 dark:text-rose-100 dark:hover:bg-rose-950/70 md:h-7 md:min-h-0 [&_svg]:h-[14px] [&_svg]:w-[14px]";
 
   const listActionBtn = (variant) => {
     const base =
-      "flex w-full min-w-0 items-center justify-center rounded-lg border font-semibold transition touch-manipulation max-sm:min-h-[44px] sm:min-h-0 max-sm:py-2.5 max-sm:px-3 max-sm:text-xs sm:py-2 sm:px-3 sm:text-xs";
+      "flex w-full min-w-0 items-center justify-center rounded-lg border font-semibold transition touch-manipulation min-h-[44px] py-2.5 px-3 text-xs md:min-h-0 md:py-2 md:px-3 md:text-xs";
     const neutral =
       "border-primary bg-surface text-primary shadow-[inset_0_1px_0_0_rgba(255,255,255,0.65)] hover:bg-primary-soft dark:border-slate-600 dark:bg-slate-900/75 dark:text-slate-100 dark:shadow-none dark:hover:bg-slate-800";
     const danger =
@@ -156,47 +156,47 @@ export function SellerProductCard({
   };
 
   const gridActionPad = isComfortableGrid
-    ? "px-3 py-2.5 text-xs sm:py-1.5 md:px-2.5 md:py-2 md:text-xs"
+    ? "px-3 py-2.5 text-xs md:py-1.5 md:px-2.5 md:py-2 md:text-xs"
     : compactGrid
-      ? "max-sm:min-h-[44px] max-sm:touch-manipulation max-sm:py-2.5 px-2.5 py-1.5 text-[11px] sm:min-h-0 sm:py-1.5 md:px-2 md:py-1 md:text-[10px]"
+      ? "min-h-[44px] touch-manipulation py-2.5 px-2.5 text-[11px] md:min-h-0 md:py-1.5 md:px-2 md:py-1 md:text-[10px]"
       : "px-3 py-1.5 text-xs";
 
   const gridNeutral = `rounded-xl border font-semibold transition duration-200 ease-in-out ${gridActionPad} border-primary bg-surface text-primary hover:bg-primary-soft dark:border-slate-600 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-800`;
   const gridDanger = `rounded-xl border font-semibold transition duration-200 ease-in-out ${gridActionPad} border-danger bg-danger text-white hover:bg-danger-hover dark:border-rose-500/55 dark:bg-rose-950/40 dark:text-rose-100 dark:hover:bg-rose-950/55`;
 
   const qtyRowClass = qtyMobileExpanded
-    ? "flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5"
+    ? "flex w-full min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-1.5"
     : "flex w-full min-w-0 flex-wrap items-center gap-1.5";
   const qtyInputWrapClass = qtyMobileExpanded
     ? compactGrid
-      ? "flex min-h-[44px] min-w-0 flex-1 items-stretch gap-2 sm:h-8 sm:min-h-0 sm:max-w-[11rem] sm:items-center sm:gap-1"
-      : "flex min-h-[44px] min-w-0 flex-1 items-stretch gap-2 sm:min-h-0 sm:max-w-[11rem] sm:items-center sm:gap-1"
-    : "flex min-w-0 flex-1 basis-[8rem] items-center gap-1 sm:basis-auto sm:max-w-[11rem]";
+      ? "flex min-h-[44px] min-w-0 flex-1 items-stretch gap-2 md:h-8 md:min-h-0 md:max-w-[11rem] md:items-center md:gap-1"
+      : "flex min-h-[44px] min-w-0 flex-1 items-stretch gap-2 md:min-h-0 md:max-w-[11rem] md:items-center md:gap-1"
+    : "flex min-w-0 flex-1 basis-[8rem] items-center gap-1 md:basis-auto md:max-w-[11rem]";
   const qtyInputClass = qtyMobileExpanded
     ? compactGrid
-      ? "input-base min-h-[44px] min-w-0 flex-1 rounded-lg px-3 text-center text-sm tabular-nums text-neutral-700 dark:text-slate-200 sm:h-8 sm:min-h-0 sm:rounded-md sm:text-[11px]"
-      : "input-base min-h-[44px] min-w-0 flex-1 rounded-lg px-3 text-center text-sm tabular-nums text-neutral-700 dark:text-slate-200 sm:h-7 sm:min-h-0 sm:rounded-md sm:text-[11px]"
-    : "input-base h-8 min-w-0 flex-1 rounded-md px-2 text-center text-xs tabular-nums text-neutral-700 dark:text-slate-200 sm:h-7 sm:text-[11px]";
+      ? "input-base min-h-[44px] min-w-0 flex-1 rounded-lg px-3 text-center text-sm tabular-nums text-neutral-700 dark:text-slate-200 md:h-8 md:min-h-0 md:rounded-md md:text-[11px]"
+      : "input-base min-h-[44px] min-w-0 flex-1 rounded-lg px-3 text-center text-sm tabular-nums text-neutral-700 dark:text-slate-200 md:h-7 md:min-h-0 md:rounded-md md:text-[11px]"
+    : "input-base h-8 min-w-0 flex-1 rounded-md px-2 text-center text-xs tabular-nums text-neutral-700 dark:text-slate-200 md:h-7 md:text-[11px]";
   const qtySetClass = qtyMobileExpanded
     ? compactGrid
-      ? "btn-secondary min-h-[44px] shrink-0 touch-manipulation whitespace-nowrap px-4 text-xs font-semibold sm:h-8 sm:min-h-0 sm:px-2 sm:py-0"
-      : "btn-secondary min-h-[44px] shrink-0 touch-manipulation whitespace-nowrap px-4 text-xs font-semibold sm:h-7 sm:min-h-0 sm:px-2 sm:py-0"
-    : "btn-secondary shrink-0 whitespace-nowrap px-2 py-1 text-[10px] font-semibold sm:h-7 sm:px-2 sm:py-0";
+      ? "btn-secondary min-h-[44px] shrink-0 touch-manipulation whitespace-nowrap px-4 text-xs font-semibold md:h-8 md:min-h-0 md:px-2 md:py-0"
+      : "btn-secondary min-h-[44px] shrink-0 touch-manipulation whitespace-nowrap px-4 text-xs font-semibold md:h-7 md:min-h-0 md:px-2 md:py-0"
+    : "btn-secondary shrink-0 whitespace-nowrap px-2 py-1 text-[10px] font-semibold md:h-7 md:px-2 md:py-0";
 
   const descClamp =
     compactGrid
-      ? "max-sm:line-clamp-1 sm:line-clamp-2 md:line-clamp-2"
+      ? "line-clamp-1 md:line-clamp-2"
       : gridMode
         ? isComfortableGrid
-          ? "max-sm:line-clamp-2 md:line-clamp-3 lg:line-clamp-4"
-          : "line-clamp-2 sm:line-clamp-3"
-        : "max-sm:line-clamp-2 sm:line-clamp-3";
+          ? "line-clamp-2 md:line-clamp-3 lg:line-clamp-4"
+          : "line-clamp-2 md:line-clamp-3"
+        : "line-clamp-2 md:line-clamp-3";
 
   const innerBody = (
     <>
       {isListLayout ? (
         <div className="flex items-start gap-2">
-          <p className="min-w-0 flex-1 text-sm font-semibold leading-snug text-neutral-900 dark:text-slate-100 sm:text-base">{listing.title || "Untitled product"}</p>
+          <p className="min-w-0 flex-1 text-sm font-semibold leading-snug text-neutral-900 dark:text-slate-100 md:text-base">{listing.title || "Untitled product"}</p>
           <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${statusBadgeClass}`}>{statusBadgeLabel}</span>
         </div>
       ) : compactGrid ? (
@@ -228,7 +228,7 @@ export function SellerProductCard({
         ) : null}
       </div>
       <p
-        className={`mt-1 text-xs text-neutral-600 dark:text-slate-400 ${isComfortableGrid ? "sm:text-[13px]" : ""} ${isListLayout ? "sm:text-[13px]" : ""} ${compactGrid ? "text-[11px]" : ""}`}
+        className={`mt-1 text-xs text-neutral-600 dark:text-slate-400 ${isComfortableGrid ? "md:text-[13px]" : ""} ${isListLayout ? "md:text-[13px]" : ""} ${compactGrid ? "text-[11px]" : ""}`}
       >
         <span className="font-medium text-neutral-700 dark:text-slate-300">Current quantity:</span>{" "}
         <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{listedQtyForBadge}</span>
@@ -241,7 +241,7 @@ export function SellerProductCard({
               {quantityUpdating ? <span className="text-[10px] font-medium text-neutral-500 dark:text-slate-500">Saving…</span> : null}
             </div>
             <div className="flex min-w-0 items-stretch gap-1">
-              <div className="flex min-h-[40px] min-w-0 flex-1 overflow-hidden rounded-lg border border-neutral-300/95 bg-white shadow-sm ring-1 ring-neutral-200/70 dark:border-[#1f3c56] dark:bg-[#11283d] dark:ring-[#1f3c56]/60 sm:min-h-8">
+              <div className="flex min-h-[40px] min-w-0 flex-1 overflow-hidden rounded-lg border border-neutral-300/95 bg-white shadow-sm ring-1 ring-neutral-200/70 dark:border-[#1f3c56] dark:bg-[#11283d] dark:ring-[#1f3c56]/60 md:min-h-8">
                 <button
                   type="button"
                   className={`${denseStepMinusPlus} rounded-none border-r border-neutral-200 dark:border-slate-700`}
@@ -288,7 +288,7 @@ export function SellerProductCard({
                 aria-label="Apply quantity"
                 onClick={() => tryCommitQuantityDraft()}
               >
-                <IconCheck className="h-[18px] w-[18px] sm:h-3.5 sm:w-3.5" />
+                <IconCheck className="h-[18px] w-[18px] md:h-3.5 md:w-3.5" />
               </button>
             </div>
           </div>
@@ -296,14 +296,14 @@ export function SellerProductCard({
           <div
             className={
               isListLayout
-                ? `${qtyRowClass} sm:items-center sm:gap-2`
+                ? `${qtyRowClass} md:items-center md:gap-2`
                 : isComfortableGrid
                   ? `${qtyRowClass} md:items-center md:gap-2`
                   : qtyRowClass
             }
           >
             {isListLayout ? (
-              <span className="hidden shrink-0 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500 sm:inline-block">Listed qty</span>
+              <span className="hidden shrink-0 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500 md:inline-block">Listed qty</span>
             ) : null}
             {isComfortableGrid ? (
               <span className="hidden shrink-0 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500 md:inline-block">Listed qty</span>
@@ -347,7 +347,7 @@ export function SellerProductCard({
               </button>
             </div>
             {isListLayout && quantityUpdating ? (
-              <span className="text-[10px] font-medium text-neutral-500 dark:text-slate-400 max-sm:hidden sm:ml-auto sm:shrink-0">Saving…</span>
+              <span className="hidden text-[10px] font-medium text-neutral-500 dark:text-slate-400 md:ml-auto md:inline md:shrink-0">Saving…</span>
             ) : null}
             {isComfortableGrid && quantityUpdating ? (
               <span className="hidden text-[10px] font-medium text-neutral-500 dark:text-slate-400 md:ml-auto md:inline md:shrink-0">Saving…</span>
@@ -356,12 +356,12 @@ export function SellerProductCard({
         )}
       </div>
       <p
-        className={`text-xs leading-snug text-neutral-600 dark:text-slate-400 ${isComfortableGrid ? "sm:text-[13px]" : ""} ${isListLayout ? "sm:text-[13px]" : ""} ${compactGrid ? "truncate md:text-[11px]" : ""} ${isListLayout || compactGrid ? "max-sm:text-[11px]" : ""}`}
+        className={`leading-snug text-neutral-600 dark:text-slate-400 ${isListLayout || compactGrid ? "text-[11px] md:text-xs" : "text-xs"} ${isComfortableGrid ? "md:text-[13px]" : ""} ${isListLayout ? "md:text-[13px]" : ""} ${compactGrid ? "truncate md:text-[11px]" : ""}`}
       >
         <span className={`font-medium text-neutral-700 dark:text-slate-300 ${isComfortableGrid ? "text-neutral-800 dark:text-slate-200" : ""}`}>Availability</span>
-        <span className={isListLayout || compactGrid ? "max-sm:hidden" : ""}>: </span>
+        <span className={isListLayout || compactGrid ? "hidden md:inline" : ""}>: </span>
         <span
-          className={`${isListLayout || compactGrid ? "max-sm:mt-0.5 max-sm:block" : ""} ${isListLayout ? "sm:inline sm:text-neutral-600 dark:sm:text-slate-400" : ""} ${compactGrid ? "md:inline" : ""} ${isComfortableGrid ? "sm:inline" : ""}`}
+          className={`${isListLayout || compactGrid ? "mt-0.5 block md:mt-0 md:inline" : ""} ${isListLayout ? "md:text-neutral-600 dark:md:text-slate-400" : ""} ${compactGrid ? "md:inline" : ""} ${isComfortableGrid ? "md:inline" : ""}`}
         >
           {availabilityLabel}
         </span>
@@ -431,7 +431,7 @@ export function SellerProductCard({
             </div>
             <div className="min-w-0 flex-1 space-y-1.5">{innerBody}</div>
           </div>
-          <div className="grid w-full min-w-0 grid-cols-2 gap-2 border-t border-neutral-200/90 pt-3 dark:border-[#1f3c56]/80 sm:grid-cols-4 sm:gap-2">{sellerActionsExpanded}</div>
+          <div className="grid w-full min-w-0 grid-cols-2 gap-2 border-t border-neutral-200/90 pt-3 dark:border-[#1f3c56]/80 md:grid-cols-4 md:gap-2">{sellerActionsExpanded}</div>
         </div>
       ) : (
         <div className={`flex min-w-0 flex-col ${mainGap} ${isComfortableGrid || compactGrid ? "md:h-full" : ""}`}>
@@ -446,10 +446,10 @@ export function SellerProductCard({
           <div
             className={
               isComfortableGrid
-                ? "mt-auto grid w-full min-w-0 shrink-0 grid-cols-2 gap-2 self-stretch sm:gap-2 md:gap-2 [&>button]:min-h-[44px] [&>button]:touch-manipulation sm:[&>button]:min-h-0 md:[&>button]:min-h-0"
+                ? "mt-auto grid w-full min-w-0 shrink-0 grid-cols-2 gap-2 self-stretch md:gap-2 md:gap-2 [&>button]:min-h-[44px] [&>button]:touch-manipulation md:[&>button]:min-h-0 md:[&>button]:min-h-0"
                 : compactGrid
-                  ? "mt-auto grid w-full min-w-0 shrink-0 grid-cols-2 gap-1 self-stretch sm:gap-1 [&>button]:touch-manipulation"
-                  : "grid w-full min-w-0 grid-cols-2 gap-1.5 self-stretch sm:gap-2"
+                  ? "mt-auto grid w-full min-w-0 shrink-0 grid-cols-2 gap-1 self-stretch md:gap-1 [&>button]:touch-manipulation"
+                  : "grid w-full min-w-0 grid-cols-2 gap-1.5 self-stretch md:gap-2"
             }
           >
             {compactGrid ? sellerActionsDense : sellerActionsExpanded}
@@ -465,7 +465,7 @@ export function SellerProductCard({
               <button
                 key={percent}
                 type="button"
-                className={`touch-manipulation rounded-md border border-amber-300/90 bg-white font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30 ${compactGrid ? "min-h-9 min-w-[2.25rem] px-1.5 py-0.5 text-[11px] sm:min-h-0 sm:min-w-0" : "min-h-10 min-w-[2.75rem] px-2 py-1 text-xs sm:min-h-0 sm:min-w-0"}`}
+                className={`touch-manipulation rounded-md border border-amber-300/90 bg-white font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30 ${compactGrid ? "min-h-9 min-w-[2.25rem] px-1.5 py-0.5 text-[11px] md:min-h-0 md:min-w-0" : "min-h-10 min-w-[2.75rem] px-2 py-1 text-xs md:min-h-0 md:min-w-0"}`}
                 onClick={() => {
                   onSaleSelect(percent);
                   setSaleOpen(false);

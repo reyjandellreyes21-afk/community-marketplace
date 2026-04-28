@@ -47,10 +47,10 @@ export function CommunityShopListingCard({
   const mainGap = gridMode && compactGrid ? "gap-2" : gridMode ? "gap-2.5" : "gap-3";
   const compactActionBtnClass = compactGrid
     ? "flex h-10 items-center justify-center whitespace-nowrap px-2 text-[11px] leading-none"
-    : "min-h-[44px] px-3 py-2 text-sm sm:min-h-0 sm:py-1.5 sm:text-xs";
+    : "min-h-[44px] px-3 py-2 text-sm md:min-h-0 md:py-1.5 md:text-xs";
   const compactActionRowClass = compactGrid
     ? "grid w-full grid-cols-2 gap-2"
-    : "flex w-full flex-col gap-2 min-[380px]:flex-row min-[380px]:items-stretch";
+    : "flex w-full flex-col gap-2 md:flex-row md:items-stretch";
   const isListMode = !gridMode;
 
   /** Compact grid tiles only: heart stays on the photo (saves vertical space). Standard grid + list: heart beside title so the product image stays clear. */

@@ -31,13 +31,13 @@ function LandingFeatureIconBuddy(props) {
 
 export function LandingFeatureRow({ Icon, eyebrow, title, body }) {
   return (
-    <div className="flex gap-4 sm:gap-5">
+    <div className="flex gap-4 md:gap-5">
       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-teal-50 text-brand-accent shadow-sm dark:bg-slate-800 dark:text-brand-accent">
         {createElement(Icon, { className: "h-5 w-5" })}
       </div>
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-brand-accent">{eyebrow}</p>
-        <h3 className="mt-1 text-base font-bold leading-snug text-neutral-900 dark:text-slate-100 sm:text-lg">{title}</h3>
+        <h3 className="mt-1 text-base font-bold leading-snug text-neutral-900 dark:text-slate-100 md:text-lg">{title}</h3>
         <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-slate-400">{body}</p>
       </div>
     </div>
