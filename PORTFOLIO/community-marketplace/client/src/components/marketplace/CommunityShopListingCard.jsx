@@ -52,6 +52,57 @@ export function CommunityShopListingCard({
     : "flex w-full flex-col gap-2 min-[380px]:flex-row min-[380px]:items-stretch";
   const isListMode = !gridMode;
 
+  /** Compact grid tiles only: heart stays on the photo (saves vertical space). Standard grid + list: heart beside title so the product image stays clear. */
+  const favoriteOverlayOnImage = Boolean(gridMode && compactGrid && !isOwner && showFavoriteIcon);
+
+  /** Overlay favorite (compact grid): scales with thumbnail width. */
+  const favoriteFabPosition = "right-[clamp(0.3rem,3.5%,0.65rem)] top-[clamp(0.3rem,3.5%,0.65rem)]";
+  const favoriteFabSize =
+    "box-border w-[clamp(2.5rem,min(20%,3.25rem),2.875rem)] max-h-[2.875rem] max-w-[2.875rem] min-h-[2.5rem] min-w-[2.5rem]";
+  const favoriteFabSurface =
+    "flex aspect-square shrink-0 items-center justify-center rounded-[26%] border border-black/[0.06] bg-white shadow-[0_2px_10px_rgba(15,23,42,0.11)] transition duration-200 ease-in-out hover:scale-[1.04] hover:border-black/[0.08] hover:shadow-[0_4px_16px_rgba(15,23,42,0.14)] active:scale-[0.98] touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50 dark:border-black/10 dark:bg-white";
+
+  /** Inline favorite (default grid / list): circular chip by the title — full photo visibility + predictable hit target. */
+  const favoriteInlineSurface =
+    "inline-flex aspect-square shrink-0 items-center justify-center rounded-full border border-black/[0.06] bg-white shadow-[0_1px_6px_rgba(15,23,42,0.08)] transition duration-200 ease-in-out hover:border-black/[0.1] hover:shadow-[0_3px_12px_rgba(15,23,42,0.12)] active:scale-[0.97] touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50 dark:border-black/10 dark:bg-white";
+  const favoriteInlineSize = "box-border h-10 w-10 min-h-[2.5rem] min-w-[2.5rem]";
+
+  const favoriteHeartSvg = (
+    <svg className="h-[44%] w-[44%] shrink-0" viewBox="0 0 24 24" aria-hidden>
+      <path
+        fill={isFavorite ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth={isFavorite ? 0 : 2.125}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        vectorEffect="nonScalingStroke"
+        d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
+      />
+    </svg>
+  );
+
+  const showFavoriteUi = Boolean(!isOwner && showFavoriteIcon);
+
+  const favoriteTitleEnd =
+    showFavoriteUi && !favoriteOverlayOnImage ? (
+      <button
+        type="button"
+        className={`${favoriteInlineSize} ${favoriteInlineSurface} ${
+          isFavorite
+            ? "text-[#ff4d6d]"
+            : "text-[#ff4d6d]/75 hover:text-[#ff4d6d] dark:text-[#ff4d6d]/70 dark:hover:text-[#ff4d6d]"
+        }`}
+        aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+        aria-pressed={isFavorite}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleFavorite?.();
+        }}
+      >
+        {favoriteHeartSvg}
+      </button>
+    ) : null;
+
   return (
     <div
       className={`group relative rounded-2xl border border-border bg-surface shadow-sm transition duration-200 ease-in-out hover:-translate-y-0.5 hover:scale-[1.01] hover:border-primary/35 hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 ${pad} ${
@@ -62,17 +113,22 @@ export function CommunityShopListingCard({
         className={`flex min-h-0 ${gridMode ? `flex-1 flex-col ${mainGap}` : "flex-row items-start gap-3"}`}
       >
         <div className={`relative shrink-0 overflow-hidden rounded-xl border border-border bg-background dark:border-[#1f3c56] dark:bg-[#11283d] ${imgBox}`}>
-          {!isOwner && showFavoriteIcon ? (
+          {favoriteOverlayOnImage ? (
             <button
               type="button"
-              className="absolute right-2 top-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-surface text-accent shadow-sm transition duration-200 ease-in-out hover:scale-105 hover:text-accent-hover dark:border-slate-600 dark:bg-slate-900 dark:text-rose-400 dark:hover:text-rose-300"
+              className={`absolute z-10 ${favoriteFabPosition} ${favoriteFabSize} ${favoriteFabSurface} ${
+                isFavorite
+                  ? "text-[#ff4d6d]"
+                  : "text-[#ff4d6d]/75 hover:text-[#ff4d6d] dark:text-[#ff4d6d]/70 dark:hover:text-[#ff4d6d]"
+              }`}
               aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+              aria-pressed={isFavorite}
               onClick={(e) => {
                 e.stopPropagation();
                 onToggleFavorite?.();
               }}
             >
-              <span className="text-[1.45rem] leading-none">{isFavorite ? "♥" : "♡"}</span>
+              {favoriteHeartSvg}
             </button>
           ) : null}
           {imageUrl ? (
@@ -87,6 +143,7 @@ export function CommunityShopListingCard({
           <MarketplaceProductDetailStack
             variant="card"
             title={listing.title || "Untitled product"}
+            titleEnd={favoriteTitleEnd}
             priceCents={listing.priceCents}
             description={listing.description}
             fulfillmentModes={listing.fulfillmentModes}

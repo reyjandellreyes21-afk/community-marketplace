@@ -13,7 +13,7 @@ export const VIEWS = {
   ABOUT: "about",
   TERMS: "terms",
   USERS: "users",
-  /** Seller hub: products and review. */
+  /** Seller hub: products and feedback snapshot. */
   SELLER: "seller",
   /** Add-to-cart screen (nav placeholder). */
   CART: "cart",
@@ -24,5 +24,6 @@ export const VIEWS = {
 /** Sub-navigation for `VIEWS.SELLER` (stored in App state `sellerTab`). */
 export const SELLER_TABS = {
   PRODUCTS: "products",
-  REVIEW: "review",
+  /** Profile seller hub: buyer feedback received (UI label: Feedback). */
+  FEEDBACK: "feedback",
 };

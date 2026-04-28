@@ -79,6 +79,7 @@ import { ListingCategoryPicker } from "./components/marketplace/ListingCategoryP
 import { OrderBuyerReviewForm } from "./components/marketplace/OrderBuyerReviewForm.jsx";
 import { CartSellerSelectAllCheckbox } from "./components/marketplace/CartSellerSelectAllCheckbox.jsx";
 import { SellerProductCard } from "./components/marketplace/SellerProductCard.jsx";
+import { SellerBuyerFeedbackList } from "./components/marketplace/SellerBuyerFeedbackList.jsx";
 import { ProductInspectModal } from "./components/marketplace/ProductInspectModal.jsx";
 import { LandingFeatureRow, LANDING_FEATURE_ROWS } from "./components/landing/LandingFeatureRows.jsx";
 import {
@@ -693,7 +694,6 @@ function App() {
   }, []);
 
   const [orderListingsById, setOrderListingsById] = useState({});
-  const [sellerSummary, setSellerSummary] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [expenseDraft, setExpenseDraft] = useState({ amountPesos: "", category: "supplies", note: "" });
   const [listingForm, setListingForm] = useState({
@@ -2922,6 +2922,19 @@ function App() {
     () => RECENT_ORDER_TAB_KEYS.reduce((sum, tab) => sum + (sellerUnseenIdsByTab[tab]?.length || 0), 0),
     [sellerUnseenIdsByTab],
   );
+  const profileDashboardStats = useMemo(
+    () => [
+      {
+        key: "cart",
+        label: "Cart",
+        value: cartItems.length,
+      },
+      { key: "buying", label: "Buying", value: purchaseNavBadgeCount },
+      { key: "selling", label: "Selling", value: sellerNavBadgeCount },
+      { key: "favorites", label: "Favorites", value: favoriteIds.size },
+    ],
+    [cartItems, purchaseNavBadgeCount, sellerNavBadgeCount, favoriteIds],
+  );
 
   const ordersTabBadgeIdsByTab = ordersRole === "seller" ? sellerUnseenIdsByTab : buyerUnseenIdsByTab;
   const ordersTabRecentPendingIds = ordersTabBadgeIdsByTab.pending;
@@ -3723,31 +3736,6 @@ function App() {
   }, [token, isBrowseLikeView, usersList.length]);
 
   useEffect(() => {
-    if (!token || activeView !== VIEWS.PROFILE) return undefined;
-    let cancelled = false;
-    (async () => {
-      try {
-        const [sum, exp] = await Promise.all([
-          apiRequest("/me/seller/summary", { token }),
-          apiRequest("/me/expenses", { token }),
-        ]);
-        if (!cancelled) {
-          setSellerSummary(sum);
-          setExpenses(exp.expenses || []);
-        }
-      } catch {
-        if (!cancelled) {
-          setSellerSummary(null);
-          setExpenses([]);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token, activeView, sellerTab]);
-
-  useEffect(() => {
     if (!token) return undefined;
     const loadMyListings =
       activeView === VIEWS.MY_LISTINGS ||
@@ -4075,8 +4063,7 @@ function App() {
         },
       });
       setExpenseDraft({ amountPesos: "", category: "supplies", note: "" });
-      const [sum, exp] = await Promise.all([apiRequest("/me/seller/summary", { token }), apiRequest("/me/expenses", { token })]);
-      setSellerSummary(sum);
+      const exp = await apiRequest("/me/expenses", { token });
       setExpenses(exp.expenses || []);
       pushMarketplaceToast("Expense added.");
     } catch (e) {
@@ -4087,8 +4074,7 @@ function App() {
   const deleteExpenseById = async (id) => {
     try {
       await apiRequest(`/me/expenses/${id}`, { method: "DELETE", token });
-      const [sum, exp] = await Promise.all([apiRequest("/me/seller/summary", { token }), apiRequest("/me/expenses", { token })]);
-      setSellerSummary(sum);
+      const exp = await apiRequest("/me/expenses", { token });
       setExpenses(exp.expenses || []);
     } catch (e) {
       pushMarketplaceToast(e.message || "Could not delete.");
@@ -4682,13 +4668,9 @@ function App() {
             token,
             body: payload,
           });
-      const [listRes, sumRes] = await Promise.all([
-        apiRequest("/me/listings", { token }),
-        apiRequest("/me/seller/summary", { token }),
-      ]);
+      const listRes = await apiRequest("/me/listings", { token });
       const latestListings = listRes.listings || [];
       setSellerListings(latestListings.length ? latestListings : createRes?.listing ? [createRes.listing] : []);
-      setSellerSummary(sumRes);
       setListingForm({
         title: "",
         description: "",
@@ -5467,6 +5449,7 @@ function App() {
         purchasesItemCount={purchaseNavBadgeCount}
         ordersItemCount={sellerNavBadgeCount}
         notificationUnreadCount={unreadNotificationCount}
+        favoriteCount={favoriteIds.size}
         theme={theme}
         setTheme={setTheme}
         onLogout={logout}
@@ -8177,7 +8160,7 @@ function App() {
               <div className="space-y-4 rounded-2xl border border-neutral-200/90 bg-white p-4 shadow-sm md:space-y-6 dark:border-slate-600 dark:bg-slate-900/80">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">
-                    {isViewingSellerProfile ? "Seller profile" : "My profile"}
+                    {isViewingSellerProfile ? "Seller profile" : "Profile"}
                   </h2>
                   {isViewingSellerProfile ? (
                     <button type="button" className="btn-secondary shrink-0" onClick={goBackFromSellerProfile}>
@@ -9163,6 +9146,18 @@ function App() {
                       ) : null}
                     </ul>
                   </div>
+                  <div className={`${UI_KIT.surfaceCard} px-4 py-4`}>
+                    <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">Dashboard</h3>
+                    <div className="mt-3 border-t border-neutral-200/80 dark:border-slate-700/80" />
+                    <ul className="mt-3 grid grid-cols-2 gap-2">
+                      {profileDashboardStats.map((stat) => (
+                        <li key={stat.key} className="rounded-xl border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/50">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">{stat.label}</p>
+                          <p className="mt-1 text-xl font-semibold tabular-nums text-neutral-900 dark:text-slate-100">{stat.value}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               )
             ) : (
@@ -9171,10 +9166,10 @@ function App() {
               </div>
               {!isViewingSellerProfile ? (
               <aside className="min-w-0 space-y-4 rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-slate-900/80">
-                <div className="flex flex-wrap gap-2" role="tablist" aria-label="Seller hub sections">
+                <div className="flex flex-wrap gap-2" role="tablist" aria-label="Seller hub: products and buyer feedback">
                   {[
                     { id: SELLER_TABS.PRODUCTS, label: "Products" },
-                    { id: SELLER_TABS.REVIEW, label: "Review" },
+                    { id: SELLER_TABS.FEEDBACK, label: "Feedback" },
                   ].map(({ id, label }) => (
                     <button
                       key={id}
@@ -9284,29 +9279,7 @@ function App() {
                     ) : null}
                   </div>
                 )}
-                {sellerTab === SELLER_TABS.REVIEW && (
-                  <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 dark:border-slate-700 dark:bg-slate-900/40">
-                    <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">COD review snapshot</p>
-                    {sellerSummary ? (
-                      <dl className="mt-4 grid gap-3">
-                        <div className="rounded-lg bg-white p-3 dark:bg-slate-900/80">
-                          <dt className="text-xs uppercase text-neutral-500 dark:text-slate-400">Revenue (completed)</dt>
-                          <dd className="text-lg font-semibold text-neutral-900 dark:text-slate-100">{formatCents(sellerSummary.revenueCents)}</dd>
-                        </div>
-                        <div className="rounded-lg bg-white p-3 dark:bg-slate-900/80">
-                          <dt className="text-xs uppercase text-neutral-500 dark:text-slate-400">Expenses</dt>
-                          <dd className="text-lg font-semibold text-neutral-900 dark:text-slate-100">{formatCents(sellerSummary.expenseCents)}</dd>
-                        </div>
-                        <div className="rounded-lg bg-white p-3 dark:bg-slate-900/80">
-                          <dt className="text-xs uppercase text-neutral-500 dark:text-slate-400">Profit</dt>
-                          <dd className="text-lg font-semibold text-brand-primary">{formatCents(sellerSummary.profitCents)}</dd>
-                        </div>
-                      </dl>
-                    ) : (
-                      <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">Load data by opening this tab when logged in.</p>
-                    )}
-                  </div>
-                )}
+                {sellerTab === SELLER_TABS.FEEDBACK && <SellerBuyerFeedbackList token={token} />}
               </aside>
               ) : null}
             </div>

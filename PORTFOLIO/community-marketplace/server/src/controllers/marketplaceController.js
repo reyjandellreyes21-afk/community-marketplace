@@ -1319,6 +1319,68 @@ export const sellerSummary = async (req, res, next) => {
   }
 };
 
+/** Buyer star/text reviews left on completed orders — seller reads these in Profile → Feedback. */
+export const listSellerBuyerFeedback = async (req, res, next) => {
+  try {
+    const { data: reviews, error } = await supabaseAdmin
+      .from("order_reviews")
+      .select("*")
+      .eq("seller_id", req.user.id)
+      .order("created_at", { ascending: false });
+    if (error?.code === "PGRST205") return res.json({ items: [] });
+    if (error) throw new AppError(500, error.message);
+    const rows = reviews || [];
+    if (rows.length === 0) return res.json({ items: [] });
+
+    const orderIds = [...new Set(rows.map((r) => r.order_id).filter(Boolean))];
+    const { data: orders } = await supabaseAdmin.from("orders").select("id, listing_id, created_at").in("id", orderIds);
+    const orderById = new Map((orders || []).map((o) => [o.id, o]));
+
+    const listingIds = [...new Set((orders || []).map((o) => o.listing_id).filter(Boolean))];
+    let listingById = new Map();
+    if (listingIds.length > 0) {
+      const { data: listings } = await supabaseAdmin.from("listings").select("id, title").in("id", listingIds);
+      listingById = new Map((listings || []).map((l) => [l.id, l]));
+    }
+
+    const buyerIds = [...new Set(rows.map((r) => r.buyer_id).filter(Boolean))];
+    let profileById = new Map();
+    if (buyerIds.length > 0) {
+      const { data: profiles } = await supabaseAdmin
+        .from("profiles")
+        .select("id, username, first_name, last_name")
+        .in("id", buyerIds);
+      profileById = new Map((profiles || []).map((p) => [p.id, p]));
+    }
+
+    const displayName = (p) => {
+      if (!p) return "Buyer";
+      const u = String(p.username || "").trim();
+      if (u) return u;
+      const fn = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
+      return fn || "Buyer";
+    };
+
+    const items = rows.map((rev) => {
+      const ord = orderById.get(rev.order_id);
+      const listing = ord ? listingById.get(ord.listing_id) : null;
+      const buyer = profileById.get(rev.buyer_id);
+      return {
+        orderId: rev.order_id,
+        listingTitle: listing?.title ? String(listing.title).trim() : "Listing",
+        rating: Number(rev.rating) || 0,
+        reviewText: String(rev.review_text ?? "").trim() || null,
+        reviewedAt: rev.updated_at || rev.created_at,
+        buyerDisplayName: displayName(buyer),
+      };
+    });
+
+    res.json({ items });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const listUsersDirectory = async (req, res, next) => {
   try {
     let data = null;
