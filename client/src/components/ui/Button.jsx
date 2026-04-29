@@ -2,15 +2,15 @@ import { forwardRef } from "react";
 import { cn } from "../../lib/cn.js";
 
 const VARIANT_CLASS = {
-  primary: "btn-primary",
-  secondary: "btn-secondary",
-  ghost: "btn-ghost",
-  danger: "btn-danger",
-  accent: "btn-accent",
+  primary: "lm-btn-primary",
+  secondary: "lm-btn-secondary",
+  ghost: "lm-btn-ghost",
+  danger: "lm-btn-danger",
+  accent: "lm-btn-accent",
 };
 
 /**
- * Mobile-friendly button: default / pressed (`active:` scale + brightness in `.btn-base`), disabled,
+ * Mobile-friendly button — LinkMart `lm-btn*` system (`index.css`). Active scale + disabled opacity,
  * loading (`aria-busy`, `data-state`, spinner). Use `fullWidth` for stacked recovery actions on phones.
  * When `iconOnly` is set, also pass `aria-label` (or `aria-labelledby`) for screen readers.
  */
@@ -54,7 +54,7 @@ export const Button = forwardRef(function Button(
         cls,
         compact,
         fullWidth && "w-full",
-        iconOnly && "btn-icon-only",
+        iconOnly && "lm-btn-icon",
         isDisabled && "cursor-not-allowed opacity-55",
         loading && "pointer-events-none",
         className,

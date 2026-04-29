@@ -1,5 +1,7 @@
--- community-marketplace v2 schema foundation
--- Run in Supabase SQL editor.
+-- DEPRECATED FOR RUNTIME USE.
+-- Source of truth is `supabase/migrations/*` in this repository.
+-- This file is retained only as an old reference snapshot and does not match
+-- current production table names/columns.
 
 create extension if not exists "pgcrypto";
 

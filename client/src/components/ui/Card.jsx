@@ -5,9 +5,9 @@ const VARIANT_CLASS = {
   default: "app-card",
   interactive: "app-card-interactive",
   raised:
-    "rounded-[var(--ui-radius-lg)] border border-border bg-gradient-to-b from-surface to-primary-soft/20 p-4 text-sm leading-relaxed shadow-sm dark:border-[#1f3c56] dark:from-[#0f2234] dark:to-[#11283d]/90 md:p-5",
+    "lm-card bg-gradient-to-b from-surface to-primary-soft/25 p-4 text-sm leading-relaxed shadow-none dark:from-[#0f2234] dark:to-[#11283d]/88 md:p-5 md:shadow-sm md:shadow-slate-900/[0.04] dark:md:shadow-none md:dark:border-[#1f3c56]",
   muted:
-    "rounded-[var(--ui-radius)] border border-border bg-primary-soft/40 p-4 text-sm leading-relaxed dark:border-[#1f3c56] dark:bg-[#11283d]/65",
+    "lm-card rounded-[var(--ui-radius)] border-neutral-200/80 bg-primary-soft/45 p-4 text-sm leading-relaxed dark:border-slate-600/70 dark:bg-[#11283d]/65 md:dark:border-[#1f3c56]",
 };
 
 const PADDING_CLASS = {

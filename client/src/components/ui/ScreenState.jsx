@@ -1,7 +1,7 @@
 import { Button } from "./Button.jsx";
 import { cn } from "../../lib/cn.js";
 import { UI_KIT } from "../../lib/appUiKit.js";
-import { MOBILE_UI } from "../../lib/mobileUi.js";
+import { MOBILE_UI, MOBILE_DESIGN_SYSTEM } from "../../lib/mobileUi.js";
 
 function CheckCircleIcon(props) {
   return (
@@ -59,7 +59,7 @@ function RecoveryButtons({ primaryAction, secondaryAction }) {
 }
 
 /**
- * Full-width loading placeholder — tuned for mobile shells (`MOBILE_UI.screenStateMin`).
+ * Full-width loading placeholder — tuned for mobile shells (`MOBILE_DESIGN_SYSTEM.screen.loading.minHeight`).
  * Use inside narrow layouts / browse grids; set `minHeight={false}` for inline strips.
  */
 export function ScreenLoading({
@@ -75,37 +75,54 @@ export function ScreenLoading({
       aria-live="polite"
       aria-busy="true"
       className={cn(
-        UI_KIT.surfaceMuted,
+        MOBILE_DESIGN_SYSTEM.screen.loading.surface,
         "flex flex-col items-center justify-center gap-3 border-dashed px-4 py-12 text-center md:py-14",
         minHeight && (spacious ? cn(MOBILE_UI.screenStateMin, "py-14 md:py-16") : "min-h-[12rem]"),
         className,
       )}
     >
-      <span
-        className="h-9 w-9 animate-spin rounded-full border-2 border-brand-primary border-t-transparent motion-reduce:animate-none dark:border-brand-accent dark:border-t-transparent"
-        aria-hidden
-      />
-      <p className="text-sm font-medium text-neutral-600 dark:text-slate-400">{message}</p>
+      <span className={MOBILE_DESIGN_SYSTEM.screen.loading.spinner} aria-hidden />
+      <p className={cn("max-w-mobile-baseline", MOBILE_DESIGN_SYSTEM.screen.loading.message)}>{message}</p>
     </div>
   );
 }
 
 /** Empty state with optional primary / secondary recovery (44px targets on mobile). */
-export function ScreenEmpty({ title, description, primaryAction, secondaryAction, spacious = true, className = "" }) {
+export function ScreenEmpty({
+  title,
+  description,
+  primaryAction,
+  secondaryAction,
+  /** Shows a top-right dismiss control (e.g. profile reminders). */
+  onDismiss,
+  spacious = true,
+  className = "",
+}) {
   return (
     <div
       className={cn(
         UI_KIT.surfaceRaised,
-        "flex flex-col items-center justify-center border-dashed px-4 py-10 text-center md:px-6 md:py-14",
+        "relative flex flex-col items-center justify-center border-dashed px-4 py-10 text-center md:px-6 md:py-14",
+        onDismiss && "pr-11 pt-3 md:pr-12",
         spacious && MOBILE_UI.screenStateMin,
         className,
       )}
     >
-      <p className="text-base font-semibold text-neutral-900 dark:text-slate-100 md:text-lg">{title}</p>
+      {onDismiss ? (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          className="absolute right-2 top-2 z-10 inline-flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-full text-lg leading-none text-neutral-500 transition hover:bg-neutral-200/80 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100 dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-900"
+        >
+          <span aria-hidden className="block translate-y-[-0.05em]">
+            ×
+          </span>
+        </button>
+      ) : null}
+      <p className={cn("max-w-mobile-baseline text-balance", MOBILE_DESIGN_SYSTEM.screen.empty.title)}>{title}</p>
       {description ? (
-        <p className="mt-2 max-w-mobile-baseline text-xs leading-relaxed text-neutral-600 dark:text-slate-400 md:max-w-md md:text-sm">
-          {description}
-        </p>
+        <p className={cn("mt-2 break-words text-pretty", MOBILE_DESIGN_SYSTEM.screen.empty.description)}>{description}</p>
       ) : null}
       <RecoveryButtons primaryAction={primaryAction} secondaryAction={secondaryAction} />
     </div>
@@ -138,11 +155,9 @@ export function ScreenSuccess({
       <span className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
         <CheckCircleIcon className="h-9 w-9" />
       </span>
-      <p className="text-base font-semibold text-emerald-900 dark:text-emerald-50 md:text-lg">{title}</p>
+      <p className={MOBILE_DESIGN_SYSTEM.screen.success.title}>{title}</p>
       {description ? (
-        <p className="mt-2 max-w-mobile-baseline text-xs leading-relaxed text-emerald-900/90 dark:text-emerald-100/90 md:max-w-md md:text-sm">
-          {description}
-        </p>
+        <p className={cn("mt-2", MOBILE_DESIGN_SYSTEM.screen.success.description)}>{description}</p>
       ) : null}
       <RecoveryButtons primaryAction={primaryAction} secondaryAction={secondaryAction} />
     </div>
@@ -166,7 +181,7 @@ export function ScreenError({
   return (
     <div
       className={cn(
-        "app-alert-error flex flex-col gap-3 rounded-xl border border-rose-200/90 px-4 py-4 text-left dark:border-rose-900/40",
+        MOBILE_DESIGN_SYSTEM.screen.error.panel,
         spacious && cn(MOBILE_UI.screenStateMin, "justify-center py-8 md:py-10"),
         className,
       )}
@@ -174,7 +189,9 @@ export function ScreenError({
     >
       <div>
         <p className="font-semibold text-rose-900 dark:text-rose-50">{title}</p>
-        {message ? <p className="mt-1 text-sm text-rose-800 dark:text-rose-100">{message}</p> : null}
+        {message ? (
+          <p className="mt-1 break-words text-pretty text-sm text-rose-800 dark:text-rose-100">{message}</p>
+        ) : null}
         {!message ? (
           <p className="mt-1 text-sm text-rose-800/90 dark:text-rose-100/90">
             Check your connection, then try again. If it keeps happening, use another action below.

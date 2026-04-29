@@ -1,15 +1,15 @@
 import { Router } from "express";
-import { validate } from "../middleware/validate.js";
-import { requireAuth } from "../middleware/auth.js";
-import { writeLimiter } from "../middleware/rateLimit.js";
 import {
-  conversationsValidators,
   createConversation,
   listConversations,
   listConversationMessages,
   createConversationMessage,
   markConversationRead,
 } from "../controllers/conversationsController.js";
+import { requireAuth } from "../middleware/auth.js";
+import { writeLimiter } from "../middleware/rateLimit.js";
+import { validate } from "../middleware/validate.js";
+import { conversationsValidators } from "../schemas/conversationSchemas.js";
 
 const conversationRouter = Router();
 

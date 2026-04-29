@@ -1,5 +1,4 @@
 import { Router } from "express";
-import { body, param } from "express-validator";
 import {
   acceptBid,
   addFavorite,
@@ -28,7 +27,6 @@ import {
   listOpenDeliveryOrders,
   listOrders,
   listUsersDirectory,
-  listingsValidators,
   patchCourierModes,
   patchOrder,
   upsertOrderReview,
@@ -43,17 +41,18 @@ import { optionalAuth, requireAuth } from "../middleware/auth.js";
 import { communityImageUpload } from "../middleware/communityImageUpload.js";
 import { writeLimiter } from "../middleware/rateLimit.js";
 import { validate } from "../middleware/validate.js";
+import { listingsValidators, marketplaceRouteValidators } from "../schemas/marketplaceSchemas.js";
 
 const marketplaceRouter = Router();
 
 marketplaceRouter.get("/communities", listCommunities);
-marketplaceRouter.get("/communities/:id", [param("id").isUUID()], validate, getCommunityById);
+marketplaceRouter.get("/communities/:id", marketplaceRouteValidators.communityIdParam, validate, getCommunityById);
 marketplaceRouter.post("/communities", requireAuth, writeLimiter, communityImageUpload.single("image"), createCommunity);
 marketplaceRouter.patch(
   "/communities/:id",
   requireAuth,
   writeLimiter,
-  [param("id").isUUID()],
+  marketplaceRouteValidators.communityIdParam,
   validate,
   communityImageUpload.single("image"),
   updateCommunity,
@@ -62,7 +61,7 @@ marketplaceRouter.patch(
 marketplaceRouter.get("/listings", optionalAuth, listingsValidators.list, validate, listListings);
 marketplaceRouter.get("/listings/:id", listingsValidators.idParam, validate, getListing);
 
-marketplaceRouter.get("/users", requireAuth, listUsersDirectory);
+marketplaceRouter.get("/users", requireAuth, marketplaceRouteValidators.listUsers, validate, listUsersDirectory);
 
 marketplaceRouter.get("/me/listings", requireAuth, listMyListings);
 marketplaceRouter.post(
@@ -78,21 +77,22 @@ marketplaceRouter.patch(
   requireAuth,
   writeLimiter,
   listingsValidators.idParam,
+  listingsValidators.patch,
   validate,
   updateListing,
 );
 marketplaceRouter.delete("/me/listings/:id", requireAuth, writeLimiter, listingsValidators.idParam, validate, deleteListing);
 
 marketplaceRouter.get("/me/favorites", requireAuth, listFavorites);
-marketplaceRouter.post("/me/favorites/:listingId", requireAuth, writeLimiter, [param("listingId").isUUID()], validate, addFavorite);
-marketplaceRouter.delete("/me/favorites/:listingId", requireAuth, writeLimiter, [param("listingId").isUUID()], validate, removeFavorite);
+marketplaceRouter.post("/me/favorites/:listingId", requireAuth, writeLimiter, marketplaceRouteValidators.listingIdParam, validate, addFavorite);
+marketplaceRouter.delete("/me/favorites/:listingId", requireAuth, writeLimiter, marketplaceRouteValidators.listingIdParam, validate, removeFavorite);
 
 marketplaceRouter.get("/me/cart", requireAuth, listCartItems);
 marketplaceRouter.post(
   "/me/cart/items",
   requireAuth,
   writeLimiter,
-  [body("listingId").isUUID(), body("quantity").optional().isInt({ min: 1 }), body("comment").optional().isString().isLength({ max: 2000 })],
+  marketplaceRouteValidators.cartAdd,
   validate,
   addCartItem,
 );
@@ -100,31 +100,26 @@ marketplaceRouter.patch(
   "/me/cart/items/:listingId",
   requireAuth,
   writeLimiter,
-  [param("listingId").isUUID(), body("quantity").isInt({ min: 1 })],
+  marketplaceRouteValidators.cartPatch,
   validate,
   patchCartItem,
 );
-marketplaceRouter.delete("/me/cart/items/:listingId", requireAuth, writeLimiter, [param("listingId").isUUID()], validate, removeCartItem);
+marketplaceRouter.delete("/me/cart/items/:listingId", requireAuth, writeLimiter, marketplaceRouteValidators.listingIdParam, validate, removeCartItem);
 
 marketplaceRouter.post(
   "/orders",
   requireAuth,
   writeLimiter,
-  [
-    body("listingId").isUUID(),
-    body("fulfillmentType").isIn(["pickup", "delivery"]),
-    body("quantity").optional().isInt({ min: 1 }),
-    body("comment").optional().isString().isLength({ max: 2000 }),
-  ],
+  marketplaceRouteValidators.createOrder,
   validate,
   createOrder,
 );
-marketplaceRouter.get("/orders", requireAuth, listOrders);
+marketplaceRouter.get("/orders", requireAuth, marketplaceRouteValidators.listOrders, validate, listOrders);
 marketplaceRouter.patch(
   "/orders/:id",
   requireAuth,
   writeLimiter,
-  [param("id").isUUID(), body("transition").trim().isString().notEmpty()],
+  marketplaceRouteValidators.patchOrder,
   validate,
   patchOrder,
 );
@@ -132,25 +127,25 @@ marketplaceRouter.put(
   "/orders/:id/review",
   requireAuth,
   writeLimiter,
-  [param("id").isUUID(), body("rating").isInt({ min: 1, max: 5 }), body("reviewText").optional({ checkFalsy: true }).isString().isLength({ max: 2000 })],
+  marketplaceRouteValidators.orderReview,
   validate,
   upsertOrderReview,
 );
-marketplaceRouter.get("/orders/:id/bids", requireAuth, [param("id").isUUID()], validate, listBidsForOrder);
+marketplaceRouter.get("/orders/:id/bids", requireAuth, marketplaceRouteValidators.orderIdParam, validate, listBidsForOrder);
 marketplaceRouter.post(
   "/orders/:id/bids",
   requireAuth,
   writeLimiter,
-  [param("id").isUUID(), body("amountCents").isInt({ min: 1 }), body("mode").isIn(["walk", "run", "bike"]), body("etaMinutes").optional().isInt({ min: 1 })],
+  marketplaceRouteValidators.createBid,
   validate,
   createBid,
 );
-marketplaceRouter.post("/orders/:id/bids/:bidId/accept", requireAuth, writeLimiter, [param("id").isUUID(), param("bidId").isUUID()], validate, acceptBid);
+marketplaceRouter.post("/orders/:id/bids/:bidId/accept", requireAuth, writeLimiter, marketplaceRouteValidators.acceptBid, validate, acceptBid);
 
 marketplaceRouter.get("/delivery/open", requireAuth, listOpenDeliveryOrders);
 marketplaceRouter.get("/delivery/my-bids", requireAuth, listMyBids);
 marketplaceRouter.get("/me/courier-modes", requireAuth, getCourierModes);
-marketplaceRouter.patch("/me/courier-modes", requireAuth, writeLimiter, [body("modes").isArray()], validate, patchCourierModes);
+marketplaceRouter.patch("/me/courier-modes", requireAuth, writeLimiter, marketplaceRouteValidators.patchCourierModes, validate, patchCourierModes);
 
 marketplaceRouter.get("/me/order-attention", requireAuth, getMeOrderAttention);
 marketplaceRouter.put("/me/order-attention", requireAuth, writeLimiter, putMeOrderAttention);
@@ -162,10 +157,10 @@ marketplaceRouter.post(
   "/me/expenses",
   requireAuth,
   writeLimiter,
-  [body("amountCents").isInt({ min: 0 }), body("category").optional().isString(), body("note").optional().isString(), body("occurredOn").optional().isString().trim()],
+  marketplaceRouteValidators.createExpense,
   validate,
   createExpense,
 );
-marketplaceRouter.delete("/me/expenses/:id", requireAuth, writeLimiter, [param("id").isUUID()], validate, deleteExpense);
+marketplaceRouter.delete("/me/expenses/:id", requireAuth, writeLimiter, marketplaceRouteValidators.expenseIdParam, validate, deleteExpense);
 
 export { marketplaceRouter };

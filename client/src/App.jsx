@@ -9,7 +9,7 @@ import {
   isSameCommunityLocale,
   levenshteinDistance,
 } from "./lib/communityNameSimilarity.js";
-import { formatBrowseLabel, getVerticalById, VERTICALS } from "./categoryNav.js";
+import { formatBrowseLabel, getListingCategoryShortLabel, getVerticalById, VERTICALS } from "./categoryNav.js";
 import { gradientForId, initialsFromName } from "./communityUi.js";
 import { LoggedInHeader } from "./components/LoggedInHeader.jsx";
 import {
@@ -22,6 +22,9 @@ import {
   LazySellerBuyerFeedbackList,
 } from "./appCodeSplit.jsx";
 import { ImagetoolsPicture } from "./components/media/ImagetoolsPicture.jsx";
+import { StableMediaImage, StableAvatar } from "./components/media/StableMediaImage.jsx";
+import { ProductListingMedia } from "./components/media/ProductListingMedia.jsx";
+import { enrichListingSnapshotForOrderCard, resolveListingCoverImageUrl } from "./lib/listingImageUrl.js";
 import { formatCents } from "./marketplace/money.js";
 import { SELLER_TABS, VIEWS } from "./views.js";
 import {
@@ -40,7 +43,6 @@ import {
   getDisplayNameFromUser,
   getProfileCardDisplayNameFromUser,
   PROFILE_GENDER_OPTIONS,
-  formatBirthdayDisplay,
   computeAgeFromBirthday,
 } from "./lib/userProfileFormat.js";
 import {
@@ -96,13 +98,21 @@ import {
   LinkMartLogo,
 } from "./components/landing/LandingMarketing.jsx";
 import { ScreenLoading, ScreenEmpty, ScreenError } from "./components/ui/ScreenState.jsx";
+import { BrowseGridSkeleton, SellerListingsSkeletonGrid } from "./components/marketplace/MobileBrowseSkeleton.jsx";
 import { Button } from "./components/ui/Button.jsx";
 import { MobileFormActions } from "./components/ui/MobileFormActions.jsx";
 import { validateConfirmPassword, validateEmail, validatePasswordClient } from "./lib/formValidation.js";
 import { MobileAppShell } from "./layouts/MobileAppShell.jsx";
 import { useBodyScrollLock } from "./hooks/useBodyScrollLock.js";
 import { useMobileViewport } from "./hooks/useMobileViewport.js";
-import { useCommunityShopPullToRefresh } from "./hooks/useCommunityShopPullToRefresh.js";
+import { useMobilePullToRefresh } from "./hooks/useMobilePullToRefresh.js";
+import {
+  communityBrowseGridClass,
+  favoritesGridClass,
+  sellerListingsGridClass,
+  commerceFlowLineItemsClass,
+  lmBrowseViewShellClass,
+} from "./lib/lmViewLayouts.js";
 
 /** Best-effort recency for ordering “unseen” pending rows (API field names vary). */
 function orderRowSortMs(o) {
@@ -194,14 +204,35 @@ const SELLER_ORDERS_POLL_MS = 28_000;
 const ORDERS_REALTIME_DEBOUNCE_MS = 200;
 /** Coalesce bursty chat events for immediate but efficient conversation updates. */
 const CHAT_REALTIME_DEBOUNCE_MS = 220;
-const LISTING_OPTION_NAME_SUGGESTIONS = ["Condition", "Size", "Color", "Material"];
+/** Preset variant types (first and second group use the same list; Custom allows free text). */
+const LISTING_VARIANT_TYPES = [
+  "Size",
+  "Color",
+  "Flavor",
+  "Material",
+  "Style",
+  "Weight",
+  "Volume",
+  "Pack size",
+  "Custom",
+];
+const LISTING_VARIANT_SELECT_CUSTOM = "__custom__";
 const LISTING_OPTION_VALUE_SUGGESTIONS = {
-  condition: ["Brand New", "Like New", "Used - Good", "Used - Fair"],
-  size: ["XS", "S", "M", "L", "XL"],
-  color: ["Black", "White", "Blue", "Red", "Gray"],
+  size: ["Small", "Medium", "Large"],
+  color: ["Red", "Blue", "Black"],
+  flavor: ["Vanilla", "Chocolate"],
   material: ["Cotton", "Wood", "Metal", "Plastic"],
+  style: ["Classic", "Modern", "Sport"],
+  weight: ["250g", "500g", "1kg"],
+  volume: ["250ml", "500ml", "1L"],
+  "pack size": ["Single", "3-pack", "6-pack"],
+  condition: ["Brand New", "Like New", "Used - Good", "Used - Fair"],
 };
 const LISTING_PROCESSING_TIME_PRESETS = ["1 day", "2-3 days", "5-7 days", "2 weeks"];
+/** Shortcut presets for in-stock “Ready in” (estimated ready time). */
+const LISTING_READY_IN_PRESETS = ["Same day", "2 hours", "Tomorrow", "1–2 days"];
+/** Upload form: one-tap quantity quick picks (1 / 5 / 10). */
+const LISTING_QUANTITY_PRESETS = [1, 5, 10];
 const LISTING_MAX_IMAGES = 6;
 
 function normalizeListingImageUrlKey(url) {
@@ -255,6 +286,86 @@ function getListingOptionValueSuggestions(optionName) {
   return LISTING_OPTION_VALUE_SUGGESTIONS[key] || [];
 }
 
+function listingVariantTypeSelectValue(optionName) {
+  const n = String(optionName || "").trim();
+  if (!n) return "";
+  if (LISTING_VARIANT_TYPES.includes(n)) return n;
+  return LISTING_VARIANT_SELECT_CUSTOM;
+}
+
+function filterVariantTypesExcluding(excludeTrimmed) {
+  const ex = String(excludeTrimmed || "").trim().toLowerCase();
+  if (!ex) return LISTING_VARIANT_TYPES;
+  return LISTING_VARIANT_TYPES.filter((t) => t.toLowerCase() !== ex);
+}
+
+/** On blur: normalize casing or snap typos to the closest preset (within edit distance). */
+function resolveVariantTypeOnBlur(raw, candidates) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return "";
+  const lower = trimmed.toLowerCase();
+  const exact = candidates.find((c) => c.toLowerCase() === lower);
+  if (exact) return exact;
+
+  let best = null;
+  let bestScore = Infinity;
+  for (const c of candidates) {
+    const cl = c.toLowerCase();
+    let score = levenshteinDistance(lower, cl);
+    for (const part of cl.split(/\s+/)) {
+      if (part.length) score = Math.min(score, levenshteinDistance(lower, part));
+    }
+    if (cl.startsWith(lower) && lower.length > 0) {
+      score = Math.min(score, 0.02 + (cl.length - lower.length) * 0.001);
+    }
+    if (score < bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+  if (best != null && bestScore <= 3) return best;
+  return trimmed;
+}
+
+/** Single nearest preset for inline hint; null if empty, exact match, or no close match. */
+function nearestVariantTypeSuggestion(typed, candidates) {
+  const q = String(typed || "").trim();
+  if (!q) return null;
+  const ql = q.toLowerCase();
+  if (candidates.some((c) => c.toLowerCase() === ql)) return null;
+
+  let best = null;
+  let bestScore = Infinity;
+  for (const c of candidates) {
+    const cl = c.toLowerCase();
+    let score = levenshteinDistance(ql, cl);
+    for (const part of cl.split(/\s+/)) {
+      if (part.length) score = Math.min(score, levenshteinDistance(ql, part));
+    }
+    if (cl.startsWith(ql)) {
+      score = Math.min(score, 0.02 + (cl.length - ql.length) * 0.001);
+    }
+    if (score < bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+  if (best == null || bestScore > 3) return null;
+  return best;
+}
+
+function findDuplicateChoiceCaseInsensitive(parts) {
+  const seen = new Set();
+  for (const p of parts) {
+    const s = String(p || "").trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) return s;
+    seen.add(k);
+  }
+  return null;
+}
+
 function loadImageElementFromFile(file) {
   return new Promise((resolve, reject) => {
     try {
@@ -303,47 +414,11 @@ async function cropImageFileToSquareByRect(file, cropLeft = 0.1, cropTop = 0.1, 
   return new File([blob], `${baseName}-square.jpg`, { type: "image/jpeg", lastModified: Date.now() });
 }
 
-/** Responsive browse layouts: list, comfortable auto-fill grid, or compact auto-fill grid. */
-function communityBrowseGridClass(view, mobileTwoColumnBrowse = false) {
-  if (view === "list") return "space-y-3 md:space-y-4";
-  if (view === "compact") {
-    return "grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,10.25rem),1fr))] gap-2 md:gap-3";
-  }
-  /** Mobile shop browse: stable 2-column grid for readable cards at ~360–430px widths. */
-  if (mobileTwoColumnBrowse) {
-    return "grid grid-cols-2 items-stretch gap-2.5 sm:gap-3";
-  }
-  return "grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))] gap-3 md:gap-4 lg:gap-5";
-}
-
-function favoritesGridClass(view) {
-  if (view === "list") return "grid grid-cols-1 items-stretch gap-3 md:gap-4";
-  if (view === "compact") return "grid grid-cols-4 items-stretch gap-2 md:gap-3";
-  return "grid grid-cols-2 items-stretch gap-3 md:gap-4";
-}
-
-function sellerListingsGridClass(view) {
-  if (view === "list") return "mt-3 space-y-3";
-  if (view === "compact") {
-    /** Dense: tighter gaps, more tiles per row than comfortable grid. */
-    return [
-      "mt-3 grid min-w-0 items-stretch",
-      "grid-cols-1",
-      "gap-1.5 md:gap-2",
-      "md:[grid-template-columns:repeat(auto-fill,minmax(min(100%,9rem),1fr))]",
-      "md:[grid-template-columns:repeat(auto-fill,minmax(min(100%,10.25rem),1fr))]",
-      "xl:[grid-template-columns:repeat(auto-fill,minmax(min(100%,11rem),1fr))]",
-    ].join(" ");
-  }
-  /** Comfortable grid: roomier cards vs dense; multi-column from sm+. */
-  return [
-    "mt-3 grid min-w-0 items-stretch",
-    "grid-cols-1",
-    "gap-4 md:gap-5",
-    "md:[grid-template-columns:repeat(auto-fill,minmax(min(100%,10.75rem),1fr))]",
-    "lg:[grid-template-columns:repeat(auto-fill,minmax(min(100%,15.5rem),1fr))]",
-    "xl:[grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))]",
-  ].join(" ");
+/** Mobile: honor list + grid; map legacy dense (compact) to grid. Desktop compact unchanged. */
+function normalizeMobileProductBrowseView(view) {
+  if (view === "list" || view === "grid") return view;
+  if (view === "compact") return "grid";
+  return "grid";
 }
 
 function ProductViewDensityToggle({
@@ -351,24 +426,27 @@ function ProductViewDensityToggle({
   onChange,
   /** When false (e.g. mobile), Dense is hidden; compact preference maps to Grid for display. */
   allowCompact = true,
+  /** Minimal: low-contrast chrome for phones (icon-first; active uses teal ring). */
+  variant = "default",
   groupAriaLabel = "Product layout",
   gridTitle = "Grid — columns fit your screen (comfortable cards)",
   compactTitle = "Compact — more tiles per row, shorter cards",
 }) {
   const displayValue = !allowCompact && value === "compact" ? "grid" : value;
-  const btn = (isActive) =>
-    `inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md px-2 py-1.5 text-xs font-semibold transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-1 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-900 md:min-h-0 md:min-w-0 md:gap-1.5 md:px-2.5 ${
-      isActive
-        ? "bg-brand-soft text-brand-primary shadow-none dark:bg-slate-800 dark:text-slate-100"
-        : "text-neutral-600 hover:bg-neutral-100/90 dark:text-slate-400 dark:hover:bg-slate-800/80"
-    }`;
+  const isMinimal = variant === "minimal";
+  const wrapClass = isMinimal ? "lm-view-toggle lm-view-toggle--minimal" : "lm-view-toggle lm-view-toggle--default";
+  const btn = (isActive) => {
+    const base = "lm-view-toggle-button lm-btn-segment";
+    if (isActive) {
+      if (isMinimal) return `${base} lm-view-toggle-button-active lm-btn-segment-active-muted`;
+      return `${base} lm-view-toggle-button-active lm-btn-segment-active`;
+    }
+    return isMinimal ? `${base} lm-btn-segment-idle-minimal` : `${base} lm-btn-segment-idle`;
+  };
+  const labelClass = isMinimal ? "sr-only" : "hidden pl-1 md:inline";
   const iconCls = "h-4 w-4 shrink-0";
   return (
-    <div
-      className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-lg bg-neutral-100/40 p-0.5 dark:bg-slate-800/50 md:rounded-xl md:border md:border-neutral-200/85 md:bg-white md:p-1 md:shadow-sm dark:md:border-slate-600 dark:md:bg-slate-900"
-      role="group"
-      aria-label={groupAriaLabel}
-    >
+    <div className={wrapClass} role="group" aria-label={groupAriaLabel}>
       <button
         type="button"
         className={btn(displayValue === "list")}
@@ -379,7 +457,7 @@ function ProductViewDensityToggle({
         <svg className={iconCls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
           <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />
         </svg>
-        <span className="hidden pl-1 md:inline">List</span>
+        <span className={labelClass}>List</span>
       </button>
       <button
         type="button"
@@ -394,7 +472,7 @@ function ProductViewDensityToggle({
           <rect x="3" y="14" width="7" height="7" rx="1" />
           <rect x="14" y="14" width="7" height="7" rx="1" />
         </svg>
-        <span className="hidden pl-1 md:inline">Grid</span>
+        <span className={labelClass}>Grid</span>
       </button>
       {allowCompact ? (
         <button
@@ -549,38 +627,6 @@ function readCommerceFlowFromStorage(primaryKey) {
   return "list";
 }
 
-/**
- * Line items inside one seller card (Add to cart, My purchases, Sales inbox).
- * List: stacked rows. Grid: 2 columns from sm+. Dense: 3 columns from lg+ (same as buying/selling).
- */
-function commerceFlowLineItemsClass(view, ctx = {}) {
-  const variant = ctx.variant ?? "cart";
-
-  if (view === "list") {
-    /** Order rows use bordered cards + gap like grid; cart list keeps slim `divide-y` rows. */
-    if (variant === "orders") return "flex flex-col gap-2 px-1 md:gap-2.5 md:px-1.5";
-    return "divide-y divide-neutral-200/80 px-1 dark:divide-slate-700/80 md:px-1.5";
-  }
-
-  if (variant === "orders" || variant === "cart") {
-    if (view === "compact") {
-      return [
-        "grid items-stretch gap-2 md:gap-2.5",
-        "grid-cols-1",
-        "md:grid-cols-2",
-        "lg:grid-cols-3",
-      ].join(" ");
-    }
-    return [
-      "grid items-stretch gap-2.5 md:gap-3",
-      "grid-cols-1",
-      "md:grid-cols-2",
-    ].join(" ");
-  }
-
-  return "grid items-stretch gap-2.5 md:gap-3 grid-cols-1 md:grid-cols-2";
-}
-
 function App() {
   const [authMode, setAuthMode] = useState("login");
   const [authPanelVisible, setAuthPanelVisible] = useState(false);
@@ -666,13 +712,61 @@ function App() {
 
   const [activeView, setActiveView] = useState(() => {
     const savedView = readActiveView();
-    if (savedView && Object.values(VIEWS).includes(savedView)) return savedView;
+    if (savedView && Object.values(VIEWS).includes(savedView)) {
+      if (savedView === VIEWS.SELLER) return VIEWS.PROFILE;
+      return savedView;
+    }
     return VIEWS.BROWSE;
   });
   const isBrowseLikeView = useMemo(
     () => activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP || activeView === VIEWS.FAVORITES,
     [activeView],
   );
+  const secondaryMobileNavOrder = useMemo(
+    () => [VIEWS.BROWSE, VIEWS.CART, VIEWS.MY_PURCHASES, VIEWS.ORDERS, VIEWS.NOTIFICATIONS, VIEWS.PROFILE],
+    [],
+  );
+  const secondarySwipeNavView = useMemo(() => {
+    if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(activeView)) return VIEWS.BROWSE;
+    return activeView;
+  }, [activeView]);
+  const previousActiveViewRef = useRef(activeView);
+  const secondarySwipeRef = useRef({
+    x: 0,
+    y: 0,
+    dx: 0,
+    dy: 0,
+    t: 0,
+    width: 0,
+    tracking: false,
+    horizontal: false,
+    baseView: VIEWS.BROWSE,
+  });
+  const [mobileSecondarySlideClass, setMobileSecondarySlideClass] = useState("");
+  const [mobileSecondaryDragX, setMobileSecondaryDragX] = useState(0);
+  const [mobileSecondaryDragging, setMobileSecondaryDragging] = useState(false);
+  useEffect(() => {
+    const prev = previousActiveViewRef.current;
+    const next = secondarySwipeNavView;
+    previousActiveViewRef.current = next;
+    const isMobileNow =
+      typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)").matches : false;
+    if (!isMobileNow) {
+      setMobileSecondarySlideClass("");
+      return undefined;
+    }
+    const prevIndex = secondaryMobileNavOrder.indexOf(prev);
+    const nextIndex = secondaryMobileNavOrder.indexOf(next);
+    if (prevIndex === -1 || nextIndex === -1 || prevIndex === nextIndex) return undefined;
+    setMobileSecondarySlideClass(nextIndex > prevIndex ? "lm-view-slide-left" : "lm-view-slide-right");
+    const timerId = window.setTimeout(() => setMobileSecondarySlideClass(""), 240);
+    return () => window.clearTimeout(timerId);
+  }, [secondarySwipeNavView, secondaryMobileNavOrder]);
+
+  useEffect(() => {
+    const saved = readActiveView();
+    if (saved === VIEWS.SELLER) setSellerTab(SELLER_TABS.PRODUCTS);
+  }, []);
   /** @type {[string | null, import('react').Dispatch<import('react').SetStateAction<string | null>>]} */
   const [browseVerticalId, setBrowseVerticalId] = useState(null);
   const [browseSubId, setBrowseSubId] = useState(null);
@@ -733,14 +827,6 @@ function App() {
   /** Order ids the user has marked “seen” per status tab (localStorage per user). Unseen rows drive badges + highlights. */
   const [buyerOrderDismissedIdsByTab, setBuyerOrderDismissedIdsByTab] = useState(() => emptyOrderAttentionByTab());
   const [sellerOrderDismissedIdsByTab, setSellerOrderDismissedIdsByTab] = useState(() => emptyOrderAttentionByTab());
-  /** True after the buyer opens these Purchases queues; leaving Purchases can dismiss only those tabs. */
-  const buyerCancelledTabVisitedThisPurchasesSessionRef = useRef(false);
-  const buyerProcessingTabVisitedThisPurchasesSessionRef = useRef(false);
-  const buyerCompletedTabVisitedThisPurchasesSessionRef = useRef(false);
-  /** Same for seller Orders. */
-  const sellerCancelledTabVisitedThisOrdersSessionRef = useRef(false);
-  const sellerProcessingTabVisitedThisOrdersSessionRef = useRef(false);
-  const sellerCompletedTabVisitedThisOrdersSessionRef = useRef(false);
   const ordersStatusTabDismissContextRef = useRef({ key: "", tab: "pending" });
 
   useEffect(() => {
@@ -874,7 +960,7 @@ function App() {
   });
   const listingCropViewportRef = useRef(null);
   const [listingCropApplyError, setListingCropApplyError] = useState("");
-  /** Upload Product: tap thumbnail → actions (crop, set as cover, replace cover). */
+  /** Upload: tap thumbnail → actions (crop, set as cover, replace cover). */
   const [listingPhotoActionModal, setListingPhotoActionModal] = useState({ open: false, variant: "cover", extraId: "" });
   const [editingListingId, setEditingListingId] = useState(null);
   const [listingImageDragActive, setListingImageDragActive] = useState(false);
@@ -884,6 +970,8 @@ function App() {
   const [listingOptionValueDraftB, setListingOptionValueDraftB] = useState("");
   const [listingSecondOptionOpen, setListingSecondOptionOpen] = useState(false);
   const [listingSaving, setListingSaving] = useState(false);
+  /** Inline banner when publish/save listing fails (toast still fires). */
+  const [listingPublishError, setListingPublishError] = useState("");
   const [listingFieldErrors, setListingFieldErrors] = useState({});
   /** Stacked marketplace toasts (e.g. multiple “Order placed” while prior toasts are still visible). */
   const [marketplaceToasts, setMarketplaceToasts] = useState([]);
@@ -1019,7 +1107,7 @@ function App() {
       postalCode: String(p.addressPostalCode || "").trim(),
     };
   }, [user?.address]);
-  /** Marketplace “Buy now” requires contact + delivery/pickup details (lighter than seller upload checklist). */
+  /** Marketplace “Buy now” requires core contact + location details (lighter than seller upload checklist). */
   const buyNowFromProfile = useMemo(() => {
     const parsedAddress = splitAddressParts(user?.address);
     const checks = [
@@ -1027,7 +1115,6 @@ function App() {
       [toPhilippinesLocalPhone10(user?.phone).length === 10, "Phone number"],
       [String(user?.firstName || "").trim().length >= 2, "First name"],
       [String(user?.lastName || "").trim().length >= 2, "Last name"],
-      [String(parsedAddress.addressHouseStreet || "").trim().length > 0, "House number & street"],
       [String(parsedAddress.addressBarangay || "").trim().length > 0, "Barangay"],
       [String(parsedAddress.addressCity || "").trim().length > 0, "City or Municipality"],
       [String(parsedAddress.addressProvince || "").trim().length > 0, "Province"],
@@ -1041,6 +1128,9 @@ function App() {
     if (!buyNowFromProfile.ready) return "Complete your profile to buy.";
     return "";
   }, [token, buyNowFromProfile]);
+  useEffect(() => {
+    if (buyNowFromProfile.ready) setProfileFinishBannerDismissed(false);
+  }, [buyNowFromProfile.ready]);
   /** Community row whose name matches profile community and city/province when set. */
   const listingCommunityFromProfile = useMemo(() => {
     const label = String(profileCommunityName || "").trim();
@@ -1122,8 +1212,6 @@ function App() {
   const prevShopCommunityIdRef = useRef(null);
   /** Avoid clearing listings + duplicate fetch when only `communities` hydration updates `activeCommunity`. */
   const communityShopListingsQueryKeyRef = useRef(null);
-  /** Throttle pull-to-refresh triggers. */
-  const communityShopPtrLastTriggerRef = useRef(0);
   /** Clear orders when `ordersRole` changes; keep rows when re-entering Orders with the same role. */
   const ordersDataQueryKeyRef = useRef(null);
   const communityListingsSyncedRef = useRef(null);
@@ -1133,6 +1221,7 @@ function App() {
   const [quickAddModalOpen, setQuickAddModalOpen] = useState(false);
   const [quickAddListing, setQuickAddListing] = useState(null);
   const [quickAddImagePreviewOpen, setQuickAddImagePreviewOpen] = useState(false);
+  const [quickAddLightboxImageFailed, setQuickAddLightboxImageFailed] = useState(false);
   const [quickActionType, setQuickActionType] = useState("cart");
   const [quickAddQuantity, setQuickAddQuantity] = useState("1");
   const [quickAddComment, setQuickAddComment] = useState("");
@@ -1227,7 +1316,7 @@ function App() {
     }
   }, [recentlyAddedCartListingIds]);
 
-  /** Dismiss queues when leaving Purchases / Orders or switching tabs (localStorage-backed). */
+  /** Dismiss a tab's unseen queue only after user leaves that specific tab. */
   const ordersNavPrevRef = useRef({ view: activeView, role: ordersRole });
   useEffect(() => {
     const prev = ordersNavPrevRef.current;
@@ -1235,75 +1324,34 @@ function App() {
     const sellerList = sellerOrdersForBadges ?? [];
     const leftMyPurchases = prev.view === VIEWS.MY_PURCHASES && activeView !== VIEWS.MY_PURCHASES;
     const leftOrders = prev.view === VIEWS.ORDERS && activeView !== VIEWS.ORDERS;
-    if (leftMyPurchases) {
-      const dismissCancelled = buyerCancelledTabVisitedThisPurchasesSessionRef.current;
-      const dismissProcessing = buyerProcessingTabVisitedThisPurchasesSessionRef.current;
-      const dismissCompleted = buyerCompletedTabVisitedThisPurchasesSessionRef.current;
-      buyerCancelledTabVisitedThisPurchasesSessionRef.current = false;
-      buyerProcessingTabVisitedThisPurchasesSessionRef.current = false;
-      buyerCompletedTabVisitedThisPurchasesSessionRef.current = false;
-      dismissBuyerOrdersForTab("pending", buyerList);
-      if (dismissProcessing) dismissBuyerOrdersForTab("processing", buyerList);
-      if (dismissCompleted) dismissBuyerOrdersForTab("completed", buyerList);
-      if (dismissCancelled) dismissBuyerOrdersForTab("cancelled", buyerList);
+
+    const prevKey =
+      prev.role === "buyer" && prev.view === VIEWS.MY_PURCHASES
+        ? "buyer-mp"
+        : prev.role === "seller" && prev.view === VIEWS.ORDERS
+          ? "seller-ord"
+          : "other";
+    const currentKey =
+      ordersRole === "buyer" && activeView === VIEWS.MY_PURCHASES
+        ? "buyer-mp"
+        : ordersRole === "seller" && activeView === VIEWS.ORDERS
+          ? "seller-ord"
+          : "other";
+
+    const prevTab = ordersStatusTabDismissContextRef.current.tab;
+    const currentTab = ordersStatusTab;
+    const leftBuyerTab = prevKey === "buyer-mp" && (leftMyPurchases || currentKey !== "buyer-mp" || prevTab !== currentTab);
+    const leftSellerTab = prevKey === "seller-ord" && (leftOrders || currentKey !== "seller-ord" || prevTab !== currentTab);
+
+    if (leftBuyerTab && RECENT_ORDER_TAB_KEYS.includes(prevTab)) {
+      dismissBuyerOrdersForTab(prevTab, buyerList);
     }
-    if (leftOrders) {
-      if (prev.role === "seller") {
-        const dismissCancelled = sellerCancelledTabVisitedThisOrdersSessionRef.current;
-        const dismissProcessing = sellerProcessingTabVisitedThisOrdersSessionRef.current;
-        const dismissCompleted = sellerCompletedTabVisitedThisOrdersSessionRef.current;
-        sellerCancelledTabVisitedThisOrdersSessionRef.current = false;
-        sellerProcessingTabVisitedThisOrdersSessionRef.current = false;
-        sellerCompletedTabVisitedThisOrdersSessionRef.current = false;
-        dismissSellerOrdersForTab("pending", sellerList);
-        if (dismissProcessing) dismissSellerOrdersForTab("processing", sellerList);
-        if (dismissCompleted) dismissSellerOrdersForTab("completed", sellerList);
-        if (dismissCancelled) dismissSellerOrdersForTab("cancelled", sellerList);
-      }
-      if (prev.role === "buyer") {
-        setBuyerOrderDismissedIdsByTab((prevTabs) => {
-          const next = { ...prevTabs };
-          for (const tab of RECENT_ORDER_TAB_KEYS) {
-            const ids = buyerList
-              .filter((o) => orderMatchesOrdersStatusTab(o.status, tab))
-              .map((o) => String(o.id || ""))
-              .filter(Boolean);
-            const set = new Set(next[tab] ?? []);
-            ids.forEach((id) => set.add(id));
-            next[tab] = Array.from(set);
-          }
-          return next;
-        });
-      }
+    if (leftSellerTab && RECENT_ORDER_TAB_KEYS.includes(prevTab)) {
+      dismissSellerOrdersForTab(prevTab, sellerList);
     }
-    const enteredMyPurchases = prev.view !== VIEWS.MY_PURCHASES && activeView === VIEWS.MY_PURCHASES;
-    if (enteredMyPurchases) {
-      buyerCancelledTabVisitedThisPurchasesSessionRef.current = false;
-      buyerProcessingTabVisitedThisPurchasesSessionRef.current = false;
-      buyerCompletedTabVisitedThisPurchasesSessionRef.current = false;
-    }
-    const enteredSellerOrders = prev.view !== VIEWS.ORDERS && activeView === VIEWS.ORDERS && ordersRole === "seller";
-    if (enteredSellerOrders) {
-      sellerCancelledTabVisitedThisOrdersSessionRef.current = false;
-      sellerProcessingTabVisitedThisOrdersSessionRef.current = false;
-      sellerCompletedTabVisitedThisOrdersSessionRef.current = false;
-    }
+
     ordersNavPrevRef.current = { view: activeView, role: ordersRole };
   }, [activeView, ordersRole, buyerOrdersForBadges, sellerOrdersForBadges, dismissBuyerOrdersForTab, dismissSellerOrdersForTab]);
-
-  useEffect(() => {
-    if (activeView !== VIEWS.MY_PURCHASES || ordersRole !== "buyer") return;
-    if (ordersStatusTab === "cancelled") buyerCancelledTabVisitedThisPurchasesSessionRef.current = true;
-    if (ordersStatusTab === "processing") buyerProcessingTabVisitedThisPurchasesSessionRef.current = true;
-    if (ordersStatusTab === "completed") buyerCompletedTabVisitedThisPurchasesSessionRef.current = true;
-  }, [activeView, ordersRole, ordersStatusTab]);
-
-  useEffect(() => {
-    if (activeView !== VIEWS.ORDERS || ordersRole !== "seller") return;
-    if (ordersStatusTab === "cancelled") sellerCancelledTabVisitedThisOrdersSessionRef.current = true;
-    if (ordersStatusTab === "processing") sellerProcessingTabVisitedThisOrdersSessionRef.current = true;
-    if (ordersStatusTab === "completed") sellerCompletedTabVisitedThisOrdersSessionRef.current = true;
-  }, [activeView, ordersRole, ordersStatusTab]);
 
   useEffect(() => {
     const key =
@@ -1314,23 +1362,8 @@ function App() {
           : ordersRole === "seller" && activeView === VIEWS.ORDERS
             ? "seller-ord"
             : "other";
-
-    const ctx = ordersStatusTabDismissContextRef.current;
-    const leaving = ctx.tab;
-    const entering = ordersStatusTab;
-    const leavingIsTab = RECENT_ORDER_TAB_KEYS.includes(leaving);
-    if (key === ctx.key && key !== "other" && leaving !== entering && RECENT_ORDER_TAB_KEYS.includes(entering) && leavingIsTab) {
-      const buyerList = buyerOrdersForBadges ?? [];
-      const sellerList = sellerOrdersForBadges ?? [];
-      if (key.startsWith("buyer")) {
-        dismissBuyerOrdersForTab(leaving, buyerList);
-      } else if (key === "seller-ord") {
-        dismissSellerOrdersForTab(leaving, sellerList);
-        dismissSellerOrdersForTab(entering, sellerList);
-      }
-    }
     ordersStatusTabDismissContextRef.current = { key, tab: ordersStatusTab };
-  }, [ordersStatusTab, activeView, ordersRole, buyerOrdersForBadges, sellerOrdersForBadges, dismissBuyerOrdersForTab, dismissSellerOrdersForTab]);
+  }, [ordersStatusTab, activeView, ordersRole]);
 
   useEffect(() => {
     if (!token) {
@@ -1349,7 +1382,7 @@ function App() {
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
   const [sellerProductsView, setSellerProductsView] = useState("list");
   const [communityProductsView, setCommunityProductsView] = useState("grid");
-  const [favoriteProductsView, setFavoriteProductsView] = useState("list");
+  const [favoriteProductsView, setFavoriteProductsView] = useState("grid");
   /** Migrate legacy layout keys (2 / 4 / 8) to list | grid | compact. */
   useEffect(() => {
     setCommunityProductsView((v) => {
@@ -1367,7 +1400,7 @@ function App() {
       if (v === "list" || v === "grid" || v === "compact") return v;
       if (v === "8") return "compact";
       if (v === "2" || v === "4") return "grid";
-      return "list";
+      return "grid";
     });
   }, []);
   const [commerceFlowViewBuyer, setCommerceFlowViewBuyer] = useState(() => readCommerceFlowFromStorage(COMMERCE_FLOW_BUYER_STORAGE_KEY));
@@ -1386,8 +1419,39 @@ function App() {
       /* ignore */
     }
   }, [commerceFlowViewSeller]);
-  /** Inline notice by “Upload product” on Profile (not the global marketplace banner). */
+  /** Inline notice by Upload on Profile (not the global marketplace banner). */
   const [profileUploadProductNotice, setProfileUploadProductNotice] = useState("");
+
+  const mergeIncomingUserWithMembership = useCallback((incomingUser, prevUser) => {
+    const incoming = incomingUser && typeof incomingUser === "object" ? incomingUser : {};
+    const prev = prevUser && typeof prevUser === "object" ? prevUser : {};
+    const merged = { ...prev, ...incoming };
+    const incomingId = String(incoming?.id || prev?.id || "").trim();
+    const incomingCommunity = String(incoming?.community || "").trim();
+    const prevCommunity = String(prev?.community || "").trim();
+    const incomingCommunityId = String(incoming?.communityId || "").trim();
+    const preservedJoined =
+      incoming.joinedAt || incoming.createdAt || incoming.created_at || prev.joinedAt || prev.createdAt || prev.created_at || "";
+    merged.joinedAt = preservedJoined;
+    if (typeof window !== "undefined" && incomingId) {
+      const membershipKey = `${COMMUNITY_MEMBERSHIP_KEY_PREFIX}${incomingId}`;
+      const savedCommunity = String(localStorage.getItem(membershipKey) || "").trim();
+      const savedJoinedId = readJoinedShopCommunityId(incomingId);
+      if (incomingCommunity) {
+        localStorage.setItem(membershipKey, incomingCommunity);
+      } else if (savedCommunity) {
+        merged.community = savedCommunity;
+      } else if (savedJoinedId && prevCommunity) {
+        // Keep local joined state stable if backend payload is stale/blank.
+        merged.community = prevCommunity;
+      }
+      if (incomingCommunityId) {
+        writeJoinedShopCommunityId(incomingId, incomingCommunityId);
+        setJoinedShopCommunityId((prevJoined) => (prevJoined === incomingCommunityId ? prevJoined : incomingCommunityId));
+      }
+    }
+    return merged;
+  }, []);
 
   const applyJoinedCommunity = useCallback((communityName) => {
     const normalized = String(communityName || "").trim();
@@ -1679,6 +1743,8 @@ function App() {
   const [profileError, setProfileError] = useState("");
   const [profileFieldErrors, setProfileFieldErrors] = useState({});
   const [profileSocialExpanded, setProfileSocialExpanded] = useState(false);
+  /** Hide “Finish your profile” strip until next session / profile becomes complete. */
+  const [profileFinishBannerDismissed, setProfileFinishBannerDismissed] = useState(false);
   const [phCityMunicipalityOptions, setPhCityMunicipalityOptions] = useState([]);
   const [phCityPostalOptions, setPhCityPostalOptions] = useState([]);
   const [phBarangayOptions, setPhBarangayOptions] = useState([]);
@@ -1895,7 +1961,24 @@ function App() {
   const profileCitySuggestBlurTimerRef = useRef(null);
   const [profileBarangaySuggestOpen, setProfileBarangaySuggestOpen] = useState(false);
   const profileBarangaySuggestBlurTimerRef = useRef(null);
-  const profileBirthdayInputRef = useRef(null);
+  const [profileAvatarCropEditor, setProfileAvatarCropEditor] = useState({
+    open: false,
+    sourceFile: null,
+    sourcePreviewUrl: "",
+    sourcePreviewOwned: false,
+    sourceWidth: 1,
+    sourceHeight: 1,
+    cropLeft: 0.1,
+    cropTop: 0.1,
+    cropSize: 1,
+    dragging: false,
+    dragStartX: 0,
+    dragStartY: 0,
+    dragStartLeft: 0.1,
+    dragStartTop: 0.1,
+  });
+  const profileAvatarCropViewportRef = useRef(null);
+  const [profileAvatarCropApplyError, setProfileAvatarCropApplyError] = useState("");
   const todayIsoDate = useMemo(() => {
     const now = new Date();
     const y = now.getFullYear();
@@ -2068,12 +2151,7 @@ function App() {
     (async () => {
       try {
         const data = await apiRequest("/auth/me", { token });
-        setUser((prev) => {
-          const incoming = data.user || {};
-          const preservedJoined =
-            incoming.joinedAt || incoming.createdAt || incoming.created_at || prev?.joinedAt || prev?.createdAt || prev?.created_at || "";
-          return { ...(prev || {}), ...incoming, joinedAt: preservedJoined };
-        });
+        setUser((prev) => mergeIncomingUserWithMembership(data.user || {}, prev));
         const joined = data?.user?.joinedAt || data?.user?.createdAt || data?.user?.created_at || "";
         if (joined) setProfileJoinedAt(joined);
         setProfileJoinedAtResolved(true);
@@ -2158,12 +2236,7 @@ function App() {
       try {
         const data = await apiRequest("/auth/me", { token });
         if (!cancelled) {
-          setUser((prev) => {
-            const incoming = data.user || {};
-            const preservedJoined =
-              incoming.joinedAt || incoming.createdAt || incoming.created_at || prev?.joinedAt || prev?.createdAt || prev?.created_at || "";
-            return { ...(prev || {}), ...incoming, joinedAt: preservedJoined };
-          });
+          setUser((prev) => mergeIncomingUserWithMembership(data.user || {}, prev));
           const joined = data?.user?.joinedAt || data?.user?.createdAt || data?.user?.created_at || "";
           if (joined) setProfileJoinedAt(joined);
           setProfileJoinedAtResolved(true);
@@ -2191,11 +2264,7 @@ function App() {
         if (cancelled) return;
         const incoming = data?.user || null;
         if (!incoming) return;
-        setUser((prev) => {
-          const preservedJoined =
-            incoming.joinedAt || incoming.createdAt || incoming.created_at || prev?.joinedAt || prev?.createdAt || prev?.created_at || "";
-          return { ...(prev || {}), ...incoming, joinedAt: preservedJoined };
-        });
+        setUser((prev) => mergeIncomingUserWithMembership(incoming, prev));
       } catch (error) {
         if (cancelled) return;
         if (isUnauthorizedApiError(error)) {
@@ -2492,7 +2561,7 @@ function App() {
       if (!form.acceptedTerms) {
         setAuthInlineErrors((prev) => ({
           ...prev,
-          terms: "Accept the Terms of Use and Privacy Policy to continue.",
+          terms: "Check the box to accept the Terms of Use and Privacy Policy.",
         }));
         return;
       }
@@ -2646,7 +2715,7 @@ function App() {
   const goCreateSell = useCallback(() => {
     setMobileCommunityFiltersOpen(false);
     setSellerTab(SELLER_TABS.PRODUCTS);
-    setActiveView(VIEWS.SELLER);
+    setActiveView(VIEWS.PROFILE);
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
         window.scrollTo(0, 0);
@@ -2663,6 +2732,51 @@ function App() {
         window.scrollTo(0, 0);
       });
     }
+  }, []);
+  const goNotifications = useCallback(() => {
+    setActiveView(VIEWS.NOTIFICATIONS);
+  }, []);
+  const goSecondaryMobileNavView = useCallback(
+    (view) => {
+      switch (view) {
+        case VIEWS.BROWSE:
+          goBrowse();
+          break;
+        case VIEWS.CART:
+          goCart();
+          break;
+        case VIEWS.MY_PURCHASES:
+          goMyPurchases();
+          break;
+        case VIEWS.ORDERS:
+          goOrders();
+          break;
+        case VIEWS.MESSAGES:
+          goInbox();
+          break;
+        case VIEWS.NOTIFICATIONS:
+          goNotifications();
+          break;
+        case VIEWS.PROFILE:
+          goOwnProfile();
+          break;
+        default:
+          setActiveView(view);
+          break;
+      }
+    },
+    [goBrowse, goCart, goInbox, goMyPurchases, goNotifications, goOrders, goOwnProfile],
+  );
+
+  const scrollToListingSection = useCallback((sectionId, { openAdvanced = false } = {}) => {
+    if (openAdvanced) setListingAdvancedOpen(true);
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      const el = document.getElementById(sectionId);
+      if (!el) return;
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+      el.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+    });
   }, []);
 
   const usersById = useMemo(() => {
@@ -2787,10 +2901,112 @@ function App() {
 
   const { isMobile: isMobileViewport } = useMobileViewport();
   useBodyScrollLock(activeView === VIEWS.MESSAGES && messagesMobilePane === "thread" && isMobileViewport);
+  useEffect(() => {
+    if (!isMobileViewport) return undefined;
+    if (!secondaryMobileNavOrder.includes(secondarySwipeNavView)) return undefined;
+    const main = document.getElementById("main-content");
+    if (!main) return undefined;
 
-  /** Mobile browse: always 2-col grid; no dense. Cart/orders/seller: list/grid only — map dense → grid. */
-  const effectiveCommunityBrowseView = isMobileViewport ? "grid" : communityProductsView;
-  const effectiveFavoriteBrowseView = isMobileViewport ? "grid" : favoriteProductsView;
+    const onTouchStart = (e) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (t.clientX < 22) {
+        secondarySwipeRef.current = {
+          x: 0, y: 0, dx: 0, dy: 0, t: 0, width: 0, tracking: false, horizontal: false, baseView: secondarySwipeNavView,
+        };
+        return;
+      }
+      const target = e.target;
+      if (target instanceof Element && target.closest("button,a,input,textarea,select,[role='button'],[data-no-swipe-nav]")) {
+        secondarySwipeRef.current = {
+          x: 0, y: 0, dx: 0, dy: 0, t: 0, width: 0, tracking: false, horizontal: false, baseView: secondarySwipeNavView,
+        };
+        return;
+      }
+      secondarySwipeRef.current = {
+        x: t.clientX,
+        y: t.clientY,
+        dx: 0,
+        dy: 0,
+        t: Date.now(),
+        width: main.clientWidth || window.innerWidth || 360,
+        tracking: true,
+        horizontal: false,
+        baseView: secondarySwipeNavView,
+      };
+    };
+
+    const onTouchMove = (e) => {
+      if (!secondarySwipeRef.current.tracking || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const state = secondarySwipeRef.current;
+      const dx = t.clientX - state.x;
+      const dy = t.clientY - state.y;
+      state.dx = dx;
+      state.dy = dy;
+      if (!state.horizontal && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.1) {
+        state.horizontal = true;
+        setMobileSecondaryDragging(true);
+      }
+      if (!state.horizontal) return;
+      if (e.cancelable) e.preventDefault();
+      const baseIndex = secondaryMobileNavOrder.indexOf(state.baseView);
+      const index = baseIndex === -1 ? secondaryMobileNavOrder.indexOf(secondarySwipeNavView) : baseIndex;
+      const atFirst = index <= 0;
+      const atLast = index >= secondaryMobileNavOrder.length - 1;
+      const edgeResistance = (atFirst && dx > 0) || (atLast && dx < 0) ? 0.35 : 1;
+      const effectiveDx = dx * edgeResistance;
+      setMobileSecondaryDragX(effectiveDx);
+    };
+
+    const onTouchEnd = () => {
+      const { tracking, horizontal, dx, dy, t, width, baseView } = secondarySwipeRef.current;
+      secondarySwipeRef.current = {
+        x: 0, y: 0, dx: 0, dy: 0, t: 0, width: 0, tracking: false, horizontal: false, baseView: secondarySwipeNavView,
+      };
+      setMobileSecondaryDragging(false);
+      setMobileSecondaryDragX(0);
+      if (!tracking || !horizontal) return;
+      const elapsed = Math.max(1, Date.now() - Number(t || Date.now()));
+      const velocityX = dx / elapsed;
+      const index = secondaryMobileNavOrder.indexOf(baseView || secondarySwipeNavView);
+      if (index === -1) return;
+      const shouldCommitByDistance = Math.abs(dx) > Math.max(52, Number(width || 0) * 0.18) && Math.abs(dx) > Math.abs(dy) * 1.1;
+      const shouldCommitByVelocity = Math.abs(velocityX) > 0.35 && Math.abs(dx) > 18;
+      if (!shouldCommitByDistance && !shouldCommitByVelocity) return;
+      const nextIndex = (dx < 0 || velocityX < 0) ? index + 1 : index - 1;
+      if (nextIndex < 0 || nextIndex >= secondaryMobileNavOrder.length) return;
+      const nextView = secondaryMobileNavOrder[nextIndex];
+      if (nextView !== secondarySwipeNavView) goSecondaryMobileNavView(nextView);
+    };
+
+    const onTouchCancel = () => {
+      secondarySwipeRef.current = {
+        x: 0, y: 0, dx: 0, dy: 0, t: 0, width: 0, tracking: false, horizontal: false, baseView: secondarySwipeNavView,
+      };
+      setMobileSecondaryDragging(false);
+      setMobileSecondaryDragX(0);
+    };
+
+    main.addEventListener("touchstart", onTouchStart, { passive: true });
+    main.addEventListener("touchmove", onTouchMove, { passive: false });
+    main.addEventListener("touchend", onTouchEnd, { passive: true });
+    main.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    return () => {
+      main.removeEventListener("touchstart", onTouchStart);
+      main.removeEventListener("touchmove", onTouchMove);
+      main.removeEventListener("touchend", onTouchEnd);
+      main.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, [goSecondaryMobileNavView, isMobileViewport, secondaryMobileNavOrder, secondarySwipeNavView]);
+
+  /** Mobile browse: list or 2-col grid; dense hidden — map compact → grid. Cart/orders/seller: same mapping. */
+  const effectiveCommunityBrowseView = isMobileViewport
+    ? normalizeMobileProductBrowseView(communityProductsView)
+    : communityProductsView;
+  const effectiveFavoriteBrowseView = isMobileViewport
+    ? normalizeMobileProductBrowseView(favoriteProductsView)
+    : favoriteProductsView;
   const effectiveSellerProductsView =
     isMobileViewport && sellerProductsView === "compact" ? "grid" : sellerProductsView;
   const effectiveCommerceFlowViewBuyer =
@@ -2893,6 +3109,48 @@ function App() {
     () => chatThreads.reduce((sum, thread) => sum + Math.max(0, Number(thread?.unread || 0)), 0),
     [chatThreads],
   );
+  const [favoritesNavBadgeCount, setFavoritesNavBadgeCount] = useState(0);
+  const favoritesNavPrevIdsRef = useRef(new Set());
+  const favoritesNavHydratedRef = useRef(false);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setFavoritesNavBadgeCount(0);
+      favoritesNavPrevIdsRef.current = new Set();
+      favoritesNavHydratedRef.current = false;
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    const currentIds = new Set(Array.from(favoriteIds).map((id) => String(id)));
+    if (!favoritesNavHydratedRef.current) {
+      favoritesNavPrevIdsRef.current = currentIds;
+      favoritesNavHydratedRef.current = true;
+      return;
+    }
+    const prev = favoritesNavPrevIdsRef.current;
+    let changedCount = 0;
+    for (const id of currentIds) {
+      if (!prev.has(id)) changedCount += 1;
+    }
+    for (const id of prev) {
+      if (!currentIds.has(id)) changedCount += 1;
+    }
+    if (changedCount > 0) {
+      if (activeView === VIEWS.FAVORITES) {
+        setFavoritesNavBadgeCount(0);
+      } else {
+        setFavoritesNavBadgeCount((prevCount) => Math.min(99, Math.max(0, prevCount + changedCount)));
+      }
+    }
+    favoritesNavPrevIdsRef.current = currentIds;
+  }, [favoriteIds, activeView]);
+
+  useEffect(() => {
+    if (activeView === VIEWS.FAVORITES && favoritesNavBadgeCount > 0) {
+      setFavoritesNavBadgeCount(0);
+    }
+  }, [activeView, favoritesNavBadgeCount]);
 
   useEffect(() => {
     if (activeView !== VIEWS.MESSAGES || !activeChatUserId) return;
@@ -3170,10 +3428,6 @@ function App() {
   }, [orders, ordersTabBadgeIdsByTab.pending]);
 
   const listingDescriptionCount = useMemo(() => String(listingForm.description || "").length, [listingForm.description]);
-  const listingQuantityNumber = useMemo(() => {
-    const n = Number.parseInt(String(listingForm.quantity || "").trim(), 10);
-    return Number.isFinite(n) ? n : null;
-  }, [listingForm.quantity]);
   const listingRequiredCompletedCount = useMemo(() => {
     let done = 0;
     if (String(listingForm.title || "").trim()) done += 1;
@@ -3235,6 +3489,16 @@ function App() {
       setCartItems([]);
     }
   }, [token, mergeCartItemsPreservingOrder]);
+
+  const refreshCurrentUserProfile = useCallback(async () => {
+    if (!token) return;
+    const data = await apiRequest("/auth/me", { token });
+    const incoming = data?.user || {};
+    setUser((prev) => mergeIncomingUserWithMembership(incoming, prev));
+    const joined = incoming.joinedAt || incoming.createdAt || incoming.created_at || "";
+    if (joined) setProfileJoinedAt(joined);
+    setProfileJoinedAtResolved(true);
+  }, [token, mergeIncomingUserWithMembership]);
 
   const setCartLineQuantity = useCallback(
     async (listingId, rawTarget) => {
@@ -3660,13 +3924,6 @@ function App() {
     loadCommunityShopListings,
   ]);
 
-  useCommunityShopPullToRefresh({
-    enabled: Boolean(token && activeView === VIEWS.COMMUNITY_SHOP),
-    listingsBusyRef,
-    cooldownRef: communityShopPtrLastTriggerRef,
-    loadCommunityShopListings,
-  });
-
   useEffect(() => {
     if (!token || activeView !== VIEWS.FAVORITES) return undefined;
     const hadFavorites = favoritesListRef.current.length > 0;
@@ -4004,6 +4261,89 @@ function App() {
     void refreshCart();
     return undefined;
   }, [token, activeView, refreshCart]);
+
+  const refreshMobileNavigationState = useCallback(
+    async ({ skip = {} } = {}) => {
+      const tasks = [];
+      if (!skip.messages) tasks.push(refreshConversationsSnapshot());
+      if (!skip.cart) tasks.push(refreshCart());
+      if (!skip.favorites) tasks.push(refreshFavorites());
+      if (!skip.listings) tasks.push(refetchSellerListings());
+      if (!skip.sellerOrders) tasks.push(refreshSellerOrdersSnapshot(() => false));
+      if (!skip.buyerOrders) tasks.push(refreshBuyerOrdersSnapshot(() => false));
+      if (!skip.profile) tasks.push(refreshCurrentUserProfile());
+      const results = await Promise.allSettled(tasks);
+      const failed = results.find((r) => r.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+    },
+    [
+      refreshConversationsSnapshot,
+      refreshCart,
+      refreshFavorites,
+      refetchSellerListings,
+      refreshSellerOrdersSnapshot,
+      refreshBuyerOrdersSnapshot,
+      refreshCurrentUserProfile,
+    ],
+  );
+
+  const refreshMobileViewAndNavigation = useCallback(async () => {
+    if (!token) return;
+    let viewRefresh;
+    let skip = {};
+    switch (activeView) {
+      case VIEWS.BROWSE:
+      case VIEWS.COMMUNITY_SHOP:
+        viewRefresh = () => loadCommunityShopListings({ preserveExistingRows: true });
+        break;
+      case VIEWS.FAVORITES:
+        viewRefresh = () => refreshFavorites();
+        skip = { favorites: true };
+        break;
+      case VIEWS.MESSAGES:
+        viewRefresh = () => refreshConversationsSnapshot();
+        skip = { messages: true };
+        break;
+      case VIEWS.NOTIFICATIONS:
+        viewRefresh = () => Promise.resolve();
+        break;
+      case VIEWS.PROFILE:
+        viewRefresh = () => refreshCurrentUserProfile();
+        skip = { profile: true };
+        break;
+      default:
+        viewRefresh = () => Promise.resolve();
+        break;
+    }
+    const [viewResult, navResult] = await Promise.allSettled([viewRefresh(), refreshMobileNavigationState({ skip })]);
+    const failed = [viewResult, navResult].find((r) => r.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+  }, [
+    token,
+    activeView,
+    loadCommunityShopListings,
+    refreshFavorites,
+    refreshConversationsSnapshot,
+    refreshCurrentUserProfile,
+    refreshMobileNavigationState,
+  ]);
+
+  const { isPullRefreshing: mobilePullRefreshing } = useMobilePullToRefresh({
+    enabled:
+      Boolean(token) &&
+      isMobileViewport &&
+      (activeView === VIEWS.BROWSE ||
+        activeView === VIEWS.COMMUNITY_SHOP ||
+        activeView === VIEWS.FAVORITES ||
+        activeView === VIEWS.MESSAGES ||
+        activeView === VIEWS.NOTIFICATIONS ||
+        activeView === VIEWS.PROFILE),
+    isBusy: listingsBusyRef.current || favoritesLoading || ordersLoading || sellerListingsLoading || cartCheckoutSubmitting,
+    onRefresh: refreshMobileViewAndNavigation,
+    onError: (error) => {
+      pushMarketplaceToast(error?.message || "Could not refresh right now. Please try again.");
+    },
+  });
 
   useEffect(() => {
     if (!token || (!isBrowseLikeView && activeView !== VIEWS.MY_LISTINGS && activeView !== VIEWS.PROFILE)) return undefined;
@@ -4564,9 +4904,14 @@ function App() {
     return undefined;
   }, [listingDetail, selectedListingId, quickAddModalOpen, navigate, routeListingId]);
 
+  useEffect(() => {
+    if (quickAddImagePreviewOpen) setQuickAddLightboxImageFailed(false);
+  }, [quickAddImagePreviewOpen, quickAddListing]);
+
   const closeQuickAddModal = () => {
     if (quickAddSubmitting) return;
     setQuickAddImagePreviewOpen(false);
+    setQuickAddLightboxImageFailed(false);
     setQuickAddModalOpen(false);
     setQuickAddListing(null);
     setQuickActionType("cart");
@@ -4618,7 +4963,9 @@ function App() {
     setProductInspect({
       title: String(listingLike.title || "Product"),
       imageUrl: listingLike.imageUrl,
+      imageUrls: Array.isArray(listingLike.imageUrls) ? listingLike.imageUrls : [],
       priceCents,
+      categoryLabel: getListingCategoryShortLabel(listingLike.verticalId, listingLike.subId),
       description: String(listingLike.description || ""),
       sellerUsername,
       sellerAddressLine: sellerAddressLine || sellerAddressFallback,
@@ -4640,6 +4987,12 @@ function App() {
       commentSectionRequired: Boolean(extra.commentSectionRequired),
       commentHeading: extra.commentHeading || "Your note to the seller",
       fulfillmentModes: listingLike.fulfillmentModes,
+      orderType: listingLike.orderType,
+      processingTime: listingLike.processingTime,
+      optionNameA: listingLike.optionNameA,
+      optionValuesA: listingLike.optionValuesA,
+      optionNameB: listingLike.optionNameB,
+      optionValuesB: listingLike.optionValuesB,
       quantity:
         extra.quantity != null && Number.isFinite(Number(extra.quantity)) ? Number(extra.quantity) : null,
       quantityLabel: extra.quantityLabel || "Quantity",
@@ -4862,10 +5215,8 @@ function App() {
       (Array.isArray(listing.optionValuesB) && listing.optionValuesB.length > 0),
     );
     setListingAdvancedOpen(
-      Boolean(String(listing.optionNameA || "").trim()) ||
-      (Array.isArray(listing.optionValuesA) && listing.optionValuesA.length > 0) ||
       String(listing.orderType || "in_stock").trim() === "pre_order" ||
-      Boolean(String(listing.processingTime || "").trim()),
+        Boolean(String(listing.processingTime || "").trim()),
     );
     clearMarketplaceToasts();
     setActiveView(VIEWS.MY_LISTINGS);
@@ -4875,19 +5226,57 @@ function App() {
   const handleCreateListing = async (ev) => {
     ev.preventDefault();
     if (!token) return;
+    setListingPublishError("");
     const nextErrors = {};
-    if (!String(listingForm.title || "").trim()) nextErrors.title = "Product is required.";
-    if (!String(listingForm.categories || "").trim()) nextErrors.categories = "Category is required.";
-    if (String(listingForm.quantity ?? "").trim() === "") nextErrors.quantity = "Quantity is required.";
-    if (String(listingForm.pricePesos ?? "").trim() === "") nextErrors.pricePesos = "Price is required.";
-    if (String(listingForm.orderType || "in_stock") === "pre_order" && !String(listingForm.processingTime || "").trim()) {
-      nextErrors.processingTime = "Processing time is required for pre-order.";
+    const optValsA = splitOptionValuesCsv(listingForm.optionValuesA);
+    const optValsB = listingSecondOptionOpen ? splitOptionValuesCsv(listingForm.optionValuesB) : [];
+    const nameATrim = String(listingForm.optionNameA || "").trim();
+    const nameBTrim = listingSecondOptionOpen ? String(listingForm.optionNameB || "").trim() : "";
+    const dupA = findDuplicateChoiceCaseInsensitive(optValsA);
+    const dupB = findDuplicateChoiceCaseInsensitive(optValsB);
+    if (dupA) {
+      nextErrors.optionValuesA = `Duplicate choice: "${dupA}". Remove duplicates.`;
     }
-    if (!listingForm.pickup && !listingForm.delivery) nextErrors.fulfillment = "Choose at least one fulfillment method.";
+    if (dupB) {
+      nextErrors.optionValuesB = `Duplicate choice: "${dupB}". Remove duplicates.`;
+    }
+    if (optValsA.length > 0 && !nameATrim) {
+      nextErrors.optionNameA = "Add a variant type (for example: Size) or remove variant choices.";
+    }
+    if (listingSecondOptionOpen && optValsB.length > 0 && !nameBTrim) {
+      nextErrors.optionNameB = "Add a second variant type or remove those choices.";
+    }
+    if (nameATrim && optValsA.length === 0) {
+      nextErrors.optionValuesA = "Add at least one choice, or clear the variant type.";
+    }
+    if (listingSecondOptionOpen && nameBTrim && optValsB.length === 0) {
+      nextErrors.optionValuesB = "Add at least one choice, or clear the second variant type.";
+    }
+    if (nameATrim && nameBTrim && nameATrim.toLowerCase() === nameBTrim.toLowerCase()) {
+      nextErrors.optionNameB = "Choose a different variant type than the first group.";
+    }
+    if (!String(listingForm.title || "").trim()) {
+      nextErrors.title = "Add a short title so buyers recognize your listing.";
+    }
+    if (!String(listingForm.categories || "").trim()) {
+      nextErrors.categories = "Choose a category so shoppers can find your item.";
+    }
+    if (String(listingForm.quantity ?? "").trim() === "") {
+      nextErrors.quantity = "Enter how many you have in stock (use 0 if none).";
+    }
+    if (String(listingForm.pricePesos ?? "").trim() === "") {
+      nextErrors.pricePesos = "Enter the price in pesos using numbers and a decimal if needed.";
+    }
+    if (String(listingForm.orderType || "in_stock") === "pre_order" && !String(listingForm.processingTime || "").trim()) {
+      nextErrors.processingTime = "Add how long pre-orders take (for example: 7 days or 2 weeks).";
+    }
+    if (!listingForm.pickup && !listingForm.delivery) {
+      nextErrors.fulfillment = "Turn on Pick-up and/or COD Delivery so buyers know how to receive the item.";
+    }
 
     const hasImage = Boolean(String(listingImagePreviewUrl || "").trim() || listingImageFile);
     if (!hasImage) {
-      nextErrors.image = "Image is required.";
+      nextErrors.image = "Add at least one clear photo of what you are selling.";
     }
     if (Object.keys(nextErrors).length > 0) {
       setListingFieldErrors(nextErrors);
@@ -4925,7 +5314,10 @@ function App() {
     if (listingForm.pickup) modes.push("pickup");
     if (listingForm.delivery) modes.push("delivery");
     if (modes.length === 0) {
-      setListingFieldErrors((prev) => ({ ...prev, fulfillment: "Choose at least one fulfillment method." }));
+      setListingFieldErrors((prev) => ({
+        ...prev,
+        fulfillment: "Turn on Pick-up and/or COD Delivery so buyers know how to receive the item.",
+      }));
       clearMarketplaceToasts();
       return;
     }
@@ -4938,11 +5330,6 @@ function App() {
       } else if (listingImagePreviewUrl) {
         imageUrl = String(listingImagePreviewUrl).trim();
       }
-      const splitOptionValuesCsv = (raw) =>
-        String(raw || "")
-          .split(",")
-          .map((v) => v.trim())
-          .filter(Boolean);
       const extraImageUrls = (
         await Promise.all(
           listingExtraImages.map(async (item) => {
@@ -4956,11 +5343,22 @@ function App() {
       const imageUrls = dedupeListingImageUrlsOrdered([imageUrl, ...extraImageUrls].filter(Boolean)).slice(0, LISTING_MAX_IMAGES);
       const primaryImageUrl = imageUrls[0] || String(imageUrl || "").trim();
       const optionNameA = String(listingForm.optionNameA || "").trim();
-      const optionNameB = String(listingForm.optionNameB || "").trim();
+      const optionNameB = listingSecondOptionOpen ? String(listingForm.optionNameB || "").trim() : "";
       const optionValuesA = splitOptionValuesCsv(listingForm.optionValuesA).slice(0, 30);
-      const optionValuesB = splitOptionValuesCsv(listingForm.optionValuesB).slice(0, 30);
+      const optionValuesB = listingSecondOptionOpen ? splitOptionValuesCsv(listingForm.optionValuesB).slice(0, 30) : [];
+      const variantsPayload = [];
+      if (optionNameA && optionValuesA.length) variantsPayload.push({ type: optionNameA, choices: optionValuesA });
+      if (listingSecondOptionOpen && optionNameB && optionValuesB.length) {
+        variantsPayload.push({ type: optionNameB, choices: optionValuesB });
+      }
       const orderType = String(listingForm.orderType || "in_stock").trim() === "pre_order" ? "pre_order" : "in_stock";
-      const processingTime = orderType === "pre_order" ? String(listingForm.processingTime || "").trim() : "";
+      const processingTime = String(listingForm.processingTime || "")
+        .trim()
+        .slice(0, 120);
+      const subIdNormalized =
+        listingForm.subId && String(listingForm.subId).trim() !== "" && listingForm.subId !== "all"
+          ? String(listingForm.subId).trim()
+          : null;
       const payload = {
         title: listingForm.title.trim(),
         description: listingForm.description.trim(),
@@ -4968,7 +5366,7 @@ function App() {
         quantity: qtyNum,
         categories: String(listingForm.categories).trim(),
         verticalId: String(listingForm.categories).trim(),
-        ...(listingForm.subId && listingForm.subId !== "all" ? { subId: listingForm.subId } : {}),
+        subId: subIdNormalized,
         fulfillmentModes: modes,
         cityLabel: "",
         imageUrl: primaryImageUrl,
@@ -4977,6 +5375,7 @@ function App() {
         optionValuesA,
         optionNameB,
         optionValuesB,
+        variants: variantsPayload,
         orderType,
         processingTime,
         ...(shopCommunityId && isMemberOfOpenCommunity ? { communityId: String(shopCommunityId) } : {}),
@@ -5032,10 +5431,19 @@ function App() {
       navigate("/", { replace: true });
     } catch (e) {
       const msg = String(e?.message || "Could not publish listing.");
+      setListingPublishError(
+        msg.length > 160 ? `${msg.slice(0, 157)}…` : msg,
+      );
       const nextErrors = {};
       if (/processing time/i.test(msg)) nextErrors.processingTime = msg;
       if (/category|categories/i.test(msg)) nextErrors.categories = msg;
-      if (/variant type/i.test(msg)) nextErrors.optionNameA = msg;
+      if (/first variant choice/i.test(msg)) nextErrors.optionValuesA = msg;
+      if (/second variant choice/i.test(msg)) nextErrors.optionValuesB = msg;
+      if (/two variant types must be different/i.test(msg)) nextErrors.optionNameB = msg;
+      if (/variant type is required when first/i.test(msg)) nextErrors.optionNameA = msg;
+      if (/second variant type is required when second/i.test(msg)) nextErrors.optionNameB = msg;
+      if (/Add at least one choice for the first variant/i.test(msg)) nextErrors.optionValuesA = msg;
+      if (/Add at least one choice for the second variant/i.test(msg)) nextErrors.optionValuesB = msg;
       if (Object.keys(nextErrors).length > 0) {
         setListingFieldErrors((prev) => ({ ...prev, ...nextErrors }));
       }
@@ -5367,17 +5775,39 @@ function App() {
     const value = String(rawValue || "").trim();
     if (!value) return;
     if (key === "A") {
-      const next = [...new Set([...splitOptionValuesCsv(listingForm.optionValuesA), value])];
+      const current = splitOptionValuesCsv(listingForm.optionValuesA);
+      if (current.some((c) => c.toLowerCase() === value.toLowerCase())) {
+        setListingFieldErrors((prev) => ({
+          ...prev,
+          optionValuesA: `You already added "${value}".`,
+        }));
+        return;
+      }
+      setListingFieldErrors((prev) => ({ ...prev, optionValuesA: "" }));
+      const next = [...current, value];
       setListingForm((p) => ({ ...p, optionValuesA: next.join(", ") }));
       setListingOptionValueDraftA("");
     } else {
-      const next = [...new Set([...splitOptionValuesCsv(listingForm.optionValuesB), value])];
+      const current = splitOptionValuesCsv(listingForm.optionValuesB);
+      if (current.some((c) => c.toLowerCase() === value.toLowerCase())) {
+        setListingFieldErrors((prev) => ({
+          ...prev,
+          optionValuesB: `You already added "${value}".`,
+        }));
+        return;
+      }
+      setListingFieldErrors((prev) => ({ ...prev, optionValuesB: "" }));
+      const next = [...current, value];
       setListingForm((p) => ({ ...p, optionValuesB: next.join(", ") }));
       setListingOptionValueDraftB("");
     }
   }, [listingForm.optionValuesA, listingForm.optionValuesB]);
 
   const removeListingOptionValue = useCallback((key, valueToRemove) => {
+    setListingFieldErrors((prev) => ({
+      ...prev,
+      ...(key === "A" ? { optionValuesA: "" } : { optionValuesB: "" }),
+    }));
     if (key === "A") {
       const next = splitOptionValuesCsv(listingForm.optionValuesA).filter((v) => v !== valueToRemove);
       setListingForm((p) => ({ ...p, optionValuesA: next.join(", ") }));
@@ -5447,7 +5877,86 @@ function App() {
       clearTimeout(profileBarangaySuggestBlurTimerRef.current);
       profileBarangaySuggestBlurTimerRef.current = null;
     }
+    setProfileAvatarCropApplyError("");
+    setProfileAvatarCropEditor((prev) => {
+      if (prev.sourcePreviewOwned && String(prev.sourcePreviewUrl || "").startsWith("blob:")) {
+        URL.revokeObjectURL(prev.sourcePreviewUrl);
+      }
+      return {
+        open: false,
+        sourceFile: null,
+        sourcePreviewUrl: "",
+        sourcePreviewOwned: false,
+        sourceWidth: 1,
+        sourceHeight: 1,
+        cropLeft: 0.1,
+        cropTop: 0.1,
+        cropSize: 1,
+        dragging: false,
+        dragStartX: 0,
+        dragStartY: 0,
+        dragStartLeft: 0.1,
+        dragStartTop: 0.1,
+      };
+    });
   };
+
+  const closeProfileAvatarCropEditor = useCallback(() => {
+    setProfileAvatarCropApplyError("");
+    setProfileAvatarCropEditor((prev) => {
+      if (prev.sourcePreviewOwned && String(prev.sourcePreviewUrl || "").startsWith("blob:")) {
+        URL.revokeObjectURL(prev.sourcePreviewUrl);
+      }
+      return {
+        open: false,
+        sourceFile: null,
+        sourcePreviewUrl: "",
+        sourcePreviewOwned: false,
+        sourceWidth: 1,
+        sourceHeight: 1,
+        cropLeft: 0.1,
+        cropTop: 0.1,
+        cropSize: 1,
+        dragging: false,
+        dragStartX: 0,
+        dragStartY: 0,
+        dragStartLeft: 0.1,
+        dragStartTop: 0.1,
+      };
+    });
+  }, []);
+
+  const openProfileAvatarCropEditor = useCallback(async (sourceFile, sourcePreviewUrl, { sourcePreviewOwned = false } = {}) => {
+    if (!sourceFile || !sourcePreviewUrl) return;
+    let sourceWidth = 1;
+    let sourceHeight = 1;
+    try {
+      const img = await loadImageElementFromFile(sourceFile);
+      sourceWidth = Math.max(1, Number(img.naturalWidth || 1));
+      sourceHeight = Math.max(1, Number(img.naturalHeight || 1));
+    } catch {
+      // keep safe defaults
+    }
+    const minSide = Math.min(sourceWidth, sourceHeight);
+    const sidePx = Math.max(1, Math.floor(minSide * 1));
+    setProfileAvatarCropApplyError("");
+    setProfileAvatarCropEditor({
+      open: true,
+      sourceFile,
+      sourcePreviewUrl,
+      sourcePreviewOwned,
+      sourceWidth,
+      sourceHeight,
+      cropLeft: (sourceWidth - sidePx) / (2 * sourceWidth),
+      cropTop: (sourceHeight - sidePx) / (2 * sourceHeight),
+      cropSize: 1,
+      dragging: false,
+      dragStartX: 0,
+      dragStartY: 0,
+      dragStartLeft: 0.1,
+      dragStartTop: 0.1,
+    });
+  }, []);
 
   const handleProfileAvatarChange = (event) => {
     const file = event.target.files?.[0];
@@ -5461,14 +5970,29 @@ function App() {
       setProfileError("Image is too large. Please choose one smaller than 3MB.");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setProfileDraft((prev) => ({ ...prev, avatarUrl: String(reader.result || "") }));
-      setProfileError("");
-    };
-    reader.onerror = () => setProfileError("Could not read selected image.");
-    reader.readAsDataURL(file);
+    const previewUrl = URL.createObjectURL(file);
+    void openProfileAvatarCropEditor(file, previewUrl, { sourcePreviewOwned: true });
+    setProfileError("");
+    event.target.value = "";
   };
+
+  const applyProfileAvatarCropEditor = useCallback(async () => {
+    if (!profileAvatarCropEditor.open || !profileAvatarCropEditor.sourceFile) return;
+    try {
+      const cropped = await cropImageFileToSquareByRect(
+        profileAvatarCropEditor.sourceFile,
+        profileAvatarCropEditor.cropLeft,
+        profileAvatarCropEditor.cropTop,
+        profileAvatarCropEditor.cropSize,
+      );
+      const dataUrl = await fileToDataUrl(cropped);
+      setProfileDraft((prev) => ({ ...prev, avatarUrl: String(dataUrl || "") }));
+      closeProfileAvatarCropEditor();
+      setProfileError("");
+    } catch {
+      setProfileAvatarCropApplyError("Could not apply crop. Please try another image.");
+    }
+  }, [closeProfileAvatarCropEditor, profileAvatarCropEditor]);
 
   const handleProfileSubmit = async (event) => {
     event.preventDefault();
@@ -5488,49 +6012,49 @@ function App() {
     const normalizedCountry = String(profileDraft.addressCountry || "").trim();
     const nextFieldErrors = {};
     if (!normalizedUsername) {
-      nextFieldErrors.username = "Username is required.";
+      nextFieldErrors.username = "Enter a username (3–20 characters).";
     } else if (normalizedUsername.length < 3 || normalizedUsername.length > 20) {
-      nextFieldErrors.username = "Username must be 3-20 characters.";
+      nextFieldErrors.username = "Use 3 to 20 characters for your username.";
     } else if (!/^[A-Za-z]/.test(normalizedUsername)) {
-      nextFieldErrors.username = "Username must start with a letter.";
+      nextFieldErrors.username = "Start the username with a letter (a–z).";
     } else if (/\s/.test(normalizedUsername)) {
-      nextFieldErrors.username = "Username cannot contain spaces.";
+      nextFieldErrors.username = "Remove spaces — use letters, numbers, dots, or underscores only.";
     } else if (!/^[A-Za-z0-9._]+$/.test(normalizedUsername)) {
-      nextFieldErrors.username = "Only letters, numbers, dots, and underscores are allowed.";
+      nextFieldErrors.username = "Use only letters, numbers, single dots, and single underscores.";
     } else if (/[A-Z]/.test(normalizedUsername)) {
-      nextFieldErrors.username = "Use lowercase letters only (a-z).";
+      nextFieldErrors.username = "Use lowercase letters only (a–z).";
     } else if (/(\.\.|__)/.test(normalizedUsername)) {
-      nextFieldErrors.username = "Username cannot contain duplicate dots or underscores.";
+      nextFieldErrors.username = "Do not use two dots (..) or two underscores (__) in a row.";
     }
     const namePattern = /^[A-Za-z]+(?:[ -][A-Za-z]+)*$/;
     if (!normalizedFirstName) {
-      nextFieldErrors.firstName = "First name is required.";
+      nextFieldErrors.firstName = "Enter your first name as it should appear on your profile.";
     } else if (normalizedFirstName.length < 3 || normalizedFirstName.length > 50) {
-      nextFieldErrors.firstName = "First name must be 3-50 characters.";
+      nextFieldErrors.firstName = "First name should be 3–50 letters (spaces or hyphens allowed between parts).";
     } else if (!namePattern.test(normalizedFirstName)) {
-      nextFieldErrors.firstName = "First name can only contain letters, spaces, and hyphens.";
+      nextFieldErrors.firstName = "Use letters only; separate parts with a space or hyphen.";
     }
     if (normalizedMiddleName && !namePattern.test(normalizedMiddleName)) {
-      nextFieldErrors.middleName = "Middle name can only contain letters, spaces, and hyphens.";
+      nextFieldErrors.middleName = "Use letters only; separate parts with a space or hyphen.";
     }
     if (!normalizedLastName) {
-      nextFieldErrors.lastName = "Last name is required.";
+      nextFieldErrors.lastName = "Enter your last name as it should appear on your profile.";
     } else if (normalizedLastName.length < 3 || normalizedLastName.length > 50) {
-      nextFieldErrors.lastName = "Last name must be 3-50 characters.";
+      nextFieldErrors.lastName = "Last name should be 3–50 letters (spaces or hyphens allowed between parts).";
     } else if (!namePattern.test(normalizedLastName)) {
-      nextFieldErrors.lastName = "Last name can only contain letters, spaces, and hyphens.";
+      nextFieldErrors.lastName = "Use letters only; separate parts with a space or hyphen.";
     }
     if (!normalizedGender) {
-      nextFieldErrors.gender = "Gender is required.";
+      nextFieldErrors.gender = "Choose an option from the list.";
     }
     if (!normalizedBirthday) {
-      nextFieldErrors.birthday = "Birthday is required.";
+      nextFieldErrors.birthday = "Enter your birthday (YYYY-MM-DD) or use the date picker.";
     } else if (normalizedBirthday > todayIsoDate) {
-      nextFieldErrors.birthday = "Birthday cannot be in the future.";
+      nextFieldErrors.birthday = "Pick a date that is not in the future.";
     }
-    if (!normalizedProvince) nextFieldErrors.addressProvince = "Province is required.";
-    if (!normalizedCity) nextFieldErrors.addressCity = "City or Municipality is required.";
-    if (!normalizedBarangay) nextFieldErrors.addressBarangay = "Barangay is required.";
+    if (!normalizedProvince) nextFieldErrors.addressProvince = "Select or type your province, then pick from suggestions.";
+    if (!normalizedCity) nextFieldErrors.addressCity = "Select or type your city or municipality.";
+    if (!normalizedBarangay) nextFieldErrors.addressBarangay = "Select or type your barangay.";
     if (Object.keys(nextFieldErrors).length > 0) {
       setProfileFieldErrors(nextFieldErrors);
       setProfileError("");
@@ -5544,12 +6068,15 @@ function App() {
     }
     const localPhone10 = toPhilippinesLocalPhone10(profileDraft.phone);
     if (!localPhone10) {
-      setProfileFieldErrors((prev) => ({ ...prev, phone: "Phone number is required." }));
+      setProfileFieldErrors((prev) => ({ ...prev, phone: "Enter your 10-digit mobile number after +63." }));
       setProfileError("");
       return;
     }
     if (localPhone10.length !== 10) {
-      setProfileFieldErrors((prev) => ({ ...prev, phone: "Enter exactly 10 digits for mobile number." }));
+      setProfileFieldErrors((prev) => ({
+        ...prev,
+        phone: "Enter exactly 10 digits (Philippine mobile, without a leading 0).",
+      }));
       setProfileError("");
       return;
     }
@@ -5566,7 +6093,10 @@ function App() {
           return Boolean(existing) && existing === normalizedTarget;
         });
         if (duplicate) {
-          setProfileFieldErrors((prev) => ({ ...prev, phone: "This mobile number is already in use." }));
+          setProfileFieldErrors((prev) => ({
+            ...prev,
+            phone: "That number is already on another account — use a different mobile number.",
+          }));
           setProfileError("");
           return;
         }
@@ -5657,7 +6187,10 @@ function App() {
     } catch (error) {
       const message = String(error?.message || "Could not update profile.");
       if (/phone number already in use|mobile number is already in use|phone.*already/i.test(message)) {
-        setProfileFieldErrors((prev) => ({ ...prev, phone: "This mobile number is already in use." }));
+        setProfileFieldErrors((prev) => ({
+          ...prev,
+          phone: "That number is already on another account — use a different mobile number.",
+        }));
         setProfileError("");
       } else {
         setProfileError(message);
@@ -5797,11 +6330,12 @@ function App() {
                   {LANDING_DISCOVERY_SLIDES[landingDiscoverySlide].map((card) => (
                     <div key={card.title} className="flex w-full max-w-xs flex-col items-center gap-3 text-center md:max-w-none">
                       {card.logo ? (
-                        <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl p-2 md:size-[4.25rem]">
-                          <img
+                        <div className="relative size-16 shrink-0 overflow-hidden rounded-2xl p-2 md:size-[4.25rem]">
+                          <StableMediaImage
                             src={card.logo}
                             alt={`${card.title} logo`}
-                            className="max-h-full max-w-full object-contain"
+                            className="absolute inset-0 h-full w-full"
+                            objectFit="contain"
                             loading="lazy"
                             decoding="async"
                             sizes="64px"
@@ -5905,7 +6439,7 @@ function App() {
                   <span aria-hidden="true">×</span>
                 </button>
                 <div className="mb-8 pr-10">
-                  <h2 id="auth-modal-title" className="text-2xl font-bold tracking-tight text-neutral-900 dark:text-slate-100 md:text-[1.65rem]">
+                  <h2 id="auth-modal-title" className="mobile-page-title text-neutral-900 dark:text-slate-100">
                     {authMode === "signup" ? "Create an account" : "Welcome back"}
                   </h2>
                   <p className="mt-4 max-w-mobile-baseline text-sm leading-relaxed text-neutral-600 dark:text-slate-400 md:max-w-md md:text-[15px] md:leading-relaxed">
@@ -5918,7 +6452,7 @@ function App() {
                 <form noValidate onSubmit={handleAuth} className="space-y-5">
                 <>
                   <div>
-                    <label htmlFor="auth-email" className="mb-1.5 block text-sm font-medium text-neutral-700 dark:text-slate-300">
+                    <label htmlFor="auth-email" className="label-base">
                       Email
                     </label>
                     <input
@@ -5952,7 +6486,7 @@ function App() {
                     ) : null}
                   </div>
                   <div>
-                    <label htmlFor="auth-password" className="mb-1.5 block text-sm font-medium text-neutral-700 dark:text-slate-300">
+                    <label htmlFor="auth-password" className="label-base">
                       Password
                     </label>
                     <div className="relative">
@@ -5997,7 +6531,7 @@ function App() {
                   {authMode === "signup" && (
                     <>
                       <div>
-                        <label htmlFor="auth-confirm-password" className="mb-1.5 block text-sm font-medium text-neutral-700 dark:text-slate-300">
+                        <label htmlFor="auth-confirm-password" className="label-base">
                           Confirm password
                         </label>
                         <div className="relative">
@@ -6192,7 +6726,7 @@ function App() {
             </div>
             <button
               type="button"
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent text-neutral-400 transition hover:border-neutral-200 hover:bg-neutral-100 hover:text-neutral-700 dark:text-slate-500 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              className="btn-icon-only inline-flex shrink-0 items-center justify-center rounded-xl border border-transparent text-neutral-400 transition hover:border-neutral-200 hover:bg-neutral-100 hover:text-neutral-700 dark:text-slate-500 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200 md:!h-9 md:!min-h-9 md:!w-9 md:!max-w-9"
               aria-label="Dismiss notification"
               onClick={dismissPublishFlash}
             >
@@ -6234,7 +6768,7 @@ function App() {
                 </span>
                 <button
                   type="button"
-                  className={`shrink-0 rounded-md px-1.5 py-0.5 text-base leading-none transition hover:bg-black/5 dark:hover:bg-white/10 ${fb.dismissClass}`}
+                  className={`inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg px-2 text-base leading-none transition hover:bg-black/5 dark:hover:bg-white/10 md:min-h-0 md:min-w-0 md:rounded-md md:px-1.5 md:py-0.5 ${fb.dismissClass}`}
                   aria-label="Dismiss notification"
                   onClick={() => dismissMarketplaceToast(t.id)}
                 >
@@ -6256,10 +6790,12 @@ function App() {
         goMyPurchases={goMyPurchases}
         goCart={goCart}
         inboxBadgeCount={inboxNavBadgeCount}
+        messagesUnreadCount={totalChatUnreadCount}
         cartItemCount={recentlyAddedCartListingIds.length}
         purchasesItemCount={purchaseNavBadgeCount}
         ordersItemCount={sellerNavBadgeCount}
         notificationUnreadCount={unreadNotificationCount}
+        favoritesBadgeCount={favoritesNavBadgeCount}
         favoriteCount={favoriteIds.size}
         theme={theme}
         setTheme={setTheme}
@@ -6267,9 +6803,29 @@ function App() {
         getDisplayNameFromUser={getDisplayNameFromUser}
         onNavigateHome={() => navigate("/")}
       >
+      {isMobileViewport && mobilePullRefreshing ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none fixed left-1/2 top-[max(0.5rem,calc(4.25rem+env(safe-area-inset-top,0px)+0.5rem))] z-[65] -translate-x-1/2 rounded-full border border-neutral-200/80 bg-white/95 px-3 py-1 text-xs font-semibold text-brand-primary shadow-sm dark:border-slate-700 dark:bg-slate-900/95 dark:text-brand-accent"
+        >
+          Refreshing…
+        </div>
+      ) : null}
       <main
         id="main-content"
-        className={`${UI_KIT.mobileMainScroll} app-container scroll-pt-2 scroll-pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] space-y-4 bg-white pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] dark:bg-slate-950 md:scroll-pb-0 md:scroll-pt-0 md:space-y-6 md:bg-transparent md:py-8 md:pb-12 md:dark:bg-transparent`}
+        className={`${UI_KIT.mobileMainScroll} app-container scroll-pt-2 scroll-pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] space-y-5 bg-white pt-4 pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] dark:bg-slate-950 md:scroll-pb-0 md:scroll-pt-0 md:space-y-6 md:bg-transparent md:py-8 md:pb-12 md:dark:bg-transparent ${
+          isMobileViewport && !mobileSecondaryDragging ? mobileSecondarySlideClass : ""
+        }`}
+        style={
+          isMobileViewport && secondaryMobileNavOrder.includes(secondarySwipeNavView)
+            ? {
+                transform: `translate3d(${mobileSecondaryDragX}px, 0, 0)`,
+                transition: mobileSecondaryDragging ? "none" : undefined,
+                willChange: mobileSecondaryDragging ? "transform" : undefined,
+              }
+            : undefined
+        }
       >
         {isBrowseLikeView && activeView !== VIEWS.FAVORITES && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
@@ -6282,33 +6838,65 @@ function App() {
                 >
                   <div className="relative z-10 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
                     <div className="flex min-w-0 flex-1 flex-col gap-2 md:flex-row md:items-start md:gap-4 lg:gap-5">
-                      <button
-                        type="button"
-                        className="hidden min-h-[44px] shrink-0 items-center justify-center rounded-full bg-brand-primary px-3.5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-primary/90 md:min-h-0 md:justify-start md:py-2 lg:mt-0.5 lg:inline-flex lg:w-auto dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
-                        onClick={() => leaveCommunityToGlobalMarketplace()}
-                      >
-                        ← All communities
-                      </button>
                       <div className="min-w-0 flex-1 space-y-2 border-neutral-200 md:space-y-2 lg:border-l lg:pl-5 dark:lg:border-slate-600">
                         <div className="flex items-start justify-between gap-2 lg:flex-col lg:items-stretch lg:justify-start lg:gap-2">
-                          <div className="min-w-0 flex-1 lg:flex-none">
-                            <h2 className="text-lg font-semibold tracking-tight text-neutral-900 max-lg:leading-snug dark:text-slate-100 lg:text-xl lg:text-[#123a5f] lg:dark:text-[#e9f7ff] lg:text-2xl">
-                              {toTitleCase(activeCommunity?.name?.trim()) || "Community"}
-                            </h2>
+                          <div className="min-w-0 flex-1 space-y-1.5 lg:flex-none lg:space-y-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <h2 className="line-clamp-3 break-words text-pretty text-lg font-semibold tracking-tight text-neutral-900 max-lg:leading-snug dark:text-slate-100 lg:line-clamp-none lg:text-xl lg:text-[#123a5f] lg:dark:text-[#e9f7ff] lg:text-2xl">
+                                {toTitleCase(activeCommunity?.name?.trim()) || "Community"}
+                              </h2>
+                              <div className="lg:hidden">
+                                {isMemberOfOpenCommunity ? (
+                                  <span className="inline-flex items-center rounded-md border border-emerald-200/90 bg-emerald-50/90 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300">
+                                    Joined
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded-md border border-neutral-200/80 bg-neutral-50/80 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400">
+                                    Visitor
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                             {activeCommunityLocaleLine ? (
-                              <p className="mt-0.5 line-clamp-1 text-xs text-neutral-500 dark:text-slate-400 lg:mt-1 lg:line-clamp-none lg:text-sm lg:text-[#2a597f] lg:dark:text-[#9fc3d9]">
+                              <p className="line-clamp-2 text-xs text-neutral-500 dark:text-slate-400 lg:line-clamp-none lg:text-sm lg:text-[#2a597f] lg:dark:text-[#9fc3d9]">
                                 {activeCommunityLocaleLine}
                               </p>
                             ) : null}
+                            <div className="flex items-center gap-1 lg:hidden">
+                              <button
+                                type="button"
+                                className="inline-flex w-24 items-center justify-center rounded-md border border-sky-200/90 bg-sky-50/90 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300 dark:hover:border-sky-400/45 dark:hover:bg-sky-500/20"
+                                onClick={() => leaveCommunityToGlobalMarketplace()}
+                              >
+                                Communities
+                              </button>
+                              {isMemberOfOpenCommunity ? (
+                                <button
+                                  type="button"
+                                  aria-label="Leave this community"
+                                  className="inline-flex w-24 items-center justify-center rounded-md border border-rose-200/90 bg-rose-50/90 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:border-rose-400/45 dark:hover:bg-rose-500/20"
+                                  onClick={requestLeaveCommunityConfirmation}
+                                >
+                                  Leave
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
                           <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 self-start pt-0.5 max-lg:justify-start lg:w-full lg:justify-start lg:gap-2 lg:self-auto lg:pt-0">
+                            <button
+                              type="button"
+                              className="hidden lg:inline-flex items-center rounded-md border border-sky-200/90 bg-sky-50/90 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300 dark:hover:border-sky-400/45 dark:hover:bg-sky-500/20"
+                              onClick={() => leaveCommunityToGlobalMarketplace()}
+                            >
+                              Communities
+                            </button>
                             {isMemberOfOpenCommunity ? (
-                              <span className="inline-flex items-center rounded-md border border-emerald-200/90 bg-emerald-50/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800 max-lg:normal-case max-lg:tracking-normal dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300 lg:gap-1 lg:rounded-full lg:border-emerald-300/80 lg:px-2.5 lg:py-1 lg:text-xs lg:normal-case lg:tracking-normal">
+                              <span className="hidden lg:inline-flex items-center rounded-md border border-emerald-200/90 bg-emerald-50/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800 max-lg:normal-case max-lg:tracking-normal dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300 lg:gap-1 lg:rounded-full lg:border-emerald-300/80 lg:px-2.5 lg:py-1 lg:text-xs lg:normal-case lg:tracking-normal">
                                 <span className="max-lg:hidden">● Joined member</span>
                                 <span className="lg:hidden">Joined</span>
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 rounded-md border border-neutral-200/80 bg-neutral-50/80 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600 max-lg:normal-case dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400 lg:rounded-full lg:border-neutral-300/80 lg:bg-white lg:px-2.5 lg:py-1 lg:text-xs lg:text-neutral-700 dark:lg:text-slate-300">
+                              <span className="hidden lg:inline-flex items-center gap-1 rounded-md border border-neutral-200/80 bg-neutral-50/80 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600 max-lg:normal-case dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400 lg:rounded-full lg:border-neutral-300/80 lg:bg-white lg:px-2.5 lg:py-1 lg:text-xs lg:text-neutral-700 dark:lg:text-slate-300">
                                 <span className="max-lg:hidden">○ Not a member yet</span>
                                 <span className="lg:hidden">Visitor</span>
                               </span>
@@ -6329,17 +6917,6 @@ function App() {
                         {/* Mobile: compact actions below "How this shop works" */}
                         <div className="flex flex-col gap-1.5 lg:hidden">
                           <div className="flex flex-row items-center gap-2">
-                            <button
-                              type="button"
-                              className={`inline-flex min-h-[44px] min-w-0 items-center justify-center rounded-lg px-1 text-xs font-semibold text-brand-primary underline decoration-brand-primary/30 underline-offset-2 transition hover:text-brand-primary/80 hover:decoration-brand-primary/50 dark:text-brand-accent dark:decoration-brand-accent/40 ${
-                                activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "")
-                                    ? "w-full"
-                                    : "min-w-0 flex-1 truncate"
-                              }`}
-                              onClick={() => leaveCommunityToGlobalMarketplace()}
-                            >
-                              ← Communities
-                            </button>
                             {!isMemberOfOpenCommunity ? (
                               <button
                                 type="button"
@@ -6354,32 +6931,16 @@ function App() {
                               >
                                 Join community
                               </button>
-                            ) : activeCommunity?.createdBy && String(activeCommunity.createdBy) !== String(user?.id || "") ? (
-                              <button
-                                type="button"
-                                aria-label="Leave this community"
-                                className="inline-flex min-h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400"
-                                onClick={requestLeaveCommunityConfirmation}
-                              >
-                                Leave
-                              </button>
                             ) : null}
                           </div>
                           {isMemberOfOpenCommunity && activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "") ? (
-                            <div className="grid grid-cols-2 gap-1.5">
+                            <div className="grid grid-cols-1 gap-1.5">
                               <button
                                 type="button"
                                 className="inline-flex min-h-9 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-2 py-1.5 text-[11px] font-medium leading-tight text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
                                 onClick={() => openEditCommunityModal(activeCommunity)}
                               >
                                 Edit community
-                              </button>
-                              <button
-                                type="button"
-                                className="inline-flex min-h-9 items-center justify-center rounded-full bg-rose-600 px-2 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-rose-700 dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400"
-                                onClick={requestLeaveCommunityConfirmation}
-                              >
-                                Leave
                               </button>
                             </div>
                           ) : null}
@@ -6412,7 +6973,7 @@ function App() {
                       ) : (
                         <button
                           type="button"
-                          className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-rose-600 px-3 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 md:min-h-0 md:flex-none md:px-4 md:py-2 md:text-sm dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400"
+                          className="inline-flex items-center rounded-md border border-rose-200/90 bg-rose-50/90 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 md:flex-none dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:border-rose-400/45 dark:hover:bg-rose-500/20"
                           onClick={requestLeaveCommunityConfirmation}
                         >
                           Leave
@@ -6426,7 +6987,7 @@ function App() {
                   <div>
                     <h2 className="min-w-0 text-2xl font-semibold text-neutral-900 dark:text-slate-100 md:whitespace-nowrap">Marketplace</h2>
                   </div>
-                  <div className={`${UI_KIT.surfaceCard} p-3 md:p-4 max-md:border-0 max-md:bg-transparent max-md:shadow-none max-md:ring-0`}>
+                  <div className={`${UI_KIT.viewSection} p-3 md:p-4`}>
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500 md:text-sm md:normal-case md:tracking-normal md:text-brand-primary">
@@ -6530,10 +7091,10 @@ function App() {
                           >
                             <div className="relative aspect-[16/9] max-h-[9.5rem] w-full shrink-0 overflow-hidden rounded-lg shadow-inner ring-1 ring-black/5 transition group-hover:ring-brand-primary/30 dark:ring-white/10 md:max-h-[10rem]">
                               {c.imageUrl ? (
-                                <img
+                                <StableMediaImage
                                   src={c.imageUrl}
                                   alt=""
-                                  className="h-full w-full object-cover"
+                                  className="absolute inset-0 h-full w-full"
                                   loading="lazy"
                                   decoding="async"
                                   sizes="(max-width: 768px) 28vw, 120px"
@@ -6549,7 +7110,7 @@ function App() {
                               )}
                             </div>
                             <div className="min-w-0 flex-1 px-0.5">
-                              <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100 md:text-base">
+                              <p className="line-clamp-2 break-words text-sm font-semibold text-neutral-900 dark:text-slate-100 md:text-base">
                                 {toTitleCase(String(c.name || "").trim())}
                               </p>
                               <p className="mt-0.5 line-clamp-2 text-xs text-neutral-600 dark:text-slate-400 md:text-sm">
@@ -6643,7 +7204,7 @@ function App() {
                       </div>
                       <button
                         type="button"
-                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-700 shadow-sm transition hover:bg-neutral-50 active:scale-95 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                        className="inline-flex h-11 w-11 max-md:min-h-[44px] max-md:min-w-[44px] shrink-0 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-700 shadow-sm transition hover:bg-neutral-50 active:scale-95 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 md:h-10 md:w-10 md:min-h-0 md:min-w-0"
                         aria-label="Close filters"
                         onClick={() => setMobileCommunityFiltersOpen(false)}
                       >
@@ -6740,7 +7301,7 @@ function App() {
                 </aside>
               <div className="order-2 min-w-0 space-y-3 md:space-y-4 lg:order-none">
                 {activeView === VIEWS.FAVORITES ? (
-                  <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My Favorites</h2>
+                  <h2 className="break-words text-2xl font-semibold text-neutral-900 dark:text-slate-100">My Favorites</h2>
                 ) : null}
                 <div
                   className={
@@ -6784,12 +7345,41 @@ function App() {
                 ) : null}
                 {activeView === VIEWS.FAVORITES ? (
                   favoritesLoading && strictFavoritesList.length === 0 ? (
-                    <ScreenLoading message="Loading favorites…" />
+                    isMobileViewport ? (
+                      <BrowseGridSkeleton
+                        gridClassName={favoritesGridClass(effectiveFavoriteBrowseView)}
+                        variant={effectiveFavoriteBrowseView === "compact" ? "compact" : effectiveFavoriteBrowseView === "list" ? "list" : "grid"}
+                        count={effectiveFavoriteBrowseView === "compact" ? 8 : 6}
+                        ariaLabel="Loading favorites"
+                      />
+                    ) : (
+                      <ScreenLoading message="Loading favorites…" />
+                    )
                   ) : null
                 ) : listingsLoading && listings.length === 0 ? (
-                  <ScreenLoading
-                    message={activeView === VIEWS.COMMUNITY_SHOP ? "Loading listings…" : "Loading…"}
-                  />
+                  isMobileViewport ? (
+                    <BrowseGridSkeleton
+                      gridClassName={communityBrowseGridClass(effectiveCommunityBrowseView, isMobileViewport)}
+                      variant={
+                        effectiveCommunityBrowseView === "compact"
+                          ? "compact"
+                          : effectiveCommunityBrowseView === "list"
+                            ? "list"
+                            : "grid"
+                      }
+                      softBrowseChrome={
+                        activeView === VIEWS.COMMUNITY_SHOP && effectiveCommunityBrowseView !== "list"
+                      }
+                      count={effectiveCommunityBrowseView === "compact" ? 8 : 6}
+                      ariaLabel={activeView === VIEWS.COMMUNITY_SHOP ? "Loading listings" : "Loading"}
+                    />
+                  ) : (
+                    <ScreenLoading
+                      message={
+                        activeView === VIEWS.COMMUNITY_SHOP ? "Loading community listings…" : "Loading…"
+                      }
+                    />
+                  )
                 ) : null}
                 {activeView === VIEWS.FAVORITES && favoritesFetchError ? (
                   <ScreenError
@@ -6828,7 +7418,6 @@ function App() {
                         <h3 className="text-base font-semibold tracking-tight text-neutral-900 dark:text-slate-100 lg:text-lg">
                           Listings
                         </h3>
-                        <p className="mt-0.5 text-xs text-neutral-500 dark:text-slate-400">Posted in this community</p>
                         {listingsRefreshing ? (
                           <p className="mt-1 text-xs font-medium text-brand-primary dark:text-brand-accent" aria-live="polite">
                             Updating listings…
@@ -6850,38 +7439,12 @@ function App() {
                           <span className="max-[380px]:sr-only">Filters</span>
                         </button>
                       ) : null}
-                      {activeView === VIEWS.COMMUNITY_SHOP ? (
-                        <button
-                          type="button"
-                          className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-neutral-300/90 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                          aria-busy={listingsLoading || listingsRefreshing}
-                          disabled={listingsLoading || listingsRefreshing}
-                          title="Reload listings from the server"
-                          onClick={() => refreshCommunityShopListings()}
-                        >
-                          <svg
-                            className={`h-3.5 w-3.5 shrink-0 motion-reduce:animate-none ${listingsLoading || listingsRefreshing ? "animate-spin" : ""}`}
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            aria-hidden
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                            />
-                          </svg>
-                          Refresh
-                        </button>
-                      ) : null}
-                      {!isMobileViewport ? (
-                        <ProductViewDensityToggle
-                          value={activeView === VIEWS.FAVORITES ? favoriteProductsView : communityProductsView}
-                          onChange={activeView === VIEWS.FAVORITES ? setFavoriteProductsView : setCommunityProductsView}
-                        />
-                      ) : null}
+                      <ProductViewDensityToggle
+                        value={activeView === VIEWS.FAVORITES ? favoriteProductsView : communityProductsView}
+                        onChange={activeView === VIEWS.FAVORITES ? setFavoriteProductsView : setCommunityProductsView}
+                        allowCompact={!isMobileViewport}
+                        variant={isMobileViewport ? "minimal" : "default"}
+                      />
                     </div>
                   </div>
                 ) : null}
@@ -6889,14 +7452,44 @@ function App() {
                   ? !(favoritesLoading && strictFavoritesList.length === 0) && !favoritesFetchError && visibleFavoritesListings.length > 0
                   : !listingsError && visibleBrowseListings.length > 0) ? (
                   <Suspense
-                    fallback={<ScreenLoading message="Loading products…" minHeight={false} className="min-h-[10rem]" />}
+                    fallback={
+                      isMobileViewport ? (
+                        <BrowseGridSkeleton
+                          gridClassName={
+                            activeView === VIEWS.FAVORITES
+                              ? favoritesGridClass(effectiveFavoriteBrowseView)
+                              : communityBrowseGridClass(effectiveCommunityBrowseView, isMobileViewport)
+                          }
+                          variant={
+                            (activeView === VIEWS.FAVORITES ? effectiveFavoriteBrowseView : effectiveCommunityBrowseView) ===
+                            "compact"
+                              ? "compact"
+                              : (activeView === VIEWS.FAVORITES ? effectiveFavoriteBrowseView : effectiveCommunityBrowseView) ===
+                                  "list"
+                                ? "list"
+                                : "grid"
+                          }
+                          softBrowseChrome={
+                            activeView === VIEWS.COMMUNITY_SHOP &&
+                            effectiveCommunityBrowseView !== "list"
+                          }
+                          count={4}
+                          className="min-h-[10rem] w-full min-w-0"
+                          ariaLabel="Loading products"
+                        />
+                      ) : (
+                        <ScreenLoading message="Loading products…" minHeight={false} className="min-h-[10rem]" />
+                      )
+                    }
                   >
                   <div
-                    className={
+                    className={`${
                       activeView === VIEWS.FAVORITES
                         ? favoritesGridClass(effectiveFavoriteBrowseView)
                         : communityBrowseGridClass(effectiveCommunityBrowseView, isMobileViewport)
-                    }
+                    } w-full min-w-0 ${lmBrowseViewShellClass(
+                      activeView === VIEWS.FAVORITES ? effectiveFavoriteBrowseView : effectiveCommunityBrowseView,
+                    )}`}
                   >
                     {(activeView === VIEWS.FAVORITES ? visibleFavoritesListings : visibleBrowseListings).map((l) => (
                       <LazyCommunityShopListingCard
@@ -6916,6 +7509,13 @@ function App() {
                           effectiveCommunityBrowseView !== "list"
                         }
                         softBrowseChrome={isMobileViewport && activeView === VIEWS.COMMUNITY_SHOP}
+                        browseSummaryGrid={
+                          isMobileViewport &&
+                          (activeView === VIEWS.FAVORITES
+                            ? effectiveFavoriteBrowseView === "grid"
+                            : effectiveCommunityBrowseView === "grid")
+                        }
+                        mobileCardUx={isMobileViewport}
                         isFavorite={favoriteIds.has(l.id)}
                         showActions
                         currentUserId={user?.id || ""}
@@ -6973,28 +7573,42 @@ function App() {
                   ? !(favoritesLoading && strictFavoritesList.length === 0) && !favoritesFetchError && visibleFavoritesListings.length === 0
                   : !listingsError && !(listingsLoading && listings.length === 0) && visibleBrowseListings.length === 0) ? (
                   <ScreenEmpty
-                    title="No listings to show"
+                    title={
+                      activeView === VIEWS.FAVORITES
+                        ? strictFavoritesList.length === 0
+                          ? "No saved listings yet"
+                          : browseVerticalId == null
+                            ? "No favorites match this filter"
+                            : "Nothing saved in this category"
+                        : shopCommunityId
+                          ? browseVerticalId == null
+                            ? "This community shop is empty"
+                            : "No listings in this category"
+                          : browseVerticalId == null
+                            ? "Nothing listed yet"
+                            : "No listings in this category"
+                    }
                     description={
                       activeView === VIEWS.FAVORITES
                         ? strictFavoritesList.length === 0
-                          ? "No favorites yet. Use the heart on product cards to save items."
+                          ? "Tap the heart on any product to save it here for later."
                           : browseVerticalId == null
-                            ? "No saved items match this browse filter. Try All or another filter."
-                            : "No favorites in this category yet. Try another category or reset filters."
+                            ? "Try switching back to All categories, or pick another filter from the shop header."
+                            : "Try another category from the filter strip, or reset filters to see everything you saved."
                         : shopCommunityId
                           ? browseVerticalId == null
-                            ? "Nothing has been posted in this community shop yet. Publish while this community is open, or match your profile address to this community."
-                            : "No active listings in this category here yet. Try another category, or add a listing under My listings for this community."
+                            ? "Be the first to list something for neighbors, or pull to refresh if you just published."
+                            : "Try another category, reset filters, or list an item that fits this community."
                           : browseVerticalId == null
-                            ? "No active listings yet."
-                            : "No active listings in this category yet."
+                            ? "Check back soon, or open another community from Browse."
+                            : "Try All categories or pick a different filter — new items appear throughout the day."
                     }
                     primaryAction={
                       activeView === VIEWS.FAVORITES && strictFavoritesList.length === 0
                         ? { label: "Browse marketplace", onClick: goBrowse }
                         : activeView === VIEWS.COMMUNITY_SHOP
                           ? { label: "Refresh listings", onClick: () => void refreshCommunityShopListings() }
-                          : undefined
+                          : { label: "Browse marketplace", onClick: goBrowse }
                     }
                     secondaryAction={
                       browseVerticalId != null || browseQuickFilter !== "all"
@@ -7006,7 +7620,9 @@ function App() {
                               setBrowseQuickFilter("all");
                             },
                           }
-                        : undefined
+                        : activeView === VIEWS.COMMUNITY_SHOP && shopCommunityId
+                          ? { label: "Browse all communities", onClick: goBrowse }
+                          : undefined
                     }
                   />
                 ) : null}
@@ -7086,7 +7702,7 @@ function App() {
                           <li key={thread.participantId}>
                             <button
                               type="button"
-                              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition ${
+                              className={`flex w-full min-w-0 items-center justify-between rounded-lg px-3 py-2 text-left transition ${
                                 selected
                                   ? "bg-brand-soft text-brand-primary dark:bg-slate-800/80 dark:text-slate-100"
                                   : "hover:bg-neutral-100 dark:hover:bg-slate-800"
@@ -7189,10 +7805,10 @@ function App() {
                           <li key={`messages-user-${u.id}`}>
                             <button
                               type="button"
-                              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition hover:bg-neutral-100 dark:hover:bg-slate-800"
+                              className="flex w-full min-w-0 items-center justify-between rounded-lg px-3 py-2 text-left transition hover:bg-neutral-100 dark:hover:bg-slate-800"
                               onClick={() => openChatWithUser(u.id)}
                             >
-                              <span className="min-w-0">
+                              <span className="min-w-0 flex-1">
                                 <span className="block truncate text-sm font-medium text-neutral-900 dark:text-slate-100">
                                   {formatDisplayName(u.name || u.username || "Member")}
                                 </span>
@@ -7201,7 +7817,7 @@ function App() {
                                   {u.joinedAt ? ` · Joined ${new Date(u.joinedAt).toLocaleDateString()}` : ""}
                                 </span>
                               </span>
-                              <span className="rounded-md border border-brand-primary/35 px-2 py-1 text-[11px] font-semibold text-brand-primary dark:border-brand-primary/45">
+                              <span className="shrink-0 rounded-md border border-brand-primary/35 px-2 py-1 text-[11px] font-semibold text-brand-primary dark:border-brand-primary/45">
                                 Chat
                               </span>
                             </button>
@@ -7237,19 +7853,21 @@ function App() {
                   </div>
                 ) : (
                   <>
-                    <div className="border-b border-neutral-200 px-4 py-2 dark:border-slate-700 md:py-3">
+                    <div className="min-w-0 border-b border-neutral-200 px-4 py-2 dark:border-slate-700 md:py-3">
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-brand-primary md:hidden"
+                        className="inline-flex max-w-full items-center gap-1 text-xs font-semibold text-brand-primary md:hidden"
                         onClick={() => setMessagesMobilePane("list")}
                       >
                         <span aria-hidden>←</span>
-                        Back to chats
+                        <span className="truncate">Back to chats</span>
                       </button>
-                      <p className="text-sm font-semibold text-neutral-900 dark:text-slate-100">
+                      <p className="break-words text-sm font-semibold text-neutral-900 dark:text-slate-100">
                         {formatDisplayName(activeChatUser?.name || activeChatUser?.username || "Member")}
                       </p>
-                      <p className="mt-0.5 text-xs text-neutral-500 dark:text-slate-400">{communityLabelForUser(activeChatUser)}</p>
+                      <p className="mt-0.5 line-clamp-2 break-words text-xs text-neutral-500 dark:text-slate-400">
+                        {communityLabelForUser(activeChatUser)}
+                      </p>
                     </div>
                     <div
                       ref={chatThreadViewportRef}
@@ -7286,7 +7904,7 @@ function App() {
                           : ""
                       }`}
                     >
-                      <div className="flex gap-2">
+                      <div className="flex min-w-0 gap-2">
                         <input
                           ref={chatComposerInputRef}
                           type="text"
@@ -7306,7 +7924,7 @@ function App() {
                             }
                           }}
                           placeholder={`Message ${formatDisplayName(activeChatUser?.name || activeChatUser?.username || "member")}...`}
-                          className="input-base h-11 flex-1"
+                          className="input-base h-11 min-w-0 flex-1"
                         />
                         <Button
                           type="button"
@@ -7329,14 +7947,14 @@ function App() {
 
         {activeView === VIEWS.NOTIFICATIONS && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Notifications</h2>
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h2 className="break-words text-2xl font-semibold text-neutral-900 dark:text-slate-100">Notifications</h2>
                 <p className="text-sm text-neutral-600 dark:text-slate-400">
                   Order updates, delivery status, and marketplace alerts from your session appear here.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <button
                   type="button"
                   className="rounded-lg border border-neutral-300/80 px-3 py-1.5 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
@@ -7414,7 +8032,23 @@ function App() {
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My Favorites</h2>
             {favoritesLoading && strictFavoritesList.length === 0 ? (
-              <ScreenLoading message="Loading favorites…" minHeight={false} className="min-h-[8rem]" />
+              isMobileViewport ? (
+                <BrowseGridSkeleton
+                  gridClassName={favoritesGridClass(effectiveFavoriteBrowseView)}
+                  variant={
+                    effectiveFavoriteBrowseView === "compact"
+                      ? "compact"
+                      : effectiveFavoriteBrowseView === "list"
+                        ? "list"
+                        : "grid"
+                  }
+                  count={effectiveFavoriteBrowseView === "compact" ? 8 : 6}
+                  className="min-h-[8rem]"
+                  ariaLabel="Loading favorites"
+                />
+              ) : (
+                <ScreenLoading message="Loading favorites…" minHeight={false} className="min-h-[8rem]" />
+              )
             ) : null}
             {favoritesFetchError ? (
               <ScreenError
@@ -7434,21 +8068,46 @@ function App() {
             ) : null}
             {strictFavoritesList.length > 0 ? (
               <>
-                {!isMobileViewport ? (
-                  <div className="flex justify-end">
-                    <ProductViewDensityToggle value={favoriteProductsView} onChange={setFavoriteProductsView} />
-                  </div>
-                ) : null}
+                <div className="flex justify-end">
+                  <ProductViewDensityToggle
+                    value={favoriteProductsView}
+                    onChange={setFavoriteProductsView}
+                    allowCompact={!isMobileViewport}
+                    variant={isMobileViewport ? "minimal" : "default"}
+                  />
+                </div>
                 <Suspense
-                  fallback={<ScreenLoading message="Loading favorites…" minHeight={false} className="min-h-[10rem]" />}
+                  fallback={
+                    isMobileViewport ? (
+                      <BrowseGridSkeleton
+                        gridClassName={favoritesGridClass(effectiveFavoriteBrowseView)}
+                        variant={
+                          effectiveFavoriteBrowseView === "compact"
+                            ? "compact"
+                            : effectiveFavoriteBrowseView === "list"
+                              ? "list"
+                              : "grid"
+                        }
+                        count={4}
+                        className="min-h-[10rem]"
+                        ariaLabel="Loading favorites"
+                      />
+                    ) : (
+                      <ScreenLoading message="Loading favorites…" minHeight={false} className="min-h-[10rem]" />
+                    )
+                  }
                 >
-                <div className={favoritesGridClass(effectiveFavoriteBrowseView)}>
+                <div
+                  className={`${favoritesGridClass(effectiveFavoriteBrowseView)} ${lmBrowseViewShellClass(effectiveFavoriteBrowseView)}`}
+                >
                   {strictFavoritesList.map((l) => (
                     <LazyCommunityShopListingCard
                       key={l.id}
                       listing={l}
                       gridMode={effectiveFavoriteBrowseView !== "list"}
                       compactGrid={effectiveFavoriteBrowseView === "compact"}
+                      browseSummaryGrid={isMobileViewport && effectiveFavoriteBrowseView === "grid"}
+                      mobileCardUx={isMobileViewport}
                       isFavorite={favoriteIds.has(l.id)}
                       showActions
                       currentUserId={user?.id || ""}
@@ -7508,14 +8167,34 @@ function App() {
 
         {activeView === VIEWS.MY_LISTINGS && (
           <section className="w-full min-w-0 max-w-none space-y-6 md:space-y-8">
-            <form noValidate onSubmit={handleCreateListing} className="grid w-full min-w-0 max-w-none gap-5 md:grid-cols-2 md:gap-4">
+            {listingPublishError ? (
+              <ScreenError
+                title="Couldn’t save your listing"
+                message={listingPublishError}
+                onRetry={() => {
+                  setListingPublishError("");
+                  const form = document.getElementById("listing-upload-form");
+                  if (form && typeof form.requestSubmit === "function") form.requestSubmit();
+                }}
+                retryLabel="Try again"
+                secondaryAction={{
+                  label: "Dismiss",
+                  onClick: () => setListingPublishError(""),
+                }}
+                spacious={false}
+              />
+            ) : null}
+            <form
+              id="listing-upload-form"
+              noValidate
+              onSubmit={handleCreateListing}
+              aria-busy={listingSaving || undefined}
+              className="grid w-full min-w-0 max-w-none gap-5 md:grid-cols-2 md:gap-4"
+            >
               <div id="listing-section-photos" className="md:col-span-2">
-                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Upload Product</h2>
-                <div className="mb-2 flex items-end justify-between gap-2">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Photos *</p>
-                  </div>
-                  <p className="text-[11px] text-neutral-500 dark:text-slate-400">Up to 6 images · JPG/PNG/WebP up to 5MB each</p>
+                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Upload</h2>
+                <div className="mb-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Photos *</p>
                 </div>
                 <div
                   className={`rounded-xl border border-dashed bg-white/80 transition dark:bg-slate-900/60 ${
@@ -7573,25 +8252,26 @@ function App() {
                     <div className="flex flex-col gap-3">
                       <div className="flex flex-wrap items-start gap-3">
                         <div className="flex flex-col items-start gap-1.5">
-                          <div className="group relative shrink-0 overflow-hidden rounded-xl border border-neutral-200/85 transition hover:border-primary/45 dark:border-slate-600 dark:hover:border-brand-accent/45">
+                          <div className="group relative h-32 w-32 shrink-0 overflow-hidden rounded-xl border border-neutral-200/85 transition hover:border-primary/45 md:h-36 md:w-36 dark:border-slate-600 dark:hover:border-brand-accent/45">
                             <button
                               type="button"
-                              className="block w-full focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary/45 dark:focus-visible:ring-brand-accent/45"
+                              className="absolute inset-0 block focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary/45 dark:focus-visible:ring-brand-accent/45"
                               aria-label="Cover photo options"
                               onClick={() => setListingPhotoActionModal({ open: true, variant: "cover", extraId: "" })}
                             >
-                              <img
+                              <StableMediaImage
                                 src={listingImagePreviewUrl}
                                 alt=""
-                                className="h-32 w-32 object-cover object-center md:h-36 md:w-36"
+                                className="absolute inset-0 h-full w-full"
                                 decoding="async"
                                 sizes="144px"
+                                loading="eager"
                               />
-                              <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-brand-primary/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white dark:bg-brand-accent/80">Cover photo</span>
+                              <span className="pointer-events-none absolute left-2 top-2 z-[4] rounded-full bg-brand-primary/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white dark:bg-brand-accent/80">Cover photo</span>
                             </button>
                             <button
                               type="button"
-                              className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-xs font-semibold text-white transition hover:bg-rose-600"
+                              className="absolute right-1.5 top-1.5 z-[5] inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-xs font-semibold text-white transition hover:bg-rose-600"
                               aria-label="Remove cover image"
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -7618,24 +8298,25 @@ function App() {
                           </p>
                         </div>
                         {listingExtraImages.map((item) => (
-                          <div key={item.id} className="group relative shrink-0 overflow-hidden rounded-xl border border-neutral-200/85 transition hover:border-primary/45 dark:border-slate-600 dark:hover:border-brand-accent/45">
+                          <div key={item.id} className="group relative h-32 w-32 shrink-0 overflow-hidden rounded-xl border border-neutral-200/85 transition hover:border-primary/45 md:h-36 md:w-36 dark:border-slate-600 dark:hover:border-brand-accent/45">
                             <button
                               type="button"
-                              className="block w-full focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary/45 dark:focus-visible:ring-brand-accent/45"
+                              className="absolute inset-0 block focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary/45 dark:focus-visible:ring-brand-accent/45"
                               aria-label="Photo options"
                               onClick={() => setListingPhotoActionModal({ open: true, variant: "extra", extraId: item.id })}
                             >
-                              <img
+                              <StableMediaImage
                                 src={item.previewUrl}
                                 alt=""
-                                className="h-32 w-32 object-cover object-center md:h-36 md:w-36"
+                                className="absolute inset-0 h-full w-full"
                                 decoding="async"
                                 sizes="144px"
+                                loading="eager"
                               />
                             </button>
                             <button
                               type="button"
-                              className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-xs font-semibold text-white transition hover:bg-rose-600"
+                              className="absolute right-1.5 top-1.5 z-[5] inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-xs font-semibold text-white transition hover:bg-rose-600"
                               aria-label="Remove image"
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -7665,22 +8346,28 @@ function App() {
                       </div>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      className="group relative inline-flex h-28 w-28 items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white/60 text-center text-xs font-semibold text-neutral-500 transition hover:border-brand-primary/50 hover:text-brand-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:border-brand-accent/45 dark:hover:text-slate-100 dark:focus-visible:ring-brand-accent/50"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        listingImageInputRef.current?.click();
-                      }}
-                    >
-                      <span className="pointer-events-none flex flex-col items-center gap-1">
-                        <span aria-hidden className="text-base leading-none">+</span>
-                        <span>Add image</span>
-                      </span>
-                    </button>
+                    <div className="flex w-full max-w-lg flex-col items-center px-2 text-center md:max-w-xl">
+                      <button
+                        type="button"
+                        className="group relative inline-flex h-28 w-28 items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white/60 text-center text-xs font-semibold text-neutral-500 transition hover:border-brand-primary/50 hover:text-brand-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:border-brand-accent/45 dark:hover:text-slate-100 dark:focus-visible:ring-brand-accent/50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          listingImageInputRef.current?.click();
+                        }}
+                      >
+                        <span className="pointer-events-none flex flex-col items-center gap-1">
+                          <span aria-hidden className="text-base leading-none">+</span>
+                          <span>Add image</span>
+                        </span>
+                      </button>
+                    </div>
                   )}
                 </div>
-                {listingFieldErrors.image ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.image}</p> : null}
+                {listingFieldErrors.image ? (
+                  <p className="field-error-text mt-1" role="alert">
+                    {listingFieldErrors.image}
+                  </p>
+                ) : null}
                 {listingPhotoActionModal.open ? (
                   <div className="fixed inset-0 z-[119] flex items-center justify-center p-4">
                     <button
@@ -7711,8 +8398,8 @@ function App() {
                         </div>
                         <button
                           type="button"
-                          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-                          aria-label="Close"
+                          className="btn-icon-only inline-flex shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 md:!h-9 md:!min-h-9 md:!w-9 md:!max-w-9"
+                          aria-label="Close photo options"
                           onClick={() => closeListingPhotoActionModal()}
                         >
                           <span aria-hidden className="text-lg leading-none">
@@ -7721,8 +8408,8 @@ function App() {
                         </button>
                       </div>
                       <div className="-mx-5 mt-5 md:-mx-6">
-                        <div className="overflow-hidden bg-neutral-100 ring-1 ring-inset ring-neutral-200/90 dark:bg-slate-800/80 dark:ring-slate-600">
-                          <img
+                        <div className="relative aspect-video w-full overflow-hidden bg-neutral-100 ring-1 ring-inset ring-neutral-200/90 dark:bg-slate-800/80 dark:ring-slate-600">
+                          <StableMediaImage
                             src={
                               listingPhotoActionModal.variant === "cover"
                                 ? listingImagePreviewUrl
@@ -7731,7 +8418,9 @@ function App() {
                                   ).trim()
                             }
                             alt=""
-                            className="aspect-video w-full object-cover"
+                            className="absolute inset-0 h-full w-full"
+                            loading="eager"
+                            sizes="100vw"
                           />
                         </div>
                       </div>
@@ -7933,7 +8622,7 @@ function App() {
                           </button>
                         </div>
                         {listingCropApplyError ? (
-                          <p className="text-right text-sm leading-snug text-rose-600 dark:text-rose-400" role="alert">
+                          <p className="field-error-text text-right" role="alert">
                             {listingCropApplyError}
                           </p>
                         ) : null}
@@ -7943,7 +8632,9 @@ function App() {
                 ) : null}
               </div>
               <div id="listing-section-details" className="md:col-span-2">
-                <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Details *</p>
+                <label htmlFor="listing-title" className="label-base">
+                  Listing title *
+                </label>
                 <input
                   id="listing-title"
                   name="title"
@@ -7952,7 +8643,7 @@ function App() {
                   enterKeyHint="next"
                   autoComplete="off"
                   value={listingForm.title}
-                  placeholder="e.g. Preloved study table, iPhone 11 64GB, Rice cooker"
+                  placeholder="Item name"
                   onChange={(e) => {
                     setListingForm((p) => ({ ...p, title: e.target.value }));
                     if (listingFieldErrors.title) setListingFieldErrors((prev) => ({ ...prev, title: "" }));
@@ -7983,24 +8674,28 @@ function App() {
                 ) : null}
               </div>
               <div className="md:col-span-2">
-                <label className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Description (optional)</label>
+                <label htmlFor="listing-description" className="label-base">
+                  Description (optional)
+                </label>
                 <textarea
                   id="listing-description"
                   name="description"
                   className="input-base min-h-[5rem] w-full"
                   enterKeyHint="done"
                   value={listingForm.description}
-                  placeholder="Add key details buyers need: condition, size/specs, inclusions, issue disclosures, meetup area."
+                  placeholder="Details"
                   onChange={(e) => setListingForm((p) => ({ ...p, description: e.target.value }))}
                   rows={3}
-                  maxLength={500}
+                  maxLength={2000}
                 />
-                <p className="mt-1 text-right text-[11px] text-neutral-500 dark:text-slate-400">{listingDescriptionCount}/500</p>
+                <p className="mt-1 text-right text-[11px] text-neutral-500 dark:text-slate-400">{listingDescriptionCount}/2000</p>
               </div>
               <div className="md:col-span-2 mt-2 border-t border-neutral-200/65 pt-4 divide-y divide-neutral-200/65 dark:border-slate-700 dark:divide-slate-700">
                 <div id="listing-section-pricing" className="grid grid-cols-1 gap-4 py-5 md:grid-cols-2 md:py-4">
                   <div className="min-w-0">
-                  <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Pricing *</p>
+                  <label htmlFor="listing-price-pesos" className="label-base">
+                    Price (PHP) *
+                  </label>
                   <div
                     className={`flex min-w-0 overflow-hidden rounded-xl border bg-white transition dark:bg-slate-950 ${
                       listingFieldErrors.pricePesos
@@ -8015,13 +8710,15 @@ function App() {
                       PHP
                     </span>
                     <input
-                      className="min-w-0 flex-1 border-0 bg-transparent px-3 py-2.5 text-sm text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500"
+                      id="listing-price-pesos"
+                      className="min-h-[44px] min-w-0 flex-1 border-0 bg-transparent px-3 py-2.5 text-base text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500 md:min-h-0 md:text-sm"
                       type="number"
                       min={0}
                       step="0.01"
                       placeholder="e.g. 499.00"
                       aria-label="Price in Philippine pesos"
                       inputMode="decimal"
+                      enterKeyHint="next"
                       value={listingForm.pricePesos}
                       onChange={(e) => {
                         setListingForm((p) => ({ ...p, pricePesos: e.target.value }));
@@ -8036,49 +8733,51 @@ function App() {
                   ) : null}
                   </div>
                 <div className="min-w-0">
-                  <label className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Quantity *</label>
-                  <input
-                    className={`input-base w-full text-left ${listingFieldErrors.quantity ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
-                    type="number"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    min={0}
-                    step={1}
-                    placeholder="e.g. 1, 3, 10"
-                    value={listingForm.quantity}
-                    onChange={(e) => {
-                      setListingForm((p) => ({ ...p, quantity: e.target.value }));
-                      if (listingFieldErrors.quantity) setListingFieldErrors((prev) => ({ ...prev, quantity: "" }));
-                    }}
-                    onBlur={(e) => {
-                      const parsed = Number.parseInt(String(e.target.value || "").trim(), 10);
-                      const normalized = Number.isFinite(parsed) && parsed >= 0 ? String(parsed) : "";
-                      setListingForm((p) => ({ ...p, quantity: normalized }));
-                    }}
-                  />
-                  {String(listingForm.quantity || "").trim() === "" ? (
-                    <div className="mt-2">
-                      <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-                        Quick picks
-                      </p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {[1, 5, 10].map((qty) => (
-                        <button
-                          key={`qty-${qty}`}
-                          type="button"
-                          className={`rounded-full border px-2.5 py-1 text-xs transition ${
-                            listingQuantityNumber === qty
-                              ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
-                              : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
-                          }`}
-                          onClick={() => setListingForm((p) => ({ ...p, quantity: String(qty) }))}
-                        >
-                          {qty}
-                        </button>
+                    <label htmlFor="listing-quantity" className="label-base">
+                      Quantity *
+                    </label>
+                    <input
+                      id="listing-quantity"
+                      className={`input-base mt-1.5 min-h-[44px] w-full rounded-xl text-left tabular-nums md:min-h-0 ${listingFieldErrors.quantity ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
+                      type="number"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      min={0}
+                      step={1}
+                      placeholder="Type a quantity, or tap below"
+                      enterKeyHint="next"
+                      value={listingForm.quantity}
+                      onChange={(e) => {
+                        setListingForm((p) => ({ ...p, quantity: e.target.value }));
+                        if (listingFieldErrors.quantity) setListingFieldErrors((prev) => ({ ...prev, quantity: "" }));
+                      }}
+                      onBlur={(e) => {
+                        const parsed = Number.parseInt(String(e.target.value || "").trim(), 10);
+                        const normalized = Number.isFinite(parsed) && parsed >= 0 ? String(parsed) : "";
+                        setListingForm((p) => ({ ...p, quantity: normalized }));
+                      }}
+                    />
+                    {String(listingForm.quantity || "").trim() === "" ? (
+                      <div
+                        className="mt-2 flex flex-wrap gap-2"
+                        role="group"
+                        aria-label="Quantity presets"
+                      >
+                        {LISTING_QUANTITY_PRESETS.map((qty) => (
+                          <button
+                            key={`qty-${qty}`}
+                            type="button"
+                            className="min-h-10 min-w-[2.5rem] touch-manipulation rounded-full border border-brand-primary/35 px-2.5 py-1.5 text-xs font-medium tabular-nums text-brand-primary transition hover:bg-brand-soft/50 active:scale-[0.98] dark:border-brand-accent/35 dark:text-slate-200 dark:hover:bg-slate-800"
+                            onClick={() => {
+                              setListingForm((p) => ({ ...p, quantity: String(qty) }));
+                              if (listingFieldErrors.quantity) setListingFieldErrors((prev) => ({ ...prev, quantity: "" }));
+                            }}
+                          >
+                            {qty}
+                          </button>
                         ))}
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
                   {listingFieldErrors.quantity ? (
                     <p className="field-error-text mt-1" role="alert">
                       {listingFieldErrors.quantity}
@@ -8087,7 +8786,7 @@ function App() {
                 </div>
               </div>
               <div id="listing-section-fulfillment" className="py-5 md:py-4">
-                <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Fulfillment *</p>
+                <p className="label-base">Fulfillment *</p>
                 <div className="mt-2 flex flex-wrap items-center gap-4">
                   <button
                     type="button"
@@ -8121,9 +8820,13 @@ function App() {
                   </button>
                 </div>
                 <p className="mt-2 text-xs text-neutral-500 dark:text-slate-400">Choose how buyers can receive the item.</p>
-                {listingFieldErrors.fulfillment ? <p className="mt-2 text-xs font-medium text-rose-600 dark:text-rose-400">{listingFieldErrors.fulfillment}</p> : null}
+                {listingFieldErrors.fulfillment ? (
+                  <p className="field-error-text mt-2" role="alert">
+                    {listingFieldErrors.fulfillment}
+                  </p>
+                ) : null}
               </div>
-              <div className="py-1">
+              <div id="listing-section-advanced" className="md:col-span-2 py-1">
                 <div
                   role="button"
                   tabIndex={0}
@@ -8144,111 +8847,415 @@ function App() {
                   </span>
                 </div>
                 {listingAdvancedOpen ? (
-                  <div className="mt-3 space-y-3 border-t border-neutral-200/65 pt-4 dark:border-slate-700">
-                    <div id="listing-section-variants" className="py-1">
-                      <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Variants</p>
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                        <div className="min-w-0">
-                          <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Variant type</label>
-                          <input className="input-base w-full" placeholder="e.g. Condition" value={listingForm.optionNameA} onChange={(e) => setListingForm((p) => ({ ...p, optionNameA: e.target.value }))} />
-                          {String(listingForm.optionNameA || "").trim() === "" ? (
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {LISTING_OPTION_NAME_SUGGESTIONS.map((name) => (
-                                <button key={`quick-a-${name}`} type="button" className="rounded-full border border-brand-primary/35 px-2.5 py-1 text-xs font-medium text-brand-primary transition hover:bg-brand-soft/50 dark:border-brand-accent/35 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => setListingForm((p) => ({ ...p, optionNameA: name }))}>{name}</button>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                        <div className="min-w-0">
-                          <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Variant choices</label>
-                          <input className="input-base w-full" placeholder="Type value then Enter (e.g. M)" value={listingOptionValueDraftA} onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addListingOptionValue("A", listingOptionValueDraftA); } }} onChange={(e) => setListingOptionValueDraftA(e.target.value)} />
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {splitOptionValuesCsv(listingForm.optionValuesA).map((value) => (
-                              <button key={`a-tag-${value}`} type="button" className="inline-flex min-h-8 items-center gap-1 rounded-full border border-brand-primary bg-brand-primary px-2.5 py-0.5 text-xs text-white transition hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900" onClick={() => removeListingOptionValue("A", value)}>{value}<span aria-hidden>×</span></button>
-                            ))}
-                          </div>
-                          {getListingOptionValueSuggestions(listingForm.optionNameA).filter((value) => !splitOptionValuesCsv(listingForm.optionValuesA).includes(value)).length ? (
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              {getListingOptionValueSuggestions(listingForm.optionNameA).filter((value) => !splitOptionValuesCsv(listingForm.optionValuesA).includes(value)).map((value) => (
-                                <button key={`a-preset-${value}`} type="button" className="rounded-full border border-brand-primary/30 px-2 py-0.5 text-xs text-brand-primary transition hover:bg-brand-soft/45 dark:border-brand-accent/30 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => addListingOptionValue("A", value)}>{value}</button>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                        {listingSecondOptionOpen ? (
-                          <>
-                            <div className="min-w-0">
-                              <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Second variant type</label>
-                              <input className="input-base w-full" placeholder="e.g. Size" value={listingForm.optionNameB} onChange={(e) => setListingForm((p) => ({ ...p, optionNameB: e.target.value }))} />
-                              {String(listingForm.optionNameB || "").trim() === "" ? (
-                                <div className="mt-2 flex flex-wrap gap-2">
-                                  {LISTING_OPTION_NAME_SUGGESTIONS.filter((name) => name.toLowerCase() !== String(listingForm.optionNameA || "").trim().toLowerCase()).map((name) => (
-                                    <button key={`quick-b-${name}`} type="button" className="rounded-full border border-brand-primary/35 px-2.5 py-1 text-xs font-medium text-brand-primary transition hover:bg-brand-soft/50 dark:border-brand-accent/35 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => setListingForm((p) => ({ ...p, optionNameB: name }))}>{name}</button>
-                                  ))}
-                                </div>
-                              ) : null}
-                              <button type="button" className="mt-3 text-sm font-semibold text-rose-600 underline decoration-rose-300 underline-offset-2 transition hover:text-rose-700 dark:text-rose-400 dark:decoration-rose-500/60 dark:hover:text-rose-300" onClick={() => { setListingForm((p) => ({ ...p, optionNameB: "", optionValuesB: "" })); setListingOptionValueDraftB(""); setListingSecondOptionOpen(false); }}>Remove second option</button>
-                            </div>
-                            <div className="min-w-0">
-                              <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Second variant choices</label>
-                              <input className="input-base w-full" placeholder="Type value then Enter (e.g. New)" value={listingOptionValueDraftB} onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addListingOptionValue("B", listingOptionValueDraftB); } }} onChange={(e) => setListingOptionValueDraftB(e.target.value)} />
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {splitOptionValuesCsv(listingForm.optionValuesB).map((value) => (
-                                  <button key={`b-tag-${value}`} type="button" className="inline-flex min-h-8 items-center gap-1 rounded-full border border-brand-primary bg-brand-primary px-2.5 py-0.5 text-xs text-white transition hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900" onClick={() => removeListingOptionValue("B", value)}>{value}<span aria-hidden>×</span></button>
-                                ))}
-                              </div>
-                            </div>
-                          </>
-                        ) : (
-                          <div className="min-w-0 md:col-span-2">
-                            <button type="button" className="btn-secondary text-xs" onClick={() => setListingSecondOptionOpen(true)}>+ Add another option</button>
-                          </div>
-                        )}
+                  <div className="mt-3 border-t border-neutral-200/65 pt-4 dark:border-slate-700" />
+                ) : null}
+              </div>
+              <div
+                id="listing-section-variants"
+                className={`md:col-span-2 border-t border-neutral-200/65 pt-4 dark:border-slate-700 ${listingAdvancedOpen ? "block" : "hidden"}`}
+              >
+                <h3 className="text-sm font-bold text-neutral-900 dark:text-slate-100">Product variants</h3>
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
+                  <div className="min-w-0 space-y-2">
+                    <label htmlFor="listing-variant-type-a" className="label-base">
+                      Variant type
+                    </label>
+                    <input
+                      id="listing-variant-type-a"
+                      type="text"
+                      autoComplete="off"
+                      className={`input-base min-h-[44px] w-full ${listingFieldErrors.optionNameA ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
+                      placeholder="Type a preset name — closest match is suggested"
+                      aria-label="Variant type"
+                      value={listingForm.optionNameA}
+                      onChange={(e) => {
+                        setListingForm((p) => ({ ...p, optionNameA: e.target.value }));
+                        if (listingFieldErrors.optionNameA) setListingFieldErrors((prev) => ({ ...prev, optionNameA: "" }));
+                      }}
+                      onBlur={(e) => {
+                        const candidates = filterVariantTypesExcluding(listingSecondOptionOpen ? listingForm.optionNameB : "");
+                        const resolved = resolveVariantTypeOnBlur(e.target.value, candidates);
+                        setListingForm((p) =>
+                          resolved === p.optionNameA ? p : { ...p, optionNameA: resolved },
+                        );
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        const candidates = filterVariantTypesExcluding(listingSecondOptionOpen ? listingForm.optionNameB : "");
+                        const resolved = resolveVariantTypeOnBlur(e.currentTarget.value, candidates);
+                        setListingForm((p) => ({ ...p, optionNameA: resolved }));
+                        if (listingFieldErrors.optionNameA) setListingFieldErrors((prev) => ({ ...prev, optionNameA: "" }));
+                      }}
+                    />
+                    {(() => {
+                      const candidates = filterVariantTypesExcluding(listingSecondOptionOpen ? listingForm.optionNameB : "");
+                      const sug = nearestVariantTypeSuggestion(listingForm.optionNameA, candidates);
+                      return sug ? (
+                        <button
+                          type="button"
+                          className="mt-1.5 w-full rounded-xl border border-brand-primary/35 bg-brand-soft/35 px-3 py-2 text-left text-xs font-medium text-brand-primary transition hover:bg-brand-soft/50 dark:border-brand-accent/35 dark:bg-slate-800/50 dark:text-slate-200 dark:hover:bg-slate-800"
+                          onClick={() => {
+                            setListingForm((p) => ({ ...p, optionNameA: sug }));
+                            if (listingFieldErrors.optionNameA) setListingFieldErrors((prev) => ({ ...prev, optionNameA: "" }));
+                          }}
+                        >
+                          Use “{sug}”
+                        </button>
+                      ) : null;
+                    })()}
+                    {listingFieldErrors.optionNameA ? (
+                      <p className="field-error-text" role="alert">
+                        {listingFieldErrors.optionNameA}
+                      </p>
+                    ) : null}
+                    {listingVariantTypeSelectValue(listingForm.optionNameA) === "" ? (
+                      <div className="flex flex-wrap gap-2">
+                        {filterVariantTypesExcluding(listingSecondOptionOpen ? listingForm.optionNameB : "").map((name) => (
+                          <button
+                            key={`qa-${name}`}
+                            type="button"
+                            className="min-h-10 rounded-full border border-brand-primary/35 px-2.5 py-1.5 text-xs font-medium text-brand-primary transition hover:bg-brand-soft/50 dark:border-brand-accent/35 dark:text-slate-200 dark:hover:bg-slate-800"
+                            onClick={() => setListingForm((p) => ({ ...p, optionNameA: name }))}
+                          >
+                            {name}
+                          </button>
+                        ))}
                       </div>
+                    ) : null}
+                  </div>
+                  <div className="min-w-0 space-y-2">
+                    <label className="label-base" htmlFor="listing-variant-choice-draft-a">
+                      Variant choices
+                    </label>
+                    <input
+                      id="listing-variant-choice-draft-a"
+                      className="input-base min-h-[44px] w-full min-w-0"
+                      placeholder="Type a choice, then Enter or comma"
+                      value={listingOptionValueDraftA}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === ",") {
+                          e.preventDefault();
+                          addListingOptionValue("A", listingOptionValueDraftA);
+                        }
+                      }}
+                      onChange={(e) => setListingOptionValueDraftA(e.target.value)}
+                      aria-label="Add variant choice"
+                    />
+                    {listingFieldErrors.optionValuesA ? (
+                      <p className="field-error-text" role="alert">
+                        {listingFieldErrors.optionValuesA}
+                      </p>
+                    ) : null}
+                    <div className="flex flex-wrap gap-1.5">
+                      {splitOptionValuesCsv(listingForm.optionValuesA).map((value) => (
+                        <button
+                          key={`a-tag-${value}`}
+                          type="button"
+                          className="inline-flex min-h-8 items-center gap-1 rounded-full border border-brand-primary bg-brand-primary px-2.5 py-0.5 text-xs text-white transition hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                          onClick={() => removeListingOptionValue("A", value)}
+                        >
+                          {value}
+                          <span aria-hidden>×</span>
+                        </button>
+                      ))}
                     </div>
-                    <div id="listing-section-processing" className="border-t border-neutral-200/65 py-4 dark:border-slate-700">
-                      <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Processing (Order type)</p>
-                      <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            {[
-                              ["in_stock", "In stock"],
-                              ["pre_order", "Pre-order"],
-                            ].map(([value, label]) => (
-                              <button key={value} type="button" className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium transition ${listingForm.orderType === value ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900" : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"}`} onClick={() => setListingForm((p) => ({ ...p, orderType: value }))}>{label}</button>
-                            ))}
-                          </div>
-                        </div>
-                        {listingForm.orderType === "pre_order" ? (
-                          <div className="min-w-0">
-                            <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Lead / processing time</label>
-                            <input className={`input-base w-full ${listingFieldErrors.processingTime ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`} placeholder="e.g. 7 days" value={listingForm.processingTime} onChange={(e) => setListingForm((p) => ({ ...p, processingTime: e.target.value }))} />
-                            {String(listingForm.processingTime || "").trim() === "" ? (
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {LISTING_PROCESSING_TIME_PRESETS.map((preset) => (
-                                  <button key={preset} type="button" className="rounded-full border border-brand-primary/30 px-2 py-0.5 text-xs text-brand-primary transition hover:bg-brand-soft/45 dark:border-brand-accent/30 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => setListingForm((p) => ({ ...p, processingTime: preset }))}>{preset}</button>
-                                ))}
-                              </div>
-                            ) : null}
-                            {listingFieldErrors.processingTime ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.processingTime}</p> : null}
-                          </div>
-                        ) : null}
+                    {getListingOptionValueSuggestions(listingForm.optionNameA).filter(
+                      (value) =>
+                        !splitOptionValuesCsv(listingForm.optionValuesA).some((c) => c.toLowerCase() === value.toLowerCase()),
+                    ).length ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {getListingOptionValueSuggestions(listingForm.optionNameA)
+                          .filter(
+                            (value) =>
+                              !splitOptionValuesCsv(listingForm.optionValuesA).some(
+                                (c) => c.toLowerCase() === value.toLowerCase(),
+                              ),
+                          )
+                          .map((value) => (
+                            <button
+                              key={`a-preset-${value}`}
+                              type="button"
+                              className="min-h-9 rounded-full border border-brand-primary/30 px-2 py-0.5 text-xs text-brand-primary transition hover:bg-brand-soft/45 dark:border-brand-accent/30 dark:text-slate-200 dark:hover:bg-slate-800"
+                              onClick={() => addListingOptionValue("A", value)}
+                            >
+                              {value}
+                            </button>
+                          ))}
                       </div>
+                    ) : null}
+                  </div>
+                </div>
+                {listingSecondOptionOpen ? (
+                  <div className="mt-6 grid grid-cols-1 gap-4 border-t border-neutral-200/65 pt-6 md:grid-cols-2 md:gap-6 dark:border-slate-700">
+                    <div className="min-w-0 space-y-2">
+                      <label htmlFor="listing-variant-type-b" className="label-base">
+                        Second variant type
+                      </label>
+                      <input
+                        id="listing-variant-type-b"
+                        type="text"
+                        autoComplete="off"
+                        className={`input-base min-h-[44px] w-full ${listingFieldErrors.optionNameB ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
+                        placeholder="Type a preset name — closest match is suggested"
+                        aria-label="Second variant type"
+                        value={listingForm.optionNameB}
+                        onChange={(e) => {
+                          setListingForm((p) => ({ ...p, optionNameB: e.target.value }));
+                          if (listingFieldErrors.optionNameB) setListingFieldErrors((prev) => ({ ...prev, optionNameB: "" }));
+                        }}
+                        onBlur={(e) => {
+                          const candidates = filterVariantTypesExcluding(listingForm.optionNameA);
+                          const resolved = resolveVariantTypeOnBlur(e.target.value, candidates);
+                          setListingForm((p) =>
+                            resolved === p.optionNameB ? p : { ...p, optionNameB: resolved },
+                          );
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          e.preventDefault();
+                          const candidates = filterVariantTypesExcluding(listingForm.optionNameA);
+                          const resolved = resolveVariantTypeOnBlur(e.currentTarget.value, candidates);
+                          setListingForm((p) => ({ ...p, optionNameB: resolved }));
+                          if (listingFieldErrors.optionNameB) setListingFieldErrors((prev) => ({ ...prev, optionNameB: "" }));
+                        }}
+                      />
+                      {(() => {
+                        const candidates = filterVariantTypesExcluding(listingForm.optionNameA);
+                        const sug = nearestVariantTypeSuggestion(listingForm.optionNameB, candidates);
+                        return sug ? (
+                          <button
+                            type="button"
+                            className="mt-1.5 w-full rounded-xl border border-brand-primary/35 bg-brand-soft/35 px-3 py-2 text-left text-xs font-medium text-brand-primary transition hover:bg-brand-soft/50 dark:border-brand-accent/35 dark:bg-slate-800/50 dark:text-slate-200 dark:hover:bg-slate-800"
+                            onClick={() => {
+                              setListingForm((p) => ({ ...p, optionNameB: sug }));
+                              if (listingFieldErrors.optionNameB) setListingFieldErrors((prev) => ({ ...prev, optionNameB: "" }));
+                            }}
+                          >
+                            Use “{sug}”
+                          </button>
+                        ) : null;
+                      })()}
+                      {listingFieldErrors.optionNameB ? (
+                        <p className="field-error-text" role="alert">
+                          {listingFieldErrors.optionNameB}
+                        </p>
+                      ) : null}
+                      {listingVariantTypeSelectValue(listingForm.optionNameB) === "" ? (
+                        <div className="flex flex-wrap gap-2">
+                          {filterVariantTypesExcluding(listingForm.optionNameA).map((name) => (
+                            <button
+                              key={`qb-${name}`}
+                              type="button"
+                              className="min-h-10 rounded-full border border-brand-primary/35 px-2.5 py-1.5 text-xs font-medium text-brand-primary transition hover:bg-brand-soft/50 dark:border-brand-accent/35 dark:text-slate-200 dark:hover:bg-slate-800"
+                              onClick={() => setListingForm((p) => ({ ...p, optionNameB: name }))}
+                            >
+                              {name}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="min-w-0 space-y-2">
+                      <label className="label-base" htmlFor="listing-variant-choice-draft-b">
+                        Second variant choices
+                      </label>
+                      <input
+                        id="listing-variant-choice-draft-b"
+                        className="input-base min-h-[44px] w-full min-w-0"
+                        placeholder="Type a choice, then Enter or comma"
+                        value={listingOptionValueDraftB}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            addListingOptionValue("B", listingOptionValueDraftB);
+                          }
+                        }}
+                        onChange={(e) => setListingOptionValueDraftB(e.target.value)}
+                        aria-label="Add second variant choice"
+                      />
+                      {listingFieldErrors.optionValuesB ? (
+                        <p className="field-error-text" role="alert">
+                          {listingFieldErrors.optionValuesB}
+                        </p>
+                      ) : null}
+                      <div className="flex flex-wrap gap-1.5">
+                        {splitOptionValuesCsv(listingForm.optionValuesB).map((value) => (
+                          <button
+                            key={`b-tag-${value}`}
+                            type="button"
+                            className="inline-flex min-h-8 items-center gap-1 rounded-full border border-brand-primary bg-brand-primary px-2.5 py-0.5 text-xs text-white transition hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                            onClick={() => removeListingOptionValue("B", value)}
+                          >
+                            {value}
+                            <span aria-hidden>×</span>
+                          </button>
+                        ))}
+                      </div>
+                      {getListingOptionValueSuggestions(listingForm.optionNameB).filter(
+                        (value) =>
+                          !splitOptionValuesCsv(listingForm.optionValuesB).some((c) => c.toLowerCase() === value.toLowerCase()),
+                      ).length ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {getListingOptionValueSuggestions(listingForm.optionNameB)
+                            .filter(
+                              (value) =>
+                                !splitOptionValuesCsv(listingForm.optionValuesB).some(
+                                  (c) => c.toLowerCase() === value.toLowerCase(),
+                                ),
+                            )
+                            .map((value) => (
+                              <button
+                                key={`b-preset-${value}`}
+                                type="button"
+                                className="min-h-9 rounded-full border border-brand-primary/30 px-2 py-0.5 text-xs text-brand-primary transition hover:bg-brand-soft/45 dark:border-brand-accent/30 dark:text-slate-200 dark:hover:bg-slate-800"
+                                onClick={() => addListingOptionValue("B", value)}
+                              >
+                                {value}
+                              </button>
+                            ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="md:col-span-2">
+                      <button
+                        type="button"
+                        className="mt-1 text-sm font-semibold text-rose-600 underline decoration-rose-300 underline-offset-2 transition hover:text-rose-700 dark:text-rose-400 dark:decoration-rose-500/60 dark:hover:text-rose-300"
+                        onClick={() => {
+                          setListingForm((p) => ({ ...p, optionNameB: "", optionValuesB: "" }));
+                          setListingOptionValueDraftB("");
+                          setListingSecondOptionOpen(false);
+                          setListingFieldErrors((prev) => ({ ...prev, optionNameB: "", optionValuesB: "" }));
+                        }}
+                      >
+                        Remove second variant
+                      </button>
                     </div>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      className="btn-secondary min-h-[44px] w-full text-sm sm:w-auto"
+                      onClick={() => setListingSecondOptionOpen(true)}
+                    >
+                      Add second variant
+                    </button>
+                    <div
+                      className="mt-4 h-px w-full bg-neutral-200/80 dark:bg-slate-600"
+                      aria-hidden
+                    />
+                  </div>
+                )}
+              </div>
+              <div
+                id="listing-section-processing"
+                className={`md:col-span-2 py-1 ${listingAdvancedOpen ? "block" : "hidden"}`}
+              >
+                <p className="label-base">Processing (order type)</p>
+                <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {[
+                        ["in_stock", "In stock"],
+                        ["pre_order", "Pre-order"],
+                      ].map(([value, label]) => (
+                        <button key={value} type="button" className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium transition ${listingForm.orderType === value ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900" : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"}`} onClick={() => setListingForm((p) => ({ ...p, orderType: value }))}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                  {listingForm.orderType === "in_stock" ? (
+                    <div className="min-w-0">
+                      <label htmlFor="listing-ready-in" className="label-base">
+                        Estimated ready time{" "}
+                        <span className="font-normal text-neutral-500 dark:text-slate-400">(optional)</span>
+                      </label>
+                      <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="shrink-0 text-sm font-semibold text-neutral-800 dark:text-slate-100">Ready in:</span>
+                        <input
+                          id="listing-ready-in"
+                          type="text"
+                          enterKeyHint="done"
+                          autoComplete="off"
+                          className="input-base min-w-[10rem] flex-1"
+                          placeholder="e.g. 2 hours, same day"
+                          value={listingForm.processingTime}
+                          onChange={(e) => setListingForm((p) => ({ ...p, processingTime: e.target.value }))}
+                        />
+                      </div>
+                      {String(listingForm.processingTime || "").trim() === "" ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {LISTING_READY_IN_PRESETS.map((preset) => (
+                            <button
+                              key={preset}
+                              type="button"
+                              className="rounded-full border border-brand-primary/30 px-2 py-0.5 text-xs text-brand-primary transition hover:bg-brand-soft/45 dark:border-brand-accent/30 dark:text-slate-200 dark:hover:bg-slate-800"
+                              onClick={() => setListingForm((p) => ({ ...p, processingTime: preset }))}
+                            >
+                              {preset}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="min-w-0">
+                      <label htmlFor="listing-processing-time" className="label-base">
+                        Lead / processing time *
+                      </label>
+                      <input
+                        id="listing-processing-time"
+                        type="text"
+                        enterKeyHint="done"
+                        autoComplete="off"
+                        aria-invalid={listingFieldErrors.processingTime ? true : undefined}
+                        aria-describedby={
+                          listingFieldErrors.processingTime ? "listing-processing-time-error" : undefined
+                        }
+                        className={`input-base w-full ${listingFieldErrors.processingTime ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
+                        placeholder="e.g. 7 days"
+                        value={listingForm.processingTime}
+                        onChange={(e) => setListingForm((p) => ({ ...p, processingTime: e.target.value }))}
+                      />
+                      {String(listingForm.processingTime || "").trim() === "" ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {LISTING_PROCESSING_TIME_PRESETS.map((preset) => (
+                            <button key={preset} type="button" className="rounded-full border border-brand-primary/30 px-2 py-0.5 text-xs text-brand-primary transition hover:bg-brand-soft/45 dark:border-brand-accent/30 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => setListingForm((p) => ({ ...p, processingTime: preset }))}>{preset}</button>
+                          ))}
+                        </div>
+                      ) : null}
+                      {listingFieldErrors.processingTime ? (
+                        <p id="listing-processing-time-error" className="field-error-text mt-1" role="alert">
+                          {listingFieldErrors.processingTime}
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
               </div>
               </div>
               <div id="listing-section-publish" className="md:col-span-2">
                 <MobileFormActions className="border-t border-neutral-200/65 px-0 dark:border-slate-700">
-                <div className="flex w-full flex-col gap-2 md:flex-row md:w-auto md:items-center md:justify-start">
+                <div className="flex w-full min-w-0 flex-col gap-2 md:flex-row md:w-auto md:items-center md:justify-start">
                   <button
                     type="submit"
-                    className="btn-primary w-full md:w-auto"
+                    className="btn-primary w-full whitespace-normal text-balance md:w-auto"
                     disabled={listingSaving}
                     aria-busy={listingSaving || undefined}
                   >
-                    {listingSaving ? (editingListingId ? "Saving…" : "Publishing…") : editingListingId ? "Save changes" : "Publish listing"}
+                    {listingSaving ? (
+                      <span className="inline-flex items-center justify-center gap-2">
+                        <span
+                          className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white border-t-transparent motion-reduce:animate-none"
+                          aria-hidden
+                        />
+                        {editingListingId ? "Saving…" : "Publishing…"}
+                      </span>
+                    ) : editingListingId ? (
+                      "Save changes"
+                    ) : (
+                      "Publish listing"
+                    )}
                   </button>
                   <button
                     type="button"
@@ -8357,8 +9364,16 @@ function App() {
             {cartItems.length === 0 ? (
               <ScreenEmpty
                 title="Your cart is empty"
-                description="Save items from Browse or a community shop, then check out selected lines here."
+                description="Add items from Shop or your community, pick quantities, then select lines and check out for COD pickup or delivery."
                 primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
+                secondaryAction={
+                  shopCommunityId
+                    ? {
+                        label: "Open community shop",
+                        onClick: () => setActiveView(VIEWS.COMMUNITY_SHOP),
+                      }
+                    : undefined
+                }
               />
             ) : (
               <div className="space-y-3">
@@ -8400,7 +9415,11 @@ function App() {
                         </label>
                         <p className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-slate-300">{sellerLabel}</p>
                       </div>
-                      <div className={commerceFlowLineItemsClass(effectiveCommerceFlowViewBuyer, { variant: "cart" })}>
+                      <div
+                        className={`${commerceFlowLineItemsClass(effectiveCommerceFlowViewBuyer, { variant: "cart" })} ${lmBrowseViewShellClass(
+                          effectiveCommerceFlowViewBuyer === "list" ? "list" : "grid",
+                        )}`}
+                      >
                         {orderedItems.map((item) => {
                           const lid = String(item.listingId);
                           const isRecentlyAdded = recentlyAddedCartListingIds.includes(lid);
@@ -8434,23 +9453,14 @@ function App() {
                                 onChange={() => toggleCartListingSelected(item.listingId)}
                                 aria-label={`Select ${item.title || "product"}`}
                               />
-                              <div
-                                className={`${thumbClass} shrink-0 overflow-hidden rounded-xl border border-border bg-primary-soft/40 dark:border-slate-700 dark:bg-slate-800`}
-                              >
-                                {item.imageUrl ? (
-                                  <img
-                                    src={item.imageUrl}
-                                    alt={item.title || "Cart item"}
-                                    className="h-full w-full object-cover"
-                                    loading="lazy"
-                                    decoding="async"
-                                    sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
-                                  />
-                                ) : (
-                                  <div className="flex h-full w-full items-center justify-center text-[10px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-                                    No image
-                                  </div>
-                                )}
+                              <div className={`relative ${thumbClass} shrink-0`}>
+                                <ProductListingMedia
+                                  listing={item}
+                                  variant="list"
+                                  className="absolute inset-0 min-h-0"
+                                  loading="lazy"
+                                  sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
+                                />
                               </div>
                               <div className="min-w-0 flex-1">
                                 {isRecentlyAdded ? (
@@ -8464,18 +9474,29 @@ function App() {
                                   description={item.description}
                                   hideDescription
                                   fulfillmentModes={item.fulfillmentModes}
+                                  orderType={item.orderType}
+                                  processingTime={item.processingTime}
+                                  optionNameA={item.optionNameA}
+                                  optionValuesA={item.optionValuesA}
+                                  optionNameB={item.optionNameB}
+                                  optionValuesB={item.optionValuesB}
+                                  listingMetaDensity="compact"
                                 />
                                 <div
                                   className={`mt-1 space-y-0.5 text-neutral-600 dark:text-slate-400 ${
                                     cfCompact ? "text-[10px] leading-snug md:text-[11px]" : "text-xs"
                                   }`}
                                 >
-                                  <p className="line-clamp-2 text-pretty">
-                                    Description: {removeSaleMetaLines(item.description) || "No description"}
-                                  </p>
-                                  <p className="line-clamp-2 text-pretty">
-                                    Comment: {String(item.comment || "").trim() || "N/a"}
-                                  </p>
+                                  {removeSaleMetaLines(item.description)?.trim() ? (
+                                    <p className="line-clamp-2 text-pretty">
+                                      Description: {removeSaleMetaLines(item.description)}
+                                    </p>
+                                  ) : null}
+                                  {String(item.comment || "").trim() ? (
+                                    <p className="line-clamp-2 text-pretty">
+                                      Comment: {String(item.comment || "").trim()}
+                                    </p>
+                                  ) : null}
                                   <button
                                     type="button"
                                     className="btn-secondary mt-1.5 touch-manipulation self-start px-3 py-1.5 text-xs"
@@ -8516,7 +9537,7 @@ function App() {
                                   <div className="inline-flex items-center gap-1.5">
                                     <button
                                       type="button"
-                                      className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-primary/45 bg-surface text-sm font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                      className="inline-flex h-11 w-11 touch-manipulation items-center justify-center rounded-xl border border-primary/45 bg-surface text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-8 md:w-8 md:text-sm"
                                       aria-label="Decrease quantity"
                                       disabled={cartQtySavingId === lid || (Number(item.quantity) || 0) <= 0}
                                       onClick={() => {
@@ -8530,7 +9551,7 @@ function App() {
                                       type="text"
                                       inputMode="numeric"
                                       pattern="[0-9]*"
-                                      className="input-base h-8 w-14 rounded-xl border-primary/45 bg-surface px-1 text-center text-xs text-text-primary focus:border-primary focus:ring-primary/25"
+                                      className="input-base h-11 w-16 rounded-xl border-primary/45 bg-surface px-1 text-center text-sm text-text-primary focus:border-primary focus:ring-primary/25 md:h-8 md:w-14 md:text-xs"
                                       value={cartQtyEdit.id === lid ? cartQtyEdit.str : String(Number(item.quantity) || 1)}
                                       disabled={cartQtySavingId === lid}
                                       aria-label={`Quantity for ${item.title || "product"}`}
@@ -8598,7 +9619,7 @@ function App() {
                                     />
                                     <button
                                       type="button"
-                                      className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-primary/45 bg-surface text-sm font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                      className="inline-flex h-11 w-11 touch-manipulation items-center justify-center rounded-xl border border-primary/45 bg-surface text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-8 md:w-8 md:text-sm"
                                       aria-label="Increase quantity"
                                       disabled={
                                         cartQtySavingId === lid ||
@@ -8637,7 +9658,7 @@ function App() {
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div>
               <h2 className="text-xl font-semibold tracking-tight text-neutral-900 md:text-2xl dark:text-slate-100">
-                {activeView === VIEWS.MY_PURCHASES ? "My purchases" : "Sales inbox"}
+                {activeView === VIEWS.MY_PURCHASES ? "Purchases" : "Orders"}
               </h2>
               <p className="mt-1 text-xs leading-relaxed text-neutral-600 line-clamp-4 md:text-sm md:leading-normal md:line-clamp-none dark:text-slate-400">
                 {activeView === VIEWS.MY_PURCHASES
@@ -8659,7 +9680,7 @@ function App() {
                 <div
                   className="-mx-0.5 flex min-w-0 flex-1 snap-x snap-mandatory gap-1.5 overflow-x-auto px-0.5 pb-0.5 [scrollbar-width:none] md:mx-0 md:flex-wrap md:gap-2 md:overflow-visible md:pb-0 md:[scrollbar-width:auto] [&::-webkit-scrollbar]:hidden md:[&::-webkit-scrollbar]:auto"
                   role="tablist"
-                  aria-label={activeView === VIEWS.MY_PURCHASES ? "Purchase status" : "Sales order status"}
+                  aria-label={activeView === VIEWS.MY_PURCHASES ? "Purchase status" : "Order status"}
                 >
                   {ORDERS_STATUS_TABS.map(({ id, label }) => (
                     <button
@@ -8693,7 +9714,7 @@ function App() {
                     onChange={setCommerceFlowOrdersView}
                     allowCompact={!isMobileViewport}
                     groupAriaLabel={
-                      activeView === VIEWS.MY_PURCHASES ? "My purchases line layout" : "Sales inbox line layout"
+                      activeView === VIEWS.MY_PURCHASES ? "Purchases line layout" : "Orders line layout"
                     }
                     gridTitle="Grid — two columns for readable order cards"
                     compactTitle="Dense — three columns for a compact overview"
@@ -8753,42 +9774,57 @@ function App() {
                 title={activeView === VIEWS.MY_PURCHASES ? "No purchases yet" : "No orders yet"}
                 description={
                   activeView === VIEWS.MY_PURCHASES
-                    ? "When you buy from the marketplace, your orders appear here."
-                    : "When someone buys your listings, orders appear here."
+                    ? "Orders you place with sellers show up here with status updates for pickup or delivery."
+                    : "When buyers order your listings, you’ll accept or decline here and track each stage."
                 }
                 primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
+                secondaryAction={
+                  activeView === VIEWS.MY_PURCHASES
+                    ? { label: "View cart", onClick: goCart }
+                    : { label: "Upload", onClick: () => setActiveView(VIEWS.MY_LISTINGS) }
+                }
               />
             ) : null}
             {!ordersFetchError && !(ordersLoading && orders.length === 0) && orders.length > 0 && ordersForStatusTab.length === 0 ? (
-              <div className={`${UI_KIT.surfaceMuted} space-y-2 border-dashed p-8 text-sm text-neutral-500 dark:text-slate-400`}>
-                <p>
-                  {activeView === VIEWS.MY_PURCHASES ? (
-                    <>
-                      No {ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label?.toLowerCase() || ""}{" "}
-                      purchases.
-                    </>
-                  ) : (
-                    <>
-                      No {ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label?.toLowerCase() || ""} orders.
-                    </>
-                  )}
-                </p>
-                {ordersRole === "seller" &&
-                ordersStatusTab === "pending" &&
-                orders.some((o) => orderMatchesOrdersStatusTab(o.status, "processing")) ? (
-                  <p className="text-xs leading-relaxed text-neutral-600 dark:text-slate-400">
-                    You still have seller orders in other stages. Open the{" "}
-                    <button
-                      type="button"
-                      className="font-semibold text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:text-brand-primary/90 dark:text-brand-accent"
-                      onClick={() => setOrdersStatusTab("processing")}
-                    >
-                      Processing
-                    </button>{" "}
-                    tab (for example after you accept a delivery order, or while pickup is being arranged).
-                  </p>
-                ) : null}
-              </div>
+              <ScreenEmpty
+                spacious={false}
+                className="!py-8"
+                title={
+                  activeView === VIEWS.MY_PURCHASES
+                    ? `No ${ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label || ""} purchases`
+                    : `No ${ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label || ""} orders`
+                }
+                description={
+                  activeView === VIEWS.MY_PURCHASES
+                    ? "Pick another status tab above — your orders move as sellers accept and you complete pickup or delivery."
+                    : "Pick another tab — new orders start in Pending, then move when you accept or complete them."
+                }
+                primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
+                secondaryAction={
+                  activeView === VIEWS.MY_PURCHASES
+                    ? { label: "View cart", onClick: goCart }
+                    : { label: "Upload", onClick: () => setActiveView(VIEWS.MY_LISTINGS) }
+                }
+              />
+            ) : null}
+            {ordersRole === "seller" &&
+            ordersStatusTab === "pending" &&
+            !ordersFetchError &&
+            !(ordersLoading && orders.length === 0) &&
+            orders.length > 0 &&
+            ordersForStatusTab.length === 0 &&
+            orders.some((o) => orderMatchesOrdersStatusTab(o.status, "processing")) ? (
+              <p className="mt-2 text-center text-xs leading-relaxed text-neutral-600 dark:text-slate-400">
+                You may have orders in{" "}
+                <button
+                  type="button"
+                  className="font-semibold text-brand-primary underline decoration-brand-primary/40 underline-offset-2 dark:text-brand-accent"
+                  onClick={() => setOrdersStatusTab("processing")}
+                >
+                  Processing
+                </button>{" "}
+                (for example after you accept an order).
+              </p>
             ) : null}
             {!ordersFetchError && ordersForStatusTab.length > 0 ? (
               <div className="space-y-3">
@@ -8863,15 +9899,17 @@ function App() {
                       ? orderedSellerOrders.reduce((acc, o) => {
                           const listing = orderListingsById[String(o.listingId)] || null;
                           const orderedQty = Math.max(1, Number(o.quantity) || 1);
+                          const enriched = enrichListingSnapshotForOrderCard(o, listing);
                           const cardListing = listing
-                            ? { ...listing, quantity: orderedQty }
+                            ? { ...listing, ...enriched, quantity: orderedQty }
                             : {
                                 id: o.listingId,
-                                title: `Order ${String(o.id).slice(0, 8)}`,
+                                title: enriched.title,
                                 priceCents: o.codGoodsCents,
                                 quantity: orderedQty,
                                 fulfillmentModes: [o.fulfillmentType],
-                                imageUrl: "",
+                                imageUrl: enriched.imageUrl,
+                                imageUrls: enriched.imageUrls,
                                 description: "",
                                 sellerId: o.sellerId,
                               };
@@ -8911,15 +9949,17 @@ function App() {
                       : orderedSellerOrders.map((o) => {
                           const listing = orderListingsById[String(o.listingId)] || null;
                           const orderedQty = Math.max(1, Number(o.quantity) || 1);
+                          const enriched = enrichListingSnapshotForOrderCard(o, listing);
                           const cardListing = listing
-                            ? { ...listing, quantity: orderedQty }
+                            ? { ...listing, ...enriched, quantity: orderedQty }
                             : {
                                 id: o.listingId,
-                                title: `Order ${String(o.id).slice(0, 8)}`,
+                                title: enriched.title,
                                 priceCents: o.codGoodsCents,
                                 quantity: orderedQty,
                                 fulfillmentModes: [o.fulfillmentType],
-                                imageUrl: "",
+                                imageUrl: enriched.imageUrl,
+                                imageUrls: enriched.imageUrls,
                                 description: "",
                                 sellerId: o.sellerId,
                               };
@@ -8950,9 +9990,9 @@ function App() {
                         </p>
                       </div>
                       <div
-                        className={commerceFlowLineItemsClass(commerceFlowOrdersView, {
+                        className={`${commerceFlowLineItemsClass(commerceFlowOrdersView, {
                           variant: "orders",
-                        })}
+                        })} ${lmBrowseViewShellClass(commerceFlowOrdersView === "list" ? "list" : "grid")}`}
                       >
                         {mergedSellerOrders.map((entry) => {
                           const o = entry.representativeOrder;
@@ -9044,23 +10084,14 @@ function App() {
                                       aria-label={`Select order ${orderId}${entry.orderIds.length > 1 ? " group" : ""}`}
                                     />
                                   ) : null}
-                                  <div
-                                    className={`${orderThumbClass} shrink-0 overflow-hidden rounded-xl border border-border bg-primary-soft/40 dark:border-slate-700 dark:bg-slate-800`}
-                                  >
-                                  {String(cardListing.imageUrl || "").trim() ? (
-                                    <img
-                                      src={cardListing.imageUrl}
-                                      alt={cardListing.title || "Order item"}
-                                      className="h-full w-full object-cover"
+                                  <div className={`relative ${orderThumbClass} shrink-0`}>
+                                    <ProductListingMedia
+                                      listing={cardListing}
+                                      variant="list"
+                                      className="absolute inset-0 min-h-0"
                                       loading="lazy"
-                                      decoding="async"
                                       sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
                                     />
-                                  ) : (
-                                    <div className="flex h-full w-full items-center justify-center text-[10px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-                                      No image
-                                    </div>
-                                  )}
                                   </div>
                                 </div>
                                 <div className="min-w-0 flex-1">
@@ -9076,6 +10107,13 @@ function App() {
                                     hideDescription
                                     hideAvailability
                                     fulfillmentModes={cardListing.fulfillmentModes}
+                                    orderType={cardListing.orderType}
+                                    processingTime={cardListing.processingTime}
+                                    optionNameA={cardListing.optionNameA}
+                                    optionValuesA={cardListing.optionValuesA}
+                                    optionNameB={cardListing.optionNameB}
+                                    optionValuesB={cardListing.optionValuesB}
+                                    listingMetaDensity="compact"
                                   />
                                   <p className="mt-1 text-pretty text-[11px] leading-snug text-neutral-600 md:text-xs dark:text-slate-400">
                                     <span className="font-medium text-neutral-700 dark:text-slate-300">Qty</span>{" "}
@@ -9088,12 +10126,12 @@ function App() {
                                       cfCompact ? "text-[10px] md:text-[11px]" : "text-[11px] md:text-xs md:leading-normal"
                                     }`}
                                   >
-                                    <p className="line-clamp-2 text-pretty">
-                                      Description: {orderHasDesc ? orderDescPlain : "No description"}
-                                    </p>
-                                    <p className="line-clamp-2 text-pretty">
-                                      Comment: {orderHasComment ? orderCommentPlain : "N/a"}
-                                    </p>
+                                    {orderHasDesc ? (
+                                      <p className="line-clamp-2 text-pretty">Description: {orderDescPlain}</p>
+                                    ) : null}
+                                    {orderHasComment ? (
+                                      <p className="line-clamp-2 text-pretty">Comment: {orderCommentPlain}</p>
+                                    ) : null}
                                   </div>
                                 </div>
                               </div>
@@ -9338,15 +10376,6 @@ function App() {
                                           communityId: cardListing.communityId,
                                         });
                                       const listingIdStr = String(base.id || o.listingId || "");
-                                      const inspectPayload = {
-                                        title: base.title,
-                                        imageUrl: base.imageUrl,
-                                        priceCents: base.priceCents,
-                                        description: base.description,
-                                        fulfillmentModes: base.fulfillmentModes,
-                                        sellerName: String(o.sellerName || "").trim(),
-                                        sellerUsername: String(o.sellerUsername || "").trim(),
-                                      };
                                       const forQuick = {
                                         ...base,
                                         id: listingIdStr,
@@ -9368,7 +10397,7 @@ function App() {
                                         ordersRole === "seller" && String(o.sellerId || "") === String(user?.id || "");
                                       const buyerCanShop = isBuyer && String(o.sellerId || "") !== String(user?.id || "");
 
-                                      openProductInspect(inspectPayload, {
+                                      openProductInspect(forQuick, {
                                         quantity: Number(cardListing.quantity) || 1,
                                         comment: orderCommentPlain,
                                         commentSectionRequired: true,
@@ -9603,34 +10632,53 @@ function App() {
                     </button>
                   ) : null}
                   {profileRenderUser && !profileEditing && !isViewingSellerProfile ? (
-                    <button type="button" className="btn-secondary w-full min-w-0 shrink-0 md:w-auto" onClick={openProfileEdit}>
+                    <button
+                      type="button"
+                      className="btn-secondary hidden min-w-0 shrink-0 md:inline-flex md:w-auto"
+                      onClick={openProfileEdit}
+                    >
                       Edit profile
                     </button>
                   ) : null}
                 </div>
+                {profileRenderUser &&
+                !profileEditing &&
+                !isViewingSellerProfile &&
+                user &&
+                !buyNowFromProfile.ready &&
+                !profileFinishBannerDismissed ? (
+                  <ScreenEmpty
+                    spacious={false}
+                    className="!border-amber-200/85 !bg-amber-50/60 !py-4 dark:!border-amber-900/45 dark:!bg-amber-950/25"
+                    title="Finish your profile"
+                    description={`Still needed: ${buyNowFromProfile.missing.join(", ")}. Add these so Buy now, cart checkout, and meetup details work.`}
+                    primaryAction={{ label: "Complete profile", onClick: openProfileEdit }}
+                    onDismiss={() => setProfileFinishBannerDismissed(true)}
+                  />
+                ) : null}
                 {profileRenderUser ? (
               profileEditing ? (
-                <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
-                  <div className={`max-h-[90vh] w-full max-w-5xl overflow-y-auto p-5 ${UI_KIT.surfaceFloating}`}>
+                <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-900/50 p-4 backdrop-blur-[2px] md:p-6">
+                  <div className={`my-2 max-h-[90vh] w-full max-w-5xl overflow-y-auto overscroll-y-contain p-5 md:my-4 ${UI_KIT.surfaceFloating}`}>
                 <form onSubmit={handleProfileSubmit} noValidate className="space-y-3">
                   <div className="rounded-xl border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 text-xs text-neutral-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
                     <span className="font-semibold text-neutral-800 dark:text-slate-100">*</span> Required fields. Optional fields are labeled.
                   </div>
-                  <div className={`grid grid-cols-1 items-end gap-4 p-5 md:grid-cols-[auto_minmax(12rem,1fr)_minmax(14rem,1fr)] ${UI_KIT.surfaceRaised}`}>
-                    <div className="relative h-16 w-16 shrink-0 md:row-span-2 md:self-start">
-                      <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-xl font-bold text-brand-primary ring-1 ring-brand-border">
-                        {profileDraft.avatarUrl ? (
-                          <img
-                            src={profileDraft.avatarUrl}
-                            alt="Profile avatar preview"
-                            className="h-full w-full object-cover"
-                            decoding="async"
-                            sizes="112px"
-                          />
-                        ) : (
-                          (String(profileDraft.username || "").trim().charAt(0) || String(user?.username || "").trim().charAt(0) || "?").toUpperCase()
-                        )}
-                      </div>
+                  <div className={`grid grid-cols-1 items-end gap-4 p-5 md:grid-cols-[minmax(12rem,1fr)_minmax(14rem,1fr)] ${UI_KIT.surfaceRaised}`}>
+                    <div className="relative mx-auto h-16 w-16 shrink-0 md:col-span-2 md:self-center">
+                      <StableAvatar
+                        square
+                        src={profileDraft.avatarUrl}
+                        alt="Profile avatar preview"
+                        initials={(
+                          String(profileDraft.username || "").trim().charAt(0) ||
+                          String(user?.username || "").trim().charAt(0) ||
+                          "?"
+                        ).toUpperCase()}
+                        className="h-16 w-16 text-xl ring-1 ring-brand-border"
+                        textClassName="text-xl"
+                        sizes="64px"
+                      />
                       <input
                         ref={profileAvatarInputRef}
                         type="file"
@@ -9650,14 +10698,14 @@ function App() {
                       </button>
                     </div>
                     <div className="min-w-0 md:order-1">
-                      <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-username-inline">
+                      <label className="label-base" htmlFor="profile-username-inline">
                         Username *
                       </label>
                       <input
                         id="profile-username-inline"
                         name="username"
                         type="text"
-                        className="input-base h-9 w-full min-w-0 text-sm font-semibold md:min-w-[13rem]"
+                        className="input-base min-h-[44px] w-full min-w-0 text-sm font-semibold md:h-9 md:min-h-0 md:min-w-[13rem]"
                         value={profileDraft.username}
                         onChange={(e) => {
                           const value = e.target.value;
@@ -9669,10 +10717,10 @@ function App() {
                         maxLength={20}
                         title="3-20 chars, start with a letter, use a-z 0-9 . _ only, no spaces, no duplicate dots/underscores."
                       />
-                      {profileFieldErrors.username ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.username}</p> : null}
+                      {profileFieldErrors.username ? <p className="field-error-text mt-1">{profileFieldErrors.username}</p> : null}
                     </div>
                     <div className="min-w-0 md:order-4">
-                      <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-community-inline">
+                      <label className="label-base" htmlFor="profile-community-inline">
                         Community
                       </label>
                       <div className="relative">
@@ -9685,7 +10733,7 @@ function App() {
                           aria-autocomplete="list"
                           aria-expanded={profileBrgySuggestOpen && profileBrgyCommunitySuggestions.length > 0}
                           aria-controls="profile-brgy-suggestions-list"
-                          className="input-base h-9 w-full cursor-default border-0 text-sm read-only:border-0 read-only:bg-neutral-50 read-only:text-neutral-700 dark:read-only:bg-slate-900/50 dark:read-only:text-slate-300"
+                          className="input-base min-h-[44px] w-full cursor-default border-0 text-sm read-only:border-0 read-only:bg-neutral-50 read-only:text-neutral-700 dark:read-only:bg-slate-900/50 dark:read-only:text-slate-300 md:h-9 md:min-h-0"
                           value={profileDraft.community}
                           placeholder="No community yet. Join one from Communities."
                           readOnly
@@ -9694,10 +10742,10 @@ function App() {
                       </div>
                     </div>
                     <div className="min-w-0 md:order-3">
-                      <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-phone-inline">
+                      <label className="label-base" htmlFor="profile-phone-inline">
                         Phone number *
                       </label>
-                      <div className="input-base flex h-9 items-center gap-2 px-3 text-sm">
+                      <div className="input-base flex min-h-[44px] items-center gap-2 px-3 text-sm md:h-9 md:min-h-0">
                         <span className="shrink-0 text-neutral-600 dark:text-slate-300">+63</span>
                         <input
                           id="profile-phone-inline"
@@ -9705,7 +10753,7 @@ function App() {
                           type="tel"
                           inputMode="numeric"
                           autoComplete="tel-national"
-                          className="w-full border-0 bg-transparent p-0 text-sm outline-none placeholder:text-neutral-400 dark:placeholder:text-slate-500"
+                          className="w-full border-0 bg-transparent p-0 text-base outline-none placeholder:text-neutral-400 dark:placeholder:text-slate-500 md:text-sm"
                           value={profileDraft.phone}
                           placeholder="9XXXXXXXXX"
                           maxLength={10}
@@ -9720,7 +10768,7 @@ function App() {
                       {profileFieldErrors.phone ? <p className="field-error-text mt-1">{profileFieldErrors.phone}</p> : null}
                     </div>
                     <div className="min-w-0 md:order-2">
-                      <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-email-inline">
+                      <label className="label-base" htmlFor="profile-email-inline">
                         Email
                       </label>
                       <input
@@ -9730,7 +10778,7 @@ function App() {
                         inputMode="email"
                         readOnly
                         aria-readonly="true"
-                        className="input-base h-9 cursor-default border-0 read-only:border-0 read-only:bg-neutral-50 read-only:text-neutral-700 dark:read-only:bg-slate-900/50 dark:read-only:text-slate-300"
+                        className="input-base min-h-[44px] cursor-default border-0 read-only:border-0 read-only:bg-neutral-50 read-only:text-neutral-700 dark:read-only:bg-slate-900/50 dark:read-only:text-slate-300 md:h-9 md:min-h-0"
                         autoComplete="email"
                         value={profileDraft.email}
                       />
@@ -9746,7 +10794,7 @@ function App() {
                     <div className="grid grid-cols-1 gap-y-3 md:grid-cols-3 md:gap-x-4 md:gap-y-0">
                       <div className="min-w-0">
                         <label
-                          className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400"
+                          className="label-base"
                           htmlFor="profile-first-name"
                         >
                           First name *
@@ -9769,12 +10817,12 @@ function App() {
                           title="3-50 chars. Letters, spaces, and hyphens only."
                         />
                         {profileFieldErrors.firstName ? (
-                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.firstName}</p>
+                          <p className="field-error-text mt-1">{profileFieldErrors.firstName}</p>
                         ) : null}
                       </div>
                       <div className="min-w-0">
                         <label
-                          className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400"
+                          className="label-base"
                           htmlFor="profile-middle-name"
                         >
                           Middle name
@@ -9793,12 +10841,12 @@ function App() {
                           title="Optional. Letters, spaces, and hyphens only."
                         />
                         {profileFieldErrors.middleName ? (
-                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.middleName}</p>
+                          <p className="field-error-text mt-1">{profileFieldErrors.middleName}</p>
                         ) : null}
                       </div>
                       <div className="min-w-0">
                         <label
-                          className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400"
+                          className="label-base"
                           htmlFor="profile-last-name"
                         >
                           Last name *
@@ -9820,7 +10868,7 @@ function App() {
                           title="3-50 chars. Letters, spaces, and hyphens only."
                         />
                         {profileFieldErrors.lastName ? (
-                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.lastName}</p>
+                          <p className="field-error-text mt-1">{profileFieldErrors.lastName}</p>
                         ) : null}
                       </div>
                     </div>
@@ -9829,7 +10877,7 @@ function App() {
                       <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">Set demographic details used for profile completeness.</p>
                       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-8 md:items-end md:gap-x-3">
                         <div className="min-w-0 md:col-span-2">
-                          <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-gender">
+                          <label className="label-base" htmlFor="profile-gender">
                             Gender *
                           </label>
                           <select
@@ -9851,63 +10899,37 @@ function App() {
                             ))}
                           </select>
                           {profileFieldErrors.gender ? (
-                            <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.gender}</p>
+                            <p className="field-error-text mt-1">{profileFieldErrors.gender}</p>
                           ) : null}
                         </div>
                         <div className="min-w-0 md:col-span-4">
-                          <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-birthday">
+                          <label className="label-base" htmlFor="profile-birthday">
                             Birthday *
                           </label>
-                          <div
-                            className="relative mt-1"
-                            onClick={() => {
-                              const input = profileBirthdayInputRef.current;
-                              if (!input) return;
-                              if (typeof input.showPicker === "function") input.showPicker();
-                              else input.focus();
+                          <input
+                            id="profile-birthday"
+                            name="birthday"
+                            type="date"
+                            className="input-base mt-1 w-full"
+                            max={todayIsoDate}
+                            value={profileDraft.birthday}
+                            onChange={(e) => {
+                              const birthday = e.target.value;
+                              const computed = computeAgeFromBirthday(birthday);
+                              setProfileDraft((prev) => ({ ...prev, birthday, age: computed === "" ? "" : String(computed) }));
+                              setProfileFieldErrors((prev) => ({ ...prev, birthday: "", age: "" }));
                             }}
-                          >
-                            <input
-                              id="profile-birthday-display"
-                              type="text"
-                              className="input-base pointer-events-none w-full cursor-pointer pr-11"
-                              value={profileDraft.birthday ? formatBirthdayDisplay(profileDraft.birthday) : ""}
-                              placeholder="Select birthday"
-                              readOnly
-                              aria-readonly="true"
-                            />
-                            <span className="pointer-events-none absolute inset-y-0 right-3 inline-flex items-center text-neutral-500 dark:text-slate-400">
-                              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                                <line x1="16" y1="2" x2="16" y2="6" />
-                                <line x1="8" y1="2" x2="8" y2="6" />
-                                <line x1="3" y1="10" x2="21" y2="10" />
-                              </svg>
-                            </span>
-                            <input
-                              ref={profileBirthdayInputRef}
-                              id="profile-birthday"
-                              name="birthday"
-                              type="date"
-                              className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
-                              max={todayIsoDate}
-                              value={profileDraft.birthday}
-                              onChange={(e) => {
-                                const birthday = e.target.value;
-                                const computed = computeAgeFromBirthday(birthday);
-                                setProfileDraft((prev) => ({ ...prev, birthday, age: computed === "" ? "" : String(computed) }));
-                                setProfileFieldErrors((prev) => ({ ...prev, birthday: "", age: "" }));
-                              }}
-                              aria-label="Birthday date picker"
-                              required
-                            />
-                          </div>
+                            required
+                          />
+                          <p className="mt-1 text-[11px] text-neutral-500 dark:text-slate-400">
+                            You can type the date manually (YYYY-MM-DD) or pick from the calendar.
+                          </p>
                           {profileFieldErrors.birthday ? (
-                            <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.birthday}</p>
+                            <p className="field-error-text mt-1">{profileFieldErrors.birthday}</p>
                           ) : null}
                         </div>
                         <div className="min-w-0 md:col-span-2">
-                          <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-age">
+                          <label className="label-base" htmlFor="profile-age">
                             Age
                           </label>
                           <input
@@ -9923,7 +10945,7 @@ function App() {
                             aria-readonly="true"
                           />
                           {profileFieldErrors.age ? (
-                            <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.age}</p>
+                            <p className="field-error-text mt-1">{profileFieldErrors.age}</p>
                           ) : null}
                         </div>
                       </div>
@@ -9933,7 +10955,7 @@ function App() {
                       <p className="text-xs text-neutral-500 dark:text-slate-400">Order: Province to City/Municipality to Barangay. Postal code auto-fills.</p>
                       <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-x-4">
                         <div className="min-w-0">
-                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-house-street">
+                        <label className="label-base" htmlFor="profile-address-house-street">
                           House Number &amp; Street
                         </label>
                         <input
@@ -9949,11 +10971,11 @@ function App() {
                           }}
                         />
                         {profileFieldErrors.addressHouseStreet ? (
-                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressHouseStreet}</p>
+                          <p className="field-error-text mt-1">{profileFieldErrors.addressHouseStreet}</p>
                         ) : null}
                       </div>
                         <div className="min-w-0">
-                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-subdivision">
+                        <label className="label-base" htmlFor="profile-address-subdivision">
                           Subdivision
                         </label>
                         <input
@@ -9969,11 +10991,11 @@ function App() {
                           }}
                         />
                         {profileFieldErrors.addressSubdivision ? (
-                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressSubdivision}</p>
+                          <p className="field-error-text mt-1">{profileFieldErrors.addressSubdivision}</p>
                         ) : null}
                       </div>
                         <div className="min-w-0">
-                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-province">
+                        <label className="label-base" htmlFor="profile-address-province">
                           Province *
                         </label>
                         <div className="relative">
@@ -10088,13 +11110,13 @@ function App() {
                           ) : null}
                         </div>
                         {profileFieldErrors.addressProvince ? (
-                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressProvince}</p>
+                          <p className="field-error-text mt-1">{profileFieldErrors.addressProvince}</p>
                         ) : null}
                       </div>
                       </div>
                       <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-4 md:gap-x-4">
                         <div className="min-w-0">
-                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-city">
+                        <label className="label-base" htmlFor="profile-address-city">
                           City or Municipality *
                         </label>
                         <div className="relative">
@@ -10205,11 +11227,11 @@ function App() {
                           ) : null}
                         </div>
                         {profileFieldErrors.addressCity ? (
-                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressCity}</p>
+                          <p className="field-error-text mt-1">{profileFieldErrors.addressCity}</p>
                         ) : null}
                       </div>
                         <div className="min-w-0">
-                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-barangay">
+                        <label className="label-base" htmlFor="profile-address-barangay">
                           Barangay *
                         </label>
                         <div className="relative">
@@ -10306,11 +11328,11 @@ function App() {
                           ) : null}
                         </div>
                         {profileFieldErrors.addressBarangay ? (
-                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressBarangay}</p>
+                          <p className="field-error-text mt-1">{profileFieldErrors.addressBarangay}</p>
                         ) : null}
                         </div>
                         <div className="min-w-0">
-                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-postal-code">
+                        <label className="label-base" htmlFor="profile-address-postal-code">
                           Postal Code
                         </label>
                         <input
@@ -10325,11 +11347,11 @@ function App() {
                           aria-readonly="true"
                         />
                         {profileFieldErrors.addressPostalCode ? (
-                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressPostalCode}</p>
+                          <p className="field-error-text mt-1">{profileFieldErrors.addressPostalCode}</p>
                         ) : null}
                       </div>
                         <div className="min-w-0">
-                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-country">
+                        <label className="label-base" htmlFor="profile-address-country">
                           Country
                         </label>
                         <input
@@ -10342,12 +11364,12 @@ function App() {
                           aria-readonly="true"
                         />
                         {profileFieldErrors.addressCountry ? (
-                          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.addressCountry}</p>
+                          <p className="field-error-text mt-1">{profileFieldErrors.addressCountry}</p>
                         ) : null}
                         </div>
                       </div>
                       <div className="mt-4">
-                        <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-address-url">
+                        <label className="label-base" htmlFor="profile-address-url">
                           Address link (Google Maps URL, optional)
                         </label>
                         <input
@@ -10391,7 +11413,7 @@ function App() {
                       <div id="profile-social-fields" className="space-y-4 border-t border-neutral-200/80 pt-3 dark:border-slate-700/80">
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-x-4">
                           <div className="min-w-0">
-                            <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-facebook-url">
+                            <label className="label-base" htmlFor="profile-facebook-url">
                               Facebook URL
                             </label>
                             <input
@@ -10406,7 +11428,7 @@ function App() {
                             />
                           </div>
                           <div className="min-w-0">
-                            <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-twitter-url">
+                            <label className="label-base" htmlFor="profile-twitter-url">
                               X / Twitter URL
                             </label>
                             <input
@@ -10421,7 +11443,7 @@ function App() {
                             />
                           </div>
                           <div className="min-w-0">
-                            <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-instagram-url">
+                            <label className="label-base" htmlFor="profile-instagram-url">
                               Instagram URL
                             </label>
                             <input
@@ -10451,31 +11473,203 @@ function App() {
                       disabled={profileSaving}
                       aria-busy={profileSaving || undefined}
                     >
-                      {profileSaving ? "Saving…" : "Save changes"}
+                      {profileSaving ? (
+                        <span className="inline-flex items-center justify-center gap-2">
+                          <span
+                            className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white border-t-transparent motion-reduce:animate-none"
+                            aria-hidden
+                          />
+                          Saving…
+                        </span>
+                      ) : (
+                        "Save changes"
+                      )}
                     </button>
                     <button type="button" className="btn-secondary w-full min-w-0 md:w-auto md:min-w-[7rem]" disabled={profileSaving} onClick={cancelProfileEdit}>
                       Cancel
                     </button>
                   </MobileFormActions>
                 </form>
+                {profileAvatarCropEditor.open ? (
+                  <div className="fixed inset-0 z-[118] flex items-center justify-center p-4">
+                    <button
+                      type="button"
+                      className="absolute inset-0 bg-black/50"
+                      aria-label="Close profile image crop editor"
+                      onClick={() => closeProfileAvatarCropEditor()}
+                    />
+                    <div className="relative z-10 w-full max-w-3xl rounded-2xl border border-neutral-200 bg-white p-4 shadow-2xl dark:border-slate-700 dark:bg-slate-900 md:p-5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Crop profile image</p>
+                          <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">Move and resize the square crop before saving your avatar.</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-300 text-sm text-neutral-600 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                          aria-label="Close profile image crop editor"
+                          onClick={() => closeProfileAvatarCropEditor()}
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <div className="mt-4">
+                        <div>
+                          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Adjust crop</p>
+                          <div
+                            ref={profileAvatarCropViewportRef}
+                            className="relative aspect-square w-full overflow-hidden rounded-xl border border-neutral-200 bg-black/90 touch-none dark:border-slate-700"
+                            onPointerDown={(e) => {
+                              if (!profileAvatarCropEditor.open) return;
+                              setProfileAvatarCropApplyError("");
+                              e.currentTarget.setPointerCapture(e.pointerId);
+                              setProfileAvatarCropEditor((prev) => ({
+                                ...prev,
+                                dragging: true,
+                                dragStartX: e.clientX,
+                                dragStartY: e.clientY,
+                                dragStartLeft: prev.cropLeft,
+                                dragStartTop: prev.cropTop,
+                              }));
+                            }}
+                            onPointerMove={(e) => {
+                              if (!profileAvatarCropEditor.dragging) return;
+                              const viewportSize = Number(profileAvatarCropViewportRef.current?.clientWidth || 1);
+                              const dx = e.clientX - profileAvatarCropEditor.dragStartX;
+                              const dy = e.clientY - profileAvatarCropEditor.dragStartY;
+                              setProfileAvatarCropEditor((prev) => ({
+                                ...prev,
+                                cropLeft: (() => {
+                                  const w = Math.max(1, Number(prev.sourceWidth || 1));
+                                  const h = Math.max(1, Number(prev.sourceHeight || 1));
+                                  const renderedWidthFactor = w >= h ? 1 : w / h;
+                                  const side = Math.max(1, Math.floor(Math.min(w, h) * clampNumber(prev.cropSize, 0.2, 1)));
+                                  const maxLeft = Math.max(0, (w - side) / w);
+                                  const next = prev.dragStartLeft + (dx / viewportSize) / renderedWidthFactor;
+                                  return clampNumber(next, 0, maxLeft);
+                                })(),
+                                cropTop: (() => {
+                                  const w = Math.max(1, Number(prev.sourceWidth || 1));
+                                  const h = Math.max(1, Number(prev.sourceHeight || 1));
+                                  const renderedHeightFactor = h >= w ? 1 : h / w;
+                                  const side = Math.max(1, Math.floor(Math.min(w, h) * clampNumber(prev.cropSize, 0.2, 1)));
+                                  const maxTop = Math.max(0, (h - side) / h);
+                                  const next = prev.dragStartTop + (dy / viewportSize) / renderedHeightFactor;
+                                  return clampNumber(next, 0, maxTop);
+                                })(),
+                              }));
+                            }}
+                            onPointerUp={(e) => {
+                              if (profileAvatarCropEditor.dragging) {
+                                try {
+                                  e.currentTarget.releasePointerCapture(e.pointerId);
+                                } catch {
+                                  // noop
+                                }
+                              }
+                              setProfileAvatarCropEditor((prev) => ({ ...prev, dragging: false }));
+                            }}
+                            onPointerCancel={() => setProfileAvatarCropEditor((prev) => ({ ...prev, dragging: false }))}
+                          >
+                            {profileAvatarCropEditor.sourcePreviewUrl ? (
+                              <img
+                                src={profileAvatarCropEditor.sourcePreviewUrl}
+                                alt=""
+                                className="h-full w-full object-contain"
+                                draggable={false}
+                              />
+                            ) : null}
+                            {(() => {
+                              const w = Math.max(1, Number(profileAvatarCropEditor.sourceWidth || 1));
+                              const h = Math.max(1, Number(profileAvatarCropEditor.sourceHeight || 1));
+                              const renderW = w >= h ? 100 : (w / h) * 100;
+                              const renderH = h >= w ? 100 : (h / w) * 100;
+                              const offsetX = (100 - renderW) / 2;
+                              const offsetY = (100 - renderH) / 2;
+                              const side = Math.max(1, Math.floor(Math.min(w, h) * clampNumber(profileAvatarCropEditor.cropSize, 0.2, 1)));
+                              const cropWPercent = (side / w) * renderW;
+                              const cropHPercent = (side / h) * renderH;
+                              const leftPercent = offsetX + clampNumber(profileAvatarCropEditor.cropLeft, 0, 1) * renderW;
+                              const topPercent = offsetY + clampNumber(profileAvatarCropEditor.cropTop, 0, 1) * renderH;
+                              return (
+                                <div
+                                  className="pointer-events-none absolute border-2 border-white/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]"
+                                  style={{
+                                    left: `${leftPercent}%`,
+                                    top: `${topPercent}%`,
+                                    width: `${cropWPercent}%`,
+                                    height: `${cropHPercent}%`,
+                                  }}
+                                />
+                              );
+                            })()}
+                          </div>
+                          <div className="mt-3">
+                            <div className="flex items-center justify-between text-[11px] font-medium text-neutral-600 dark:text-slate-400">
+                              <span>Crop size</span>
+                              <span>{Math.round(clampNumber(Number(profileAvatarCropEditor.cropSize) || 1, 0.2, 1) * 100)}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min={20}
+                              max={100}
+                              step={1}
+                              className="mt-1 w-full"
+                              value={Math.round(clampNumber(Number(profileAvatarCropEditor.cropSize) || 1, 0.2, 1) * 100)}
+                              onChange={(e) => {
+                                setProfileAvatarCropApplyError("");
+                                setProfileAvatarCropEditor((prev) => {
+                                  const w = Math.max(1, Number(prev.sourceWidth || 1));
+                                  const h = Math.max(1, Number(prev.sourceHeight || 1));
+                                  const nextCropSize = clampNumber((Number(e.target.value) || 80) / 100, 0.2, 1);
+                                  const side = Math.max(1, Math.floor(Math.min(w, h) * nextCropSize));
+                                  const maxLeft = Math.max(0, (w - side) / w);
+                                  const maxTop = Math.max(0, (h - side) / h);
+                                  return {
+                                    ...prev,
+                                    cropSize: nextCropSize,
+                                    cropLeft: clampNumber(prev.cropLeft, 0, maxLeft),
+                                    cropTop: clampNumber(prev.cropTop, 0, maxTop),
+                                  };
+                                });
+                              }}
+                            />
+                            <p className="mt-1 text-[11px] text-neutral-500 dark:text-slate-400">Drag the square to reposition the crop area.</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex flex-col items-stretch gap-2">
+                        <div className="flex items-center justify-end gap-2">
+                          <button type="button" className="btn-secondary" onClick={() => closeProfileAvatarCropEditor()}>
+                            Cancel
+                          </button>
+                          <button type="button" className="btn-primary" onClick={() => void applyProfileAvatarCropEditor()}>
+                            Apply crop
+                          </button>
+                        </div>
+                        {profileAvatarCropApplyError ? (
+                          <p className="field-error-text text-right" role="alert">
+                            {profileAvatarCropApplyError}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
                   </div>
                 </div>
               ) : (
                 <div className="space-y-6">
                   <div className="flex flex-col items-center gap-4 border-b border-neutral-200/35 pb-8 text-center dark:border-slate-700/35 md:rounded-xl md:border md:border-neutral-200/50 md:bg-white md:p-5 md:pb-5 md:shadow-sm dark:md:border-slate-700/60 dark:md:bg-slate-900/50">
-                    <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-2xl font-bold text-brand-primary">
-                      {profileRenderUser.avatarUrl ? (
-                        <img
-                          src={profileRenderUser.avatarUrl}
-                          alt="Profile avatar"
-                          className="h-full w-full object-cover"
-                          decoding="async"
-                          sizes="96px"
-                        />
-                      ) : (
-                        (String(profileRenderUser?.username || "").trim().charAt(0) || "?").toUpperCase()
-                      )}
-                    </div>
+                    <StableAvatar
+                      square
+                      src={profileRenderUser.avatarUrl}
+                      alt="Profile avatar"
+                      initials={(String(profileRenderUser?.username || "").trim().charAt(0) || "?").toUpperCase()}
+                      className="h-20 w-20 shrink-0 text-2xl"
+                      textClassName="text-2xl"
+                      sizes="80px"
+                    />
                     <div className="w-full">
                       <p className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">
                         {getProfileCardDisplayNameFromUser(profileRenderUser)}
@@ -10556,6 +11750,15 @@ function App() {
                           );
                         })()}
                       </div>
+                      {!profileEditing && !isViewingSellerProfile ? (
+                        <button
+                          type="button"
+                          className="btn-secondary mx-auto mt-5 w-full max-w-sm md:hidden"
+                          onClick={openProfileEdit}
+                        >
+                          Edit profile
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                   <div className="border-b border-neutral-200/35 pb-8 pt-2 dark:border-slate-700/35 md:rounded-xl md:border md:border-neutral-200/50 md:bg-white md:px-4 md:py-4 md:shadow-sm dark:md:border-slate-700 dark:md:bg-[#0f2234]/95">
@@ -10639,7 +11842,7 @@ function App() {
                   ))}
                 </div>
                 {sellerTab === SELLER_TABS.PRODUCTS && (
-                  <div className="space-y-3 md:rounded-xl md:border md:border-neutral-200/60 md:bg-neutral-50/40 md:p-4 md:shadow-sm dark:md:border-slate-700 dark:md:bg-slate-900/40">
+                  <div className={`space-y-3 p-4 ${UI_KIT.surfaceCard}`}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">Listings & quantity</p>
                       <div className="flex items-center gap-2">
@@ -10658,7 +11861,7 @@ function App() {
                             setActiveView(VIEWS.MY_LISTINGS);
                           }}
                         >
-                          Upload product
+                          Upload
                         </button>
                       </div>
                     </div>
@@ -10679,7 +11882,11 @@ function App() {
                     ) : null}
                     {sellerListingsLoading && sellerListings.length === 0 ? (
                       <div className="mt-3">
-                        <ScreenLoading message="Loading your listings…" minHeight={false} className="min-h-[6rem] py-6" />
+                        {isMobileViewport ? (
+                          <SellerListingsSkeletonGrid view={effectiveSellerProductsView} />
+                        ) : (
+                          <ScreenLoading message="Loading your listings…" minHeight={false} className="min-h-[6rem] py-6" />
+                        )}
                       </div>
                     ) : null}
                     {sellerListingsFetchError ? (
@@ -10694,7 +11901,11 @@ function App() {
                       </div>
                     ) : null}
                     {sellerListings.length ? (
-                      <ul className={sellerListingsGridClass(effectiveSellerProductsView)}>
+                      <ul
+                        className={`${sellerListingsGridClass(effectiveSellerProductsView)} ${lmBrowseViewShellClass(
+                          effectiveSellerProductsView === "list" ? "list" : "grid",
+                        )}`}
+                      >
                         {sellerListings.map((l) => {
                           return (
                             <SellerProductCard
@@ -10702,6 +11913,7 @@ function App() {
                               listing={l}
                               gridMode={effectiveSellerProductsView !== "list"}
                               compactGrid={effectiveSellerProductsView === "compact"}
+                              mobileCardUx={isMobileViewport}
                               onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
                               onEdit={() => beginEditSellerListing(l)}
                               onDelete={() => deleteSellerListingById(l.id)}
@@ -10740,9 +11952,10 @@ function App() {
                     ) : !(sellerListingsLoading && sellerListings.length === 0) && !sellerListingsFetchError ? (
                       <ScreenEmpty
                         className="mt-3"
-                        title="No listings in this snapshot"
-                        description="Publish a product to see it here and in your community."
-                        primaryAction={{ label: "Upload product", onClick: () => setActiveView(VIEWS.MY_LISTINGS) }}
+                        title="No listings yet"
+                        description="Publish photos, price, and pickup or delivery options so neighbors can buy from you."
+                        primaryAction={{ label: "Upload", onClick: () => setActiveView(VIEWS.MY_LISTINGS) }}
+                        secondaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
                       />
                     ) : null}
                   </div>
@@ -10874,16 +12087,27 @@ function App() {
             onClick={() => setQuickAddImagePreviewOpen(false)}
           />
           <div className="relative z-10 w-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
-            <img
-              src={quickAddListing.imageUrl}
-              alt={quickAddListing.title || "Product image"}
-              className="max-h-[88vh] w-full rounded-2xl border border-white/30 object-contain shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
-              decoding="async"
-              sizes="100vw"
-            />
+            {!quickAddLightboxImageFailed ? (
+              <img
+                src={quickAddListing.imageUrl}
+                alt={quickAddListing.title || "Product image"}
+                className="max-h-[88vh] w-full min-h-[12rem] rounded-2xl border border-white/30 object-contain shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
+                decoding="async"
+                sizes="100vw"
+                onError={() => setQuickAddLightboxImageFailed(true)}
+              />
+            ) : (
+              <div
+                className="flex min-h-[40vh] w-full items-center justify-center rounded-2xl border border-white/20 bg-neutral-900/50 text-sm text-white/70"
+                role="img"
+                aria-label="Image unavailable"
+              >
+                Image unavailable
+              </div>
+            )}
             <button
               type="button"
-              className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/35 bg-black/45 text-lg leading-none text-white transition hover:bg-black/60"
+              className="absolute right-2 top-2 inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full border border-white/35 bg-black/45 text-lg leading-none text-white transition hover:bg-black/60 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
               aria-label="Close image preview"
               onClick={() => setQuickAddImagePreviewOpen(false)}
             >
@@ -10918,8 +12142,8 @@ function App() {
               </div>
               <button
                 type="button"
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-neutral-200/90 text-lg leading-none text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-                aria-label="Close"
+                className="btn-icon-only inline-flex shrink-0 items-center justify-center rounded-xl border border-neutral-200/90 text-lg leading-none text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100 md:!h-9 md:!min-h-9 md:!w-9 md:!max-w-9"
+                aria-label="Close add to cart dialog"
                 onClick={closeQuickAddModal}
               >
                 <span aria-hidden>×</span>
@@ -10927,38 +12151,53 @@ function App() {
             </div>
             <div className="space-y-3">
               <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/60">
-                <div className="flex flex-col gap-3 md:flex-row md:items-start">
-                  <div className="h-36 w-full shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-white md:h-32 md:w-32 dark:border-slate-600 dark:bg-slate-900">
-                    {String(quickAddListing.imageUrl || "").trim() ? (
+                <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-start">
+                  <div className="relative mx-auto h-36 w-full max-w-[20rem] shrink-0 md:mx-0 md:h-32 md:w-32 md:max-w-none">
+                    {resolveListingCoverImageUrl(quickAddListing) ? (
                       <button
                         type="button"
-                        className="h-full w-full cursor-zoom-in"
+                        className="absolute inset-0 cursor-zoom-in"
                         aria-label="View larger product image"
                         onClick={() => setQuickAddImagePreviewOpen(true)}
                       >
-                        <img
-                          src={quickAddListing.imageUrl}
-                          alt={quickAddListing.title || "Product"}
-                          className="h-full w-full object-cover transition duration-200 hover:scale-[1.02]"
-                          decoding="async"
+                        <ProductListingMedia
+                          listing={quickAddListing}
+                          variant="grid"
+                          fillFrame
+                          className="absolute inset-0 min-h-0"
+                          imageClassName="transition duration-200 hover:scale-[1.02]"
                           sizes="(max-width: 768px) 100vw, 8rem"
+                          loading="eager"
                         />
                       </button>
                     ) : (
-                      <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-                        No image
-                      </div>
+                      <ProductListingMedia
+                        listing={quickAddListing}
+                        variant="grid"
+                        fillFrame
+                        className="absolute inset-0 min-h-0"
+                        sizes="(max-width: 768px) 100vw, 8rem"
+                        loading="eager"
+                      />
                     )}
                   </div>
+                  <div className="min-w-0 flex-1">
                   <DeferredProductDetailStack
                     title={quickAddListing.title || "Product"}
                     priceCents={quickAddListing.priceCents}
                     description={quickAddListing.description}
                     fulfillmentModes={quickAddListing.fulfillmentModes}
+                    orderType={quickAddListing.orderType}
+                    processingTime={quickAddListing.processingTime}
+                    optionNameA={quickAddListing.optionNameA}
+                    optionValuesA={quickAddListing.optionValuesA}
+                    optionNameB={quickAddListing.optionNameB}
+                    optionValuesB={quickAddListing.optionValuesB}
+                    listingMetaDensity="compact"
                     frameDescriptionAsSellerNote
                     quantityAfterDescription
                     quantityRow={
-                      <div className="flex flex-wrap items-center gap-2 md:gap-3">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2 md:gap-3">
                         <span className="text-xs font-medium text-neutral-600 dark:text-slate-400">Qty</span>
                         <div className="inline-flex items-center gap-1 md:gap-1.5">
                           <button
@@ -11031,11 +12270,12 @@ function App() {
                       </div>
                     }
                   />
+                  </div>
                 </div>
                 <div className="mt-3 border-t border-neutral-200/60 pt-3 dark:border-slate-600/60">
                   <button
                     type="button"
-                    className="text-left text-xs font-semibold text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:text-brand-primary/90 dark:text-brand-accent"
+                    className="w-full text-left text-xs font-semibold text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:text-brand-primary/90 dark:text-brand-accent"
                     onClick={() => {
                       const q = Number(quickAddQuantity);
                       openProductInspect(
@@ -11107,7 +12347,7 @@ function App() {
                 </div>
               ) : null}
               <div className="border-t border-neutral-200/90 pt-3 dark:border-slate-600/90">
-                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="quick-add-comment">
+                <label className="label-base mb-1" htmlFor="quick-add-comment">
                   Comment
                 </label>
                 <textarea
@@ -11177,8 +12417,8 @@ function App() {
               </div>
               <button
                 type="button"
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-neutral-200/90 text-lg leading-none text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-                aria-label="Close"
+                className="btn-icon-only inline-flex shrink-0 items-center justify-center rounded-xl border border-neutral-200/90 text-lg leading-none text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100 md:!h-9 md:!min-h-9 md:!w-9 md:!max-w-9"
+                aria-label="Close community dialog"
                 onClick={closeAddCommunityModal}
               >
                 <span aria-hidden>×</span>
@@ -11186,7 +12426,7 @@ function App() {
             </div>
             <form onSubmit={handleCreateCommunity} className="space-y-3 rounded-lg border border-neutral-200/90 bg-neutral-50/60 p-3 dark:border-slate-600 dark:bg-slate-800/50">
               <div>
-                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400">Add image</label>
+                <label className="label-base mb-1">Add image</label>
                 <input
                   ref={communityImageInputRef}
                   className="block w-full max-w-lg cursor-pointer text-sm text-neutral-700 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-brand-soft file:px-3 file:py-2 file:text-sm file:font-medium file:text-brand-primary dark:text-slate-300 dark:file:bg-slate-800 dark:file:text-slate-200"
@@ -11203,7 +12443,7 @@ function App() {
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="md:col-span-2">
-                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="add-community-name">
+                  <label className="label-base mb-1" htmlFor="add-community-name">
                     Community name
                   </label>
                   <input
@@ -11217,7 +12457,7 @@ function App() {
                 </div>
                 <div className="md:col-span-1">
                   <label
-                    className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400"
+                    className="label-base mb-1"
                     htmlFor="add-community-province"
                   >
                     Province
@@ -11313,7 +12553,7 @@ function App() {
                   </div>
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="add-community-city">
+                  <label className="label-base mb-1" htmlFor="add-community-city">
                     City or Municipality
                   </label>
                   <div className="relative">
@@ -11407,7 +12647,7 @@ function App() {
                 </div>
                 <div className="md:col-span-1">
                   <label
-                    className="mb-1 block text-xs font-medium text-neutral-600 dark:text-slate-400"
+                    className="label-base mb-1"
                     htmlFor="add-community-postal"
                   >
                     Postal code
@@ -11423,15 +12663,33 @@ function App() {
                   />
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-col gap-2 md:flex-row md:flex-wrap">
                 <button
                   type="submit"
-                  className="btn-primary text-sm"
+                  className="btn-primary w-full min-w-0 text-sm md:w-auto"
                   disabled={communitySaving}
+                  aria-busy={communitySaving || undefined}
                 >
-                  {communitySaving ? "Saving…" : communityEditingId ? "Save changes" : "Save community"}
+                  {communitySaving ? (
+                    <span className="inline-flex items-center justify-center gap-2">
+                      <span
+                        className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white border-t-transparent motion-reduce:animate-none"
+                        aria-hidden
+                      />
+                      Saving…
+                    </span>
+                  ) : communityEditingId ? (
+                    "Save changes"
+                  ) : (
+                    "Save community"
+                  )}
                 </button>
-                <button type="button" className="btn-secondary text-sm" disabled={communitySaving} onClick={closeAddCommunityModal}>
+                <button
+                  type="button"
+                  className="btn-secondary w-full min-w-0 text-sm md:w-auto"
+                  disabled={communitySaving}
+                  onClick={closeAddCommunityModal}
+                >
                   Cancel
                 </button>
               </div>

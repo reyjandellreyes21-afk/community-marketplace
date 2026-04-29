@@ -77,8 +77,8 @@ export function ListingCategoryPicker({ value, onChange, invalid }) {
 
   return (
     <div ref={rootRef} className="relative">
-      <label htmlFor={triggerId} className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">
-        Categories *
+      <label htmlFor={triggerId} className="label-base">
+        Category *
       </label>
       <div className={`input-base flex w-full items-center gap-2 ${triggerRing}`}>
         <span className="shrink-0 text-base leading-none text-neutral-500 dark:text-slate-400" aria-hidden>
@@ -118,7 +118,7 @@ export function ListingCategoryPicker({ value, onChange, invalid }) {
               setOpen(false);
             }
           }}
-          placeholder="Type category (e.g. Home, Fashion, Electronics)"
+          placeholder="Search"
           className="min-w-0 flex-1 border-0 bg-transparent px-0 py-0 text-sm text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500"
         />
         <button

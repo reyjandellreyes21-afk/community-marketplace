@@ -26,3 +26,16 @@ export const listingCodAvailabilityLabel = (fulfillmentModes) => {
   const supportsDelivery = modes.includes("delivery");
   return supportsPickup && supportsDelivery ? "COD pickup + delivery" : supportsDelivery ? "COD delivery" : "COD pickup";
 };
+
+/**
+ * API / form may store variant choices as CSV or string[]; normalize for display.
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+export function normalizeListingOptionValues(raw) {
+  if (Array.isArray(raw)) return raw.map((x) => String(x || "").trim()).filter(Boolean);
+  return String(raw || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
