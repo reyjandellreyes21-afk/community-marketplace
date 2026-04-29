@@ -526,6 +526,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {import('react').ReactNode} [props.children] Main scroll region (below the sticky header and mobile tab row)
  * @param {import('react').ReactNode} [props.mobileSecondaryNav] Optional strip below the top header (mobile only)
  * @param {(collapsed: boolean) => void} [props.onMobileBrowseNavCollapsedChange] Fires when mobile primary+secondary chrome finishes collapsing/expanding (shop-like views).
+ * @param {boolean} [props.hideNavigationChrome] Hide top nav/header chrome (content only).
  */
 export function LoggedInHeader({
   user,
@@ -554,6 +555,7 @@ export function LoggedInHeader({
   onNavigateHome,
   mobileSecondaryNav = null,
   onMobileBrowseNavCollapsedChange,
+  hideNavigationChrome = false,
   children,
 }) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -766,14 +768,7 @@ export function LoggedInHeader({
   /** When true, scroll on `#main-content` can hide the full mobile header (primary row + icon tab row + optional `mobileSecondaryNav`). */
   const mobileShopBrowseScrollCollapseActive =
     activeView === VIEWS.BROWSE ||
-    activeView === VIEWS.COMMUNITY_SHOP ||
-    activeView === VIEWS.FAVORITES ||
-    activeView === VIEWS.CART ||
-    activeView === VIEWS.MY_PURCHASES ||
-    activeView === VIEWS.ORDERS ||
-    activeView === VIEWS.MESSAGES ||
-    activeView === VIEWS.NOTIFICATIONS ||
-    activeView === VIEWS.PROFILE;
+    activeView === VIEWS.COMMUNITY_SHOP;
 
   useEffect(() => {
     if (!mobileShopBrowseScrollCollapseActive || mobileMenuOpen) {
@@ -790,17 +785,30 @@ export function LoggedInHeader({
       if (mq.matches) {
         mainScrollLastYRef.current = 0;
         setMobileShopBrowseNavOffset(0);
-        setMobileShopBrowseNavCollapsed(false);
+        setMobileShopBrowseNavCollapsed((prev) => (prev ? false : prev));
         return;
       }
       const y = Math.max(0, main.scrollTop || 0);
       const chromeHeight = mobileChromeRef.current?.offsetHeight ?? 0;
+      const maxScrollableY = Math.max(0, (main.scrollHeight || 0) - (main.clientHeight || 0));
+      const canStablyCollapse = maxScrollableY > chromeHeight + 2;
+      if (!canStablyCollapse) {
+        mainScrollLastYRef.current = y;
+        setMobileShopBrowseNavOffset(0);
+        setMobileShopBrowseNavCollapsed((prev) => (prev ? false : prev));
+        return;
+      }
       const delta = y - mainScrollLastYRef.current;
       mainScrollLastYRef.current = y;
+      if (Math.abs(delta) < 1.5) return;
+      const dampedDelta = delta * 0.55;
       setMobileShopBrowseNavOffset((prev) => {
-        const next = Math.min(Math.max(prev + delta, 0), Math.max(0, chromeHeight));
-        setMobileShopBrowseNavCollapsed(next > 0);
-        return next;
+        const next = Math.min(Math.max(prev + dampedDelta, 0), Math.max(0, chromeHeight));
+        const collapsedNext = next > 10;
+        setMobileShopBrowseNavCollapsed((collapsedPrev) =>
+          collapsedPrev === collapsedNext ? collapsedPrev : collapsedNext
+        );
+        return Math.abs(next - prev) < 1.5 ? prev : next;
       });
     };
 
@@ -811,7 +819,7 @@ export function LoggedInHeader({
     const onMm = () => {
       if (mq.matches) {
         setMobileShopBrowseNavOffset(0);
-        setMobileShopBrowseNavCollapsed(false);
+        setMobileShopBrowseNavCollapsed((prev) => (prev ? false : prev));
       }
     };
     mq.addEventListener("change", onMm);
@@ -858,7 +866,9 @@ export function LoggedInHeader({
     /* Mobile: column (header → main). md+: `contents` flattens into App shell so sticky header + scroll work without an extra nested flex wrapper. */
     <div className="flex w-full min-h-0 flex-1 flex-col overflow-hidden md:contents">
     <header
-      className="mobile-app-top-header sticky top-0 z-50 shrink-0 pt-[env(safe-area-inset-top,0px)] md:sticky md:top-0 border-b border-neutral-200/40 bg-white/95 backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95 md:shadow-[0_1px_0_rgba(15,23,42,0.04)]"
+      className={`mobile-app-top-header sticky top-0 z-50 shrink-0 pt-[env(safe-area-inset-top,0px)] md:sticky md:top-0 border-b border-neutral-200/40 bg-white/95 backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95 md:shadow-[0_1px_0_rgba(15,23,42,0.04)] ${
+        hideNavigationChrome ? "hidden" : ""
+      }`}
     >
       {/*
         Mobile only (md:hidden): primary + secondary chrome — grid 0fr/1fr collapse (smoother than max-height).
@@ -971,7 +981,7 @@ export function LoggedInHeader({
               onClick={() => {
                 setAccountMenuOpen(false);
                 setDesktopSettingsOpen(false);
-                goBrowse();
+                goMarketplaceRoot();
                 closeAllMenus();
               }}
             >
@@ -1000,11 +1010,11 @@ export function LoggedInHeader({
               <span className="mobile-nav-tab-icon relative inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
                 <MobileNavCartIcon filled={activeView === VIEWS.CART} className="h-6 w-6 shrink-0" aria-hidden />
                 {cartItemCount > 0 ? (
-                  <span className={`${mobileNavBadgeBase} bg-amber-600 text-white dark:bg-amber-500`}>
+                  <span className={`${mobileNavBadgeBase} bg-rose-600 text-white dark:bg-rose-500`}>
                     {cartItemCount > 99 ? "99+" : cartItemCount}
                   </span>
                 ) : totalCartCount > 0 ? (
-                  <span className={`${mobileNavBadgeBase} bg-neutral-500 text-white dark:bg-slate-600`} aria-hidden>
+                  <span className={`${mobileNavBadgeBase} bg-rose-600 text-white dark:bg-rose-500`} aria-hidden>
                     {totalCartCount > 99 ? "99+" : totalCartCount}
                   </span>
                 ) : null}
@@ -1079,7 +1089,7 @@ export function LoggedInHeader({
               <span className="mobile-nav-tab-icon relative inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
                 <MobileNavNotificationsIcon filled={activeView === VIEWS.NOTIFICATIONS} className="h-6 w-6 shrink-0" aria-hidden />
                 {notificationUnreadCount > 0 ? (
-                  <span className={`${mobileNavBadgeBase} bg-brand-primary text-white`}>
+                  <span className={`${mobileNavBadgeBase} bg-rose-600 text-white dark:bg-rose-500`}>
                     {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
                   </span>
                 ) : null}
@@ -1138,7 +1148,7 @@ export function LoggedInHeader({
                 onClick={() => {
                   setAccountMenuOpen(false);
                   setDesktopSettingsOpen(false);
-                  goBrowse();
+                  goMarketplaceRoot();
                   closeAllMenus();
                 }}
               >
@@ -1168,11 +1178,11 @@ export function LoggedInHeader({
                 />
                 <span className="max-w-[7rem] truncate md:max-w-none">Cart</span>
                 {cartItemCount > 0 ? (
-                  <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-amber-500">
+                  <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
                     {cartItemCount > 99 ? "99+" : cartItemCount}
                   </span>
                 ) : totalCartCount > 0 ? (
-                  <span className="ml-1 text-[11px] font-semibold leading-none text-neutral-500 dark:text-slate-400">
+                  <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
                     {totalCartCount > 99 ? "99+" : totalCartCount}
                   </span>
                 ) : null}
@@ -1289,7 +1299,7 @@ export function LoggedInHeader({
                 className={activeView === VIEWS.NOTIFICATIONS ? "text-emerald-600 dark:text-emerald-300" : ""}
               />
               {notificationUnreadCount > 0 ? (
-                <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm">
+                <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
                   {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
                 </span>
               ) : null}

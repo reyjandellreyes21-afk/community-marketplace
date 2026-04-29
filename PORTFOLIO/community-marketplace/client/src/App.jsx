@@ -195,9 +195,24 @@ function writeJoinedShopCommunityId(userId, communityId) {
   }
 }
 
+function listingPriceCents(l) {
+  if (Number.isFinite(Number(l?.priceCents))) return Math.max(0, Number(l.priceCents));
+  const pesos = Number(l?.pricePesos);
+  if (Number.isFinite(pesos)) return Math.max(0, Math.round(pesos * 100));
+  return 0;
+}
+
 /** Success toast: full visible time before fade; fade length (should match CSS transition) */
 const PUBLISH_TOAST_DURATION_MS = 7500;
 const PUBLISH_TOAST_FADE_MS = 350;
+const LISTING_SORT_OPTIONS = [
+  { id: "newest", label: "Sort: Newest" },
+  { id: "oldest", label: "Sort: Oldest" },
+  { id: "price_asc", label: "Sort: Price low-high" },
+  { id: "price_desc", label: "Sort: Price high-low" },
+  { id: "name_asc", label: "Sort: Name A-Z" },
+  { id: "name_desc", label: "Sort: Name Z-A" },
+];
 /** Seller snapshot polling while away from Sales inbox — complements Supabase Realtime for nav badge latency. */
 const SELLER_ORDERS_POLL_MS = 28_000;
 /** Coalesce bursty `orders` row events without delaying badge updates too much. */
@@ -745,6 +760,7 @@ function App() {
   const [mobileSecondarySlideClass, setMobileSecondarySlideClass] = useState("");
   const [mobileSecondaryDragX, setMobileSecondaryDragX] = useState(0);
   const [mobileSecondaryDragging, setMobileSecondaryDragging] = useState(false);
+  const previousViewForMarketplaceScrollResetRef = useRef(activeView);
   useEffect(() => {
     const prev = previousActiveViewRef.current;
     const next = secondarySwipeNavView;
@@ -767,6 +783,21 @@ function App() {
     const saved = readActiveView();
     if (saved === VIEWS.SELLER) setSellerTab(SELLER_TABS.PRODUCTS);
   }, []);
+  useEffect(() => {
+    const prev = previousViewForMarketplaceScrollResetRef.current;
+    previousViewForMarketplaceScrollResetRef.current = activeView;
+    const enteredMarketplaceFeed =
+      (activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP) &&
+      prev !== VIEWS.BROWSE &&
+      prev !== VIEWS.COMMUNITY_SHOP;
+    if (!enteredMarketplaceFeed) return;
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      const main = document.getElementById("main-content");
+      if (main) main.scrollTop = 0;
+      window.scrollTo(0, 0);
+    });
+  }, [activeView]);
   /** @type {[string | null, import('react').Dispatch<import('react').SetStateAction<string | null>>]} */
   const [browseVerticalId, setBrowseVerticalId] = useState(null);
   const [browseSubId, setBrowseSubId] = useState(null);
@@ -815,6 +846,7 @@ function App() {
     if (ordersStatusTab !== "completed") setCompletedTabOrderDetailsOpen({});
   }, [ordersStatusTab]);
   useEffect(() => {
+    if (activeView === VIEWS.PRODUCT_DETAIL) return;
     writeActiveView(activeView);
   }, [activeView]);
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -827,7 +859,6 @@ function App() {
   /** Order ids the user has marked “seen” per status tab (localStorage per user). Unseen rows drive badges + highlights. */
   const [buyerOrderDismissedIdsByTab, setBuyerOrderDismissedIdsByTab] = useState(() => emptyOrderAttentionByTab());
   const [sellerOrderDismissedIdsByTab, setSellerOrderDismissedIdsByTab] = useState(() => emptyOrderAttentionByTab());
-  const ordersStatusTabDismissContextRef = useRef({ key: "", tab: "pending" });
 
   useEffect(() => {
     if (!user?.id) {
@@ -877,6 +908,14 @@ function App() {
     if (polledBuyerOrders === null) return null;
     return polledBuyerOrders;
   }, [ordersRole, orders, polledBuyerOrders]);
+  const buyerOrdersForBadgesRef = useRef(buyerOrdersForBadges);
+  const sellerOrdersForBadgesRef = useRef(sellerOrdersForBadges);
+  useEffect(() => {
+    buyerOrdersForBadgesRef.current = buyerOrdersForBadges;
+  }, [buyerOrdersForBadges]);
+  useEffect(() => {
+    sellerOrdersForBadgesRef.current = sellerOrdersForBadges;
+  }, [sellerOrdersForBadges]);
 
   const dismissBuyerOrdersForTab = useCallback((tabId, list) => {
     const ids = (list || [])
@@ -970,6 +1009,7 @@ function App() {
   const [listingOptionValueDraftB, setListingOptionValueDraftB] = useState("");
   const [listingSecondOptionOpen, setListingSecondOptionOpen] = useState(false);
   const [listingSaving, setListingSaving] = useState(false);
+  const [listingEditOverlayOpen, setListingEditOverlayOpen] = useState(false);
   /** Inline banner when publish/save listing fails (toast still fires). */
   const [listingPublishError, setListingPublishError] = useState("");
   const [listingFieldErrors, setListingFieldErrors] = useState({});
@@ -1228,6 +1268,8 @@ function App() {
   const [quickOrderFulfillmentType, setQuickOrderFulfillmentType] = useState("pickup");
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
   const [quickAddInlineError, setQuickAddInlineError] = useState("");
+  const productFlowOriginRef = useRef({ listingId: "", view: VIEWS.BROWSE, shopCommunityId: null });
+  const productInspectReturnRef = useRef({ view: VIEWS.BROWSE, shopCommunityId: null, scrollTop: 0, listingId: "" });
   /** Read-only modal: full listing text + cart/order buyer note. */
   const [productInspect, setProductInspect] = useState(null);
   const [recentlyAddedCartListingIds, setRecentlyAddedCartListingIds] = useState(() => readStoredStringArray(CART_RECENT_BADGE_STORAGE_KEY));
@@ -1316,54 +1358,36 @@ function App() {
     }
   }, [recentlyAddedCartListingIds]);
 
-  /** Dismiss a tab's unseen queue only after user leaves that specific tab. */
-  const ordersNavPrevRef = useRef({ view: activeView, role: ordersRole });
+  /** Dismiss a status tab only after user leaves that exact status context. */
+  const ordersNavPrevRef = useRef({
+    key:
+      ordersRole === "buyer" && activeView === VIEWS.MY_PURCHASES
+        ? "buyer-mp"
+        : ordersRole === "seller" && activeView === VIEWS.ORDERS
+          ? "seller-ord"
+          : "other",
+    tab: ordersStatusTab,
+  });
   useEffect(() => {
     const prev = ordersNavPrevRef.current;
-    const buyerList = buyerOrdersForBadges ?? [];
-    const sellerList = sellerOrdersForBadges ?? [];
-    const leftMyPurchases = prev.view === VIEWS.MY_PURCHASES && activeView !== VIEWS.MY_PURCHASES;
-    const leftOrders = prev.view === VIEWS.ORDERS && activeView !== VIEWS.ORDERS;
-
-    const prevKey =
-      prev.role === "buyer" && prev.view === VIEWS.MY_PURCHASES
-        ? "buyer-mp"
-        : prev.role === "seller" && prev.view === VIEWS.ORDERS
-          ? "seller-ord"
-          : "other";
     const currentKey =
       ordersRole === "buyer" && activeView === VIEWS.MY_PURCHASES
         ? "buyer-mp"
         : ordersRole === "seller" && activeView === VIEWS.ORDERS
           ? "seller-ord"
           : "other";
-
-    const prevTab = ordersStatusTabDismissContextRef.current.tab;
     const currentTab = ordersStatusTab;
-    const leftBuyerTab = prevKey === "buyer-mp" && (leftMyPurchases || currentKey !== "buyer-mp" || prevTab !== currentTab);
-    const leftSellerTab = prevKey === "seller-ord" && (leftOrders || currentKey !== "seller-ord" || prevTab !== currentTab);
+    const changedContext = prev.key !== currentKey || prev.tab !== currentTab;
+    if (!changedContext) return;
 
-    if (leftBuyerTab && RECENT_ORDER_TAB_KEYS.includes(prevTab)) {
-      dismissBuyerOrdersForTab(prevTab, buyerList);
+    if (prev.key === "buyer-mp" && RECENT_ORDER_TAB_KEYS.includes(prev.tab)) {
+      dismissBuyerOrdersForTab(prev.tab, buyerOrdersForBadgesRef.current ?? []);
     }
-    if (leftSellerTab && RECENT_ORDER_TAB_KEYS.includes(prevTab)) {
-      dismissSellerOrdersForTab(prevTab, sellerList);
+    if (prev.key === "seller-ord" && RECENT_ORDER_TAB_KEYS.includes(prev.tab)) {
+      dismissSellerOrdersForTab(prev.tab, sellerOrdersForBadgesRef.current ?? []);
     }
-
-    ordersNavPrevRef.current = { view: activeView, role: ordersRole };
-  }, [activeView, ordersRole, buyerOrdersForBadges, sellerOrdersForBadges, dismissBuyerOrdersForTab, dismissSellerOrdersForTab]);
-
-  useEffect(() => {
-    const key =
-      ordersRole === "buyer" && activeView === VIEWS.MY_PURCHASES
-        ? "buyer-mp"
-        : ordersRole === "buyer" && activeView === VIEWS.ORDERS
-          ? "buyer-ord"
-          : ordersRole === "seller" && activeView === VIEWS.ORDERS
-            ? "seller-ord"
-            : "other";
-    ordersStatusTabDismissContextRef.current = { key, tab: ordersStatusTab };
-  }, [ordersStatusTab, activeView, ordersRole]);
+    ordersNavPrevRef.current = { key: currentKey, tab: currentTab };
+  }, [activeView, ordersRole, ordersStatusTab, dismissBuyerOrdersForTab, dismissSellerOrdersForTab]);
 
   useEffect(() => {
     if (!token) {
@@ -1382,6 +1406,8 @@ function App() {
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
   const [sellerProductsView, setSellerProductsView] = useState("list");
   const [communityProductsView, setCommunityProductsView] = useState("grid");
+  const [communityListingsQuery, setCommunityListingsQuery] = useState("");
+  const [listingSort, setListingSort] = useState("newest");
   const [favoriteProductsView, setFavoriteProductsView] = useState("grid");
   /** Migrate legacy layout keys (2 / 4 / 8) to list | grid | compact. */
   useEffect(() => {
@@ -1679,6 +1705,7 @@ function App() {
   }, [token, user?.id, user?.community]);
 
   const [mobileCommunityFiltersOpen, setMobileCommunityFiltersOpen] = useState(false);
+  const [mobileTopChromeCollapsed, setMobileTopChromeCollapsed] = useState(false);
   const [mobileBrowseCategoryQuery, setMobileBrowseCategoryQuery] = useState("");
   const browseVerticalsForMobileDrawer = useMemo(() => {
     const q = mobileBrowseCategoryQuery.trim().toLowerCase();
@@ -1711,7 +1738,6 @@ function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [mobileCommunityFiltersOpen]);
-
   const [profileEditing, setProfileEditing] = useState(false);
   const [profileViewUserId, setProfileViewUserId] = useState("");
   const [profileViewReturnView, setProfileViewReturnView] = useState("");
@@ -2903,6 +2929,7 @@ function App() {
   useBodyScrollLock(activeView === VIEWS.MESSAGES && messagesMobilePane === "thread" && isMobileViewport);
   useEffect(() => {
     if (!isMobileViewport) return undefined;
+    if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(activeView)) return undefined;
     if (!secondaryMobileNavOrder.includes(secondarySwipeNavView)) return undefined;
     const main = document.getElementById("main-content");
     if (!main) return undefined;
@@ -2944,7 +2971,11 @@ function App() {
       const dy = t.clientY - state.y;
       state.dx = dx;
       state.dy = dy;
-      if (!state.horizontal && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.1) {
+      if (!state.horizontal && Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx) * 1.15) {
+        state.tracking = false;
+        return;
+      }
+      if (!state.horizontal && Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.5) {
         state.horizontal = true;
         setMobileSecondaryDragging(true);
       }
@@ -2971,7 +3002,7 @@ function App() {
       const velocityX = dx / elapsed;
       const index = secondaryMobileNavOrder.indexOf(baseView || secondarySwipeNavView);
       if (index === -1) return;
-      const shouldCommitByDistance = Math.abs(dx) > Math.max(52, Number(width || 0) * 0.18) && Math.abs(dx) > Math.abs(dy) * 1.1;
+      const shouldCommitByDistance = Math.abs(dx) > Math.max(56, Number(width || 0) * 0.2) && Math.abs(dx) > Math.abs(dy) * 1.35;
       const shouldCommitByVelocity = Math.abs(velocityX) > 0.35 && Math.abs(dx) > 18;
       if (!shouldCommitByDistance && !shouldCommitByVelocity) return;
       const nextIndex = (dx < 0 || velocityX < 0) ? index + 1 : index - 1;
@@ -2998,7 +3029,7 @@ function App() {
       main.removeEventListener("touchend", onTouchEnd);
       main.removeEventListener("touchcancel", onTouchCancel);
     };
-  }, [goSecondaryMobileNavView, isMobileViewport, secondaryMobileNavOrder, secondarySwipeNavView]);
+  }, [goSecondaryMobileNavView, isMobileViewport, secondaryMobileNavOrder, secondarySwipeNavView, activeView]);
 
   /** Mobile browse: list or 2-col grid; dense hidden — map compact → grid. Cart/orders/seller: same mapping. */
   const effectiveCommunityBrowseView = isMobileViewport
@@ -3271,9 +3302,21 @@ function App() {
     activeView === VIEWS.MY_PURCHASES ? setCommerceFlowViewBuyer : setCommerceFlowViewSeller;
 
   const visibleBrowseListings = useMemo(() => {
-    if (browseQuickFilter === "all") return listings;
+    let rows = listings;
+    if (activeView === VIEWS.COMMUNITY_SHOP) {
+      const q = String(communityListingsQuery || "").trim().toLowerCase();
+      if (q) {
+        rows = rows.filter((l) => {
+          const title = String(l?.title || "").toLowerCase();
+          const description = String(l?.description || "").toLowerCase();
+          const category = String(l?.categories || "").toLowerCase();
+          const sub = String(l?.subId || "").toLowerCase();
+          return title.includes(q) || description.includes(q) || category.includes(q) || sub.includes(q);
+        });
+      }
+    }
     if (browseQuickFilter === "new") {
-      return listings.filter((l) => {
+      rows = rows.filter((l) => {
         if (l?.createdAt) {
           const ageMs = Date.now() - new Date(l.createdAt).getTime();
           return Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 1000 * 60 * 60 * 24 * 14;
@@ -3283,13 +3326,26 @@ function App() {
       });
     }
     if (browseQuickFilter === "sale") {
-      return listings.filter((l) => {
+      rows = rows.filter((l) => {
         const text = `${l?.title || ""} ${l?.description || ""}`.toLowerCase();
         return /\bsale\b|discount|promo|markdown|clearance/.test(text);
       });
     }
-    return listings;
-  }, [browseQuickFilter, listings]);
+    rows = [...rows];
+    rows.sort((a, b) => {
+      if (listingSort === "oldest") return orderRowSortMs(a) - orderRowSortMs(b);
+      if (listingSort === "price_asc") return listingPriceCents(a) - listingPriceCents(b);
+      if (listingSort === "price_desc") return listingPriceCents(b) - listingPriceCents(a);
+      if (listingSort === "name_asc") {
+        return String(a?.title || "").localeCompare(String(b?.title || ""), undefined, { sensitivity: "base" });
+      }
+      if (listingSort === "name_desc") {
+        return String(b?.title || "").localeCompare(String(a?.title || ""), undefined, { sensitivity: "base" });
+      }
+      return orderRowSortMs(b) - orderRowSortMs(a);
+    });
+    return rows;
+  }, [browseQuickFilter, listings, activeView, communityListingsQuery, listingSort]);
 
   const strictFavoritesList = useMemo(() => {
     const favoriteIdStrings = new Set(Array.from(favoriteIds).map((id) => String(id)));
@@ -3304,9 +3360,8 @@ function App() {
         rows = rows.filter((l) => String(l.subId || "") === String(browseSubId));
       }
     }
-    if (browseQuickFilter === "all") return rows;
     if (browseQuickFilter === "new") {
-      return rows.filter((l) => {
+      rows = rows.filter((l) => {
         if (l?.createdAt) {
           const ageMs = Date.now() - new Date(l.createdAt).getTime();
           return Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 1000 * 60 * 60 * 24 * 14;
@@ -3316,16 +3371,30 @@ function App() {
       });
     }
     if (browseQuickFilter === "sale") {
-      return rows.filter((l) => {
+      rows = rows.filter((l) => {
         const text = `${l?.title || ""} ${l?.description || ""}`.toLowerCase();
         return /\bsale\b|discount|promo|markdown|clearance/.test(text);
       });
     }
+    rows = [...rows];
+    rows.sort((a, b) => {
+      if (listingSort === "oldest") return orderRowSortMs(a) - orderRowSortMs(b);
+      if (listingSort === "price_asc") return listingPriceCents(a) - listingPriceCents(b);
+      if (listingSort === "price_desc") return listingPriceCents(b) - listingPriceCents(a);
+      if (listingSort === "name_asc") {
+        return String(a?.title || "").localeCompare(String(b?.title || ""), undefined, { sensitivity: "base" });
+      }
+      if (listingSort === "name_desc") {
+        return String(b?.title || "").localeCompare(String(a?.title || ""), undefined, { sensitivity: "base" });
+      }
+      return orderRowSortMs(b) - orderRowSortMs(a);
+    });
     return rows;
-  }, [strictFavoritesList, browseQuickFilter, browseVerticalId, browseSubId]);
+  }, [strictFavoritesList, browseQuickFilter, browseVerticalId, browseSubId, listingSort]);
 
   const activeBrowseFilterSummary = useMemo(() => {
     const items = [];
+    const activeSortLabel = LISTING_SORT_OPTIONS.find((o) => o.id === listingSort)?.label || "Sort: Newest";
     if (browseQuickFilter !== "all") {
       const quick = BROWSE_QUICK_FILTERS.find((f) => f.id === browseQuickFilter);
       items.push(`Filter: ${quick?.label || browseQuickFilter}`);
@@ -3334,8 +3403,12 @@ function App() {
       const verticalLabel = getVerticalById(browseVerticalId)?.label ?? browseVerticalId;
       items.push(`Category: ${verticalLabel}`);
     }
+    if (activeView === VIEWS.COMMUNITY_SHOP && communityListingsQuery.trim()) {
+      items.push(`Search: ${communityListingsQuery.trim()}`);
+    }
+    if (listingSort !== "newest") items.push(activeSortLabel);
     return items;
-  }, [browseQuickFilter, browseVerticalId]);
+  }, [browseQuickFilter, browseVerticalId, activeView, communityListingsQuery, listingSort]);
 
   const ordersForStatusTab = useMemo(
     () => orders.filter((o) => orderMatchesOrdersStatusTab(o.status, ordersStatusTab)),
@@ -3826,6 +3899,13 @@ function App() {
     setActiveView(shopCommunityId ? VIEWS.COMMUNITY_SHOP : VIEWS.BROWSE);
     return undefined;
   }, [user, routeListingId, shopCommunityId]);
+
+  useEffect(() => {
+    if (!user || shopCommunityId || !joinedShopCommunityId) return undefined;
+    setShopCommunityId(String(joinedShopCommunityId));
+    if (activeView === VIEWS.BROWSE) setActiveView(VIEWS.COMMUNITY_SHOP);
+    return undefined;
+  }, [user, shopCommunityId, joinedShopCommunityId, activeView]);
 
   useEffect(() => {
     if (!user || activeView !== VIEWS.BROWSE || shopCommunityId || !listingCommunityFromProfile.id) return undefined;
@@ -4858,6 +4938,19 @@ function App() {
     const defaultFulfillment = listingModes.includes("pickup") ? "pickup" : listingModes[0];
     const savedPref = readQuickOrderFulfillmentPref();
     const initialFulfillment = savedPref && listingModes.includes(savedPref) ? savedPref : defaultFulfillment;
+    const sourceView =
+      activeView === VIEWS.PRODUCT_DETAIL
+        ? String(productInspectReturnRef.current?.view || VIEWS.BROWSE)
+        : activeView;
+    const sourceCommunityId =
+      activeView === VIEWS.PRODUCT_DETAIL
+        ? (productInspectReturnRef.current?.shopCommunityId ? String(productInspectReturnRef.current.shopCommunityId) : null)
+        : (shopCommunityId || null);
+    productFlowOriginRef.current = {
+      listingId: String(listing.id || ""),
+      view: sourceView,
+      shopCommunityId: sourceCommunityId,
+    };
     setQuickAddListing(listing);
     setQuickActionType(mode);
     setQuickOrderFulfillmentType(initialFulfillment);
@@ -4919,12 +5012,57 @@ function App() {
     setQuickAddQuantity("1");
     setQuickAddComment("");
     setQuickAddInlineError("");
+    const originListingId = String(productFlowOriginRef.current?.listingId || "");
+    if (originListingId && typeof document !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const anchor = document.getElementById(`listing-card-${originListingId}`);
+        if (anchor) anchor.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+    }
   };
 
-  const closeProductInspect = useCallback(() => setProductInspect(null), []);
+  const closeProductInspect = useCallback(() => {
+    const returnCtx = productInspectReturnRef.current || {};
+    setProductInspect(null);
+    if (activeView !== VIEWS.PRODUCT_DETAIL) return;
+    const restoreView = String(returnCtx.view || VIEWS.BROWSE);
+    const restoreCommunityId = returnCtx.shopCommunityId ? String(returnCtx.shopCommunityId) : null;
+    const restoreScrollTop = Math.max(0, Number(returnCtx.scrollTop) || 0);
+    setShopCommunityId(restoreCommunityId);
+    setActiveView(restoreView);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const main = document.getElementById("main-content");
+        if (main) {
+          main.scrollTop = restoreScrollTop;
+        }
+        const anchorId = String(returnCtx.listingId || "").trim();
+        if (anchorId && main && restoreScrollTop <= 0) {
+          const anchor = document.getElementById(`listing-card-${anchorId}`);
+          if (anchor) anchor.scrollIntoView({ block: "center", behavior: "auto" });
+        }
+      });
+    }
+  }, [activeView]);
 
   const openProductInspect = useCallback((listingLike, extra = {}) => {
     if (!listingLike) return;
+    const sourceView = activeView === VIEWS.PRODUCT_DETAIL
+      ? String(productInspectReturnRef.current?.view || VIEWS.BROWSE)
+      : activeView;
+    const sourceCommunityId = activeView === VIEWS.PRODUCT_DETAIL
+      ? (productInspectReturnRef.current?.shopCommunityId ? String(productInspectReturnRef.current.shopCommunityId) : null)
+      : (shopCommunityId ? String(shopCommunityId) : null);
+    const sourceScrollTop =
+      typeof document === "undefined"
+        ? 0
+        : Math.max(0, Number(document.getElementById("main-content")?.scrollTop || 0));
+    productInspectReturnRef.current = {
+      view: sourceView,
+      shopCommunityId: sourceCommunityId,
+      scrollTop: sourceScrollTop,
+      listingId: String(listingLike.id || ""),
+    };
     const priceCents = Number(listingLike.priceCents ?? listingLike.unitPriceCents) || 0;
     const sellerId = String(
       extra.sellerId ??
@@ -4961,6 +5099,7 @@ function App() {
         ""
     ).trim();
     setProductInspect({
+      listingId: String(listingLike.id || ""),
       title: String(listingLike.title || "Product"),
       imageUrl: listingLike.imageUrl,
       imageUrls: Array.isArray(listingLike.imageUrls) ? listingLike.imageUrls : [],
@@ -5009,8 +5148,44 @@ function App() {
       onSaleSelect: typeof extra.onSaleSelect === "function" ? extra.onSaleSelect : undefined,
       buyNowDisabled: Boolean(extra.buyNowDisabled),
       buyNowDisabledReason: String(extra.buyNowDisabledReason || ""),
+      isFavorite: favoriteIds.has(String(listingLike.id || "")),
+      onToggleFavorite:
+        listingLike?.id
+          ? () => {
+              const id = String(listingLike.id || "");
+              setProductInspect((prev) => {
+                if (!prev) return prev;
+                const nextFavorite = !Boolean(prev.isFavorite);
+                void toggleFavorite(id, nextFavorite);
+                return { ...prev, isFavorite: nextFavorite };
+              });
+            }
+          : undefined,
     });
-  }, [activeView, closeProductInspect, user?.id, usersById]);
+    setActiveView(VIEWS.PRODUCT_DETAIL);
+  }, [activeView, closeProductInspect, user?.id, usersById, favoriteIds, toggleFavorite, shopCommunityId]);
+
+  useEffect(() => {
+    if (!productInspect) return;
+    if (activeView === VIEWS.PRODUCT_DETAIL) return;
+    setActiveView(VIEWS.PRODUCT_DETAIL);
+  }, [productInspect, activeView]);
+
+  useEffect(() => {
+    if (activeView !== VIEWS.PRODUCT_DETAIL || productInspect) return;
+    const returnCtx = productInspectReturnRef.current || {};
+    const restoreView = String(returnCtx.view || VIEWS.BROWSE);
+    const restoreCommunityId = returnCtx.shopCommunityId ? String(returnCtx.shopCommunityId) : null;
+    const restoreScrollTop = Math.max(0, Number(returnCtx.scrollTop) || 0);
+    setShopCommunityId(restoreCommunityId);
+    setActiveView(restoreView);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const main = document.getElementById("main-content");
+        if (main) main.scrollTop = restoreScrollTop;
+      });
+    }
+  }, [activeView, productInspect]);
 
   const submitQuickAddOrder = async () => {
     if (!quickAddListing?.id || quickAddSubmitting) return;
@@ -5154,12 +5329,24 @@ function App() {
           pushMarketplaceToast(`Added to cart: ${shortTitle} ×${parsedQty}.`);
         }
       }
-      setActiveView(shopCommunityId ? VIEWS.COMMUNITY_SHOP : VIEWS.BROWSE);
+      const originView = String(productFlowOriginRef.current?.view || "");
+      if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(originView)) {
+        setActiveView(originView);
+      } else {
+        setActiveView(shopCommunityId ? VIEWS.COMMUNITY_SHOP : VIEWS.BROWSE);
+      }
       setQuickAddModalOpen(false);
       setQuickAddListing(null);
       setQuickAddQuantity("1");
       setQuickAddComment("");
       setQuickAddInlineError("");
+      const originListingId = String(productFlowOriginRef.current?.listingId || "");
+      if (originListingId && typeof document !== "undefined") {
+        window.requestAnimationFrame(() => {
+          const anchor = document.getElementById(`listing-card-${originListingId}`);
+          if (anchor) anchor.scrollIntoView({ block: "center", behavior: "smooth" });
+        });
+      }
     } finally {
       setQuickAddSubmitting(false);
     }
@@ -5167,6 +5354,20 @@ function App() {
 
   const beginEditSellerListing = (listing) => {
     if (!listing?.id) return;
+    const sourceView =
+      activeView === VIEWS.PRODUCT_DETAIL
+        ? String(productInspectReturnRef.current?.view || VIEWS.BROWSE)
+        : activeView;
+    const sourceCommunityId =
+      activeView === VIEWS.PRODUCT_DETAIL
+        ? (productInspectReturnRef.current?.shopCommunityId ? String(productInspectReturnRef.current.shopCommunityId) : null)
+        : (shopCommunityId || null);
+    const launchedFromProductFlow = [VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(sourceView);
+    productFlowOriginRef.current = {
+      listingId: String(listing.id || ""),
+      view: sourceView,
+      shopCommunityId: sourceCommunityId,
+    };
     const normalizedImageUrls = dedupeListingImageUrlsOrdered(
       Array.isArray(listing.imageUrls) ? listing.imageUrls.map((url) => String(url || "").trim()).filter(Boolean) : [],
     ).slice(0, LISTING_MAX_IMAGES);
@@ -5219,8 +5420,13 @@ function App() {
         Boolean(String(listing.processingTime || "").trim()),
     );
     clearMarketplaceToasts();
-    setActiveView(VIEWS.MY_LISTINGS);
-    navigate("/", { replace: true });
+    if (launchedFromProductFlow) {
+      setListingEditOverlayOpen(true);
+    } else {
+      setListingEditOverlayOpen(false);
+      setActiveView(VIEWS.MY_LISTINGS);
+      navigate("/", { replace: true });
+    }
   };
 
   const handleCreateListing = async (ev) => {
@@ -5424,11 +5630,30 @@ function App() {
       setListingOptionValueDraftB("");
       setListingSecondOptionOpen(false);
       setEditingListingId(null);
+      setListingEditOverlayOpen(false);
       clearMarketplaceToasts();
       setPublishFlash("");
       setSellerTab(SELLER_TABS.PRODUCTS);
-      goOwnProfile();
-      navigate("/", { replace: true });
+      const origin = productFlowOriginRef.current || {};
+      const originView = String(origin.view || "");
+      const shouldReturnToProductFlow =
+        Boolean(editingListingId) && [VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(originView);
+      if (shouldReturnToProductFlow) {
+        const originCommunityId = origin.shopCommunityId ? String(origin.shopCommunityId) : null;
+        setShopCommunityId(originCommunityId);
+        setActiveView(originView);
+        navigate("/", { replace: true });
+        const originListingId = String(origin.listingId || "");
+        if (originListingId && typeof document !== "undefined") {
+          window.requestAnimationFrame(() => {
+            const anchor = document.getElementById(`listing-card-${originListingId}`);
+            if (anchor) anchor.scrollIntoView({ block: "center", behavior: "smooth" });
+          });
+        }
+      } else {
+        goOwnProfile();
+        navigate("/", { replace: true });
+      }
     } catch (e) {
       const msg = String(e?.message || "Could not publish listing.");
       setListingPublishError(
@@ -6802,6 +7027,8 @@ function App() {
         onLogout={logout}
         getDisplayNameFromUser={getDisplayNameFromUser}
         onNavigateHome={() => navigate("/")}
+        onMobileBrowseNavCollapsedChange={setMobileTopChromeCollapsed}
+        hideNavigationChrome={activeView === VIEWS.PRODUCT_DETAIL}
       >
       {isMobileViewport && mobilePullRefreshing ? (
         <div
@@ -6818,7 +7045,9 @@ function App() {
           isMobileViewport && !mobileSecondaryDragging ? mobileSecondarySlideClass : ""
         }`}
         style={
-          isMobileViewport && secondaryMobileNavOrder.includes(secondarySwipeNavView)
+          isMobileViewport &&
+          secondaryMobileNavOrder.includes(secondarySwipeNavView) &&
+          (mobileSecondaryDragging || mobileSecondaryDragX !== 0)
             ? {
                 transform: `translate3d(${mobileSecondaryDragX}px, 0, 0)`,
                 transition: mobileSecondaryDragging ? "none" : undefined,
@@ -6827,10 +7056,18 @@ function App() {
             : undefined
         }
       >
+        {activeView === VIEWS.PRODUCT_DETAIL && productInspect ? (
+          <section className="w-full min-w-0">
+            <Suspense fallback={<ScreenLoading message="Loading product…" minHeight={false} className="min-h-[10rem]" />}>
+              <LazyProductInspectModal open fullScreen onClose={closeProductInspect} {...productInspect} />
+            </Suspense>
+          </section>
+        ) : null}
         {isBrowseLikeView && activeView !== VIEWS.FAVORITES && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div className="space-y-4">
               {activeView === VIEWS.COMMUNITY_SHOP ? (
+                <>
                 <div
                   className={`relative overflow-hidden border transition-opacity duration-200 max-lg:rounded-xl max-lg:border-neutral-200/70 max-lg:bg-white max-lg:p-2.5 max-lg:shadow-sm max-lg:dark:border-slate-700 max-lg:dark:bg-slate-900 border-[#7cded9]/60 bg-gradient-to-r from-[#e6fbfb] via-[#edf8ff] to-[#eaf2ff] p-3 md:p-4 lg:p-5 dark:border-[#1f3c56] dark:bg-gradient-to-r dark:from-[#0f2234] dark:via-[#11283d] dark:to-[#16324a] max-lg:bg-none ${
                     mobileCommunityFiltersOpen ? "pointer-events-none opacity-40 lg:pointer-events-auto lg:opacity-100" : ""
@@ -6862,25 +7099,6 @@ function App() {
                                 {activeCommunityLocaleLine}
                               </p>
                             ) : null}
-                            <div className="flex items-center gap-1 lg:hidden">
-                              <button
-                                type="button"
-                                className="inline-flex w-24 items-center justify-center rounded-md border border-sky-200/90 bg-sky-50/90 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300 dark:hover:border-sky-400/45 dark:hover:bg-sky-500/20"
-                                onClick={() => leaveCommunityToGlobalMarketplace()}
-                              >
-                                Communities
-                              </button>
-                              {isMemberOfOpenCommunity ? (
-                                <button
-                                  type="button"
-                                  aria-label="Leave this community"
-                                  className="inline-flex w-24 items-center justify-center rounded-md border border-rose-200/90 bg-rose-50/90 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:border-rose-400/45 dark:hover:bg-rose-500/20"
-                                  onClick={requestLeaveCommunityConfirmation}
-                                >
-                                  Leave
-                                </button>
-                              ) : null}
-                            </div>
                           </div>
                           <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 self-start pt-0.5 max-lg:justify-start lg:w-full lg:justify-start lg:gap-2 lg:self-auto lg:pt-0">
                             <button
@@ -6947,7 +7165,10 @@ function App() {
                         </div>
                       </div>
                     </div>
-                    <div className="hidden w-full flex-wrap gap-2 lg:mt-0.5 lg:flex lg:w-auto lg:shrink-0 lg:justify-end">
+                    <div className="hidden w-full flex-wrap items-center gap-2 lg:mt-0.5 lg:flex lg:w-auto lg:max-w-[20rem] lg:shrink-0 lg:justify-end">
+                      <span className="w-full text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                        Community actions
+                      </span>
                       {activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "") ? (
                         <button
                           type="button"
@@ -6973,15 +7194,40 @@ function App() {
                       ) : (
                         <button
                           type="button"
-                          className="inline-flex items-center rounded-md border border-rose-200/90 bg-rose-50/90 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 md:flex-none dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:border-rose-400/45 dark:hover:bg-rose-500/20"
+                          className="inline-flex min-h-[36px] items-center justify-center rounded-lg border border-rose-200/85 bg-transparent px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50/90 md:flex-none dark:border-rose-500/35 dark:text-rose-300 dark:hover:border-rose-400/45 dark:hover:bg-rose-500/10"
                           onClick={requestLeaveCommunityConfirmation}
                         >
-                          Leave
+                          Leave community
                         </button>
                       )}
                     </div>
                   </div>
                 </div>
+                <div className="flex items-end justify-between gap-2 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70 lg:hidden">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                    Community actions
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    className="inline-flex min-h-[32px] items-center justify-center rounded-md border border-sky-200/90 bg-sky-50/90 px-2.5 py-1 text-[10px] font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300 dark:hover:border-sky-400/45 dark:hover:bg-sky-500/20"
+                    onClick={() => leaveCommunityToGlobalMarketplace()}
+                  >
+                    Communities
+                  </button>
+                  {isMemberOfOpenCommunity ? (
+                    <button
+                      type="button"
+                      aria-label="Leave this community"
+                      className="inline-flex min-h-[32px] items-center justify-center rounded-md border border-rose-200/85 bg-transparent px-2.5 py-1 text-[10px] font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50/90 dark:border-rose-500/35 dark:text-rose-300 dark:hover:border-rose-400/45 dark:hover:bg-rose-500/10"
+                      onClick={requestLeaveCommunityConfirmation}
+                    >
+                      Leave community
+                    </button>
+                  ) : null}
+                  </div>
+                </div>
+                </>
               ) : activeView === VIEWS.FAVORITES ? null : (
                 <>
                   <div>
@@ -7231,6 +7477,26 @@ function App() {
                   <div className="rounded-xl bg-neutral-50/90 p-2.5 ring-1 ring-neutral-200/60 dark:bg-slate-800/35 dark:ring-slate-600/50 lg:bg-transparent lg:p-0 lg:ring-0">
                     <p className="mb-2 flex items-center gap-2 px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-400 dark:text-slate-500">
                       <svg className="h-3.5 w-3.5 text-brand-primary dark:text-brand-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h10M4 18h7" />
+                      </svg>
+                      Sort
+                    </p>
+                    <select
+                      value={listingSort}
+                      onChange={(e) => setListingSort(e.target.value)}
+                      className="input-base w-full py-2 pl-3 pr-8 text-sm"
+                      aria-label="Sort listings"
+                    >
+                      {LISTING_SORT_OPTIONS.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="rounded-xl bg-neutral-50/90 p-2.5 ring-1 ring-neutral-200/60 dark:bg-slate-800/35 dark:ring-slate-600/50 lg:bg-transparent lg:p-0 lg:ring-0">
+                    <p className="mb-2 flex items-center gap-2 px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-400 dark:text-slate-500">
+                      <svg className="h-3.5 w-3.5 text-brand-primary dark:text-brand-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 5h7v6H3zM14 5h7v6h-7zM14 14h7v6h-7zM3 14h7v6H3z" />
                       </svg>
                       Quick picks
@@ -7337,6 +7603,8 @@ function App() {
                         setBrowseVerticalId(null);
                         setBrowseSubId(null);
                         setBrowseQuickFilter("all");
+                        setCommunityListingsQuery("");
+                        setListingSort("newest");
                       }}
                     >
                       Reset
@@ -7409,15 +7677,18 @@ function App() {
                   <div
                     className={
                       activeView === VIEWS.COMMUNITY_SHOP
-                        ? "flex flex-wrap items-end justify-between gap-3 border-b border-neutral-200/80 pb-3 dark:border-slate-700/80"
+                        ? `flex flex-wrap items-end justify-between border-b border-neutral-200/80 dark:border-slate-700/80 ${
+                            "gap-3 pb-3"
+                          } ${
+                            isMobileViewport
+                              ? "z-20 bg-white shadow-sm dark:bg-slate-950"
+                              : ""
+                          }`
                         : "flex justify-end"
                     }
                   >
                     {activeView === VIEWS.COMMUNITY_SHOP ? (
                       <div className="min-w-0 flex-1 pr-2">
-                        <h3 className="text-base font-semibold tracking-tight text-neutral-900 dark:text-slate-100 lg:text-lg">
-                          Listings
-                        </h3>
                         {listingsRefreshing ? (
                           <p className="mt-1 text-xs font-medium text-brand-primary dark:text-brand-accent" aria-live="polite">
                             Updating listings…
@@ -7426,6 +7697,46 @@ function App() {
                       </div>
                     ) : null}
                     <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      {activeView === VIEWS.COMMUNITY_SHOP ? (
+                        <div className="input-base flex min-h-[44px] min-w-[12rem] flex-1 items-center gap-1.5 rounded-xl border-neutral-200/90 bg-white px-2.5 dark:border-slate-600 dark:bg-slate-900 sm:max-w-xs md:min-h-0 md:h-9">
+                          <input
+                            id="community-listings-search"
+                            type="search"
+                            inputMode="search"
+                            enterKeyHint="search"
+                            autoComplete="off"
+                            value={communityListingsQuery}
+                            onChange={(e) => setCommunityListingsQuery(e.target.value)}
+                            placeholder="Search listings…"
+                            className="min-h-0 w-full border-0 bg-transparent p-0 text-xs text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500"
+                            aria-label="Search community listings"
+                          />
+                          {communityListingsQuery.trim() ? (
+                            <button
+                              type="button"
+                              className="inline-flex min-h-[30px] min-w-[30px] items-center justify-center rounded-md px-1.5 text-[11px] font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                              onClick={() => setCommunityListingsQuery("")}
+                              aria-label="Clear listings search"
+                            >
+                              Clear
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {isMobileViewport ? null : (
+                        <select
+                          value={listingSort}
+                          onChange={(e) => setListingSort(e.target.value)}
+                          className="input-base min-h-[44px] min-w-[9.5rem] rounded-xl py-2 pl-3 pr-8 text-xs md:h-9 md:min-h-0 md:text-sm"
+                          aria-label="Sort listings"
+                        >
+                          {LISTING_SORT_OPTIONS.map((opt) => (
+                            <option key={opt.id} value={opt.id}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                       {activeView === VIEWS.COMMUNITY_SHOP && isMobileViewport ? (
                         <button
                           type="button"
@@ -7437,6 +7748,11 @@ function App() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M7 12h10M10 18h4" />
                           </svg>
                           <span className="max-[380px]:sr-only">Filters</span>
+                          {activeBrowseFilterSummary.length > 0 ? (
+                            <span className="inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white dark:bg-rose-500">
+                              {activeBrowseFilterSummary.length > 99 ? "99+" : activeBrowseFilterSummary.length}
+                            </span>
+                          ) : null}
                         </button>
                       ) : null}
                       <ProductViewDensityToggle
@@ -8165,8 +8481,38 @@ function App() {
           </section>
         )}
 
-        {activeView === VIEWS.MY_LISTINGS && (
-          <section className="w-full min-w-0 max-w-none space-y-6 md:space-y-8">
+        {(activeView === VIEWS.MY_LISTINGS || listingEditOverlayOpen) && (
+          <section
+            className={
+              listingEditOverlayOpen
+                ? "fixed inset-0 z-[130] overflow-y-auto bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-slate-950 md:flex md:items-start md:justify-center md:bg-black/55 md:p-6"
+                : "w-full min-w-0 max-w-none space-y-6 md:space-y-8"
+            }
+          >
+            {listingEditOverlayOpen ? (
+              <div className="sticky top-0 z-[1] -mx-4 mb-3 flex items-center justify-between border-b border-neutral-200 bg-white px-4 py-2.5 dark:border-slate-700 dark:bg-slate-950 md:mx-0 md:mb-4 md:w-full md:max-w-5xl md:rounded-t-2xl md:border md:px-5">
+                <h2 className="text-sm font-semibold text-neutral-900 dark:text-slate-100">
+                  {editingListingId ? "Edit listing" : "Create listing"}
+                </h2>
+                <button
+                  type="button"
+                  className="btn-icon-only inline-flex items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                  aria-label="Close listing editor"
+                  onClick={() => {
+                    if (listingSaving) return;
+                    setListingEditOverlayOpen(false);
+                    const origin = productFlowOriginRef.current || {};
+                    const originView = String(origin.view || "");
+                    if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(originView)) {
+                      setActiveView(originView);
+                    }
+                  }}
+                >
+                  <span aria-hidden className="text-lg leading-none">×</span>
+                </button>
+              </div>
+            ) : null}
+            <div className={listingEditOverlayOpen ? "mx-auto w-full max-w-5xl rounded-2xl bg-white md:border md:border-neutral-200 md:p-5 md:shadow-2xl dark:bg-slate-950 dark:md:border-slate-700" : ""}>
             {listingPublishError ? (
               <ScreenError
                 title="Couldn’t save your listing"
@@ -9296,10 +9642,19 @@ function App() {
                       setListingOptionValueDraftB("");
                       setListingSecondOptionOpen(false);
                       setEditingListingId(null);
+                      setListingEditOverlayOpen(false);
                       clearMarketplaceToasts();
                       setSellerTab(SELLER_TABS.PRODUCTS);
-                      goOwnProfile();
-                      navigate("/", { replace: true });
+                      if (listingEditOverlayOpen) {
+                        const origin = productFlowOriginRef.current || {};
+                        const originView = String(origin.view || "");
+                        if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(originView)) {
+                          setActiveView(originView);
+                        }
+                      } else {
+                        goOwnProfile();
+                        navigate("/", { replace: true });
+                      }
                     }}
                   >
                     Cancel
@@ -9311,6 +9666,7 @@ function App() {
                 </MobileFormActions>
               </div>
             </form>
+            </div>
           </section>
         )}
 
@@ -9694,13 +10050,13 @@ function App() {
                       <span className="inline-flex items-center gap-1.5">
                         <span>{label}</span>
                         {id === "pending" && pendingTabPillCount > 0 ? (
-                          <span className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-brand-primary px-1.5 text-[10px] font-bold leading-none text-white shadow-sm ring-1 ring-black/10 dark:bg-brand-accent dark:text-slate-950 dark:ring-white/15">
+                          <span className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[10px] font-bold leading-none text-white shadow-sm ring-1 ring-black/10 dark:bg-rose-500 dark:ring-white/15">
                             {pendingTabPillCount > 99 ? "99+" : pendingTabPillCount}
                           </span>
                         ) : null}
                         {(id === "processing" || id === "completed" || id === "cancelled") &&
                         ordersTabBadgeIdsByTab[id]?.length > 0 ? (
-                          <span className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-brand-primary px-1.5 text-[10px] font-bold leading-none text-white shadow-sm ring-1 ring-black/10 dark:bg-brand-accent dark:text-slate-950 dark:ring-white/15">
+                          <span className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[10px] font-bold leading-none text-white shadow-sm ring-1 ring-black/10 dark:bg-rose-500 dark:ring-white/15">
                             {ordersTabBadgeIdsByTab[id].length > 99 ? "99+" : ordersTabBadgeIdsByTab[id].length}
                           </span>
                         ) : null}
@@ -11978,12 +12334,6 @@ function App() {
       </main>
       </LoggedInHeader>
       </MobileAppShell>
-
-      {productInspect ? (
-        <Suspense fallback={null}>
-          <LazyProductInspectModal open onClose={closeProductInspect} {...productInspect} />
-        </Suspense>
-      ) : null}
 
       {buyerCancelConfirmOpen ? (
         <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 md:p-6" role="dialog" aria-modal="true" aria-labelledby="buyer-cancel-confirm-title">

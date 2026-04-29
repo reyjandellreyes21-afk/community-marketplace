@@ -33,6 +33,7 @@ export function MarketplaceProductDetailStack({
   optionNameB,
   optionValuesB,
   listingMetaDensity = "card",
+  compactListMeta = false,
 }) {
   const saleMeta = parseSaleMetaFromDescription(description);
   const currentPesos = Math.floor((Number(priceCents) || 0) / 100);
@@ -45,8 +46,18 @@ export function MarketplaceProductDetailStack({
 
   const availabilityBlock = isCard ? (
     <div className="min-w-0">
-      <p className="product-meta-label">Fulfillment</p>
-      <p className="product-meta-body">{availabilityLabel}</p>
+      {compactListMeta ? (
+        <p className="text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300">
+          <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">Fulfillment</span>
+          <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
+          <span className="text-text-primary dark:text-slate-100">{availabilityLabel}</span>
+        </p>
+      ) : (
+        <>
+          <p className="product-meta-label">Fulfillment</p>
+          <p className="product-meta-body">{availabilityLabel}</p>
+        </>
+      )}
     </div>
   ) : (
     <p className="text-xs text-text-secondary dark:text-slate-400">Availability: {availabilityLabel}</p>
@@ -102,17 +113,9 @@ export function MarketplaceProductDetailStack({
 
   const metaStripDefault =
     isCard && (quantityRow || availabilityLabel) ? (
-      <div
-        className={`lm-card-meta ${
-          browseStackMode === "listMobile" ? "px-3 py-2.5" : "px-2.5 py-2"
-        }`}
-      >
-        <div
-          className={`flex flex-wrap items-start ${browseStackMode === "listMobile" ? "gap-x-6 gap-y-3" : "gap-x-5 gap-y-2"}`}
-        >
-          {availabilityLabel ? availabilityBlock : null}
-          {qtyBlock}
-        </div>
+      <div className={`min-w-0 ${compactListMeta ? "space-y-1" : browseStackMode === "listMobile" ? "space-y-2" : "space-y-1.5"}`}>
+        {availabilityLabel ? availabilityBlock : null}
+        {qtyBlock}
       </div>
     ) : null;
 
@@ -120,7 +123,9 @@ export function MarketplaceProductDetailStack({
     browseStackMode === "gridMobile" && isCard ? metaStripCompact : metaStripDefault;
 
   const titleClass = isCard
-    ? browseStackMode === "gridMobile"
+    ? compactListMeta
+      ? "line-clamp-1 min-w-0 break-words text-[14px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[390px]:text-[15px]"
+      : browseStackMode === "gridMobile"
       ? "lm-product-card-title"
       : browseStackMode === "listMobile"
         ? "product-card-title min-[420px]:text-base"
@@ -128,13 +133,17 @@ export function MarketplaceProductDetailStack({
     : "truncate text-sm font-semibold leading-snug text-text-primary dark:text-slate-100 min-[400px]:text-[15px]";
 
   const priceMainClass = isCard
-    ? browseStackMode === "gridMobile"
+    ? compactListMeta
+      ? "text-[1.02rem] font-bold tabular-nums tracking-tight text-primary dark:text-brand-accent"
+      : browseStackMode === "gridMobile"
       ? "lm-product-card-price"
       : "product-price"
     : "text-sm font-semibold tabular-nums text-text-primary dark:text-slate-200 min-[400px]:text-base";
 
   const rootGap =
-    isCard && browseStackMode === "gridMobile"
+    compactListMeta
+      ? "space-y-1"
+      : isCard && browseStackMode === "gridMobile"
       ? "space-y-2"
       : isCard && browseStackMode === "listMobile"
         ? "space-y-2.5"
@@ -156,7 +165,9 @@ export function MarketplaceProductDetailStack({
       ) : null}
       <div
         className={
-          isCard && browseStackMode === "gridMobile"
+          compactListMeta
+            ? "flex min-w-0 items-center gap-1.5"
+            : isCard && browseStackMode === "gridMobile"
             ? "lm-product-card-price-row"
             : "flex min-w-0 flex-wrap items-center gap-2"
         }
@@ -215,7 +226,13 @@ export function MarketplaceProductDetailStack({
           {metaStrip}
           {browseStackMode !== "gridMobile" && categoryLabel ? (
             <div className="lm-product-card-badge-row">
-              <span className="line-clamp-1 max-w-full rounded-none border border-orange-300 bg-orange-100 px-2.5 py-0.5 text-xs font-semibold leading-tight text-orange-700 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-300 min-[380px]:text-[13px]">
+              <span
+                className={`line-clamp-1 max-w-full rounded-none border border-orange-300 bg-orange-100 py-0.5 leading-tight text-orange-700 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-300 ${
+                  compactListMeta
+                    ? "px-2 text-[11px] font-semibold"
+                    : "px-2.5 text-xs font-semibold min-[380px]:text-[13px]"
+                }`}
+              >
                 {categoryLabel}
               </span>
             </div>
