@@ -1,6 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 /**
  * MAIN MOBILE-FIRST RULE (mobile view only for base styles):
+ * — Mobile tokens / patterns: `MOBILE_DESIGN_SYSTEM` + flat `MOBILE_UI` in `src/utils/mobile/ui.js`.
  * — Design mobile first; tune at 360 / 390 / 430. Logged-in shell is fluid (`max-w-none`); `max-w-mobile-baseline` = 100% of parent (use `md:`/`lg:` for fixed columns).
  * — Sanity-check at 360px (narrow) and 430px (wide phone).
  * — Do not build desktop-first layouts. Add tablet/desktop only via `md:` / `lg:` (progressive enhancement).

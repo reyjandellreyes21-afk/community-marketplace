@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { getListingCategoryShortLabel } from "../../categoryNav.js";
 import { UI_KIT } from "../../lib/appUiKit.js";
 import { SALE_PERCENT_OPTIONS } from "../../lib/listingSaleMeta.js";
+import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
 import { MarketplaceProductDetailStack } from "./MarketplaceProductDetailStack.jsx";
 
 export function CommunityShopListingCard({
@@ -25,14 +27,17 @@ export function CommunityShopListingCard({
   mobileOwnerActionsInMenu = false,
   /** Lighter image chrome (mobile shop browse). */
   softBrowseChrome = false,
+  /** Mobile 2-col grid: omit description block for shorter, even rows; list mode ignores this. */
+  browseSummaryGrid = false,
+  /** Mobile marketplace browse: tighter grid/list density, aspect images, secondary owner CTAs. */
+  mobileCardUx = false,
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
   const ownerMenuRef = useRef(null);
   const [customSalePercent, setCustomSalePercent] = useState("");
   const [showAllSaleOptions, setShowAllSaleOptions] = useState(false);
-  const imageUrlFromGallery = Array.isArray(listing.imageUrls) ? String(listing.imageUrls[0] || "").trim() : "";
-  const imageUrl = String(imageUrlFromGallery || listing.imageUrl || "").trim();
+  const categoryShortLabel = getListingCategoryShortLabel(listing.verticalId, listing.subId);
   const isOwner = String(listing.sellerId || "") === String(currentUserId || "");
   const stockQty = Math.max(0, Number(listing.quantity) || 0);
   const isOutOfStock = stockQty <= 0;
@@ -43,22 +48,34 @@ export function CommunityShopListingCard({
     customSaleValue >= 1 &&
     customSaleValue <= 99;
 
-  const pad = gridMode && compactGrid ? "p-2.5" : "p-3.5";
-  const imgBox =
-    gridMode && compactGrid
+  const mobileUx = Boolean(mobileCardUx);
+  /** Mobile marketplace grid / compact: dense feed tile + flush square hero */
+  const useFeedLayout = Boolean(gridMode && mobileUx);
+  /** Mobile: card CTAs live in the inspect modal; image opens details when handler exists. */
+  const hideCardActionsOnMobile = Boolean(mobileUx && onInspect);
+  const imageOpensInspect = Boolean(onInspect && mobileUx);
+
+  const pad = useFeedLayout ? "p-0" : gridMode && compactGrid ? "p-2.5" : gridMode ? "p-2.5" : "p-3.5";
+  const imgBox = useFeedLayout
+    ? compactGrid
+      ? "h-28 max-h-28 w-full min-h-0 !aspect-auto overflow-hidden"
+      : "aspect-square w-full min-h-0 overflow-hidden"
+    : gridMode && compactGrid
       ? "h-28 w-full"
-      : gridMode && softBrowseChrome
-        ? "aspect-[4/3] w-full min-h-[7.5rem] max-h-[10.5rem] sm:max-h-[11rem] md:aspect-auto md:min-h-0 md:max-h-none"
-        : gridMode
-          ? /** Slightly shorter hero on narrow 2-col grids (~360–430px) for readable titles + actions. */
-            "h-40 w-full sm:h-44 md:h-48"
-          : "h-32 w-32";
-  const imageFrameClass = softBrowseChrome
-    ? "relative shrink-0 overflow-hidden rounded-xl bg-background ring-1 ring-neutral-200/55 dark:bg-[#11283d] dark:ring-slate-600/50"
-    : "relative shrink-0 overflow-hidden rounded-xl border border-border bg-background dark:border-[#1f3c56] dark:bg-[#11283d]";
+      : gridMode && mobileUx
+        ? "aspect-[4/3] w-full"
+        : gridMode && softBrowseChrome
+          ? "aspect-[4/3] w-full min-h-[7.5rem] max-h-[10.5rem] min-[640px]:max-h-[11rem] md:aspect-auto md:min-h-0 md:max-h-none"
+          : gridMode
+            ? /** Desktop / non-touch browse: flexible tile height. */
+              "h-40 w-full min-[640px]:h-44 md:h-48"
+            : mobileUx
+              ? "aspect-[4/3] w-full min-[400px]:aspect-square min-[400px]:h-[7.5rem] min-[400px]:w-[7.5rem] min-[400px]:max-h-[7.5rem] min-[400px]:max-w-[7.5rem] min-[400px]:shrink-0"
+              : "h-32 w-32";
+  /** Outer shell dimensions; `ProductListingMedia` fills via `absolute inset-0` */
   const mainGap = gridMode && compactGrid ? "gap-2" : gridMode ? "gap-2.5" : "gap-3";
   const compactActionBtnClass = compactGrid
-    ? "flex h-10 items-center justify-center whitespace-nowrap px-2 text-[11px] leading-none"
+    ? "flex h-10 items-center justify-center whitespace-nowrap px-2 text-xs font-semibold leading-snug"
     : "min-h-[44px] px-3 py-2 text-sm md:min-h-0 md:py-1.5 md:text-xs";
   const compactActionRowClass = compactGrid
     ? "grid w-full grid-cols-2 gap-2"
@@ -80,20 +97,25 @@ export function CommunityShopListingCard({
     };
   }, [ownerMenuOpen]);
 
-  /** Compact grid tiles only: heart stays on the photo (saves vertical space). Standard grid + list: heart beside title so the product image stays clear. */
-  const favoriteOverlayOnImage = Boolean(gridMode && compactGrid && !isOwner && showFavoriteIcon);
+  /** Heart on the photo: compact grid, or mobile tap-image-for-details (same stack as image inspect button — z-10 vs z-0). Otherwise beside title. */
+  const favoriteOverlayOnImage = Boolean(
+    !isOwner && showFavoriteIcon && ((gridMode && compactGrid) || imageOpensInspect),
+  );
 
   /** Overlay favorite (compact grid): scales with thumbnail width. */
   const favoriteFabPosition = "right-[clamp(0.3rem,3.5%,0.65rem)] top-[clamp(0.3rem,3.5%,0.65rem)]";
   const favoriteFabSize =
-    "box-border w-[clamp(2.5rem,min(20%,3.25rem),2.875rem)] max-h-[2.875rem] max-w-[2.875rem] min-h-[2.5rem] min-w-[2.5rem]";
+    "box-border w-[clamp(2.75rem,min(20%,3.25rem),2.875rem)] max-h-[2.875rem] max-w-[2.875rem] min-h-[44px] min-w-[44px]";
   const favoriteFabSurface =
-    "flex aspect-square shrink-0 items-center justify-center rounded-[26%] border border-black/[0.06] bg-white shadow-[0_2px_10px_rgba(15,23,42,0.11)] transition duration-200 ease-in-out hover:scale-[1.04] hover:border-black/[0.08] hover:shadow-[0_4px_16px_rgba(15,23,42,0.14)] active:scale-[0.98] touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50 dark:border-black/10 dark:bg-white";
+    "flex aspect-square shrink-0 items-center justify-center rounded-[var(--ui-radius)] border-0 bg-white/95 shadow-[0_2px_8px_rgba(15,23,42,0.08)] ring-1 ring-black/[0.05] transition duration-200 ease-in-out hover:scale-[1.04] hover:ring-black/[0.08] active:scale-[0.98] touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50 dark:bg-white/95 dark:ring-white/10 md:rounded-[26%] md:border md:border-black/[0.06] md:shadow-[0_2px_10px_rgba(15,23,42,0.11)] md:ring-0 dark:md:border-black/10";
 
-  /** Inline favorite (default grid / list): circular chip by the title — full photo visibility + predictable hit target. */
+  /** Inline favorite: soft square on phones; md+ may use a round chip. */
   const favoriteInlineSurface =
-    "inline-flex aspect-square shrink-0 items-center justify-center rounded-full border border-black/[0.06] bg-white shadow-[0_1px_6px_rgba(15,23,42,0.08)] transition duration-200 ease-in-out hover:border-black/[0.1] hover:shadow-[0_3px_12px_rgba(15,23,42,0.12)] active:scale-[0.97] touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50 dark:border-black/10 dark:bg-white";
-  const favoriteInlineSize = "box-border h-10 w-10 min-h-[2.5rem] min-w-[2.5rem]";
+    "inline-flex aspect-square shrink-0 items-center justify-center rounded-[var(--ui-radius)] border-0 bg-white/95 shadow-none ring-1 ring-black/[0.06] transition duration-200 ease-in-out hover:ring-black/[0.1] active:scale-[0.97] touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50 dark:bg-white/95 dark:ring-white/10 md:rounded-full md:border md:border-black/[0.06] md:shadow-[0_1px_6px_rgba(15,23,42,0.08)] md:ring-0 dark:md:border-black/10";
+  const favoriteInlineSize =
+    mobileUx && gridMode
+      ? "box-border h-11 w-11 min-h-[44px] min-w-[44px] md:h-10 md:w-10 md:min-h-[2.5rem] md:min-w-[2.5rem]"
+      : "box-border h-10 w-10 min-h-[2.5rem] min-w-[2.5rem]";
 
   const favoriteHeartSvg = (
     <svg className="h-[44%] w-[44%] shrink-0" viewBox="0 0 24 24" aria-hidden>
@@ -131,16 +153,25 @@ export function CommunityShopListingCard({
       </button>
     ) : null;
 
+  const imageInspectBtnClass =
+    "lm-product-card--tap absolute inset-0 z-0 min-h-0 w-full border-0 bg-transparent p-0 text-left";
+
   return (
     <div
-      className={`group relative transition duration-200 ease-in-out ${pad} ${
-        gridMode ? "flex h-full min-h-0 flex-col" : ""
-      }`}
+      className={`lm-card group relative transition duration-200 ease-in-out ${
+        gridMode ? "lm-grid-card lm-product-card-grid" : "lm-list-card lm-product-card-list"
+      } ${useFeedLayout ? "lm-product-card lm-product-card--feed" : ""} ${pad} ${gridMode ? "flex h-full min-h-0 flex-col" : ""}`}
     >
       <div
-        className={`flex min-h-0 ${gridMode ? `flex-1 flex-col ${mainGap}` : "flex-row items-start gap-3"}`}
+        className={`flex min-h-0 ${
+          gridMode
+            ? `flex-1 flex-col ${mainGap}`
+            : mobileUx
+              ? "flex flex-col gap-3 min-[400px]:flex-row min-[400px]:items-start min-[400px]:gap-3.5"
+              : "flex-row items-start gap-3"
+        }`}
       >
-        <div className={`${imageFrameClass} ${imgBox}`}>
+        <div className={`relative ${imgBox}`}>
           {favoriteOverlayOnImage ? (
             <button
               type="button"
@@ -159,49 +190,105 @@ export function CommunityShopListingCard({
               {favoriteHeartSvg}
             </button>
           ) : null}
-          {imageUrl ? (
-            <img
-              src={imageUrl}
-              alt={listing.title || "Product"}
-              className="h-full w-full object-cover"
-              loading="lazy"
-              decoding="async"
-              sizes="(max-width: 767px) 45vw, min(240px, 18vw)"
-            />
+          {imageOpensInspect ? (
+            <button
+              type="button"
+              className={imageInspectBtnClass}
+              aria-label={`View details: ${listing.title || "product"}`}
+              onClick={() => onInspect?.()}
+            >
+              <ProductListingMedia
+                listing={listing}
+                variant={gridMode ? "grid" : "list"}
+                feed={useFeedLayout}
+                fillFrame={Boolean(gridMode && !useFeedLayout)}
+                softChrome={Boolean(softBrowseChrome && !useFeedLayout)}
+                ring={Boolean(useFeedLayout && softBrowseChrome)}
+                className="pointer-events-none absolute inset-0 min-h-0"
+                sizes="(max-width: 767px) 45vw, min(240px, 18vw)"
+                loading="lazy"
+              />
+            </button>
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-text-secondary dark:text-slate-400">No image</div>
+            <ProductListingMedia
+              listing={listing}
+              variant={gridMode ? "grid" : "list"}
+              feed={useFeedLayout}
+              fillFrame={Boolean(gridMode && !useFeedLayout)}
+              softChrome={Boolean(softBrowseChrome && !useFeedLayout)}
+              ring={Boolean(useFeedLayout && softBrowseChrome)}
+              className="absolute inset-0 min-h-0"
+              sizes="(max-width: 767px) 45vw, min(240px, 18vw)"
+              loading="lazy"
+            />
           )}
         </div>
         <div
-          className={`min-w-0 flex-1 ${gridMode ? `flex min-h-0 flex-col ${compactGrid ? "gap-1" : "gap-2"}` : "space-y-1"}`}
+          className={`min-w-0 flex-1 ${
+            useFeedLayout
+              ? `lm-product-card-body ${compactGrid ? "!gap-1" : ""}`
+              : gridMode
+                ? `flex min-h-0 flex-col ${compactGrid ? "gap-1" : "gap-2"}`
+                : mobileUx
+                  ? "flex w-full min-w-0 flex-col gap-1.5 min-[400px]:min-w-0 min-[400px]:flex-1"
+                  : "space-y-1"
+          }`}
         >
           <MarketplaceProductDetailStack
             variant="card"
+            browseStackMode={mobileUx ? (gridMode ? "gridMobile" : "listMobile") : null}
             title={listing.title || "Untitled product"}
             titleEnd={favoriteTitleEnd}
             priceCents={listing.priceCents}
+            categoryLabel={categoryShortLabel}
             description={listing.description}
             fulfillmentModes={listing.fulfillmentModes}
+            orderType={listing.orderType}
+            processingTime={listing.processingTime}
+            optionNameA={listing.optionNameA}
+            optionValuesA={listing.optionValuesA}
+            optionNameB={listing.optionNameB}
+            optionValuesB={listing.optionValuesB}
             quantityRow={
               <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary dark:text-slate-500">Stock</p>
+                <p className="product-meta-label">Stock</p>
                 <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-semibold tabular-nums text-text-primary dark:text-slate-100">{stockQty}</p>
+                  <p className="product-meta-value">{mobileUx && gridMode ? `Stock: ${stockQty}` : stockQty}</p>
                   {isOutOfStock ? (
-                    <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600 dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
+                    <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-600 min-[380px]:text-xs dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
                       Out of stock
                     </span>
                   ) : null}
                 </div>
               </div>
             }
-            hideDescription={Boolean(gridMode && compactGrid)}
+            hideDescription={Boolean(gridMode && (compactGrid || browseSummaryGrid))}
           />
-          {listing.cityLabel ? <span className={UI_KIT.chipMuted}>{listing.cityLabel}</span> : null}
+          {useFeedLayout && listing.cityLabel ? (
+            <div className="lm-product-card-badge-row">
+              {listing.cityLabel ? (
+                <span className={`line-clamp-1 max-w-full ${UI_KIT.chipMuted} py-px text-[10px] leading-tight`}>
+                  {listing.cityLabel}
+                </span>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              {listing.cityLabel ? (
+                <span
+                  className={
+                    mobileUx && gridMode ? `${UI_KIT.chipMuted} py-px text-[10px] leading-tight` : UI_KIT.chipMuted
+                  }
+                >
+                  {listing.cityLabel}
+                </span>
+              ) : null}
+            </>
+          )}
         </div>
       </div>
-      {showActions ? (
-        <div className={`flex flex-col gap-2 ${gridMode ? "mt-auto pt-3" : "mt-3"}`}>
+      {showActions && !hideCardActionsOnMobile ? (
+        <div className={`flex flex-col gap-2 ${gridMode ? (useFeedLayout ? "mt-auto px-2 pb-2 pt-1.5 min-[400px]:px-2.5 min-[400px]:pb-2.5" : "mt-auto pt-3") : "mt-3"}`}>
           {ownerGridOverflow ? (
             <div className="flex items-stretch gap-2">
               {onInspect ? (
@@ -275,7 +362,7 @@ export function CommunityShopListingCard({
             </div>
           ) : (
             <>
-          {onInspect && !isListMode ? (
+          {onInspect && !isListMode && !(mobileUx && gridMode) ? (
             <button
               type="button"
               className={`rounded-lg border border-neutral-300 font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 ${
@@ -313,10 +400,16 @@ export function CommunityShopListingCard({
               ) : null}
               <button
                 type="button"
-                className={`min-w-0 rounded-xl bg-accent font-semibold text-white shadow-sm transition duration-200 ease-in-out hover:bg-accent-hover dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400 ${
-                  isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                className={`min-w-0 shadow-none transition duration-200 ease-in-out active:scale-[0.99] motion-reduce:active:scale-100 dark:active:scale-100 ${
+                  mobileUx && !isListMode
+                    ? `rounded-lg border border-rose-200/90 bg-rose-50/70 font-medium text-rose-900 hover:bg-rose-100/90 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45 ${
+                        isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                      }`
+                    : `rounded-xl bg-accent font-semibold text-white hover:bg-accent-hover dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400 ${
+                        isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                      }`
                 } ${
-                  saleOpen ? "ring-2 ring-rose-300/60 dark:ring-rose-300/45" : ""
+                  saleOpen ? "ring-2 ring-rose-400/45 ring-offset-1 ring-offset-white dark:ring-rose-400/35 dark:ring-offset-slate-900" : ""
                 }`}
                 title={saleOpen ? "Hide discount options" : "Apply a sale discount"}
                 aria-expanded={saleOpen}
@@ -336,8 +429,14 @@ export function CommunityShopListingCard({
               </button>
               <button
                 type="button"
-                className={`min-w-0 rounded-xl bg-primary font-semibold text-white shadow-sm transition duration-200 ease-in-out hover:bg-primary-hover dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90 ${
-                  isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                className={`min-w-0 shadow-none transition duration-200 ease-in-out active:scale-[0.99] motion-reduce:active:scale-100 ${
+                  mobileUx && !isListMode
+                    ? `rounded-lg border border-neutral-200/90 bg-white font-medium text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${
+                        isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                      }`
+                    : `rounded-xl bg-primary font-semibold text-white hover:bg-primary-hover dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90 ${
+                        isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                      }`
                 }`}
                 title="Edit title, price, photos, and stock"
                 aria-label={`Edit listing: ${listing.title || "product"}`}
@@ -353,7 +452,7 @@ export function CommunityShopListingCard({
             <div
               className={
                 isListMode
-                  ? "grid w-full grid-cols-3 gap-2"
+                  ? `grid w-full grid-cols-3 ${mobileUx ? "gap-2.5" : "gap-2"}`
                   : compactActionRowClass
               }
             >
@@ -373,7 +472,9 @@ export function CommunityShopListingCard({
               <button
                 type="button"
                 title={isOutOfStock ? undefined : "Keep shopping — review cart anytime"}
-                className={`rounded-xl border border-primary font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 ${
+                className={`rounded-xl border border-primary font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-brand-accent dark:text-brand-accent dark:hover:bg-slate-800/80 max-md:border-2 ${
+                  mobileUx && isListMode ? "shadow-sm" : ""
+                } ${
                   isListMode ? "h-10 w-full px-3 text-xs" : `flex-1 ${compactActionBtnClass}`
                 }`}
                 disabled={isOutOfStock}
@@ -394,7 +495,7 @@ export function CommunityShopListingCard({
                       : "Go to checkout — choose pickup or delivery"
                 }
                 aria-label={isOutOfStock ? "Out of stock" : "Buy now"}
-                className={`rounded-xl bg-primary font-semibold text-white transition duration-200 ease-in-out dark:bg-brand-accent dark:text-slate-900 ${
+                className={`rounded-xl bg-primary font-bold text-white shadow-sm transition duration-200 ease-in-out dark:bg-brand-accent dark:text-slate-900 ${
                   isListMode ? "h-10 w-full px-3 text-xs" : `flex-1 ${compactActionBtnClass}`
                 } ${
                   isOutOfStock
@@ -415,8 +516,8 @@ export function CommunityShopListingCard({
           )}
         </div>
       ) : null}
-      {showActions && isOwner && saleOpen ? (
-        <div className={gridMode ? "mt-2 shrink-0" : "mt-2"}>
+      {showActions && !hideCardActionsOnMobile && isOwner && saleOpen ? (
+        <div className={gridMode ? (useFeedLayout ? "mt-2 shrink-0 px-2 pb-2 min-[400px]:px-2.5" : "mt-2 shrink-0") : "mt-2"}>
           <div className="rounded-xl border border-rose-200/80 bg-rose-50/80 p-2 dark:border-rose-500/30 dark:bg-rose-500/10">
             <div className="flex flex-wrap items-center gap-2">
               <input

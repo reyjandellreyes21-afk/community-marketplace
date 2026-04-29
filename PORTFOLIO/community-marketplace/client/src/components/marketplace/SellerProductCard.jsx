@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
+import { ListingProductMetaExtras } from "./ListingProductMetaExtras.jsx";
 import {
   formatPesoWhole,
   listingCodAvailabilityLabel,
@@ -65,6 +67,8 @@ export function SellerProductCard({
   quantityUpdating = false,
   onView,
   onNotifyQuantityRequired,
+  /** Mobile: hide card action buttons; tap image to open full details (inspect modal). */
+  mobileCardUx = false,
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
   const [qtyDraft, setQtyDraft] = useState("");
@@ -79,8 +83,6 @@ export function SellerProductCard({
   const statusBadgeClass = isOutOfStock
     ? "bg-gray-100 text-gray-600 dark:border-amber-500/45 dark:bg-amber-950/40 dark:text-amber-100"
     : statusClass;
-  const imageUrlFromGallery = Array.isArray(listing.imageUrls) ? String(listing.imageUrls[0] || "").trim() : "";
-  const imageUrl = String(imageUrlFromGallery || listing.imageUrl || "").trim();
   const availabilityLabel = listingCodAvailabilityLabel(listing.fulfillmentModes);
   const saleMeta = parseSaleMetaFromDescription(listing.description);
   const currentPesos = Math.floor((Number(listing.priceCents) || 0) / 100);
@@ -110,10 +112,10 @@ export function SellerProductCard({
   const isListLayout = !gridMode;
   /** Shell styles: list = wide management row; grid = catalog card; dense = compact inventory tile. */
   const cardShellClass = isListLayout
-    ? "rounded-2xl border border-border bg-surface p-3 shadow-sm transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 md:p-3.5"
+    ? "lm-card bg-surface p-3 transition duration-200 ease-in-out dark:bg-[#0f2234] md:p-3.5 md:hover:shadow-md md:dark:hover:shadow-[0_8px_24px_rgba(0,0,0,0.28)]"
     : compactGrid
-      ? "rounded-xl border border-border bg-background p-2.5 shadow-sm ring-1 ring-border/25 transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 dark:ring-[#1f3c56]/45 md:p-3"
-      : "rounded-2xl border border-border bg-surface p-3 shadow-sm ring-1 ring-border/50 transition duration-200 ease-in-out hover:shadow-md dark:border-[#1f3c56] dark:bg-[#0f2234]/90 dark:ring-[#1f3c56]/50 md:p-3.5";
+      ? "lm-card bg-background p-2.5 transition duration-200 ease-in-out dark:bg-[#0f2234] md:p-3 md:ring-1 md:ring-border/25 md:hover:shadow-md md:dark:ring-[#1f3c56]/45"
+      : "lm-card bg-surface p-3 transition duration-200 ease-in-out dark:bg-[#0f2234] md:p-3.5 md:ring-1 md:ring-border/50 md:hover:shadow-md md:dark:ring-[#1f3c56]/50";
   /** List + comfortable grid: larger ± / input on small screens only. */
   const qtyTouchFriendly = isComfortableGrid || isListLayout;
   /** Dense: full-width cards on mobile — use comfortable touch/stacked qty below sm only. */
@@ -134,16 +136,16 @@ export function SellerProductCard({
       : "inline-flex h-8 w-8 shrink-0 touch-manipulation items-center justify-center rounded-md border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-7 md:w-7 md:text-xs";
 
   const denseStepMinusPlus =
-    "inline-flex min-h-[40px] min-w-[2rem] shrink-0 touch-manipulation items-center justify-center border-0 bg-neutral-50/95 text-[15px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-100 active:bg-neutral-200/80 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-slate-800/90 dark:text-slate-100 dark:hover:bg-slate-700 dark:active:bg-slate-700 md:min-h-0 md:h-8 md:w-8 md:text-sm";
+    "inline-flex min-h-[44px] min-w-[2.75rem] shrink-0 touch-manipulation items-center justify-center border-0 bg-neutral-50/95 text-[15px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-100 active:bg-neutral-200/80 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-slate-800/90 dark:text-slate-100 dark:hover:bg-slate-700 dark:active:bg-slate-700 md:min-h-0 md:h-8 md:w-8 md:text-sm";
   const denseQtyInput =
-    "input-base min-h-[40px] min-w-0 flex-1 border-0 bg-transparent px-1.5 text-center text-[13px] font-semibold tabular-nums text-neutral-900 outline-none ring-0 focus:ring-0 dark:text-slate-100 md:h-8 md:min-h-0 md:px-1 md:text-[12px]";
+    "input-base min-h-[44px] min-w-0 flex-1 border-0 bg-transparent px-1.5 text-center text-[13px] font-semibold tabular-nums text-neutral-900 outline-none ring-0 focus:ring-0 dark:text-slate-100 md:h-8 md:min-h-0 md:px-1 md:text-[12px]";
   const denseApplyBtn =
-    "inline-flex min-h-[40px] min-w-[40px] shrink-0 touch-manipulation items-center justify-center rounded-lg border border-slate-400/90 bg-white text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:opacity-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 md:min-h-8 md:min-w-8";
+    "inline-flex min-h-[44px] min-w-[44px] shrink-0 touch-manipulation items-center justify-center rounded-lg border border-slate-400/90 bg-white text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:opacity-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 md:min-h-8 md:min-w-8";
 
   const denseIconNeutral =
-    "inline-flex h-8 w-full min-h-[40px] touch-manipulation items-center justify-center rounded-md border border-slate-300/90 bg-white px-0 py-0 text-slate-800 shadow-sm transition hover:bg-slate-100 active:scale-[0.98] dark:border-slate-600 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-800 md:h-7 md:min-h-0 [&_svg]:h-[14px] [&_svg]:w-[14px]";
+    "inline-flex h-8 w-full min-h-[44px] touch-manipulation items-center justify-center rounded-md border border-slate-300/90 bg-white px-0 py-0 text-slate-800 shadow-sm transition hover:bg-slate-100 active:scale-[0.98] dark:border-slate-600 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-800 md:h-7 md:min-h-0 [&_svg]:h-[14px] [&_svg]:w-[14px]";
   const denseIconDanger =
-    "inline-flex h-8 w-full min-h-[40px] touch-manipulation items-center justify-center rounded-md border border-rose-500/90 bg-rose-50 px-0 py-0 text-rose-800 shadow-sm transition hover:bg-rose-100 active:scale-[0.98] dark:border-rose-500/55 dark:bg-rose-950/45 dark:text-rose-100 dark:hover:bg-rose-950/70 md:h-7 md:min-h-0 [&_svg]:h-[14px] [&_svg]:w-[14px]";
+    "inline-flex h-8 w-full min-h-[44px] touch-manipulation items-center justify-center rounded-md border border-rose-500/90 bg-rose-50 px-0 py-0 text-rose-800 shadow-sm transition hover:bg-rose-100 active:scale-[0.98] dark:border-rose-500/55 dark:bg-rose-950/45 dark:text-rose-100 dark:hover:bg-rose-950/70 md:h-7 md:min-h-0 [&_svg]:h-[14px] [&_svg]:w-[14px]";
 
   const listActionBtn = (variant) => {
     const base =
@@ -195,24 +197,28 @@ export function SellerProductCard({
   const innerBody = (
     <>
       {isListLayout ? (
-        <div className="flex items-start gap-2">
-          <p className="min-w-0 flex-1 text-sm font-semibold leading-snug text-neutral-900 dark:text-slate-100 md:text-base">{listing.title || "Untitled product"}</p>
+        <div className="flex min-w-0 items-start gap-2">
+          <p className="min-w-0 flex-1 text-pretty text-sm font-semibold leading-snug text-neutral-900 dark:text-slate-100 md:text-base">{listing.title || "Untitled product"}</p>
           <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${statusBadgeClass}`}>{statusBadgeLabel}</span>
         </div>
       ) : compactGrid ? (
-        <div className="flex items-start justify-between gap-2">
-          <p className="min-w-0 flex-1 truncate text-sm font-semibold leading-snug text-neutral-900 dark:text-slate-100">{listing.title || "Untitled product"}</p>
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <p className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-semibold leading-snug text-neutral-900 dark:text-slate-100">
+            {listing.title || "Untitled product"}
+          </p>
           <span className={`inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium capitalize ${statusBadgeClass}`}>{statusBadgeLabel}</span>
         </div>
       ) : (
-        <div className="flex items-start justify-between gap-2">
-          <p className="min-w-0 flex-1 truncate text-base font-semibold leading-snug text-neutral-900 dark:text-slate-100 md:text-[1.0625rem]">{listing.title || "Untitled product"}</p>
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <p className="line-clamp-2 min-w-0 flex-1 break-words text-base font-semibold leading-snug text-neutral-900 dark:text-slate-100 md:text-[1.0625rem]">
+            {listing.title || "Untitled product"}
+          </p>
           <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${statusBadgeClass}`}>{statusBadgeLabel}</span>
         </div>
       )}
-      <div className={`flex flex-wrap items-center gap-2 ${isComfortableGrid ? "md:gap-2.5" : ""}`}>
+      <div className={`flex min-w-0 flex-wrap items-center gap-2 ${isComfortableGrid ? "md:gap-2.5" : ""}`}>
         <p
-          className={`font-semibold text-neutral-800 dark:text-slate-200 ${isComfortableGrid ? "text-base md:text-lg" : compactGrid ? "text-sm tabular-nums" : "text-sm"}`}
+          className={`min-w-0 font-semibold text-neutral-800 dark:text-slate-200 ${isComfortableGrid ? "text-base md:text-lg" : compactGrid ? "text-sm tabular-nums" : "text-sm"}`}
         >
           {formatPesoWhole(listing.priceCents)}
         </p>
@@ -227,6 +233,15 @@ export function SellerProductCard({
           </div>
         ) : null}
       </div>
+      <ListingProductMetaExtras
+        orderType={listing.orderType}
+        processingTime={listing.processingTime}
+        optionNameA={listing.optionNameA}
+        optionValuesA={listing.optionValuesA}
+        optionNameB={listing.optionNameB}
+        optionValuesB={listing.optionValuesB}
+        density={compactGrid ? "compact" : "card"}
+      />
       <p
         className={`mt-1 text-xs text-neutral-600 dark:text-slate-400 ${isComfortableGrid ? "md:text-[13px]" : ""} ${isListLayout ? "md:text-[13px]" : ""} ${compactGrid ? "text-[11px]" : ""}`}
       >
@@ -241,7 +256,7 @@ export function SellerProductCard({
               {quantityUpdating ? <span className="text-[10px] font-medium text-neutral-500 dark:text-slate-500">Saving…</span> : null}
             </div>
             <div className="flex min-w-0 items-stretch gap-1">
-              <div className="flex min-h-[40px] min-w-0 flex-1 overflow-hidden rounded-lg border border-neutral-300/95 bg-white shadow-sm ring-1 ring-neutral-200/70 dark:border-[#1f3c56] dark:bg-[#11283d] dark:ring-[#1f3c56]/60 md:min-h-8">
+              <div className="flex min-h-[40px] min-w-0 flex-1 overflow-hidden rounded-lg border-0 bg-white shadow-none ring-1 ring-neutral-200/55 dark:bg-[#11283d] dark:ring-[#1f3c56]/50 md:min-h-8 md:border md:border-neutral-300/95 md:shadow-sm md:ring-0 dark:md:border-[#1f3c56] dark:md:ring-0">
                 <button
                   type="button"
                   className={`${denseStepMinusPlus} rounded-none border-r border-neutral-200 dark:border-slate-700`}
@@ -391,6 +406,10 @@ export function SellerProductCard({
     </>
   );
 
+  const mobileImageInspect = Boolean(mobileCardUx && onView);
+  const imageInspectBtnClass =
+    "lm-product-card--tap absolute inset-0 z-0 min-h-0 w-full border-0 bg-transparent p-0 text-left";
+
   const sellerActionsDense = (
     <>
       {onView ? (
@@ -418,59 +437,93 @@ export function SellerProductCard({
   );
 
   return (
-    <li className={`min-w-0 overflow-hidden ${cardShellClass} ${gridMode ? "h-full" : ""}`}>
+    <li
+      className={`min-w-0 overflow-hidden ${gridMode ? "lm-grid-card lm-product-card-grid" : "lm-list-card lm-product-card-list"} ${cardShellClass} ${gridMode ? "h-full" : ""}`}
+    >
       {isListLayout ? (
         <div className="flex min-w-0 flex-col gap-3">
           <div className="flex min-w-0 gap-3">
-            <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-[#1f3c56] dark:bg-[#11283d] ${imgBox}`}>
-              {imageUrl ? (
-                <img
-                  src={imageUrl}
-                  alt={listing.title || "Product"}
-                  className="h-full w-full object-cover"
-                  loading="lazy"
-                  decoding="async"
-                  sizes="(max-width: 768px) 42vw, min(240px, 18vw)"
-                />
+            <div className={`relative ${imgBox}`}>
+              {mobileImageInspect ? (
+                <button
+                  type="button"
+                  className={imageInspectBtnClass}
+                  aria-label={`View details: ${listing.title || "product"}`}
+                  onClick={() => onView()}
+                >
+                  <ProductListingMedia
+                    listing={listing}
+                    variant="list"
+                    className="pointer-events-none absolute inset-0 min-h-0"
+                    sizes="(max-width: 768px) 42vw, min(240px, 18vw)"
+                    loading="lazy"
+                  />
+                </button>
               ) : (
-                <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">No image</div>
+                <ProductListingMedia
+                  listing={listing}
+                  variant="list"
+                  className="absolute inset-0 min-h-0"
+                  sizes="(max-width: 768px) 42vw, min(240px, 18vw)"
+                  loading="lazy"
+                />
               )}
             </div>
             <div className="min-w-0 flex-1 space-y-1.5">{innerBody}</div>
           </div>
-          <div className="grid w-full min-w-0 grid-cols-2 gap-2 border-t border-neutral-200/90 pt-3 dark:border-[#1f3c56]/80 md:grid-cols-4 md:gap-2">{sellerActionsExpanded}</div>
+          {!mobileCardUx ? (
+            <div className="grid w-full min-w-0 grid-cols-2 gap-2 border-t border-neutral-200/90 pt-3 dark:border-[#1f3c56]/80 md:grid-cols-4 md:gap-2">
+              {sellerActionsExpanded}
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className={`flex min-w-0 flex-col ${mainGap} ${isComfortableGrid || compactGrid ? "md:h-full" : ""}`}>
-          <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-[#1f3c56] dark:bg-[#11283d] ${imgBox}`}>
-            {imageUrl ? (
-              <img
-                src={imageUrl}
-                alt={listing.title || "Product"}
-                className="h-full w-full object-cover"
-                loading="lazy"
-                decoding="async"
-                sizes="(max-width: 768px) 42vw, min(240px, 18vw)"
-              />
+          <div className={`relative ${imgBox}`}>
+            {mobileImageInspect ? (
+              <button
+                type="button"
+                className={imageInspectBtnClass}
+                aria-label={`View details: ${listing.title || "product"}`}
+                onClick={() => onView()}
+              >
+                <ProductListingMedia
+                  listing={listing}
+                  variant="grid"
+                  fillFrame
+                  className="pointer-events-none absolute inset-0 min-h-0"
+                  sizes="(max-width: 768px) 42vw, min(240px, 18vw)"
+                  loading="lazy"
+                />
+              </button>
             ) : (
-              <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">No image</div>
+              <ProductListingMedia
+                listing={listing}
+                variant="grid"
+                fillFrame
+                className="absolute inset-0 min-h-0"
+                sizes="(max-width: 768px) 42vw, min(240px, 18vw)"
+                loading="lazy"
+              />
             )}
           </div>
           <div className={`min-w-0 flex-1 space-y-1.5 ${isComfortableGrid || compactGrid ? "md:flex md:min-h-0 md:flex-col" : ""}`}>{innerBody}</div>
-          <div
-            className={
-              isComfortableGrid
-                ? "mt-auto grid w-full min-w-0 shrink-0 grid-cols-2 gap-2 self-stretch md:gap-2 md:gap-2 [&>button]:min-h-[44px] [&>button]:touch-manipulation md:[&>button]:min-h-0 md:[&>button]:min-h-0"
-                : compactGrid
-                  ? "mt-auto grid w-full min-w-0 shrink-0 grid-cols-2 gap-1 self-stretch md:gap-1 [&>button]:touch-manipulation"
-                  : "grid w-full min-w-0 grid-cols-2 gap-1.5 self-stretch md:gap-2"
-            }
-          >
-            {compactGrid ? sellerActionsDense : sellerActionsExpanded}
-          </div>
+          {!mobileCardUx ? (
+            <div
+              className={
+                isComfortableGrid
+                  ? "mt-auto grid w-full min-w-0 shrink-0 grid-cols-2 gap-2 self-stretch md:gap-2 md:gap-2 [&>button]:min-h-[44px] [&>button]:touch-manipulation md:[&>button]:min-h-0 md:[&>button]:min-h-0"
+                  : compactGrid
+                    ? "mt-auto grid w-full min-w-0 shrink-0 grid-cols-2 gap-1 self-stretch md:gap-1 [&>button]:touch-manipulation"
+                    : "grid w-full min-w-0 grid-cols-2 gap-1.5 self-stretch md:gap-2"
+              }
+            >
+              {compactGrid ? sellerActionsDense : sellerActionsExpanded}
+            </div>
+          ) : null}
         </div>
       )}
-      {saleOpen ? (
+      {!mobileCardUx && saleOpen ? (
         <div className={`overflow-x-auto ${compactGrid ? "mt-2" : "mt-3"}`}>
           <div
             className={`flex min-w-max items-center rounded-lg border border-amber-200/80 bg-amber-50/80 dark:border-amber-500/30 dark:bg-amber-500/10 ${compactGrid ? "gap-1 p-1.5" : "gap-1.5 rounded-xl p-2"}`}

@@ -193,3 +193,17 @@ export function formatBrowseLabel(verticalId, subId) {
   if (!sub) return v.label;
   return `${v.label} — ${sub.label}`;
 }
+
+/**
+ * Short label for product cards (vertical + optional sub), or "" if unknown.
+ */
+export function getListingCategoryShortLabel(verticalId, subId) {
+  const id = String(verticalId || "").trim();
+  if (!id) return "";
+  const v = getVerticalById(id);
+  if (!v) return "";
+  const sid = String(subId ?? "").trim();
+  if (!sid || sid === "all") return v.label;
+  const sub = v.subs?.find((s) => s.id === sid);
+  return sub ? `${v.label} · ${sub.label}` : v.label;
+}

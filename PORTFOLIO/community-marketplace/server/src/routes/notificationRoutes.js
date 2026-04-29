@@ -1,13 +1,9 @@
 import { Router } from "express";
-import {
-  listNotifications,
-  markNotificationRead,
-  markNotificationsReadBulk,
-  notificationsValidators,
-} from "../controllers/notificationsController.js";
+import { listNotifications, markNotificationRead, markNotificationsReadBulk } from "../controllers/notificationsController.js";
 import { requireAuth } from "../middleware/auth.js";
 import { writeLimiter } from "../middleware/rateLimit.js";
 import { validate } from "../middleware/validate.js";
+import { notificationsValidators } from "../schemas/notificationSchemas.js";
 
 const notificationRouter = Router();
 

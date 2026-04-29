@@ -8,7 +8,10 @@ export const requireAuth = async (req, _res, next) => {
     return next(new AppError(401, "Missing or invalid Authorization header."));
   }
 
-  const token = authHeader.slice("Bearer ".length);
+  const token = authHeader.slice("Bearer ".length).trim();
+  if (!token) {
+    return next(new AppError(401, "Missing or invalid Authorization header."));
+  }
   try {
     const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(token);
     if (authError || !authData?.user) {

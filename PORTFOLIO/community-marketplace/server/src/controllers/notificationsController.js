@@ -1,4 +1,3 @@
-import { body, param, query } from "express-validator";
 import { AppError } from "../errors/AppError.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 
@@ -16,17 +15,6 @@ const notificationRowToApi = (row) => ({
   readAt: row.read_at ?? null,
   createdAt: row.created_at,
 });
-
-export const notificationsValidators = {
-  list: [
-    query("limit").optional().isInt({ min: 1, max: 200 }),
-    query("offset").optional().isInt({ min: 0 }),
-    query("type").optional().isString().trim().isLength({ min: 1, max: 80 }),
-    query("unreadOnly").optional().isBoolean(),
-  ],
-  markReadOne: [param("id").isUUID()],
-  markReadMany: [body("ids").optional().isArray(), body("ids.*").optional().isUUID()],
-};
 
 export const listNotifications = async (req, res, next) => {
   try {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LinkMartLogo } from "./media/LinkMartLogo.jsx";
+import { StableAvatar } from "./media/StableMediaImage.jsx";
 import { VIEWS } from "../views.js";
 
 function ChevronDownIcon(props) {
@@ -108,10 +109,10 @@ function MenuUserIcon(props) {
 
 function MenuStoreIcon(props) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
-      <path d="M3 6h18" />
-      <path d="M16 10a4 4 0 0 1-8 0" />
+    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <path d="M4.5 8.25h15v9.25a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2z" />
+      <path d="M7 8.25V6.5a1.75 1.75 0 0 1 1.75-1.75h6.5A1.75 1.75 0 0 1 17 6.5v1.75" />
+      <path d="M9.5 11.5h5" />
     </svg>
   );
 }
@@ -136,12 +137,10 @@ function MenuInfoIcon(props) {
 
 function MenuFileIcon(props) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2Z" />
-      <polyline points="14 2 14 8 20 8" />
-      <line x1="16" x2="8" y1="13" y2="13" />
-      <line x1="16" x2="8" y1="17" y2="17" />
-      <line x1="10" x2="8" y1="9" y2="9" />
+    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <path d="M7 4.75h7l3.25 3.25V19a2 2 0 0 1-2 2H7A2 2 0 0 1 5 19V6.75a2 2 0 0 1 2-2z" />
+      <path d="M14 4.75V8h3.25" />
+      <path d="M8.75 12h6.5M8.75 15.5h6.5" />
     </svg>
   );
 }
@@ -169,68 +168,240 @@ function MenuHamburgerIcon(props) {
 
 function MenuOrdersIcon(props) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M6 3h12a1 1 0 0 1 1 1v17l-3-2-3 2-3-2-3 2V4a1 1 0 0 1 1-1z" />
-      <path d="M9 8h6M9 12h6M9 16h4" />
+    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <path d="M6.5 4.75h11a1.75 1.75 0 0 1 1.75 1.75v11a1.75 1.75 0 0 1-1.75 1.75h-11A1.75 1.75 0 0 1 4.75 17.5v-11A1.75 1.75 0 0 1 6.5 4.75z" />
+      <path d="M8.5 9.25h7M8.5 12.25h7M8.5 15.25h4.5" />
     </svg>
   );
 }
 
 function MenuCartIcon(props) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-      <polyline points="7.5 4.21 12 6.81 16.5 4.21" />
-      <polyline points="7.5 19.79 7.5 14.6 3 12" />
-      <polyline points="21 12 16.5 14.6 16.5 19.79" />
-      <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-      <line x1="12" x2="12" y1="22.08" y2="12" />
+    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <circle cx="9" cy="19.25" r="1.25" />
+      <circle cx="17" cy="19.25" r="1.25" />
+      <path d="M3 4h1.8l1.35 8.9a1.5 1.5 0 0 0 1.48 1.28h8.82a1.5 1.5 0 0 0 1.45-1.11l1.3-4.95H6.65" />
     </svg>
   );
 }
 
-/** Mobile secondary nav — four distinct glyphs (not isometric cubes): Store, ShoppingCart, Truck, Tag */
-
-function MobileNavShopIcon(props) {
+function MenuTruckIcon(props) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7" />
-      <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
-      <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4" />
-      <path d="M2 7h20" />
+    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <path d="M3.75 6.75h10.5v8.5H3.75z" />
+      <path d="M14.25 9.75h3.2l2.8 2.8v2.7h-6" />
+      <circle cx="8" cy="18.25" r="1.5" />
+      <circle cx="18" cy="18.25" r="1.5" />
+      <path d="M3.75 18.25h2.75M14.25 18.25h2.25" />
     </svg>
   );
 }
 
-function MobileNavCartIcon(props) {
+function MenuFeedbackIcon(props) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <circle cx="8" cy="21" r="1" />
-      <circle cx="19" cy="21" r="1" />
-      <path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" />
+    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <path d="M6.5 4.75h11a1.75 1.75 0 0 1 1.75 1.75v7A1.75 1.75 0 0 1 17.5 15.25h-5.2L8 19v-3.75H6.5A1.75 1.75 0 0 1 4.75 13.5v-7A1.75 1.75 0 0 1 6.5 4.75z" />
+      <path d="M9.1 10.75h5.8" />
     </svg>
   );
 }
 
-/** Incoming orders / deliveries — truck silhouette (not a box or cart) */
-function MobileNavBuyingIcon(props) {
+/** Mobile secondary nav icons — 24×24, unified 1.75 stroke / filled-solid pairs (mobile strip only). */
+const MOBILE_NAV_ICON_STROKE = 1.75;
+
+function MobileNavShopIcon({ filled = false, className = "", ...props }) {
+  if (filled) {
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
+        <path
+          fill="currentColor"
+          d="M5 9h14l-1.25 9.25A1.75 1.75 0 0116.52 20H7.48a1.75 1.75 0 01-1.73-1.75L5 9zm2.5-5.25h9L18 8H6l1.5-4.25zM10 21.25a.75.75 0 01.75-.75h2.5a.75.75 0 010 1.5h-2.5a.75.75 0 01-.75-.75z"
+        />
+      </svg>
+    );
+  }
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" />
-      <path d="M15 18H9" />
-      <path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14" />
-      <circle cx="17" cy="18" r="2" />
-      <circle cx="7" cy="18" r="2" />
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={MOBILE_NAV_ICON_STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+      {...props}
+    >
+      <path d="M5 10h14v9a1.5 1.5 0 01-1.5 1.5H6.5A1.5 1.5 0 015 19v-9z" />
+      <path d="M5 10V8.5l2.25-5h9.5L19 8.5V10" />
+      <path d="M10 21.25h4" />
     </svg>
   );
 }
 
-/** Listings & sales — price tag (not a receipt or cube) */
-function MobileNavSellingIcon(props) {
+function MobileNavCartIcon({ filled = false, className = "", ...props }) {
+  if (filled) {
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
+        <path
+          fill="currentColor"
+          d="M8.25 18.5a1.75 1.75 0 11-.001 3.501A1.75 1.75 0 018.25 18.5zm9.5 0a1.75 1.75 0 11-.001 3.501 1.75 1.75 0 01.001-3.501zM2.25 3.75h2.02l.37 1.5h14.47a.75.75 0 01.73.92l-1.56 6.02a1.5 1.5 0 01-1.45 1.12H8.18l-.98 5.29h12.05a.75.75 0 010 1.5H6.53a1.5 1.5 0 01-1.48-1.22l-3.09-15.1a.75.75 0 01.73-.89H4.4l-.4-1.59a.75.75 0 01.75-.93z"
+        />
+      </svg>
+    );
+  }
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.434 0l6.294-6.294a2 2 0 0 0 0-2.828l-8.704-8.702z" />
-      <circle cx="7.5" cy="7.5" r="1" fill="currentColor" stroke="none" />
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={MOBILE_NAV_ICON_STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+      {...props}
+    >
+      <circle cx="9" cy="20.25" r="1.25" />
+      <circle cx="17" cy="20.25" r="1.25" />
+      <path d="M3.25 3.75h1.7l1.35 9.05a1.25 1.25 0 001.24 1.07h9.37a1.25 1.25 0 001.21-.94l1.46-5.68H6.42" />
+    </svg>
+  );
+}
+
+/** Buying — shopping bag / orders */
+function MobileNavBuyingIcon({ filled = false, className = "", ...props }) {
+  if (filled) {
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
+        <path
+          fill="currentColor"
+          d="M8.25 6.5V5.5a3.75 3.75 0 017.5 0v1h4.25a1.25 1.25 0 011.25 1.25v10.5a2 2 0 01-2 2H5a2 2 0 01-2-2V7.75a1.25 1.25 0 011.25-1.25h4zm1.5 0h5V5.5a2.25 2.25 0 10-4.5 0v1z"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={MOBILE_NAV_ICON_STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+      {...props}
+    >
+      <path d="M6 8.25V7a4 4 0 018 0v1.25" />
+      <path d="M5.25 8.25h13.5a1.25 1.25 0 011.25 1.25v9a2 2 0 01-2 2h-12a2 2 0 01-2-2v-9a1.25 1.25 0 011.25-1.25z" />
+    </svg>
+  );
+}
+
+/** Selling — price tag / listing */
+function MobileNavSellingIcon({ filled = false, className = "", ...props }) {
+  if (filled) {
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
+        <path
+          fill="currentColor"
+          d="M12.95 2.25h-6.7a2.25 2.25 0 00-1.59.66l-3.24 3.24a2.25 2.25 0 000 3.18l8.46 8.46a2.25 2.25 0 003.18 0l5.66-5.66a2.25 2.25 0 000-3.18l-5.77-5.9z"
+        />
+        <circle cx="8.25" cy="8.25" r="1.65" className="fill-white dark:fill-slate-950" />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={MOBILE_NAV_ICON_STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+      {...props}
+    >
+      <path d="M12.5 2.5h-6a2 2 0 00-1.41.59l-3 3a2 2 0 000 2.82l7.88 7.88a2 2 0 002.83 0l5.66-5.66a2 2 0 000-2.83l-5.96-5.78z" />
+      <circle cx="8.25" cy="8.25" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function MobileNavNotificationsIcon({ filled = false, className = "", ...props }) {
+  if (filled) {
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
+        <path
+          fill="currentColor"
+          d="M12 2.25a5.25 5.25 0 00-5.25 5.25c0 3.48-1.15 4.77-2.05 5.67a.75.75 0 00.53 1.28h13.54a.75.75 0 00.53-1.28c-.9-.9-2.05-2.19-2.05-5.67A5.25 5.25 0 0012 2.25zm0 19.5a2.25 2.25 0 002.18-1.7H9.82A2.25 2.25 0 0012 21.75z"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={MOBILE_NAV_ICON_STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+      {...props}
+    >
+      <path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
+      <path d="M13.73 21a2 2 0 01-3.46 0" />
+    </svg>
+  );
+}
+
+function MobileNavProfileIcon({ filled = false, className = "", ...props }) {
+  if (filled) {
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
+        <path
+          fill="currentColor"
+          d="M12 11.25a3.75 3.75 0 100-7.5 3.75 3.75 0 000 7.5zm-7.2 8.77c.31-3.32 3.85-5.27 7.2-5.27s6.89 1.95 7.2 5.27a.75.75 0 01-.74.88H5.54a.75.75 0 01-.74-.88z"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={MOBILE_NAV_ICON_STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+      {...props}
+    >
+      <circle cx="12" cy="8.25" r="3.25" />
+      <path d="M6.75 19.25v-.25a4.25 4.25 0 014.25-4.25h2a4.25 4.25 0 014.25 4.25v.25" />
     </svg>
   );
 }
@@ -244,9 +415,9 @@ const accountMenuIconWrap =
 const accountMenuIconWrapDanger =
   "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-rose-200/80 bg-rose-50 text-rose-600 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-400";
 
-/** Mobile: borderless ghost controls (shell already frames the bar). md+: bordered pills like desktop chrome. */
+/** Mobile: squircle hit targets (no circular chrome). md+: bordered pills like desktop chrome. */
 const headerUtilityButtonBase =
-  "relative inline-flex h-11 w-11 items-center justify-center rounded-full border-0 bg-transparent text-neutral-700 transition motion-reduce:transition-none hover:bg-neutral-100/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30 focus-visible:ring-offset-2 focus-visible:ring-offset-white active:bg-neutral-100/70 dark:text-slate-200 dark:hover:bg-slate-800/85 dark:focus-visible:ring-brand-accent/35 dark:focus-visible:ring-offset-slate-950 md:h-10 md:w-10 md:border md:border-neutral-200/75 md:bg-white md:hover:border-neutral-300 md:hover:bg-neutral-50/90 md:active:bg-white dark:md:border-slate-600/90 dark:md:bg-slate-900 dark:md:hover:border-slate-500 dark:md:hover:bg-slate-800";
+  "relative inline-flex h-11 w-11 items-center justify-center rounded-xl border-0 bg-transparent text-neutral-700 transition motion-reduce:transition-none hover:bg-neutral-100/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30 focus-visible:ring-offset-2 focus-visible:ring-offset-white active:bg-neutral-100/70 dark:text-slate-200 dark:hover:bg-slate-800/85 dark:focus-visible:ring-brand-accent/35 dark:focus-visible:ring-offset-slate-950 md:h-10 md:w-10 md:rounded-full md:border md:border-neutral-200/75 md:bg-white md:hover:border-neutral-300 md:hover:bg-neutral-50/90 md:active:bg-white dark:md:border-slate-600/90 dark:md:bg-slate-900 dark:md:hover:border-slate-500 dark:md:hover:bg-slate-800";
 
 /** Mobile: flat teal tint only (no ring). md+: bordered pill matches desktop chrome. */
 const headerUtilityButtonActive =
@@ -272,19 +443,14 @@ function navPillTrade(active, role) {
   return `${layout} bg-primary-soft text-primary shadow-sm ring-1 ring-primary/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-primary/45`;
 }
 
-/** Mobile secondary nav: 44px targets; active = teal wash + bar (no heavy borders). */
+/** Mobile secondary nav (icon-only): inactive = outline/neutral; active = teal + filled glyph + thin underline. */
 function mobileIconTabClass(active) {
   const base =
-    "relative flex min-h-[44px] min-w-0 flex-1 touch-manipulation items-center justify-center rounded-xl px-0.5 py-1 transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/35 dark:focus-visible:ring-brand-accent/35";
+    "relative flex min-h-[var(--ui-touch-target,44px)] min-w-0 flex-1 touch-manipulation items-center justify-center px-0.5 py-2 transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 select-none";
   if (!active) {
-    return `${base} text-neutral-600 hover:bg-neutral-50/90 hover:text-neutral-900 dark:text-slate-500 dark:hover:bg-slate-800/70 dark:hover:text-slate-100`;
+    return `${base} text-neutral-400 hover:text-neutral-500 dark:text-slate-500 dark:hover:text-slate-400`;
   }
-  return `${base} bg-brand-soft text-brand-primary shadow-[inset_0_-2px_0_0_rgba(13,148,136,0.35)] after:pointer-events-none after:absolute after:bottom-0.5 after:left-1/2 after:h-[3px] after:w-[48%] after:max-w-[3.25rem] after:-translate-x-1/2 after:rounded-full after:bg-brand-primary dark:bg-teal-950/40 dark:text-brand-accent dark:shadow-[inset_0_-2px_0_0_rgba(45,212,191,0.35)] dark:after:bg-brand-accent`;
-}
-
-/** Icon-only strip: names stay for screen readers (buttons also set aria-label). */
-function MobileNavTabLabel({ children }) {
-  return <span className="sr-only">{children}</span>;
+  return `${base} text-brand-primary after:pointer-events-none after:absolute after:bottom-0 after:left-1/2 after:h-[2px] after:w-9 after:max-w-[42%] after:-translate-x-1/2 after:bg-brand-primary dark:text-brand-accent dark:after:bg-brand-accent [&_.mobile-nav-tab-icon]:text-brand-primary dark:[&_.mobile-nav-tab-icon]:text-brand-accent`;
 }
 
 const mobileNavBadgeBase =
@@ -292,7 +458,7 @@ const mobileNavBadgeBase =
 
 const mobileSheetMenuItem = `${accountMenuItemBase} min-h-[44px] items-center rounded-xl py-3`;
 
-/** Drawer rows: teal glyph, no boxed icon chip (mobile visual reference = Upload Product). */
+/** Drawer rows: teal glyph, no boxed icon chip (mobile visual reference = Upload). */
 const mobileDrawerIconPlain =
   "flex h-10 w-10 shrink-0 items-center justify-center text-brand-primary dark:text-brand-accent";
 
@@ -342,6 +508,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {() => void} props.goMyPurchases
  * @param {() => void} props.goCart
  * @param {number} [props.inboxBadgeCount] Badge total for messages icon (messages + orders attention + notifications)
+ * @param {number} [props.messagesUnreadCount] Unread messages badge count
  * @param {"light"|"dark"} props.theme
  * @param {(t: "light"|"dark") => void} props.setTheme
  * @param {() => void} props.onLogout
@@ -353,10 +520,12 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {number} [props.ordersItemCount] Seller orders tab / new-order badge count
  * @param {number} [props.totalOrdersCount] Total seller orders count
  * @param {number} [props.notificationUnreadCount] Unread notification badge count
+ * @param {number} [props.favoritesBadgeCount] Unseen favorites-related updates
  * @param {number} [props.favoriteCount] Saved favorites count (shop / community product hearts)
  * @param {() => void} [props.onNavigateHome] Clear SPA path (e.g. /l/…) when opening marketplace from the logo
- * @param {import('react').ReactNode} [props.children] Main scroll region (placed between header and mobile bottom nav)
+ * @param {import('react').ReactNode} [props.children] Main scroll region (below the sticky header and mobile tab row)
  * @param {import('react').ReactNode} [props.mobileSecondaryNav] Optional strip below the top header (mobile only)
+ * @param {(collapsed: boolean) => void} [props.onMobileBrowseNavCollapsedChange] Fires when mobile primary+secondary chrome finishes collapsing/expanding (shop-like views).
  */
 export function LoggedInHeader({
   user,
@@ -368,6 +537,7 @@ export function LoggedInHeader({
   goMyPurchases = () => {},
   goCart = () => {},
   inboxBadgeCount = 0,
+  messagesUnreadCount = 0,
   theme,
   setTheme,
   onLogout,
@@ -379,9 +549,11 @@ export function LoggedInHeader({
   ordersItemCount = 0,
   totalOrdersCount = 0,
   notificationUnreadCount = 0,
+  favoritesBadgeCount = 0,
   favoriteCount = 0,
   onNavigateHome,
   mobileSecondaryNav = null,
+  onMobileBrowseNavCollapsedChange,
   children,
 }) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -405,6 +577,11 @@ export function LoggedInHeader({
     width: 320,
   });
   const swipeCloseAfterTransitionRef = useRef(false);
+  /** Mobile Shop / Community shop: live scroll-linked hide offset (0..mobile chrome height). */
+  const mobileChromeRef = useRef(null);
+  const mainScrollLastYRef = useRef(0);
+  const [mobileShopBrowseNavOffset, setMobileShopBrowseNavOffset] = useState(0);
+  const [mobileShopBrowseNavCollapsed, setMobileShopBrowseNavCollapsed] = useState(false);
 
   const closeAllMenus = useCallback(() => {
     setAccountMenuOpen(false);
@@ -586,10 +763,83 @@ export function LoggedInHeader({
   const mobileShopTabActive =
     activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP;
 
+  /** When true, scroll on `#main-content` can hide the full mobile header (primary row + icon tab row + optional `mobileSecondaryNav`). */
+  const mobileShopBrowseScrollCollapseActive =
+    activeView === VIEWS.BROWSE ||
+    activeView === VIEWS.COMMUNITY_SHOP ||
+    activeView === VIEWS.FAVORITES ||
+    activeView === VIEWS.CART ||
+    activeView === VIEWS.MY_PURCHASES ||
+    activeView === VIEWS.ORDERS ||
+    activeView === VIEWS.MESSAGES ||
+    activeView === VIEWS.NOTIFICATIONS ||
+    activeView === VIEWS.PROFILE;
+
+  useEffect(() => {
+    if (!mobileShopBrowseScrollCollapseActive || mobileMenuOpen) {
+      setMobileShopBrowseNavOffset(0);
+      setMobileShopBrowseNavCollapsed(false);
+      return undefined;
+    }
+    const main = document.getElementById("main-content");
+    if (!main) return undefined;
+
+    const mq = window.matchMedia("(min-width: 768px)");
+
+    const onScroll = () => {
+      if (mq.matches) {
+        mainScrollLastYRef.current = 0;
+        setMobileShopBrowseNavOffset(0);
+        setMobileShopBrowseNavCollapsed(false);
+        return;
+      }
+      const y = Math.max(0, main.scrollTop || 0);
+      const chromeHeight = mobileChromeRef.current?.offsetHeight ?? 0;
+      const delta = y - mainScrollLastYRef.current;
+      mainScrollLastYRef.current = y;
+      setMobileShopBrowseNavOffset((prev) => {
+        const next = Math.min(Math.max(prev + delta, 0), Math.max(0, chromeHeight));
+        setMobileShopBrowseNavCollapsed(next > 0);
+        return next;
+      });
+    };
+
+    mainScrollLastYRef.current = Math.max(0, main.scrollTop || 0);
+    onScroll();
+    main.addEventListener("scroll", onScroll, { passive: true });
+
+    const onMm = () => {
+      if (mq.matches) {
+        setMobileShopBrowseNavOffset(0);
+        setMobileShopBrowseNavCollapsed(false);
+      }
+    };
+    mq.addEventListener("change", onMm);
+
+    return () => {
+      main.removeEventListener("scroll", onScroll);
+      mq.removeEventListener("change", onMm);
+    };
+  }, [mobileShopBrowseScrollCollapseActive, mobileMenuOpen, activeView]);
+
+  useEffect(() => {
+    onMobileBrowseNavCollapsedChange?.(mobileShopBrowseNavCollapsed);
+  }, [mobileShopBrowseNavCollapsed, onMobileBrowseNavCollapsedChange]);
+
   const mobileSellingTabActive =
     activeView === VIEWS.ORDERS ||
     activeView === VIEWS.SELLER ||
     activeView === VIEWS.MY_LISTINGS;
+  /** Mobile: hide top utility row on secondary tabs (keep visible on Shop-like views). */
+  const hideMobilePrimaryRow =
+    activeView === VIEWS.CART ||
+    activeView === VIEWS.MY_PURCHASES ||
+    activeView === VIEWS.ORDERS ||
+    activeView === VIEWS.SELLER ||
+    activeView === VIEWS.MY_LISTINGS ||
+    activeView === VIEWS.MESSAGES ||
+    activeView === VIEWS.NOTIFICATIONS ||
+    activeView === VIEWS.PROFILE;
 
   const drawerUsesPullTransform =
     mobileSheetEntered && (isDrawerDragging || drawerPullPx !== 0);
@@ -607,13 +857,39 @@ export function LoggedInHeader({
   return (
     /* Mobile: column (header → main). md+: `contents` flattens into App shell so sticky header + scroll work without an extra nested flex wrapper. */
     <div className="flex w-full min-h-0 flex-1 flex-col overflow-hidden md:contents">
-    <header className="mobile-app-top-header sticky top-0 z-50 shrink-0 pt-[env(safe-area-inset-top,0px)] md:sticky md:top-0 border-b border-neutral-200/40 bg-white/95 backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95 md:shadow-[0_1px_0_rgba(15,23,42,0.04)]">
-      <div className="md:hidden shrink-0">
-        <div className="app-shell-content-inset flex h-[4.25rem] w-full max-w-full items-center gap-2">
+    <header
+      className="mobile-app-top-header sticky top-0 z-50 shrink-0 pt-[env(safe-area-inset-top,0px)] md:sticky md:top-0 border-b border-neutral-200/40 bg-white/95 backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95 md:shadow-[0_1px_0_rgba(15,23,42,0.04)]"
+    >
+      {/*
+        Mobile only (md:hidden): primary + secondary chrome — grid 0fr/1fr collapse (smoother than max-height).
+        Desktop header is a sibling block with md:flex — unchanged.
+      */}
+      <div
+        ref={mobileChromeRef}
+        className="md:hidden grid shrink-0 grid-rows-[1fr] will-change-transform"
+        style={
+          mobileShopBrowseScrollCollapseActive && !mobileMenuOpen
+            ? {
+                transform: `translate3d(0, -${mobileShopBrowseNavOffset}px, 0)`,
+                marginBottom: `-${mobileShopBrowseNavOffset}px`,
+              }
+            : undefined
+        }
+      >
+        <div className="min-h-0 overflow-hidden">
+        <div className="flex flex-col">
+        <div
+          className={`app-shell-content-inset flex w-full max-w-full items-center gap-2 overflow-hidden transition-[max-height,opacity,transform] duration-300 ease-out motion-reduce:transition-none ${
+            hideMobilePrimaryRow
+              ? "pointer-events-none max-h-0 -translate-y-1 opacity-0"
+              : "h-[4.25rem] max-h-[4.25rem] translate-y-0 opacity-100"
+          }`}
+          aria-hidden={hideMobilePrimaryRow ? true : undefined}
+        >
           <button
             ref={mobileMenuButtonRef}
             type="button"
-            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0`}
+            className={`${headerUtilityButtonBase} h-11 w-11 min-h-[var(--ui-touch-target,44px)] min-w-[var(--ui-touch-target,44px)] shrink-0 ${mobileMenuOpen ? headerUtilityButtonActive : "text-neutral-500 dark:text-slate-500"}`}
             aria-expanded={mobileMenuOpen}
             aria-controls="mobile-nav-menu-panel"
             aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
@@ -632,13 +908,13 @@ export function LoggedInHeader({
           <span className="min-w-[2px] flex-1" aria-hidden />
           <button
             type="button"
-            className={`${headerUtilityButtonBase} relative h-11 w-11 shrink-0 ${activeView === VIEWS.FAVORITES ? headerUtilityButtonActive : ""}`}
+            className={`${headerUtilityButtonBase} relative h-11 w-11 min-h-[var(--ui-touch-target,44px)] min-w-[var(--ui-touch-target,44px)] shrink-0 ${activeView === VIEWS.FAVORITES ? headerUtilityButtonActive : "text-neutral-500 dark:text-slate-500"}`}
             aria-label={
-              favoriteCount > 0
-                ? `Favorites, ${favoriteCount > 99 ? "99 plus" : favoriteCount} saved`
+              favoritesBadgeCount > 0
+                ? `Favorites, ${favoritesBadgeCount > 99 ? "99 plus" : favoritesBadgeCount} new updates`
                 : "Favorites"
             }
-            title={favoriteCount > 0 ? `${favoriteCount > 99 ? "99+" : favoriteCount} saved` : "Saved listings"}
+            title={favoritesBadgeCount > 0 ? `${favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount} new updates` : "Saved listings"}
             onClick={() => {
               setActiveView(VIEWS.FAVORITES);
               closeAllMenus();
@@ -648,18 +924,18 @@ export function LoggedInHeader({
               filled={activeView === VIEWS.FAVORITES}
               className={activeView === VIEWS.FAVORITES ? "text-primary dark:text-brand-accent" : ""}
             />
-            {favoriteCount > 0 ? (
+            {favoritesBadgeCount > 0 ? (
               <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
-                {favoriteCount > 99 ? "99+" : favoriteCount}
+                {favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount}
               </span>
             ) : null}
           </button>
           <button
             type="button"
-            className={`${headerUtilityButtonBase} relative h-11 w-11 shrink-0 ${activeView === VIEWS.MESSAGES ? headerUtilityButtonActive : ""}`}
+            className={`${headerUtilityButtonBase} relative h-11 w-11 min-h-[var(--ui-touch-target,44px)] min-w-[var(--ui-touch-target,44px)] shrink-0 ${activeView === VIEWS.MESSAGES ? headerUtilityButtonActive : "text-neutral-500 dark:text-slate-500"}`}
             aria-label={
-              inboxBadgeCount > 0
-                ? `Messages, ${inboxBadgeCount > 99 ? "99 plus" : inboxBadgeCount} unread or updates`
+              messagesUnreadCount > 0
+                ? `Messages, ${messagesUnreadCount > 99 ? "99 plus" : messagesUnreadCount} unread`
                 : "Messages"
             }
             onClick={() => {
@@ -671,19 +947,19 @@ export function LoggedInHeader({
               filled={activeView === VIEWS.MESSAGES}
               className={activeView === VIEWS.MESSAGES ? "text-primary dark:text-brand-accent" : ""}
             />
-            {inboxBadgeCount > 0 ? (
-              <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm">
-                {inboxBadgeCount > 99 ? "99+" : inboxBadgeCount}
+            {messagesUnreadCount > 0 ? (
+              <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
+                {messagesUnreadCount > 99 ? "99+" : messagesUnreadCount}
               </span>
             ) : null}
           </button>
         </div>
 
-        <nav className="mobile-app-secondary-nav" role="navigation" aria-label="Primary">
+        <nav className="mobile-app-secondary-nav" role="navigation" aria-label="Main sections">
           <div
-            className="app-shell-content-inset flex min-h-0 w-full max-w-full items-stretch gap-0.5 py-1.5 min-[360px]:gap-1 min-[390px]:gap-1.5 min-[430px]:gap-2"
+            className="app-shell-content-inset flex min-h-[var(--ui-touch-target,44px)] w-full max-w-full items-stretch gap-0.5 py-1 min-[360px]:gap-1 min-[390px]:gap-1.5 min-[430px]:gap-2"
             role="tablist"
-            aria-label="Shop, cart, buying, selling, profile"
+            aria-label="Home, cart, purchases, orders, notifications, and profile"
           >
             <button
               type="button"
@@ -691,7 +967,7 @@ export function LoggedInHeader({
               aria-selected={mobileShopTabActive}
               aria-current={mobileShopTabActive ? "page" : undefined}
               className={mobileIconTabClass(mobileShopTabActive)}
-              aria-label="Shop"
+              aria-label="Home"
               onClick={() => {
                 setAccountMenuOpen(false);
                 setDesktopSettingsOpen(false);
@@ -699,8 +975,9 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <MobileNavShopIcon className="h-[22px] w-[22px] shrink-0" aria-hidden />
-              <MobileNavTabLabel>Shop</MobileNavTabLabel>
+              <span className="mobile-nav-tab-icon relative inline-flex size-6 shrink-0 items-center justify-center" aria-hidden>
+                <MobileNavShopIcon filled={mobileShopTabActive} className="h-6 w-6 shrink-0" aria-hidden />
+              </span>
             </button>
             <button
               type="button"
@@ -720,8 +997,8 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <span className="relative inline-flex h-[22px] min-w-[22px] shrink-0 items-center justify-center">
-                <MobileNavCartIcon className="h-[22px] w-[22px] shrink-0" aria-hidden />
+              <span className="mobile-nav-tab-icon relative inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
+                <MobileNavCartIcon filled={activeView === VIEWS.CART} className="h-6 w-6 shrink-0" aria-hidden />
                 {cartItemCount > 0 ? (
                   <span className={`${mobileNavBadgeBase} bg-amber-600 text-white dark:bg-amber-500`}>
                     {cartItemCount > 99 ? "99+" : cartItemCount}
@@ -732,7 +1009,6 @@ export function LoggedInHeader({
                   </span>
                 ) : null}
               </span>
-              <MobileNavTabLabel>Cart</MobileNavTabLabel>
             </button>
             <button
               type="button"
@@ -742,23 +1018,22 @@ export function LoggedInHeader({
               className={mobileIconTabClass(activeView === VIEWS.MY_PURCHASES)}
               aria-label={
                 purchasesItemCount > 0
-                  ? `Buying, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
-                  : "Buying"
+                  ? `Purchases, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
+                  : "Purchases"
               }
               onClick={() => {
                 goMyPurchases();
                 closeAllMenus();
               }}
             >
-              <span className="relative inline-flex h-[22px] min-w-[22px] shrink-0 items-center justify-center">
-                <MobileNavBuyingIcon className="h-[22px] w-[22px] shrink-0" aria-hidden />
+              <span className="mobile-nav-tab-icon relative inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
+                <MobileNavBuyingIcon filled={activeView === VIEWS.MY_PURCHASES} className="h-6 w-6 shrink-0" aria-hidden />
                 {purchasesItemCount > 0 ? (
-                  <span className={`${mobileNavBadgeBase} bg-sky-600 text-white dark:bg-sky-500`}>
+                  <span className={`${mobileNavBadgeBase} bg-rose-600 text-white dark:bg-rose-500`}>
                     {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
                   </span>
                 ) : null}
               </span>
-              <MobileNavTabLabel>Buying</MobileNavTabLabel>
             </button>
             <button
               type="button"
@@ -768,23 +1043,47 @@ export function LoggedInHeader({
               className={mobileIconTabClass(mobileSellingTabActive)}
               aria-label={
                 ordersItemCount > 0
-                  ? `Selling, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} alerts`
-                  : "Selling"
+                  ? `Orders, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} alerts`
+                  : "Orders"
               }
               onClick={() => {
                 goOrders();
                 closeAllMenus();
               }}
             >
-              <span className="relative inline-flex h-[22px] min-w-[22px] shrink-0 items-center justify-center">
-                <MobileNavSellingIcon className="h-[22px] w-[22px] shrink-0" aria-hidden />
+              <span className="mobile-nav-tab-icon relative inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
+                <MobileNavSellingIcon filled={mobileSellingTabActive} className="h-6 w-6 shrink-0" aria-hidden />
                 {ordersItemCount > 0 ? (
-                  <span className={`${mobileNavBadgeBase} bg-emerald-600 text-white dark:bg-emerald-500`}>
+                  <span className={`${mobileNavBadgeBase} bg-rose-600 text-white dark:bg-rose-500`}>
                     {ordersItemCount > 99 ? "99+" : ordersItemCount}
                   </span>
                 ) : null}
               </span>
-              <MobileNavTabLabel>Selling</MobileNavTabLabel>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === VIEWS.NOTIFICATIONS}
+              aria-current={activeView === VIEWS.NOTIFICATIONS ? "page" : undefined}
+              className={mobileIconTabClass(activeView === VIEWS.NOTIFICATIONS)}
+              aria-label={
+                notificationUnreadCount > 0
+                  ? `Notifications, ${notificationUnreadCount > 99 ? "99 plus" : notificationUnreadCount} unread`
+                  : "Notifications"
+              }
+              onClick={() => {
+                setActiveView(VIEWS.NOTIFICATIONS);
+                closeAllMenus();
+              }}
+            >
+              <span className="mobile-nav-tab-icon relative inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
+                <MobileNavNotificationsIcon filled={activeView === VIEWS.NOTIFICATIONS} className="h-6 w-6 shrink-0" aria-hidden />
+                {notificationUnreadCount > 0 ? (
+                  <span className={`${mobileNavBadgeBase} bg-brand-primary text-white`}>
+                    {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
+                  </span>
+                ) : null}
+              </span>
             </button>
             <button
               type="button"
@@ -798,17 +1097,20 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <MenuUserIcon className="h-[22px] w-[22px] shrink-0" width={22} height={22} aria-hidden />
-              <MobileNavTabLabel>Profile</MobileNavTabLabel>
+              <span className="mobile-nav-tab-icon relative inline-flex size-6 shrink-0 items-center justify-center" aria-hidden>
+                <MobileNavProfileIcon filled={activeView === VIEWS.PROFILE} className="h-6 w-6 shrink-0" aria-hidden />
+              </span>
             </button>
           </div>
         </nav>
 
         {mobileSecondaryNav ? (
-          <div className="border-t border-neutral-200/80 bg-white/95 py-2 dark:border-slate-700 dark:bg-slate-900/95">
+          <div className="border-t border-neutral-200/35 bg-white/90 py-2.5 dark:border-slate-700/45 dark:bg-slate-900/90">
             <div className="app-shell-content-inset">{mobileSecondaryNav}</div>
           </div>
         ) : null}
+        </div>
+        </div>
       </div>
 
       <div className="app-container hidden md:flex h-[4.25rem] items-center justify-between gap-2 md:gap-3">
@@ -826,12 +1128,12 @@ export function LoggedInHeader({
             <div
               className="flex max-w-full shrink-0 items-center gap-0.5 rounded-full p-0.5"
               role="group"
-              aria-label="Shop, cart, buying, and selling"
+              aria-label="Home, cart, purchases, and orders"
             >
               <button
                 type="button"
                 className={navPillShop(browsePillActive, "browse")}
-                aria-label="Shop"
+                aria-label="Home"
                 title="Browse listings"
                 onClick={() => {
                   setAccountMenuOpen(false);
@@ -843,7 +1145,7 @@ export function LoggedInHeader({
                 <MenuStoreIcon
                   className={`h-[18px] w-[18px] shrink-0 ${browsePillActive ? "text-primary dark:text-primary-soft" : ""}`}
                 />
-                <span className="max-w-[5.5rem] truncate md:max-w-none">Shop</span>
+                <span className="max-w-[5.5rem] truncate md:max-w-none">Home</span>
               </button>
               <button
                 type="button"
@@ -880,12 +1182,12 @@ export function LoggedInHeader({
                 className={navPillTrade(activeView === VIEWS.MY_PURCHASES, "buy")}
                 aria-label={
                   purchasesItemCount > 0
-                    ? `Buying, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
+                    ? `Purchases, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
                     : totalPurchasesCount > 0
-                      ? `Buying, ${totalPurchasesCount > 99 ? "99 plus" : totalPurchasesCount} order${totalPurchasesCount === 1 ? "" : "s"}`
-                      : "Buying — things you purchased"
+                      ? `Purchases, ${totalPurchasesCount > 99 ? "99 plus" : totalPurchasesCount} order${totalPurchasesCount === 1 ? "" : "s"}`
+                      : "Purchases — things you bought"
                 }
-                title="Things you bought — track status, pickup, and COD"
+                title="Purchases — track status, pickup, and COD"
                 onClick={() => {
                   goMyPurchases();
                   closeAllMenus();
@@ -894,9 +1196,9 @@ export function LoggedInHeader({
                 <MenuFileIcon
                   className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.MY_PURCHASES ? "text-primary dark:text-primary-soft" : ""}`}
                 />
-                <span className="max-w-[5.5rem] truncate md:max-w-none">Buying</span>
+                <span className="max-w-[5.5rem] truncate md:max-w-none">Purchases</span>
                 {purchasesItemCount > 0 ? (
-                  <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-sky-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-sky-500">
+                  <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
                     {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
                   </span>
                 ) : totalPurchasesCount > 0 ? (
@@ -910,10 +1212,10 @@ export function LoggedInHeader({
                 className={navPillTrade(activeView === VIEWS.ORDERS, "sell")}
                 aria-label={
                   ordersItemCount > 0
-                    ? `Selling, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} buyer order alerts`
+                    ? `Orders, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} buyer order alerts`
                     : totalOrdersCount > 0
-                      ? `Selling, ${totalOrdersCount > 99 ? "99 plus" : totalOrdersCount} order${totalOrdersCount === 1 ? "" : "s"}`
-                      : "Selling — orders from your buyers"
+                      ? `Orders, ${totalOrdersCount > 99 ? "99 plus" : totalOrdersCount} order${totalOrdersCount === 1 ? "" : "s"}`
+                      : "Orders — orders from your buyers"
                 }
                 title={
                   ordersItemCount > 0
@@ -930,10 +1232,10 @@ export function LoggedInHeader({
                 <MenuOrdersIcon
                   className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.ORDERS ? "text-primary dark:text-primary-soft" : ""}`}
                 />
-                <span className="max-w-[5.5rem] truncate md:max-w-none">Selling</span>
+                <span className="max-w-[5.5rem] truncate md:max-w-none">Orders</span>
                 {ordersItemCount > 0 ? (
                   <span
-                    className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-emerald-500"
+                    className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500"
                     aria-hidden
                   >
                     {ordersItemCount > 99 ? "99+" : ordersItemCount}
@@ -953,7 +1255,11 @@ export function LoggedInHeader({
             <button
               type="button"
               className={`${headerUtilityButtonBase} ${activeView === VIEWS.MESSAGES ? headerUtilityButtonActive : ""}`}
-              aria-label="Messages"
+              aria-label={
+                messagesUnreadCount > 0
+                  ? `Messages, ${messagesUnreadCount > 99 ? "99 plus" : messagesUnreadCount} unread`
+                  : "Messages"
+              }
               onClick={() => {
                 setActiveView(VIEWS.MESSAGES);
                 closeAllMenus();
@@ -963,6 +1269,11 @@ export function LoggedInHeader({
                 filled={activeView === VIEWS.MESSAGES}
                 className={activeView === VIEWS.MESSAGES ? "text-emerald-600 dark:text-emerald-300" : ""}
               />
+              {messagesUnreadCount > 0 ? (
+                <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
+                  {messagesUnreadCount > 99 ? "99+" : messagesUnreadCount}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -987,11 +1298,11 @@ export function LoggedInHeader({
               type="button"
               className={`${headerUtilityButtonBase} ${activeView === VIEWS.FAVORITES ? headerUtilityButtonActive : ""}`}
               aria-label={
-                favoriteCount > 0
-                  ? `My Favorites, ${favoriteCount > 99 ? "99 plus" : favoriteCount} saved`
+                favoritesBadgeCount > 0
+                  ? `My Favorites, ${favoritesBadgeCount > 99 ? "99 plus" : favoritesBadgeCount} new updates`
                   : "My Favorites"
               }
-              title={favoriteCount > 0 ? `${favoriteCount > 99 ? "99+" : favoriteCount} saved listings` : "Saved listings"}
+              title={favoritesBadgeCount > 0 ? `${favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount} new updates` : "Saved listings"}
               onClick={() => {
                 setActiveView(VIEWS.FAVORITES);
                 closeAllMenus();
@@ -1001,9 +1312,9 @@ export function LoggedInHeader({
                 filled={activeView === VIEWS.FAVORITES}
                 className={activeView === VIEWS.FAVORITES ? "text-emerald-600 dark:text-emerald-300" : ""}
               />
-              {favoriteCount > 0 ? (
+              {favoritesBadgeCount > 0 ? (
                 <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
-                  {favoriteCount > 99 ? "99+" : favoriteCount}
+                  {favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount}
                 </span>
               ) : null}
             </button>
@@ -1021,19 +1332,13 @@ export function LoggedInHeader({
               aria-label={activeView === VIEWS.PROFILE ? "Account menu (viewing profile)" : "Account menu"}
               onClick={openAccount}
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-soft text-xs font-bold text-brand-primary">
-                {user?.avatarUrl ? (
-                  <img
-                    src={user.avatarUrl}
-                    alt=""
-                    className="h-full w-full object-cover"
-                    decoding="async"
-                    sizes="32px"
-                  />
-                ) : (
-                  (String(user?.username || "").trim().charAt(0) || "?").toUpperCase()
-                )}
-              </span>
+              <StableAvatar
+                src={user?.avatarUrl}
+                alt=""
+                initials={(String(user?.username || "").trim().charAt(0) || "?").toUpperCase()}
+                className="h-8 w-8 shrink-0 text-xs"
+                sizes="32px"
+              />
             </button>
             {accountMenuOpen ? (
               <div
@@ -1154,7 +1459,7 @@ export function LoggedInHeader({
             id="mobile-nav-menu-panel"
             role="dialog"
             aria-modal="true"
-            aria-label="Account menu"
+            aria-label="Navigation and account menu"
             onTouchStart={onDrawerTouchStart}
             onTouchMove={onDrawerTouchMove}
             onTouchEnd={onDrawerTouchEnd}
@@ -1198,6 +1503,32 @@ export function LoggedInHeader({
                     <MenuUserIcon />
                   </span>
                   Profile
+                </button>
+                <button
+                  type="button"
+                  className={mobileSheetMenuItem}
+                  onClick={() => {
+                    setActiveView(VIEWS.ORDERS);
+                    finalizeMobileSheetClose();
+                  }}
+                >
+                  <span className={mobileDrawerIconPlain} aria-hidden>
+                    <MenuTruckIcon />
+                  </span>
+                  Courier
+                </button>
+                <button
+                  type="button"
+                  className={mobileSheetMenuItem}
+                  onClick={() => {
+                    setActiveView(VIEWS.SELLER);
+                    finalizeMobileSheetClose();
+                  }}
+                >
+                  <span className={mobileDrawerIconPlain} aria-hidden>
+                    <MenuFeedbackIcon />
+                  </span>
+                  Feedback
                 </button>
                 <button
                   type="button"

@@ -19,6 +19,8 @@ export function validatePasswordClient(password, { signup = false } = {}) {
 }
 
 export function validateConfirmPassword(password, confirm) {
-  if (String(password || "") !== String(confirm || "")) return "Passwords must match.";
+  if (String(password || "") !== String(confirm || "")) {
+    return "Re-enter the same password in both fields.";
+  }
   return "";
 }

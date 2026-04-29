@@ -1,4 +1,3 @@
-import { body, param, query } from "express-validator";
 import { AppError } from "../errors/AppError.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { uploadCommunityCoverImage } from "../lib/communityImageStorage.js";
@@ -58,6 +57,123 @@ function dedupeListingImageUrlsOrdered(urls) {
     seen.add(key);
     out.push(trimmed);
   }
+  return out;
+}
+
+const MAX_LISTING_OPTION_CHOICES = 30;
+
+function normalizeUniqueChoiceList(raw) {
+  const seen = new Set();
+  const out = [];
+  for (const x of raw || []) {
+    const s = String(x ?? "").trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+    if (out.length >= MAX_LISTING_OPTION_CHOICES) break;
+  }
+  return out;
+}
+
+function assertNoDuplicateChoicesInRequest(rawArray, fieldLabel) {
+  if (!Array.isArray(rawArray)) return;
+  const seen = new Set();
+  for (const x of rawArray) {
+    const s = String(x ?? "").trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) {
+      throw new AppError(400, `Duplicate ${fieldLabel} choice: "${s}".`);
+    }
+    seen.add(k);
+  }
+}
+
+/**
+ * Validates variant groups; trims choices; dedupes case-insensitively; max two groups via columns A/B.
+ */
+function validateListingVariantGroups(nameAIn, valsARaw, nameBIn, valsBRaw) {
+  assertNoDuplicateChoicesInRequest(valsARaw, "first variant");
+  assertNoDuplicateChoicesInRequest(valsBRaw, "second variant");
+  const valsA = normalizeUniqueChoiceList(valsARaw);
+  const valsB = normalizeUniqueChoiceList(valsBRaw);
+  const na = String(nameAIn ?? "").trim().slice(0, 120);
+  const nb = String(nameBIn ?? "").trim().slice(0, 120);
+
+  if (valsA.length > 0 && !na) {
+    throw new AppError(400, "Variant type is required when first variant choices are provided.");
+  }
+  if (valsB.length > 0 && !nb) {
+    throw new AppError(400, "Second variant type is required when second variant choices are provided.");
+  }
+  if (na && valsA.length === 0) {
+    throw new AppError(400, "Add at least one choice for the first variant, or clear the variant type.");
+  }
+  if (nb && valsB.length === 0) {
+    throw new AppError(400, "Add at least one choice for the second variant, or clear the second variant type.");
+  }
+  if (na && nb && na.toLowerCase() === nb.toLowerCase()) {
+    throw new AppError(400, "The two variant types must be different.");
+  }
+
+  return {
+    option_name_a: na,
+    option_values_a: valsA,
+    option_name_b: nb,
+    option_values_b: valsB,
+  };
+}
+
+function mergeAndValidateListingVariants(body, existing) {
+  const ex = existing || {};
+  if (Array.isArray(body?.variants)) {
+    if (body.variants.length > 2) {
+      throw new AppError(400, "At most two variant groups are allowed.");
+    }
+    const g0 = body.variants[0];
+    const g1 = body.variants[1];
+    const nameA = g0 && typeof g0 === "object" && g0.type != null ? String(g0.type).trim().slice(0, 120) : "";
+    const nameB = g1 && typeof g1 === "object" && g1.type != null ? String(g1.type).trim().slice(0, 120) : "";
+    const valsA = g0 && Array.isArray(g0.choices) ? g0.choices : [];
+    const valsB = g1 && Array.isArray(g1.choices) ? g1.choices : [];
+    return validateListingVariantGroups(nameA, valsA, nameB, valsB);
+  }
+
+  const nameA =
+    body.optionNameA !== undefined
+      ? String(body.optionNameA).trim().slice(0, 120)
+      : String(ex.option_name_a ?? "").trim();
+  const nameB =
+    body.optionNameB !== undefined
+      ? String(body.optionNameB).trim().slice(0, 120)
+      : String(ex.option_name_b ?? "").trim();
+  /** Raw request arrays reject duplicates; existing DB rows are pre-deduped so PATCH metadata-only updates stay compatible with legacy data. */
+  const valsA =
+    body.optionValuesA !== undefined
+      ? Array.isArray(body.optionValuesA)
+        ? body.optionValuesA
+        : []
+      : normalizeUniqueChoiceList(Array.isArray(ex.option_values_a) ? ex.option_values_a : []);
+  const valsB =
+    body.optionValuesB !== undefined
+      ? Array.isArray(body.optionValuesB)
+        ? body.optionValuesB
+        : []
+      : normalizeUniqueChoiceList(Array.isArray(ex.option_values_b) ? ex.option_values_b : []);
+
+  return validateListingVariantGroups(nameA, valsA, nameB, valsB);
+}
+
+function buildVariantsArrayFromRow(row) {
+  const out = [];
+  const na = String(row?.option_name_a ?? "").trim();
+  const va = Array.isArray(row?.option_values_a) ? normalizeUniqueChoiceList(row.option_values_a) : [];
+  if (na && va.length) out.push({ type: na, choices: va });
+  const nb = String(row?.option_name_b ?? "").trim();
+  const vb = Array.isArray(row?.option_values_b) ? normalizeUniqueChoiceList(row.option_values_b) : [];
+  if (nb && vb.length) out.push({ type: nb, choices: vb });
   return out;
 }
 
@@ -173,6 +289,16 @@ const LISTINGS_OPTIONAL_PRODUCT_COLUMNS = [
   "order_type",
   "processing_time",
 ];
+const CART_LISTING_REQUIRED_SELECT =
+  "id,seller_id,title,description,image_url,price_cents,quantity,status,fulfillment_modes";
+const CART_LISTING_OPTIONAL_COLUMNS = [
+  "order_type",
+  "processing_time",
+  "option_name_a",
+  "option_values_a",
+  "option_name_b",
+  "option_values_b",
+];
 const firstRow = (data) => (Array.isArray(data) && data.length > 0 ? data[0] : null);
 
 /** Last three comma-separated segments of `address`: city, province, postal (Express create format). */
@@ -218,6 +344,7 @@ const listingRowToApi = (row) => ({
   optionValuesA: Array.isArray(row.option_values_a) ? row.option_values_a.map(String) : [],
   optionNameB: String(row.option_name_b ?? "").trim(),
   optionValuesB: Array.isArray(row.option_values_b) ? row.option_values_b.map(String) : [],
+  variants: buildVariantsArrayFromRow(row),
   orderType: String(row.order_type ?? "in_stock").trim() || "in_stock",
   processingTime: String(row.processing_time ?? "").trim(),
   communityId: row.community_id ?? null,
@@ -267,7 +394,19 @@ const buyerReviewRowToApi = (row) => {
   };
 };
 
-const orderRowToApi = (row, reviewRow = null) => ({
+/** Snapshot fields from `listings` row (snake_case) for order responses — keeps thumbnails working without extra client fetches. */
+function orderListingSnapshotFromDbRow(row) {
+  if (!row) return { listingTitle: null, listingImageUrl: "", listingImageUrls: [] };
+  const imageUrls = Array.isArray(row.image_urls) ? row.image_urls.map(String) : [];
+  const primary = String(row.image_url || "").trim() || String(imageUrls[0] || "").trim();
+  return {
+    listingTitle: String(row.title || "").trim() || null,
+    listingImageUrl: primary,
+    listingImageUrls: imageUrls.length ? imageUrls : primary ? [primary] : [],
+  };
+}
+
+const orderRowToApi = (row, reviewRow = null, listingMeta = null) => ({
   id: row.id,
   listingId: row.listing_id,
   buyerId: row.buyer_id,
@@ -286,6 +425,7 @@ const orderRowToApi = (row, reviewRow = null) => ({
   cancelledAt: row.cancelled_at ?? null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
+  ...orderListingSnapshotFromDbRow(listingMeta),
 });
 
 const bidRowToApi = (row) => ({
@@ -321,41 +461,46 @@ const communityRowToApi = (row, memberCount) => {
   };
 };
 
-/** Members are users whose profile `community_id` matches the community UUID. */
+/** Members are users whose profile `community_id` matches the community UUID. Uses grouped SQL via RPC for scale. */
 async function loadProfileMemberCountsByCommunity() {
-  const { data, error } = await supabaseAdmin.from("profiles").select("id,community_id");
-  if (error) {
-    const counts = new Map();
-    try {
-      const authList = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-      const users = authList?.data?.users || [];
-      const uniqueMembersByCommunity = new Map();
-      for (const user of users) {
-        const userId = String(user?.id || "").trim();
-        const communityId = String(user?.user_metadata?.community_id || "").trim();
-        if (!userId || !communityId) continue;
-        if (!uniqueMembersByCommunity.has(communityId)) uniqueMembersByCommunity.set(communityId, new Set());
-        uniqueMembersByCommunity.get(communityId).add(userId);
-      }
-      for (const [communityId, members] of uniqueMembersByCommunity.entries()) {
-        counts.set(communityId, members.size);
-      }
-    } catch {
-      // Ignore fallback failures and return empty counts.
-    }
-    return counts;
-  }
-  const uniqueMembersByCommunity = new Map();
-  for (const row of data || []) {
-    const userId = String(row?.id || "").trim();
-    const communityId = String(row?.community_id || "").trim();
-    if (!userId || !communityId) continue;
-    if (!uniqueMembersByCommunity.has(communityId)) uniqueMembersByCommunity.set(communityId, new Set());
-    uniqueMembersByCommunity.get(communityId).add(userId);
-  }
+  const { data, error } = await supabaseAdmin.rpc("community_member_counts");
   const counts = new Map();
-  for (const [communityId, members] of uniqueMembersByCommunity.entries()) {
-    counts.set(communityId, members.size);
+  if (!error) {
+    for (const row of data || []) {
+      const communityId = String(row?.community_id || "").trim();
+      const memberCount = Number(row?.member_count);
+      if (!communityId || !Number.isFinite(memberCount)) continue;
+      counts.set(communityId, Math.max(0, memberCount));
+    }
+  }
+
+  // Backward compatibility: include profiles that still have only text `community`
+  // and no `community_id` yet. This prevents undercounting during migration.
+  try {
+    const [{ data: communityRows, error: communitiesError }, { data: profileRows, error: profilesError }] = await Promise.all([
+      supabaseAdmin.from("communities").select("id,name"),
+      supabaseAdmin.from("profiles").select("community,community_id"),
+    ]);
+    if (communitiesError || profilesError) return counts;
+
+    const communityIdByName = new Map();
+    for (const row of communityRows || []) {
+      const id = String(row?.id || "").trim();
+      const key = String(row?.name || "").trim().toLowerCase();
+      if (!id || !key || communityIdByName.has(key)) continue;
+      communityIdByName.set(key, id);
+    }
+
+    for (const row of profileRows || []) {
+      if (row?.community_id) continue;
+      const key = String(row?.community || "").trim().toLowerCase();
+      if (!key) continue;
+      const resolvedCommunityId = communityIdByName.get(key);
+      if (!resolvedCommunityId) continue;
+      counts.set(resolvedCommunityId, (counts.get(resolvedCommunityId) ?? 0) + 1);
+    }
+  } catch {
+    // Keep primary RPC counts even if fallback merge fails.
   }
   return counts;
 }
@@ -398,81 +543,66 @@ const communityPublicToApi = (row, memberCount) => {
   };
 };
 
-/** Haversine km between two WGS84 points */
-function distanceKm(lat1, lng1, lat2, lng2) {
-  if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) return null;
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
+const DEFAULT_LISTINGS_LIMIT = 24;
+const MAX_LISTINGS_LIMIT = 60;
+const DEFAULT_ORDERS_LIMIT = 40;
+const MAX_ORDERS_LIMIT = 100;
 
-export const listingsValidators = {
-  list: [
-    query("categories").optional().isString(),
-    query("verticalId").optional().isString(),
-    query("subId").optional().isString(),
-    query("communityId").optional().isUUID(),
-    query("lat").optional().isFloat(),
-    query("lng").optional().isFloat(),
-    query("radiusKm").optional().isFloat({ min: 0.5, max: 500 }),
-  ],
-  create: [
-    body("title").isString().trim().isLength({ min: 2, max: 200 }),
-    body("description").optional().isString().isLength({ max: 8000 }),
-    body("priceCents").isInt({ min: 0 }),
-    body("quantity").isInt({ min: 0 }),
-    body("categories").optional().isString().trim().notEmpty().isLength({ min: 1, max: 32 }),
-    body("verticalId").optional().isString().trim().notEmpty().isLength({ min: 1, max: 32 }),
-    body().custom((_, { req }) => {
-      const categories = String(req.body?.categories ?? "").trim();
-      const verticalId = String(req.body?.verticalId ?? "").trim();
-      if (!categories && !verticalId) throw new Error("Categories is required.");
-      return true;
-    }),
-    body("subId").optional({ values: "null" }).isString().trim(),
-    body("fulfillmentModes").optional().isArray(),
-    body("cityLabel").optional().isString().trim(),
-    body("lat").optional().isFloat(),
-    body("lng").optional().isFloat(),
-    body("imageUrl").optional().isString(),
-    body("imageUrls").optional().isArray(),
-    body("optionNameA").optional().isString().isLength({ max: 120 }),
-    body("optionValuesA").optional().isArray(),
-    body("optionNameB").optional().isString().isLength({ max: 120 }),
-    body("optionValuesB").optional().isArray(),
-    body("orderType").optional().isIn(["in_stock", "pre_order"]),
-    body("processingTime").optional().isString().isLength({ max: 120 }),
-  ],
-  idParam: [param("id").isUUID()],
-};
+function parsePositiveInt(value, fallback, maxCap) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const whole = Math.floor(n);
+  if (whole < 1) return fallback;
+  return Math.min(maxCap, whole);
+}
 
 export const listListings = async (req, res, next) => {
   try {
-    const { categories, verticalId, subId, communityId, lat, lng, radiusKm } = req.query;
-    let q = supabaseAdmin.from("listings").select("*").eq("status", "active").order("created_at", { ascending: false });
+    const { categories, verticalId, subId, communityId, lat, lng, radiusKm, q: textQuery, limit, offset } = req.query;
+    const pageLimit = parsePositiveInt(limit, DEFAULT_LISTINGS_LIMIT, MAX_LISTINGS_LIMIT);
+    const pageOffset = Math.max(0, Math.floor(Number(offset) || 0));
+    let q = supabaseAdmin
+      .from("listings")
+      .select("*")
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .range(pageOffset, pageOffset + pageLimit - 1);
     const categoryFilter = String(categories || verticalId || "").trim();
     if (categoryFilter) q = q.eq("vertical_id", categoryFilter);
     if (subId && subId !== "all") q = q.eq("sub_id", String(subId));
     if (communityId) q = q.eq("community_id", String(communityId));
-    const { data, error } = await q;
-    if (error?.code === "PGRST205") return res.json({ listings: [] });
-    if (error) throw new AppError(500, error.message);
-    let rows = data || [];
+    const search = String(textQuery || "").trim();
+    if (search) {
+      const escaped = search.replace(/[%_,]/g, "\\$&");
+      q = q.or(`title.ilike.%${escaped}%,description.ilike.%${escaped}%`);
+    }
     const latN = lat != null ? Number(lat) : null;
     const lngN = lng != null ? Number(lng) : null;
     const r = radiusKm != null ? Number(radiusKm) : null;
-    if (latN != null && lngN != null && r != null && Number.isFinite(r)) {
-      rows = rows.filter((row) => {
-        const d = distanceKm(latN, lngN, row.lat, row.lng);
-        return d == null || d <= r;
-      });
+    if (latN != null && lngN != null && r != null && Number.isFinite(r) && r > 0) {
+      const latDelta = r / 111.32;
+      const safeLatCos = Math.max(0.01, Math.abs(Math.cos((latN * Math.PI) / 180)));
+      const lngDelta = r / (111.32 * safeLatCos);
+      q = q
+        .gte("lat", latN - latDelta)
+        .lte("lat", latN + latDelta)
+        .gte("lng", lngN - lngDelta)
+        .lte("lng", lngN + lngDelta);
     }
+    const { data, error } = await q;
+    if (error?.code === "PGRST205") return res.json({ listings: [] });
+    if (error) throw new AppError(500, error.message);
+    const rows = data || [];
     const listings = await enrichListingsWithSellerProfile(rows);
-    res.json({ listings });
+    res.json({
+      listings,
+      page: {
+        limit: pageLimit,
+        offset: pageOffset,
+        returned: listings.length,
+        hasMore: listings.length === pageLimit,
+      },
+    });
   } catch (e) {
     next(e);
   }
@@ -507,23 +637,17 @@ export const createListing = async (req, res, next) => {
     const primaryFromBody = String(req.body.imageUrl ?? "").trim();
     const imageUrls = dedupeListingImageUrlsOrdered(primaryFromBody ? [primaryFromBody, ...rawImageUrls] : rawImageUrls).slice(0, 6);
     const imageUrl = imageUrls[0] || "";
-    const optionValuesA = Array.isArray(req.body.optionValuesA)
-      ? req.body.optionValuesA.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 30)
-      : [];
-    const optionValuesB = Array.isArray(req.body.optionValuesB)
-      ? req.body.optionValuesB.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 30)
-      : [];
     const orderType = String(req.body.orderType || "in_stock").trim() === "pre_order" ? "pre_order" : "in_stock";
     const processingTime = String(req.body.processingTime ?? "").trim().slice(0, 120);
     if (orderType === "pre_order" && !processingTime) {
       throw new AppError(400, "Processing time is required for pre-order listings.");
     }
-    if (optionValuesA.length > 0 && !String(req.body.optionNameA ?? "").trim()) {
-      throw new AppError(400, "Variant type is required when first variant choices are provided.");
-    }
-    if (optionValuesB.length > 0 && !String(req.body.optionNameB ?? "").trim()) {
-      throw new AppError(400, "Second variant type is required when second variant choices are provided.");
-    }
+    const mergedVariants = mergeAndValidateListingVariants(req.body, {
+      option_name_a: "",
+      option_name_b: "",
+      option_values_a: [],
+      option_values_b: [],
+    });
     const row = {
       seller_id: req.user.id,
       title: String(req.body.title).trim(),
@@ -538,10 +662,10 @@ export const createListing = async (req, res, next) => {
       lng: req.body.lng != null ? Number(req.body.lng) : null,
       image_url: imageUrl,
       image_urls: imageUrls.length ? imageUrls : imageUrl ? [imageUrl] : [],
-      option_name_a: String(req.body.optionNameA ?? "").trim().slice(0, 120),
-      option_values_a: optionValuesA,
-      option_name_b: String(req.body.optionNameB ?? "").trim().slice(0, 120),
-      option_values_b: optionValuesB,
+      option_name_a: mergedVariants.option_name_a,
+      option_values_a: mergedVariants.option_values_a,
+      option_name_b: mergedVariants.option_name_b,
+      option_values_b: mergedVariants.option_values_b,
       order_type: orderType,
       processing_time: processingTime,
       // Keep insert compatible with DB constraint: active|paused|sold.
@@ -617,43 +741,18 @@ export const updateListing = async (req, res, next) => {
     } else if (req.body.imageUrl != null) {
       patch.image_url = String(req.body.imageUrl).trim();
     }
-    if (req.body.optionNameA != null) patch.option_name_a = String(req.body.optionNameA).trim().slice(0, 120);
-    if (req.body.optionValuesA != null) {
-      patch.option_values_a = Array.isArray(req.body.optionValuesA)
-        ? req.body.optionValuesA.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 30)
-        : [];
-    }
-    if (req.body.optionNameB != null) patch.option_name_b = String(req.body.optionNameB).trim().slice(0, 120);
-    if (req.body.optionValuesB != null) {
-      patch.option_values_b = Array.isArray(req.body.optionValuesB)
-        ? req.body.optionValuesB.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 30)
-        : [];
-    }
     if (req.body.orderType != null) patch.order_type = String(req.body.orderType) === "pre_order" ? "pre_order" : "in_stock";
     if (req.body.processingTime != null) patch.processing_time = String(req.body.processingTime).trim().slice(0, 120);
     const effectiveOrderType = String(patch.order_type ?? existing.order_type ?? "in_stock");
     const effectiveProcessingTime = String(patch.processing_time ?? existing.processing_time ?? "").trim();
-    const effectiveOptionNameA = String(patch.option_name_a ?? existing.option_name_a ?? "").trim();
-    const effectiveOptionNameB = String(patch.option_name_b ?? existing.option_name_b ?? "").trim();
-    const effectiveOptionValuesA = Array.isArray(patch.option_values_a)
-      ? patch.option_values_a
-      : Array.isArray(existing.option_values_a)
-        ? existing.option_values_a
-        : [];
-    const effectiveOptionValuesB = Array.isArray(patch.option_values_b)
-      ? patch.option_values_b
-      : Array.isArray(existing.option_values_b)
-        ? existing.option_values_b
-        : [];
     if (effectiveOrderType === "pre_order" && !effectiveProcessingTime) {
       throw new AppError(400, "Processing time is required for pre-order listings.");
     }
-    if (effectiveOptionValuesA.length > 0 && !effectiveOptionNameA) {
-      throw new AppError(400, "Variant type is required when first variant choices are provided.");
-    }
-    if (effectiveOptionValuesB.length > 0 && !effectiveOptionNameB) {
-      throw new AppError(400, "Second variant type is required when second variant choices are provided.");
-    }
+    const mergedVariants = mergeAndValidateListingVariants(req.body, existing);
+    patch.option_name_a = mergedVariants.option_name_a;
+    patch.option_values_a = mergedVariants.option_values_a;
+    patch.option_name_b = mergedVariants.option_name_b;
+    patch.option_values_b = mergedVariants.option_values_b;
     if (req.body.communityId !== undefined) {
       if (req.body.communityId == null || req.body.communityId === "") {
         patch.community_id = null;
@@ -771,10 +870,18 @@ export const removeFavorite = async (req, res, next) => {
 async function enrichCartRowsForApi(rows) {
   if (!rows?.length) return [];
   const listingIds = [...new Set(rows.map((r) => String(r.listing_id)))];
-  const { data: listings, error: lerr } = await supabaseAdmin
+  const fullSelect = `${CART_LISTING_REQUIRED_SELECT},${CART_LISTING_OPTIONAL_COLUMNS.join(",")}`;
+  let { data: listings, error: lerr } = await supabaseAdmin
     .from("listings")
-    .select("id,seller_id,title,description,image_url,price_cents,quantity,status,fulfillment_modes")
+    .select(fullSelect)
     .in("id", listingIds);
+  if (lerr && (lerr.code === "PGRST204" || lerr.code === "42703" || /schema cache|does not exist/i.test(String(lerr.message || "")))) {
+    // Backward compatibility: cart should still work on DBs that don't have newer listing product columns yet.
+    ({ data: listings, error: lerr } = await supabaseAdmin
+      .from("listings")
+      .select(CART_LISTING_REQUIRED_SELECT)
+      .in("id", listingIds));
+  }
   if (lerr) throw new AppError(500, lerr.message);
   const listingById = new Map((listings || []).map((l) => [String(l.id), l]));
   const sellerIds = [...new Set((listings || []).map((l) => String(l.seller_id)).filter(Boolean))];
@@ -790,6 +897,7 @@ async function enrichCartRowsForApi(rows) {
     const sid = String(listing.seller_id);
     const un = usernameById.get(sid);
     const sellerLabel = un ? `@${un}` : sid ? `Seller ${sid.slice(0, 8)}` : "Unknown seller";
+    const meta = listingRowToApi(listing);
     out.push({
       listingId: String(row.listing_id),
       sellerId: sid,
@@ -802,6 +910,12 @@ async function enrichCartRowsForApi(rows) {
       listingQuantity: Math.max(0, Number(listing.quantity) || 0),
       fulfillmentModes: Array.isArray(listing.fulfillment_modes) ? listing.fulfillment_modes.map(String) : [],
       comment: String(row.comment || "").trim(),
+      orderType: meta.orderType,
+      processingTime: meta.processingTime,
+      optionNameA: meta.optionNameA,
+      optionValuesA: meta.optionValuesA,
+      optionNameB: meta.optionNameB,
+      optionValuesB: meta.optionValuesB,
     });
   }
   return out;
@@ -1009,7 +1123,7 @@ export const createOrder = async (req, res, next) => {
       preferredId: preferredRowId || null,
     });
     if (!finalized) throw new AppError(500, "Could not finalize order.");
-    res.status(201).json({ order: orderRowToApi(finalized) });
+    res.status(201).json({ order: orderRowToApi(finalized, null, listing) });
   } catch (e) {
     next(e);
   }
@@ -1069,7 +1183,13 @@ const consolidateBuyerListingStatusOrders = async ({ buyerId, listingId, status,
 export const listOrders = async (req, res, next) => {
   try {
     const role = String(req.query.role || "buyer");
-    let q = supabaseAdmin.from("orders").select("*").order("created_at", { ascending: false });
+    const pageLimit = parsePositiveInt(req.query.limit, DEFAULT_ORDERS_LIMIT, MAX_ORDERS_LIMIT);
+    const pageOffset = Math.max(0, Math.floor(Number(req.query.offset) || 0));
+    let q = supabaseAdmin
+      .from("orders")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .range(pageOffset, pageOffset + pageLimit - 1);
     if (role === "seller") q = q.eq("seller_id", req.user.id);
     else q = q.eq("buyer_id", req.user.id);
     const { data, error } = await q;
@@ -1086,7 +1206,30 @@ export const listOrders = async (req, res, next) => {
         }
       }
     }
-    res.json({ orders: rows.map((row) => orderRowToApi(row, reviewByOrderId.get(row.id) || null)) });
+    const listingIds = [...new Set(rows.map((r) => String(r?.listing_id || "")).filter(Boolean))];
+    const listingById = new Map();
+    if (listingIds.length > 0) {
+      const { data: listings, error: lerr } = await supabaseAdmin
+        .from("listings")
+        .select("id, title, image_url, image_urls")
+        .in("id", listingIds);
+      if (!lerr && Array.isArray(listings)) {
+        for (const L of listings) {
+          if (L?.id) listingById.set(String(L.id), L);
+        }
+      }
+    }
+    res.json({
+      orders: rows.map((row) =>
+        orderRowToApi(row, reviewByOrderId.get(row.id) || null, listingById.get(String(row.listing_id)) || null),
+      ),
+      page: {
+        limit: pageLimit,
+        offset: pageOffset,
+        returned: rows.length,
+        hasMore: rows.length === pageLimit,
+      },
+    });
   } catch (e) {
     next(e);
   }
@@ -1531,6 +1674,8 @@ export const listSellerBuyerFeedback = async (req, res, next) => {
 
 export const listUsersDirectory = async (req, res, next) => {
   try {
+    const pageLimit = parsePositiveInt(req.query.limit, 200, 300);
+    const pageOffset = Math.max(0, Math.floor(Number(req.query.offset) || 0));
     let data = null;
     let error = null;
     const { data: communityRows, error: communitiesErr } = await supabaseAdmin.from("communities").select("*");
@@ -1539,13 +1684,13 @@ export const listUsersDirectory = async (req, res, next) => {
       .from("profiles")
       .select("id, username, first_name, middle_name, last_name, address, community, created_at")
       .order("username", { ascending: true })
-      .limit(200));
+      .range(pageOffset, pageOffset + pageLimit - 1));
     if (error && (error.code === "PGRST204" || /community/i.test(String(error.message || "")))) {
       ({ data, error } = await supabaseAdmin
         .from("profiles")
         .select("id, username, first_name, middle_name, last_name, address, created_at")
         .order("username", { ascending: true })
-        .limit(200));
+        .range(pageOffset, pageOffset + pageLimit - 1));
     }
     if (error) throw new AppError(500, error.message);
     const mergedById = new Map();
@@ -1562,30 +1707,6 @@ export const listUsersDirectory = async (req, res, next) => {
         community: String(p?.community || "").trim(),
         joinedAt: p?.created_at || null,
       });
-    }
-
-    // Some users only have community saved in auth metadata; merge as fallback.
-    try {
-      const authList = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-      const authUsers = authList?.data?.users || [];
-      for (const authUser of authUsers) {
-        const id = String(authUser?.id || "").trim();
-        if (!id) continue;
-        const meta = authUser?.user_metadata || {};
-        const existing = mergedById.get(id);
-        mergedById.set(id, {
-          id,
-          username: String(existing?.username || meta.username || authUser?.email || "").trim(),
-          firstName: String(existing?.firstName || meta.first_name || meta.firstName || "").trim(),
-          middleName: String(existing?.middleName || meta.middle_name || meta.middleName || "").trim(),
-          lastName: String(existing?.lastName || meta.last_name || meta.lastName || "").trim(),
-          address: String(existing?.address || meta.address || "").trim(),
-          community: String(existing?.community || meta.community || "").trim(),
-          joinedAt: existing?.joinedAt || authUser?.created_at || null,
-        });
-      }
-    } catch {
-      // Keep directory usable even when auth list is unavailable.
     }
 
     const inferCommunityFromAddress = (address) => {
@@ -1639,8 +1760,16 @@ export const listUsersDirectory = async (req, res, next) => {
           sensitivity: "base",
         }),
       )
-      .slice(0, 200);
-    res.json({ users: rows });
+      .slice(0, pageLimit);
+    res.json({
+      users: rows,
+      page: {
+        limit: pageLimit,
+        offset: pageOffset,
+        returned: rows.length,
+        hasMore: rows.length === pageLimit,
+      },
+    });
   } catch (e) {
     next(e);
   }
