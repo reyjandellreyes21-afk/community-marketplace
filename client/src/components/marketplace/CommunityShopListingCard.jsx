@@ -97,10 +97,8 @@ export function CommunityShopListingCard({
     };
   }, [ownerMenuOpen]);
 
-  /** Heart on the photo: compact grid, or mobile tap-image-for-details (same stack as image inspect button — z-10 vs z-0). Otherwise beside title. */
-  const favoriteOverlayOnImage = Boolean(
-    !isOwner && showFavoriteIcon && ((gridMode && compactGrid) || imageOpensInspect),
-  );
+  /** Keep favorite action inline with title; no image overlay button. */
+  const favoriteOverlayOnImage = false;
 
   /** Overlay favorite (compact grid): scales with thumbnail width. */
   const favoriteFabPosition = "right-[clamp(0.3rem,3.5%,0.65rem)] top-[clamp(0.3rem,3.5%,0.65rem)]";
@@ -131,7 +129,7 @@ export function CommunityShopListingCard({
     </svg>
   );
 
-  const showFavoriteUi = Boolean(!isOwner && showFavoriteIcon);
+  const showFavoriteUi = false;
 
   const favoriteTitleEnd =
     showFavoriteUi && !favoriteOverlayOnImage ? (
@@ -158,6 +156,7 @@ export function CommunityShopListingCard({
 
   return (
     <div
+      id={listing?.id ? `listing-card-${String(listing.id)}` : undefined}
       className={`lm-card group relative transition duration-200 ease-in-out ${
         gridMode ? "lm-grid-card lm-product-card-grid" : "lm-list-card lm-product-card-list"
       } ${useFeedLayout ? "lm-product-card lm-product-card--feed" : ""} ${pad} ${gridMode ? "flex h-full min-h-0 flex-col" : ""}`}
@@ -231,12 +230,13 @@ export function CommunityShopListingCard({
                 ? `flex min-h-0 flex-col ${compactGrid ? "gap-1" : "gap-2"}`
                 : mobileUx
                   ? "flex w-full min-w-0 flex-col gap-1.5 min-[400px]:min-w-0 min-[400px]:flex-1"
-                  : "space-y-1"
+                  : "flex h-32 min-w-0 flex-col justify-between overflow-hidden"
           }`}
         >
           <MarketplaceProductDetailStack
             variant="card"
             browseStackMode={mobileUx ? (gridMode ? "gridMobile" : "listMobile") : null}
+            compactListMeta={isListMode}
             title={listing.title || "Untitled product"}
             titleEnd={favoriteTitleEnd}
             priceCents={listing.priceCents}
@@ -251,9 +251,21 @@ export function CommunityShopListingCard({
             optionValuesB={listing.optionValuesB}
             quantityRow={
               <div className="min-w-0">
-                <p className="product-meta-label">Stock</p>
-                <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                  <p className="product-meta-value">{mobileUx && gridMode ? `Stock: ${stockQty}` : stockQty}</p>
+                {isListMode ? null : <p className="product-meta-label">Stock</p>}
+                <div className={`${isListMode ? "" : "mt-0.5"} flex flex-wrap items-center gap-2`}>
+                  <p className={isListMode ? "text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300" : "product-meta-value"}>
+                    {isListMode ? (
+                      <>
+                        <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">Stock</span>
+                        <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
+                        <span className="tabular-nums font-semibold text-text-primary dark:text-slate-100">{stockQty}</span>
+                      </>
+                    ) : mobileUx && gridMode ? (
+                      `Stock: ${stockQty}`
+                    ) : (
+                      stockQty
+                    )}
+                  </p>
                   {isOutOfStock ? (
                     <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-600 min-[380px]:text-xs dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
                       Out of stock
@@ -262,7 +274,7 @@ export function CommunityShopListingCard({
                 </div>
               </div>
             }
-            hideDescription={Boolean(gridMode && (compactGrid || browseSummaryGrid))}
+            hideDescription={Boolean(isListMode || (gridMode && (compactGrid || browseSummaryGrid)))}
           />
           {useFeedLayout && listing.cityLabel ? (
             <div className="lm-product-card-badge-row">

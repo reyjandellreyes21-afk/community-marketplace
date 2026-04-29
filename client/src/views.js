@@ -3,6 +3,8 @@ export const VIEWS = {
   BROWSE: "browse",
   /** Same listing grid as browse, scoped to one community — own “screen” like Orders vs Marketplace. */
   COMMUNITY_SHOP: "community_shop",
+  /** Full-screen product details view (opened from listing cards). */
+  PRODUCT_DETAIL: "product_detail",
   MESSAGES: "messages",
   NOTIFICATIONS: "notifications",
   /** Saved listings and sellers — UI placeholder until favorites API exists. */

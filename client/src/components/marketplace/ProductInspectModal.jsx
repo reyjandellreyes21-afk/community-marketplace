@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   formatPesoWhole,
   normalizeListingOptionValues,
+  parseSaleMetaFromDescription,
   removeSaleMetaLines,
   SALE_PERCENT_OPTIONS,
 } from "../../lib/listingSaleMeta.js";
@@ -34,6 +35,7 @@ function dedupeListingGalleryUrls(primary, extraUrls) {
  */
 export function ProductInspectModal({
   open,
+  fullScreen = false,
   onClose,
   title,
   imageUrl = "",
@@ -70,6 +72,8 @@ export function ProductInspectModal({
   optionValuesB,
   /** From `getListingCategoryShortLabel(verticalId, subId)` — same as upload category. */
   categoryLabel = "",
+  isFavorite = false,
+  onToggleFavorite,
 }) {
   const [salePickerOpen, setSalePickerOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
@@ -81,6 +85,9 @@ export function ProductInspectModal({
     [imageUrl, imageUrls]
   );
   const displayImageUrl = galleryUrls[galleryThumbIdx] || galleryUrls[0] || "";
+  const saleMeta = parseSaleMetaFromDescription(description);
+  const currentPesos = Math.floor((Number(priceCents) || 0) / 100);
+  const originalPesos = Number.isFinite(Number(saleMeta?.originalPesos)) ? Number(saleMeta.originalPesos) : null;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -152,20 +159,30 @@ export function ProductInspectModal({
 
   return (
     <div
-      className="fixed inset-0 z-[95] flex items-end justify-center p-0 md:items-center md:p-4"
-      role="dialog"
-      aria-modal="true"
+      className={
+        fullScreen
+          ? "w-full"
+          : "fixed inset-0 z-[95] flex items-end justify-center p-0 md:items-center md:p-4"
+      }
+      role={fullScreen ? "region" : "dialog"}
+      aria-modal={fullScreen ? undefined : "true"}
       aria-labelledby="product-inspect-title"
       aria-describedby={showActionFooter ? "product-inspect-dismiss-hint" : undefined}
     >
-      <button
-        type="button"
-        className="absolute inset-0 bg-neutral-900/50 backdrop-blur-[2px] dark:bg-black/55"
-        aria-label="Close product details"
-        onClick={onClose}
-      />
+      {!fullScreen ? (
+        <button
+          type="button"
+          className="absolute inset-0 bg-neutral-900/50 backdrop-blur-[2px] dark:bg-black/55"
+          aria-label="Close product details"
+          onClick={onClose}
+        />
+      ) : null}
       <div
-        className={`relative z-10 flex max-h-[min(88dvh,42rem)] w-full max-w-lg flex-col rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-[#1f3c56] dark:bg-[#0f2234] md:max-h-[min(90dvh,44rem)] md:rounded-2xl md:shadow-[0_20px_60px_rgba(15,23,42,0.22)] ${UI_KIT.surfaceFloating}`}
+        className={`relative z-10 flex w-full flex-col ${
+          fullScreen
+            ? "mx-auto min-h-[calc(100dvh-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] max-w-screen-lg rounded-none border-0 bg-white shadow-none dark:bg-slate-950"
+            : "max-h-[min(88dvh,42rem)] max-w-lg rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-[#1f3c56] dark:bg-[#0f2234] md:max-h-[min(90dvh,44rem)] md:rounded-2xl md:shadow-[0_20px_60px_rgba(15,23,42,0.22)]"
+        } ${UI_KIT.surfaceFloating}`}
         onClick={(e) => e.stopPropagation()}
       >
         {imagePreviewOpen && String(displayImageUrl || "").trim() ? (
@@ -215,11 +232,11 @@ export function ProductInspectModal({
             To dismiss without choosing an action, use the close control in the header, press Escape, or activate the dimmed area behind this dialog.
           </p>
         ) : null}
-        <div className="flex min-w-0 shrink-0 items-start justify-between gap-3 border-b border-neutral-200/80 px-4 pb-2.5 pt-3 dark:border-[#1f3c56]/85 md:px-5 md:pb-3 md:pt-4">
+        <div className="flex min-w-0 shrink-0 items-start justify-between gap-2.5 border-b border-neutral-200/80 px-3 pb-2 pt-2.5 min-[390px]:gap-3 min-[390px]:px-4 min-[390px]:pb-2.5 min-[390px]:pt-3 min-[430px]:px-5 dark:border-[#1f3c56]/85 md:px-5 md:pb-3 md:pt-4">
           <div className="min-w-0 flex-1 pr-2">
             <h2
               id="product-inspect-title"
-              className="break-words text-pretty text-base font-semibold leading-snug text-neutral-900 dark:text-slate-100 md:text-lg"
+              className="break-words text-pretty text-[15px] font-semibold leading-snug text-neutral-900 min-[390px]:text-base dark:text-slate-100 md:text-lg"
             >
               {title || "Product"}
             </h2>
@@ -227,26 +244,43 @@ export function ProductInspectModal({
               <p className="mt-0.5 line-clamp-2 break-words text-xs text-neutral-500 dark:text-slate-400">{subtitle}</p>
             ) : null}
           </div>
-          <button
-            type="button"
-            className="btn-icon-only inline-flex shrink-0 items-center justify-center rounded-xl border border-neutral-200/90 text-lg leading-none text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100 md:!h-9 md:!min-h-9 md:!w-9 md:!max-w-9"
-            aria-label={showActionFooter ? "Close product details" : "Close product details"}
-            onClick={onClose}
-          >
-            <span aria-hidden>×</span>
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {typeof onToggleFavorite === "function" ? (
+              <button
+                type="button"
+                className={`btn-icon-only inline-flex items-center justify-center rounded-xl border text-lg leading-none transition md:!h-9 md:!min-h-9 md:!w-9 md:!max-w-9 ${
+                  isFavorite
+                    ? "border-rose-200/90 bg-rose-50 text-rose-600 hover:border-rose-300 hover:bg-rose-100 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:border-rose-400/60 dark:hover:bg-rose-500/20"
+                    : "border-neutral-200/90 text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                }`}
+                aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                onClick={() => onToggleFavorite()}
+              >
+                <span aria-hidden>{isFavorite ? "♥" : "♡"}</span>
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn-icon-only inline-flex shrink-0 items-center justify-center rounded-xl border border-neutral-200/90 text-lg leading-none text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100 md:!h-9 md:!min-h-9 md:!w-9 md:!max-w-9"
+              aria-label={showActionFooter ? "Close product details" : "Close product details"}
+              onClick={onClose}
+            >
+              <span aria-hidden>×</span>
+            </button>
+          </div>
         </div>
 
-        <div className="drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-3 md:px-5 md:py-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-start md:gap-4">
-            <div className="mx-auto flex w-full max-w-[12.5rem] shrink-0 flex-col md:mx-0 md:max-w-none">
-              <div className="relative mx-auto aspect-square w-full max-w-[12.5rem] shrink-0 md:mx-0 md:h-36 md:w-36 md:max-w-none md:aspect-auto">
+        <div className={`drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-2.5 min-[390px]:px-4 min-[390px]:py-3 min-[430px]:px-5 md:px-5 md:py-4 ${fullScreen ? "pb-[max(6rem,calc(env(safe-area-inset-bottom,0px)+5.5rem))]" : ""}`}>
+          <div className={`flex flex-col gap-3 md:flex-row md:items-start md:gap-4 ${fullScreen ? "lg:gap-6" : ""}`}>
+            <div className={`mx-auto flex w-full shrink-0 flex-col ${fullScreen ? "max-w-[13rem] min-[390px]:max-w-[14.5rem] min-[430px]:max-w-[16rem] md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]" : "max-w-[12.5rem] md:mx-0 md:max-w-none"}`}>
+              <div className={`relative mx-auto aspect-square w-full shrink-0 ${fullScreen ? "max-w-[13rem] min-[390px]:max-w-[14.5rem] min-[430px]:max-w-[16rem] md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]" : "max-w-[12.5rem] md:mx-0 md:h-36 md:w-36 md:max-w-none md:aspect-auto"}`}>
                 {String(displayImageUrl || "").trim() ? (
                   <button
                     type="button"
-                    className="absolute inset-0 cursor-zoom-in"
+                    className="absolute inset-0 cursor-zoom-in touch-pan-y"
                     aria-label="View larger product image"
                     onClick={() => setImagePreviewOpen(true)}
+                    style={{ touchAction: "pan-y" }}
                   >
                     <ProductListingMedia
                       listing={{ title, imageUrl: displayImageUrl, imageUrls: galleryUrls }}
@@ -271,7 +305,11 @@ export function ProductInspectModal({
               </div>
               {galleryUrls.length > 1 ? (
                 <div
-                  className="mt-2 flex max-w-[12.5rem] gap-1.5 overflow-x-auto pb-0.5 pt-0.5 md:max-w-[9rem]"
+                  className={`mt-2 flex gap-1.5 overflow-x-auto pb-0.5 pt-0.5 [-webkit-overflow-scrolling:touch] ${
+                    fullScreen
+                      ? "max-w-[13rem] min-[390px]:max-w-[14.5rem] min-[430px]:max-w-[16rem] md:max-w-[12rem] lg:max-w-[14rem]"
+                      : "max-w-[12.5rem] md:max-w-[9rem]"
+                  }`}
                   role="list"
                   aria-label="Product photos"
                 >
@@ -295,10 +333,24 @@ export function ProductInspectModal({
                 </div>
               ) : null}
             </div>
-            <div className="min-w-0 flex-1 space-y-1.5 md:space-y-2">
-              <p className="text-lg font-bold tabular-nums text-brand-primary dark:text-brand-accent md:text-xl">
-                {formatPesoWhole(priceCents)}
-              </p>
+            <div className="min-w-0 flex-1 space-y-1.5 min-[430px]:space-y-2 md:space-y-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <p className="text-[1.06rem] font-bold tabular-nums text-brand-primary min-[390px]:text-lg dark:text-brand-accent md:text-xl">
+                  {formatPesoWhole(priceCents)}
+                </p>
+                {originalPesos != null && originalPesos > currentPesos ? (
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">
+                      ₱{originalPesos}
+                    </span>
+                    {saleMeta?.percent ? (
+                      <span className="rounded-md border border-amber-300/80 bg-amber-100/80 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-300">
+                        -{saleMeta.percent}%
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
               {showQuantityLine ? (
                 <p className="text-xs text-neutral-600 dark:text-slate-400">
                   <span className="font-semibold text-neutral-700 dark:text-slate-300">{quantityLabel}:</span>{" "}
@@ -319,81 +371,61 @@ export function ProductInspectModal({
             </div>
           </div>
 
-          <section
-            className={`mt-4 rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/65 md:mt-5 md:p-3.5`}
-            aria-label="Listing details"
-          >
-            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-              Listing details
-            </h3>
-            <dl className="mt-2 space-y-2 text-sm text-neutral-800 dark:text-slate-200">
-              <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
-                <dt className="shrink-0 font-semibold text-neutral-700 dark:text-slate-300 sm:min-w-[10.5rem]">Category</dt>
-                <dd className="min-w-0 break-words">{categoryTrim || "—"}</dd>
+          <div className="mt-3.5 space-y-2.5 min-[390px]:mt-4 min-[390px]:space-y-3 md:mt-5 md:space-y-4">
+            <div className="space-y-2.5 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
+                Listing details
+              </h3>
+              <div className="space-y-1.5 text-[13px] min-[390px]:text-sm">
+                <p className="flex items-baseline justify-between gap-2">
+                  <span className="shrink-0 font-semibold text-neutral-600 dark:text-slate-400">Category</span>
+                  <span className="text-right text-neutral-900 dark:text-slate-100">{categoryTrim || "—"}</span>
+                </p>
+                <p className="flex items-baseline justify-between gap-2">
+                  <span className="shrink-0 font-semibold text-neutral-600 dark:text-slate-400">Pick-up</span>
+                  <span className="text-right text-neutral-900 dark:text-slate-100">{offersPickup ? "Yes" : "No"}</span>
+                </p>
+                <p className="flex items-baseline justify-between gap-2">
+                  <span className="shrink-0 font-semibold text-neutral-600 dark:text-slate-400">COD delivery</span>
+                  <span className="text-right text-neutral-900 dark:text-slate-100">{offersDelivery ? "Yes" : "No"}</span>
+                </p>
+                <p className="flex items-baseline justify-between gap-2">
+                  <span className="shrink-0 font-semibold text-neutral-600 dark:text-slate-400">Availability</span>
+                  <span className="text-right text-neutral-900 dark:text-slate-100">{orderTypeReadable === "In stock" ? "Ready now (in stock)" : "Made/prepared on order"}</span>
+                </p>
+                {processingTrim ? (
+                  <p className="flex items-baseline justify-between gap-2">
+                    <span className="shrink-0 font-semibold text-neutral-600 dark:text-slate-400">{processingLabel || "Processing"}</span>
+                    <span className="text-right text-neutral-900 dark:text-slate-100">{processingTrim}</span>
+                  </p>
+                ) : null}
               </div>
-              <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
-                <dt className="shrink-0 font-semibold text-neutral-700 dark:text-slate-300 sm:min-w-[10.5rem]">Price (PHP)</dt>
-                <dd className="tabular-nums font-medium">{formatPesoWhole(priceCents)}</dd>
-              </div>
-              <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
-                <dt className="shrink-0 font-semibold text-neutral-700 dark:text-slate-300 sm:min-w-[10.5rem]">Quantity listed</dt>
-                <dd className="tabular-nums">
-                  {stock != null
-                    ? stock
-                    : showQuantityLine
-                      ? quantityNumber
-                      : "—"}
-                </dd>
-              </div>
-              <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
-                <dt className="shrink-0 font-semibold text-neutral-700 dark:text-slate-300 sm:min-w-[10.5rem]">Pick-up</dt>
-                <dd>{offersPickup ? "Available" : "Not offered"}</dd>
-              </div>
-              <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
-                <dt className="shrink-0 font-semibold text-neutral-700 dark:text-slate-300 sm:min-w-[10.5rem]">COD delivery</dt>
-                <dd>{offersDelivery ? "Available" : "Not offered"}</dd>
-              </div>
-              <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
-                <dt className="shrink-0 font-semibold text-neutral-700 dark:text-slate-300 sm:min-w-[10.5rem]">Order type</dt>
-                <dd>{orderTypeReadable}</dd>
-              </div>
-              {processingTrim ? (
-                <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
-                  <dt className="shrink-0 font-semibold text-neutral-700 dark:text-slate-300 sm:min-w-[10.5rem]">
-                    {processingLabel || "Processing"}
-                  </dt>
-                  <dd className="min-w-0 break-words">{processingTrim}</dd>
-                </div>
-              ) : null}
-            </dl>
-            <div className="mt-3 border-t border-neutral-200/80 pt-3 dark:border-slate-600/80">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+            </div>
+
+            <div className="space-y-2.5 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
                 Product variants
-              </p>
+              </h3>
               {hasVariantDetailRows ? (
-                <div className="mt-2">
-                  <ListingProductMetaExtras
-                    orderType={orderType}
-                    processingTime={processingTime}
-                    optionNameA={optionNameA}
-                    optionValuesA={optionValuesA}
-                    optionNameB={optionNameB}
-                    optionValuesB={optionValuesB}
-                    density="card"
-                    truncateValueLists={false}
-                    variantsOnly
-                  />
-                </div>
+                <ListingProductMetaExtras
+                  orderType={orderType}
+                  processingTime={processingTime}
+                  optionNameA={optionNameA}
+                  optionValuesA={optionValuesA}
+                  optionNameB={optionNameB}
+                  optionValuesB={optionValuesB}
+                  density="card"
+                  truncateValueLists={false}
+                  variantsOnly
+                />
               ) : (
-                <p className="mt-2 text-sm text-neutral-500 dark:text-slate-400">No product variants.</p>
+                <p className="text-sm text-neutral-500 dark:text-slate-400">No product variants.</p>
               )}
             </div>
-          </section>
 
-          <div className="mt-4 space-y-3 md:mt-5 md:space-y-4">
             {descPlain ? (
               <section
-                className={`rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/65 md:p-3.5`}
+                className={`rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-2.5 min-[390px]:p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/65 md:p-3.5`}
               >
                 <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                   From the seller
@@ -404,41 +436,8 @@ export function ProductInspectModal({
               </section>
             ) : null}
 
-            {hasSellerDetails ? (
-              <section className="rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/65 md:p-3.5">
-                <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-                  Seller details
-                </h3>
-                <div className="mt-1.5 space-y-1.5 text-sm leading-relaxed md:mt-2">
-                  {sellerUsernameTrim ? (
-                    <p className="break-words text-neutral-800 dark:text-slate-200">
-                      <span className="font-semibold text-neutral-700 dark:text-slate-300">Username:</span>{" "}
-                      {sellerUsernameTrim.startsWith("@") ? sellerUsernameTrim : `@${sellerUsernameTrim}`}
-                    </p>
-                  ) : null}
-                  {sellerAddressLineTrim ? (
-                    <p className="break-words text-neutral-800 dark:text-slate-200">
-                      <span className="font-semibold text-neutral-700 dark:text-slate-300">
-                        Address:
-                      </span>{" "}
-                      {sellerAddressLineTrim}
-                    </p>
-                  ) : null}
-                  {typeof onViewSellerProfile === "function" ? (
-                    <button
-                      type="button"
-                      className="inline-flex min-h-8 items-center justify-center rounded-lg border border-neutral-300/90 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
-                      onClick={() => onViewSellerProfile()}
-                    >
-                      View profile
-                    </button>
-                  ) : null}
-                </div>
-              </section>
-            ) : null}
-
             {showCommentBlock && commentTrim && !/^n\/a$/i.test(commentTrim) ? (
-              <section className="rounded-xl border border-sky-200/80 bg-sky-50/80 p-3 dark:border-sky-500/35 dark:bg-sky-950/25 md:p-3.5">
+              <section className="rounded-xl border border-sky-200/80 bg-sky-50/80 p-2.5 min-[390px]:p-3 dark:border-sky-500/35 dark:bg-sky-950/25 md:p-3.5">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wide text-sky-800 dark:text-sky-200">
                   {commentHeading}
                 </h3>
@@ -447,10 +446,39 @@ export function ProductInspectModal({
                 </p>
               </section>
             ) : null}
+
+            {hasSellerDetails ? (
+              <div className="space-y-1.5 border-t border-neutral-200/70 pt-2.5 text-sm leading-relaxed dark:border-slate-700/70">
+                <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
+                  Seller details
+                </h3>
+                {sellerUsernameTrim ? (
+                  <p className="break-words text-neutral-800 dark:text-slate-200">
+                    <span className="font-semibold text-neutral-700 dark:text-slate-300">Username:</span>{" "}
+                    {sellerUsernameTrim.startsWith("@") ? sellerUsernameTrim : `@${sellerUsernameTrim}`}
+                  </p>
+                ) : null}
+                {sellerAddressLineTrim ? (
+                  <p className="break-words text-neutral-800 dark:text-slate-200">
+                    <span className="font-semibold text-neutral-700 dark:text-slate-300">Address:</span>{" "}
+                    {sellerAddressLineTrim}
+                  </p>
+                ) : null}
+                {typeof onViewSellerProfile === "function" ? (
+                  <button
+                    type="button"
+                    className="inline-flex min-h-8 items-center justify-center rounded-lg border border-neutral-300/90 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                    onClick={() => onViewSellerProfile()}
+                  >
+                    View profile
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
 
-        <div className="shrink-0 border-t border-neutral-200/80 px-4 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2.5 dark:border-[#1f3c56]/85 md:px-5 md:pb-4 md:pt-3">
+        <div className="shrink-0 border-t border-neutral-200/80 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 min-[390px]:px-4 min-[390px]:pt-2.5 min-[430px]:px-5 dark:border-[#1f3c56]/85 md:px-5 md:pb-4 md:pt-3">
           {hasSellerHandlers ? (
             <div className="space-y-2">
               <div className="flex w-full flex-col gap-2 md:flex-row md:items-stretch md:gap-2">
