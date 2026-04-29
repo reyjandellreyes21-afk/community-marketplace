@@ -1,23 +1,7 @@
-import navLogo from "../../assets/new-brand-logo.png";
-import communityImage from "../../assets/community-image.png";
+import { LinkMartLogo } from "../media/LinkMartLogo.jsx";
 
-export function LandingIllustration() {
-  return (
-    <div className="relative w-full overflow-hidden rounded-[1.75rem] border border-neutral-200/80 bg-gradient-to-br from-white to-violet-50/60 shadow-[0_18px_45px_-28px_rgba(67,56,202,0.45)] dark:border-slate-700 dark:from-slate-900 dark:to-slate-800/80">
-      <div className="aspect-[16/10] w-full">
-        <img
-          src={communityImage}
-          alt="Local community marketplace"
-          className="h-full w-full object-cover object-[74%_center]"
-        />
-      </div>
-    </div>
-  );
-}
-
-export function LinkMartLogo({ className = "h-8 w-auto max-w-[12rem] shrink-0 object-contain md:h-9 md:max-w-[13.5rem]" }) {
-  return <img src={navLogo} alt="LinkMart logo" className={className} />;
-}
+export { LandingIllustration } from "./LandingIllustration.jsx";
+export { LinkMartLogo };
 
 export function EyeShowPasswordIcon(props) {
   return (
@@ -87,7 +71,7 @@ export function LandingSiteFooter() {
         <path fill="#2d3748" d="M0 48V16Q720 0 1440 16V48H0z" />
       </svg>
       <div className="-mt-px bg-[#2d3748] px-6 pb-8 pt-0 md:px-8 lg:px-12">
-        <div className="app-container mx-auto grid max-w-7xl grid-cols-1 gap-12 pb-14 md:grid-cols-2 md:gap-10 lg:grid-cols-3 lg:gap-8 lg:pb-16">
+        <div className="app-container mx-auto grid grid-cols-1 gap-12 pb-14 md:grid-cols-2 md:gap-10 lg:grid-cols-3 lg:gap-8 lg:pb-16">
           <div className="text-left">
             <h2 className="text-base font-bold tracking-tight text-white">Why LinkMart</h2>
             <p className="mt-4 text-sm leading-relaxed text-white/85">
@@ -132,7 +116,7 @@ export function LandingSiteFooter() {
             </dl>
           </div>
         </div>
-        <div className="app-container mx-auto max-w-7xl border-t border-white/15 pt-10">
+        <div className="app-container mx-auto border-t border-white/15 pt-10">
           <div className="flex flex-col items-center gap-8 lg:flex-row lg:items-end lg:justify-between">
             <div className="flex flex-col items-center gap-1 lg:items-start">
               <LinkMartLogo className="h-9 w-auto max-w-[12rem] shrink-0 object-contain brightness-0 invert md:h-10 md:max-w-[13rem]" />

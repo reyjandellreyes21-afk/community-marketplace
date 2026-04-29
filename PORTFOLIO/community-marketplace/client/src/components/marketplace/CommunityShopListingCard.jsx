@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { UI_KIT } from "../../lib/appUiKit.js";
 import { SALE_PERCENT_OPTIONS } from "../../lib/listingSaleMeta.js";
 import { MarketplaceProductDetailStack } from "./MarketplaceProductDetailStack.jsx";
@@ -21,8 +21,14 @@ export function CommunityShopListingCard({
   /** When true, Buy now is disabled (e.g. sign-in or profile incomplete). */
   buyNowDisabled = false,
   buyNowDisabledReason = "",
+  /** Mobile community shop grid: tuck Sale/Edit into overflow so buyer-style browse stays primary. */
+  mobileOwnerActionsInMenu = false,
+  /** Lighter image chrome (mobile shop browse). */
+  softBrowseChrome = false,
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
+  const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
+  const ownerMenuRef = useRef(null);
   const [customSalePercent, setCustomSalePercent] = useState("");
   const [showAllSaleOptions, setShowAllSaleOptions] = useState(false);
   const imageUrlFromGallery = Array.isArray(listing.imageUrls) ? String(listing.imageUrls[0] || "").trim() : "";
@@ -41,9 +47,15 @@ export function CommunityShopListingCard({
   const imgBox =
     gridMode && compactGrid
       ? "h-28 w-full"
-      : gridMode
-        ? "h-48 w-full"
-        : "h-32 w-32";
+      : gridMode && softBrowseChrome
+        ? "aspect-[4/3] w-full min-h-[7.5rem] max-h-[10.5rem] sm:max-h-[11rem] md:aspect-auto md:min-h-0 md:max-h-none"
+        : gridMode
+          ? /** Slightly shorter hero on narrow 2-col grids (~360–430px) for readable titles + actions. */
+            "h-40 w-full sm:h-44 md:h-48"
+          : "h-32 w-32";
+  const imageFrameClass = softBrowseChrome
+    ? "relative shrink-0 overflow-hidden rounded-xl bg-background ring-1 ring-neutral-200/55 dark:bg-[#11283d] dark:ring-slate-600/50"
+    : "relative shrink-0 overflow-hidden rounded-xl border border-border bg-background dark:border-[#1f3c56] dark:bg-[#11283d]";
   const mainGap = gridMode && compactGrid ? "gap-2" : gridMode ? "gap-2.5" : "gap-3";
   const compactActionBtnClass = compactGrid
     ? "flex h-10 items-center justify-center whitespace-nowrap px-2 text-[11px] leading-none"
@@ -52,6 +64,21 @@ export function CommunityShopListingCard({
     ? "grid w-full grid-cols-2 gap-2"
     : "flex w-full flex-col gap-2 md:flex-row md:items-stretch";
   const isListMode = !gridMode;
+  const ownerGridOverflow =
+    Boolean(mobileOwnerActionsInMenu) && isOwner && gridMode && !isListMode && showActions;
+
+  useEffect(() => {
+    if (!ownerMenuOpen) return undefined;
+    const onDoc = (e) => {
+      if (ownerMenuRef.current && !ownerMenuRef.current.contains(e.target)) setOwnerMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("touchstart", onDoc, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("touchstart", onDoc);
+    };
+  }, [ownerMenuOpen]);
 
   /** Compact grid tiles only: heart stays on the photo (saves vertical space). Standard grid + list: heart beside title so the product image stays clear. */
   const favoriteOverlayOnImage = Boolean(gridMode && compactGrid && !isOwner && showFavoriteIcon);
@@ -113,7 +140,7 @@ export function CommunityShopListingCard({
       <div
         className={`flex min-h-0 ${gridMode ? `flex-1 flex-col ${mainGap}` : "flex-row items-start gap-3"}`}
       >
-        <div className={`relative shrink-0 overflow-hidden rounded-xl border border-border bg-background dark:border-[#1f3c56] dark:bg-[#11283d] ${imgBox}`}>
+        <div className={`${imageFrameClass} ${imgBox}`}>
           {favoriteOverlayOnImage ? (
             <button
               type="button"
@@ -133,7 +160,14 @@ export function CommunityShopListingCard({
             </button>
           ) : null}
           {imageUrl ? (
-            <img src={imageUrl} alt={listing.title || "Product"} className="h-full w-full object-cover" />
+            <img
+              src={imageUrl}
+              alt={listing.title || "Product"}
+              className="h-full w-full object-cover"
+              loading="lazy"
+              decoding="async"
+              sizes="(max-width: 767px) 45vw, min(240px, 18vw)"
+            />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-text-secondary dark:text-slate-400">No image</div>
           )}
@@ -168,6 +202,79 @@ export function CommunityShopListingCard({
       </div>
       {showActions ? (
         <div className={`flex flex-col gap-2 ${gridMode ? "mt-auto pt-3" : "mt-3"}`}>
+          {ownerGridOverflow ? (
+            <div className="flex items-stretch gap-2">
+              {onInspect ? (
+                <button
+                  type="button"
+                  className={`min-h-[44px] flex-1 rounded-xl border border-brand-primary/35 bg-white font-semibold text-brand-primary transition hover:bg-brand-soft/80 dark:border-slate-600 dark:bg-slate-900 dark:text-brand-accent dark:hover:bg-slate-800 ${compactActionBtnClass}`}
+                  title="Read full description and details"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onInspect();
+                  }}
+                >
+                  View details
+                </button>
+              ) : null}
+              <div className="relative shrink-0" ref={ownerMenuRef}>
+                <button
+                  type="button"
+                  className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-neutral-200/90 bg-white text-lg font-bold leading-none text-neutral-600 transition hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                  aria-label="Listing options"
+                  aria-expanded={ownerMenuOpen}
+                  aria-haspopup="menu"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOwnerMenuOpen((o) => !o);
+                  }}
+                >
+                  ···
+                </button>
+                {ownerMenuOpen ? (
+                  <div
+                    role="menu"
+                    className="absolute bottom-full right-0 z-30 mb-1 min-w-[10.5rem] overflow-hidden rounded-xl border border-neutral-200/90 bg-white py-1 shadow-lg dark:border-slate-600 dark:bg-slate-900"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center px-3 py-2.5 text-left text-sm font-semibold text-rose-700 transition hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSaleOpen((prev) => {
+                          const next = !prev;
+                          if (!next) {
+                            setCustomSalePercent("");
+                            setShowAllSaleOptions(false);
+                          }
+                          return next;
+                        });
+                        setOwnerMenuOpen(false);
+                      }}
+                    >
+                      {saleOpen ? "Hide sale" : "Sale"}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center px-3 py-2.5 text-left text-sm font-semibold text-brand-primary transition hover:bg-brand-soft/60 dark:text-brand-accent dark:hover:bg-slate-800"
+                      title="Edit title, price, photos, and stock"
+                      aria-label={`Edit listing: ${listing.title || "product"}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOwnerMenuOpen(false);
+                        onEdit?.();
+                      }}
+                    >
+                      Edit
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <>
           {onInspect && !isListMode ? (
             <button
               type="button"
@@ -303,6 +410,8 @@ export function CommunityShopListingCard({
                 {isOutOfStock ? "Out of stock" : "Buy now"}
               </button>
             </div>
+          )}
+            </>
           )}
         </div>
       ) : null}

@@ -9,13 +9,13 @@ const VARIANT_CLASS = {
 
 /**
  * Static label chips (`size="default"`).
- * `size="touch"` adds 44px min height + padding for tappable filter chips (still uses variant colors).
+ * `size="touch"` — 44px min height + comfortable padding for filter chips / pill controls (variant colors preserved).
  */
 export function Badge({ variant = "neutral", size = "default", className, ...props }) {
   const base = VARIANT_CLASS[variant] || VARIANT_CLASS.neutral;
   const touch =
     size === "touch"
-      ? "min-h-[44px] touch-manipulation items-center justify-center px-4 text-sm"
+      ? "!min-h-[var(--ui-touch-target)] touch-manipulation items-center justify-center !px-4 !py-0 !text-sm leading-snug"
       : "";
-  return <span className={cn(base, touch, className)} {...props} />;
+  return <span className={cn("inline-flex", base, touch, className)} {...props} />;
 }

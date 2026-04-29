@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getApiV1Base } from "../apiBase.js";
 import { formatCents } from "../marketplace/money.js";
 import { Button, Card } from "./ui/index.js";
-import { ScreenLoading, ScreenError, InlineSuccess } from "./ui/ScreenState.jsx";
+import { ScreenEmpty, ScreenError, InlineSuccess, ScreenLoading } from "./ui/ScreenState.jsx";
 
 const API_URL = getApiV1Base();
 
@@ -34,13 +34,26 @@ export function PublicListingPage({ listingId, onBack, onOpenLogin }) {
 
   return (
     <div className="min-h-screen min-h-[100dvh] bg-app pl-[max(1.5rem,env(safe-area-inset-left,0px))] pr-[max(1.5rem,env(safe-area-inset-right,0px))] pt-[max(2.5rem,env(safe-area-inset-top,0px))] pb-[max(2.5rem,env(safe-area-inset-bottom,0px))] dark:bg-slate-950">
-      <div className="mx-auto max-w-lg space-y-6">
+      <main id="main-content" className="mx-auto w-full max-w-mobile-baseline space-y-6 md:max-w-lg">
         <Button type="button" variant="ghost" className="-ml-2 px-3 text-sm font-medium text-brand-primary hover:underline dark:text-brand-accent" onClick={onBack}>
           ← Back
         </Button>
-        {loading ? <ScreenLoading message="Loading listing…" /> : null}
+        {loading ? <ScreenLoading message="Loading listing…" spacious /> : null}
         {!loading && error ? (
-          <ScreenError title="Couldn’t load this listing" message={error} onRetry={() => void fetchListing()} secondaryAction={{ label: "Go back", onClick: onBack }} />
+          <ScreenError
+            title="Couldn’t load this listing"
+            message={error}
+            onRetry={() => void fetchListing()}
+            secondaryAction={{ label: "Go back", onClick: onBack }}
+            spacious
+          />
+        ) : null}
+        {!loading && !error && (!listing || String(listing.id) !== String(listingId)) ? (
+          <ScreenEmpty
+            title="Listing not found"
+            description="It may have been removed or the link is incorrect."
+            primaryAction={{ label: "Go back", onClick: onBack }}
+          />
         ) : null}
         {!loading && !error && listing && String(listing.id) === String(listingId) ? (
           <>
@@ -56,6 +69,9 @@ export function PublicListingPage({ listingId, onBack, onOpenLogin }) {
                     src={String((Array.isArray(listing.imageUrls) ? listing.imageUrls[0] : listing.imageUrl) || "").trim()}
                     alt={listing.title || "Product"}
                     className="h-64 w-full object-cover"
+                    decoding="async"
+                    sizes="(max-width: 768px) 100vw, min(32rem, 90vw)"
+                    fetchPriority="high"
                   />
                 </div>
               ) : null}
@@ -72,7 +88,7 @@ export function PublicListingPage({ listingId, onBack, onOpenLogin }) {
             </Card>
           </>
         ) : null}
-      </div>
+      </main>
     </div>
   );
 }

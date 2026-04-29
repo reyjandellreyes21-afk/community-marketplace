@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import navLogo from "../assets/new-brand-logo.png";
+import { LinkMartLogo } from "./media/LinkMartLogo.jsx";
 import { VIEWS } from "../views.js";
 
 function ChevronDownIcon(props) {
@@ -14,14 +14,6 @@ function ChevronRightIcon(props) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
       <path d="M9 18l6-6-6-6" />
-    </svg>
-  );
-}
-
-function CloseIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden {...props}>
-      <path d="M18 6L6 18M6 6l12 12" />
     </svg>
   );
 }
@@ -164,6 +156,17 @@ function MenuLogOutIcon(props) {
   );
 }
 
+/** Drawer / menu trigger — 24×24 glyph inside 44px touch target */
+function MenuHamburgerIcon(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <line x1="4" x2="20" y1="6" y2="6" />
+      <line x1="4" x2="20" y1="12" y2="12" />
+      <line x1="4" x2="20" y1="18" y2="18" />
+    </svg>
+  );
+}
+
 function MenuOrdersIcon(props) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
@@ -186,8 +189,54 @@ function MenuCartIcon(props) {
   );
 }
 
+/** Mobile secondary nav — four distinct glyphs (not isometric cubes): Store, ShoppingCart, Truck, Tag */
+
+function MobileNavShopIcon(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7" />
+      <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+      <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4" />
+      <path d="M2 7h20" />
+    </svg>
+  );
+}
+
+function MobileNavCartIcon(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <circle cx="8" cy="21" r="1" />
+      <circle cx="19" cy="21" r="1" />
+      <path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" />
+    </svg>
+  );
+}
+
+/** Incoming orders / deliveries — truck silhouette (not a box or cart) */
+function MobileNavBuyingIcon(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" />
+      <path d="M15 18H9" />
+      <path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14" />
+      <circle cx="17" cy="18" r="2" />
+      <circle cx="7" cy="18" r="2" />
+    </svg>
+  );
+}
+
+/** Listings & sales — price tag (not a receipt or cube) */
+function MobileNavSellingIcon(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.434 0l6.294-6.294a2 2 0 0 0 0-2.828l-8.704-8.702z" />
+      <circle cx="7.5" cy="7.5" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 const accountMenuItemBase =
-  "flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm text-neutral-800 outline-none transition-colors hover:bg-neutral-100/90 dark:text-slate-200 dark:hover:bg-slate-800/90";
+  "flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm text-neutral-800 outline-none transition-colors motion-reduce:transition-none hover:bg-neutral-100/90 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary dark:text-slate-200 dark:hover:bg-slate-800/90 dark:focus-visible:ring-brand-accent";
 
 const accountMenuIconWrap =
   "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-neutral-200/80 bg-neutral-50 text-neutral-600 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-400";
@@ -195,15 +244,13 @@ const accountMenuIconWrap =
 const accountMenuIconWrapDanger =
   "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-rose-200/80 bg-rose-50 text-rose-600 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-400";
 
+/** Mobile: borderless ghost controls (shell already frames the bar). md+: bordered pills like desktop chrome. */
 const headerUtilityButtonBase =
-  "relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-700 shadow-sm transition hover:-translate-y-px hover:border-neutral-400 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800";
+  "relative inline-flex h-11 w-11 items-center justify-center rounded-full border-0 bg-transparent text-neutral-700 transition motion-reduce:transition-none hover:bg-neutral-100/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30 focus-visible:ring-offset-2 focus-visible:ring-offset-white active:bg-neutral-100/70 dark:text-slate-200 dark:hover:bg-slate-800/85 dark:focus-visible:ring-brand-accent/35 dark:focus-visible:ring-offset-slate-950 md:h-10 md:w-10 md:border md:border-neutral-200/75 md:bg-white md:hover:border-neutral-300 md:hover:bg-neutral-50/90 md:active:bg-white dark:md:border-slate-600/90 dark:md:bg-slate-900 dark:md:hover:border-slate-500 dark:md:hover:bg-slate-800";
 
+/** Mobile: flat teal tint only (no ring). md+: bordered pill matches desktop chrome. */
 const headerUtilityButtonActive =
-  "border-emerald-400/60 bg-white text-emerald-600 ring-2 ring-emerald-400/20 dark:border-emerald-400/50 dark:bg-slate-900 dark:text-emerald-300 dark:ring-emerald-400/20";
-
-function LinkMartLogo({ className = "h-9 w-9 shrink-0 object-contain md:h-10 md:w-10" }) {
-  return <img src={navLogo} alt="LinkMart logo" className={className} />;
-}
+  "bg-brand-soft/95 text-brand-primary dark:bg-slate-800 dark:text-brand-accent md:border-primary/35 md:bg-primary-soft/80 md:text-primary md:ring-1 md:ring-primary/20 md:dark:border-brand-accent/40 md:dark:ring-brand-accent/18";
 
 /** Desktop pills for Marketplace vs Cart — shop flow inside the shop segment. */
 function navPillShop(active, role) {
@@ -225,43 +272,29 @@ function navPillTrade(active, role) {
   return `${layout} bg-primary-soft text-primary shadow-sm ring-1 ring-primary/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-primary/45`;
 }
 
-/** Mobile bottom tab: clear active state (indicator + fill). */
-function mobileBottomTabClass(active) {
-  const indicator =
-    "before:pointer-events-none before:absolute before:top-1 before:left-1/2 before:h-0.5 before:w-7 before:-translate-x-1/2 before:rounded-full before:bg-brand-primary before:transition-opacity before:duration-200 dark:before:bg-brand-accent";
-  const base = `${indicator} group relative flex min-h-[2.75rem] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 py-1.5 text-[10px] font-semibold leading-tight transition touch-manipulation select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/40 md:text-[11px]`;
+/** Mobile secondary nav: 44px targets; active = teal wash + bar (no heavy borders). */
+function mobileIconTabClass(active) {
+  const base =
+    "relative flex min-h-[44px] min-w-0 flex-1 touch-manipulation items-center justify-center rounded-xl px-0.5 py-1 transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/35 dark:focus-visible:ring-brand-accent/35";
   if (!active) {
-    return `${base} before:opacity-0 text-neutral-500 hover:bg-neutral-100/90 hover:text-neutral-800 dark:text-slate-500 dark:hover:bg-slate-800/85 dark:hover:text-slate-200`;
+    return `${base} text-neutral-600 hover:bg-neutral-50/90 hover:text-neutral-900 dark:text-slate-500 dark:hover:bg-slate-800/70 dark:hover:text-slate-100`;
   }
-  return `${base} before:opacity-100 bg-brand-soft/90 text-brand-primary shadow-[inset_0_0_0_1px_rgba(59,130,246,0.12)] dark:bg-slate-800/95 dark:text-brand-accent dark:shadow-[inset_0_0_0_1px_rgba(148,163,184,0.25)]`;
+  return `${base} bg-brand-soft text-brand-primary shadow-[inset_0_-2px_0_0_rgba(13,148,136,0.35)] after:pointer-events-none after:absolute after:bottom-0.5 after:left-1/2 after:h-[3px] after:w-[48%] after:max-w-[3.25rem] after:-translate-x-1/2 after:rounded-full after:bg-brand-primary dark:bg-teal-950/40 dark:text-brand-accent dark:shadow-[inset_0_-2px_0_0_rgba(45,212,191,0.35)] dark:after:bg-brand-accent`;
 }
 
-function HomeNavIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <path d="M3 9.5 12 3l9 6.5" />
-      <path d="M5 10v10h14V10" />
-    </svg>
-  );
+/** Icon-only strip: names stay for screen readers (buttons also set aria-label). */
+function MobileNavTabLabel({ children }) {
+  return <span className="sr-only">{children}</span>;
 }
 
-function SearchNavIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <circle cx="11" cy="11" r="7" />
-      <path d="M20 20l-3-3" />
-    </svg>
-  );
-}
+const mobileNavBadgeBase =
+  "pointer-events-none absolute -right-0.5 -top-0.5 z-[1] inline-flex min-h-[1rem] min-w-[1rem] items-center justify-center rounded-full px-1 py-px text-[9px] font-bold leading-none shadow-sm";
 
-function CreateSellNavIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 8v8M8 12h8" />
-    </svg>
-  );
-}
+const mobileSheetMenuItem = `${accountMenuItemBase} min-h-[44px] items-center rounded-xl py-3`;
+
+/** Drawer rows: teal glyph, no boxed icon chip (mobile visual reference = Upload Product). */
+const mobileDrawerIconPlain =
+  "flex h-10 w-10 shrink-0 items-center justify-center text-brand-primary dark:text-brand-accent";
 
 function ThemeToggleGroup({ theme, setTheme }) {
   return (
@@ -270,10 +303,10 @@ function ThemeToggleGroup({ theme, setTheme }) {
         type="button"
         role="radio"
         aria-checked={theme === "light"}
-        className={`flex flex-1 items-center justify-center gap-1 rounded-md py-2 text-xs font-semibold transition ${
+        className={`flex flex-1 items-center justify-center gap-1 rounded-md py-2 text-xs font-semibold transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-inset dark:focus-visible:ring-brand-accent ${
           theme === "light"
             ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-700 dark:text-white"
-            : "text-neutral-500 hover:text-neutral-800 dark:text-slate-400 dark:hover:text-slate-200"
+            : "text-neutral-600 hover:text-neutral-800 dark:text-slate-400 dark:hover:text-slate-200"
         }`}
         onClick={() => setTheme("light")}
       >
@@ -284,10 +317,10 @@ function ThemeToggleGroup({ theme, setTheme }) {
         type="button"
         role="radio"
         aria-checked={theme === "dark"}
-        className={`flex flex-1 items-center justify-center gap-1 rounded-md py-2 text-xs font-semibold transition ${
+        className={`flex flex-1 items-center justify-center gap-1 rounded-md py-2 text-xs font-semibold transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-inset dark:focus-visible:ring-brand-accent ${
           theme === "dark"
             ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-700 dark:text-white"
-            : "text-neutral-500 hover:text-neutral-800 dark:text-slate-400 dark:hover:text-slate-200"
+            : "text-neutral-600 hover:text-neutral-800 dark:text-slate-400 dark:hover:text-slate-200"
         }`}
         onClick={() => setTheme("dark")}
       >
@@ -308,12 +341,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {() => void} props.goOrders
  * @param {() => void} props.goMyPurchases
  * @param {() => void} props.goCart
- * @param {() => void} [props.goMobileHome] Mobile: Home tab — browse feed, closes filter sheet
- * @param {() => void} [props.goMobileSearch] Mobile: Search tab — browse + open filters
- * @param {() => void} [props.goCreateSell] Mobile: Create / sell hub
- * @param {() => void} [props.goInbox] Mobile: Inbox (messages, orders, notifications)
- * @param {boolean} [props.browseFiltersOpen] Mobile search tab active when filter sheet is open on browse views
- * @param {number} [props.inboxBadgeCount] Badge total for inbox tab (messages + orders attention + notifications)
+ * @param {number} [props.inboxBadgeCount] Badge total for messages icon (messages + orders attention + notifications)
  * @param {"light"|"dark"} props.theme
  * @param {(t: "light"|"dark") => void} props.setTheme
  * @param {() => void} props.onLogout
@@ -327,9 +355,8 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {number} [props.notificationUnreadCount] Unread notification badge count
  * @param {number} [props.favoriteCount] Saved favorites count (shop / community product hearts)
  * @param {() => void} [props.onNavigateHome] Clear SPA path (e.g. /l/…) when opening marketplace from the logo
- * @param {string | null} [props.communityShopName] When set, user is in a community-scoped shop (show context + leave control)
- * @param {() => void} [props.onLeaveCommunityShop] Navigate to global marketplace (all areas)
  * @param {import('react').ReactNode} [props.children] Main scroll region (placed between header and mobile bottom nav)
+ * @param {import('react').ReactNode} [props.mobileSecondaryNav] Optional strip below the top header (mobile only)
  */
 export function LoggedInHeader({
   user,
@@ -340,11 +367,6 @@ export function LoggedInHeader({
   goOrders = () => {},
   goMyPurchases = () => {},
   goCart = () => {},
-  goMobileHome,
-  goMobileSearch,
-  goCreateSell,
-  goInbox,
-  browseFiltersOpen = false,
   inboxBadgeCount = 0,
   theme,
   setTheme,
@@ -359,8 +381,7 @@ export function LoggedInHeader({
   notificationUnreadCount = 0,
   favoriteCount = 0,
   onNavigateHome,
-  communityShopName = null,
-  onLeaveCommunityShop,
+  mobileSecondaryNav = null,
   children,
 }) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -371,11 +392,19 @@ export function LoggedInHeader({
   const accountMenuRef = useRef(null);
   const mobileMenuButtonRef = useRef(null);
   const mobileMenuPanelRef = useRef(null);
-  const mobileSheetCloseRef = useRef(null);
-  const mobileSheetSurfaceRef = useRef(null);
+  const mobileDrawerFirstFocusRef = useRef(null);
   const mobileSheetCloseTimerRef = useRef(null);
-
   const [mobileSheetEntered, setMobileSheetEntered] = useState(false);
+  /** Horizontal drag offset (≤0); 0 = fully open. Mobile swipe-to-dismiss. */
+  const [drawerPullPx, setDrawerPullPx] = useState(0);
+  const [isDrawerDragging, setIsDrawerDragging] = useState(false);
+  const drawerTouchRef = useRef({
+    startX: 0,
+    startY: 0,
+    axis: /** @type {'none'|'h'|'v'} */ ("none"),
+    width: 320,
+  });
+  const swipeCloseAfterTransitionRef = useRef(false);
 
   const closeAllMenus = useCallback(() => {
     setAccountMenuOpen(false);
@@ -397,6 +426,9 @@ export function LoggedInHeader({
   useEffect(() => {
     if (!mobileMenuOpen) {
       setMobileSheetEntered(false);
+      setDrawerPullPx(0);
+      setIsDrawerDragging(false);
+      swipeCloseAfterTransitionRef.current = false;
       if (mobileSheetCloseTimerRef.current) {
         clearTimeout(mobileSheetCloseTimerRef.current);
         mobileSheetCloseTimerRef.current = null;
@@ -424,28 +456,89 @@ export function LoggedInHeader({
   }, []);
 
   const closeMobileSheetAnimated = useCallback(() => {
+    setDrawerPullPx(0);
+    setIsDrawerDragging(false);
+    swipeCloseAfterTransitionRef.current = false;
     if (!mobileSheetEntered) {
       finalizeMobileSheetClose();
       return;
     }
     setMobileSheetEntered(false);
-    mobileSheetCloseTimerRef.current = window.setTimeout(finalizeMobileSheetClose, 340);
+    mobileSheetCloseTimerRef.current = window.setTimeout(finalizeMobileSheetClose, 320);
   }, [mobileSheetEntered, finalizeMobileSheetClose]);
 
-  const handleMobileSheetTransitionEnd = useCallback(
+  const handleMobileDrawerTransitionEnd = useCallback(
     (event) => {
-      if (event.target !== mobileSheetSurfaceRef.current) return;
+      if (event.target !== mobileMenuPanelRef.current) return;
       if (event.propertyName !== "transform") return;
+      if (swipeCloseAfterTransitionRef.current) {
+        swipeCloseAfterTransitionRef.current = false;
+        setDrawerPullPx(0);
+        finalizeMobileSheetClose();
+        return;
+      }
       if (mobileMenuOpen && !mobileSheetEntered) finalizeMobileSheetClose();
     },
     [mobileMenuOpen, mobileSheetEntered, finalizeMobileSheetClose],
   );
 
+  const onDrawerTouchStart = useCallback((e) => {
+    if (e.touches.length !== 1 || !mobileSheetEntered) return;
+    const t = e.touches[0];
+    const w = mobileMenuPanelRef.current?.offsetWidth ?? 320;
+    drawerTouchRef.current = {
+      startX: t.clientX,
+      startY: t.clientY,
+      axis: "none",
+      width: w,
+    };
+  }, [mobileSheetEntered]);
+
+  const onDrawerTouchMove = useCallback(
+    (e) => {
+      if (e.touches.length !== 1 || !mobileSheetEntered) return;
+      const t = e.touches[0];
+      const { startX, startY, axis, width } = drawerTouchRef.current;
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      let nextAxis = axis;
+      if (nextAxis === "none") {
+        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) nextAxis = "h";
+        else if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx)) nextAxis = "v";
+      }
+      drawerTouchRef.current.axis = nextAxis;
+      if (nextAxis !== "h") return;
+      if (e.cancelable) e.preventDefault();
+      setIsDrawerDragging(true);
+      const pull = Math.min(0, Math.max(-width, dx));
+      setDrawerPullPx(pull);
+    },
+    [mobileSheetEntered],
+  );
+
+  const onDrawerTouchEnd = useCallback(() => {
+    if (!mobileSheetEntered) return;
+    const { axis, width } = drawerTouchRef.current;
+    drawerTouchRef.current.axis = "none";
+    setIsDrawerDragging(false);
+    if (axis !== "h") return;
+    setDrawerPullPx((pull) => {
+      const w = width || mobileMenuPanelRef.current?.offsetWidth || 300;
+      if (pull <= -w * 0.22) {
+        swipeCloseAfterTransitionRef.current = true;
+        return -w;
+      }
+      return 0;
+    });
+  }, [mobileSheetEntered]);
+
   useEffect(() => {
     if (!mobileMenuOpen || !mobileSheetEntered) return undefined;
     const trigger = mobileMenuButtonRef.current;
-    const closeBtn = mobileSheetCloseRef.current;
-    closeBtn?.focus({ preventScroll: true });
+    const first = mobileDrawerFirstFocusRef.current;
+    requestAnimationFrame(() => {
+      first?.focus({ preventScroll: true });
+    });
     return () => {
       trigger?.focus({ preventScroll: true });
     };
@@ -470,9 +563,11 @@ export function LoggedInHeader({
       if (event.key === "Escape") closeAllMenus();
     };
     document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown, { passive: true });
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [accountMenuOpen, mobileMenuOpen, closeMobileSheetAnimated, closeAllMenus]);
@@ -482,50 +577,249 @@ export function LoggedInHeader({
     setAccountMenuOpen((o) => !o);
   };
 
-  const accountLabel = user?.username || getDisplayNameFromUser(user) || "Account";
-
   const browsePillActive =
     activeView === VIEWS.BROWSE ||
     activeView === VIEWS.COMMUNITY_SHOP ||
     activeView === VIEWS.FAVORITES;
 
-  const homeTabActive = browsePillActive && !browseFiltersOpen;
-  const searchTabActive = browsePillActive && browseFiltersOpen;
-  const createSellTabActive = activeView === VIEWS.SELLER || activeView === VIEWS.MY_LISTINGS;
-  const inboxTabActive =
-    activeView === VIEWS.MESSAGES ||
-    activeView === VIEWS.NOTIFICATIONS ||
-    activeView === VIEWS.MY_PURCHASES ||
-    activeView === VIEWS.ORDERS;
+  /** Mobile Shop tab — marketplace feed (excludes Favorites; hearts live in the top bar). */
+  const mobileShopTabActive =
+    activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP;
+
+  const mobileSellingTabActive =
+    activeView === VIEWS.ORDERS ||
+    activeView === VIEWS.SELLER ||
+    activeView === VIEWS.MY_LISTINGS;
+
+  const drawerUsesPullTransform =
+    mobileSheetEntered && (isDrawerDragging || drawerPullPx !== 0);
+
+  useEffect(() => {
+    const el = mobileMenuPanelRef.current;
+    if (!el || !mobileMenuOpen || !mobileSheetEntered) return undefined;
+    const blockVerticalScrollChaining = (ev) => {
+      if (drawerTouchRef.current.axis === "h" && ev.cancelable) ev.preventDefault();
+    };
+    el.addEventListener("touchmove", blockVerticalScrollChaining, { passive: false });
+    return () => el.removeEventListener("touchmove", blockVerticalScrollChaining);
+  }, [mobileMenuOpen, mobileSheetEntered]);
 
   return (
+    /* Mobile: column (header → main). md+: `contents` flattens into App shell so sticky header + scroll work without an extra nested flex wrapper. */
     <div className="flex w-full min-h-0 flex-1 flex-col overflow-hidden md:contents">
-    <header className="relative z-50 shrink-0 pt-[env(safe-area-inset-top,0px)] md:sticky md:top-0 md:shrink border-b border-neutral-200/80 bg-white/90 shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/95">
-      <div className="app-container flex h-[4.25rem] items-center justify-between gap-2 md:gap-3">
-        <button type="button" className="rounded-xl px-1 py-1 focus:outline-none" onClick={goMarketplaceRoot} aria-label="Go to marketplace">
-          <LinkMartLogo className="h-9 w-auto max-w-[9.5rem] shrink-0 object-contain md:h-10 md:max-w-[10.5rem]" />
-        </button>
+    <header className="mobile-app-top-header sticky top-0 z-50 shrink-0 pt-[env(safe-area-inset-top,0px)] md:sticky md:top-0 border-b border-neutral-200/40 bg-white/95 backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95 md:shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+      <div className="md:hidden shrink-0">
+        <div className="app-shell-content-inset flex h-[4.25rem] w-full max-w-full items-center gap-2">
+          <button
+            ref={mobileMenuButtonRef}
+            type="button"
+            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0`}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-nav-menu-panel"
+            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+            onClick={() => setMobileMenuOpen((v) => !v)}
+          >
+            <MenuHamburgerIcon />
+          </button>
+          <button
+            type="button"
+            className="min-w-0 shrink rounded-xl px-0.5 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-950"
+            onClick={goMarketplaceRoot}
+            aria-label="Go to marketplace"
+          >
+            <LinkMartLogo className="h-8 w-auto max-w-[min(46vw,10rem)] shrink-0 object-contain" />
+          </button>
+          <span className="min-w-[2px] flex-1" aria-hidden />
+          <button
+            type="button"
+            className={`${headerUtilityButtonBase} relative h-11 w-11 shrink-0 ${activeView === VIEWS.FAVORITES ? headerUtilityButtonActive : ""}`}
+            aria-label={
+              favoriteCount > 0
+                ? `Favorites, ${favoriteCount > 99 ? "99 plus" : favoriteCount} saved`
+                : "Favorites"
+            }
+            title={favoriteCount > 0 ? `${favoriteCount > 99 ? "99+" : favoriteCount} saved` : "Saved listings"}
+            onClick={() => {
+              setActiveView(VIEWS.FAVORITES);
+              closeAllMenus();
+            }}
+          >
+            <HeartIcon
+              filled={activeView === VIEWS.FAVORITES}
+              className={activeView === VIEWS.FAVORITES ? "text-primary dark:text-brand-accent" : ""}
+            />
+            {favoriteCount > 0 ? (
+              <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
+                {favoriteCount > 99 ? "99+" : favoriteCount}
+              </span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            className={`${headerUtilityButtonBase} relative h-11 w-11 shrink-0 ${activeView === VIEWS.MESSAGES ? headerUtilityButtonActive : ""}`}
+            aria-label={
+              inboxBadgeCount > 0
+                ? `Messages, ${inboxBadgeCount > 99 ? "99 plus" : inboxBadgeCount} unread or updates`
+                : "Messages"
+            }
+            onClick={() => {
+              setActiveView(VIEWS.MESSAGES);
+              closeAllMenus();
+            }}
+          >
+            <MessagesIcon
+              filled={activeView === VIEWS.MESSAGES}
+              className={activeView === VIEWS.MESSAGES ? "text-primary dark:text-brand-accent" : ""}
+            />
+            {inboxBadgeCount > 0 ? (
+              <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm">
+                {inboxBadgeCount > 99 ? "99+" : inboxBadgeCount}
+              </span>
+            ) : null}
+          </button>
+        </div>
 
-        {communityShopName && onLeaveCommunityShop ? (
-          <div className="flex min-w-0 max-w-[min(46vw,10.5rem)] flex-1 flex-col items-stretch justify-center gap-0.5 md:max-w-[min(14rem,32vw)] lg:max-w-[min(18rem,22vw)] lg:flex-none lg:shrink-0">
-            <span
-              className="truncate text-[10px] font-semibold leading-tight text-brand-primary dark:text-brand-accent md:text-[11px]"
-              title={communityShopName}
-            >
-              In {communityShopName}
-            </span>
+        <nav className="mobile-app-secondary-nav" role="navigation" aria-label="Primary">
+          <div
+            className="app-shell-content-inset flex min-h-0 w-full max-w-full items-stretch gap-0.5 py-1.5 min-[360px]:gap-1 min-[390px]:gap-1.5 min-[430px]:gap-2"
+            role="tablist"
+            aria-label="Shop, cart, buying, selling, profile"
+          >
             <button
               type="button"
-              className="truncate text-left text-[10px] font-medium text-neutral-500 underline decoration-neutral-300 underline-offset-2 transition hover:text-neutral-800 md:text-[11px] dark:text-slate-400 dark:decoration-slate-600 dark:hover:text-slate-200"
+              role="tab"
+              aria-selected={mobileShopTabActive}
+              aria-current={mobileShopTabActive ? "page" : undefined}
+              className={mobileIconTabClass(mobileShopTabActive)}
+              aria-label="Shop"
               onClick={() => {
-                onLeaveCommunityShop();
+                setAccountMenuOpen(false);
+                setDesktopSettingsOpen(false);
+                goBrowse();
                 closeAllMenus();
               }}
             >
-              All areas
+              <MobileNavShopIcon className="h-[22px] w-[22px] shrink-0" aria-hidden />
+              <MobileNavTabLabel>Shop</MobileNavTabLabel>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === VIEWS.CART}
+              aria-current={activeView === VIEWS.CART ? "page" : undefined}
+              className={mobileIconTabClass(activeView === VIEWS.CART)}
+              aria-label={
+                cartItemCount > 0
+                  ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} new`
+                  : totalCartCount > 0
+                    ? `Cart, ${totalCartCount > 99 ? "99 plus" : totalCartCount} items`
+                    : "Cart"
+              }
+              onClick={() => {
+                goCart();
+                closeAllMenus();
+              }}
+            >
+              <span className="relative inline-flex h-[22px] min-w-[22px] shrink-0 items-center justify-center">
+                <MobileNavCartIcon className="h-[22px] w-[22px] shrink-0" aria-hidden />
+                {cartItemCount > 0 ? (
+                  <span className={`${mobileNavBadgeBase} bg-amber-600 text-white dark:bg-amber-500`}>
+                    {cartItemCount > 99 ? "99+" : cartItemCount}
+                  </span>
+                ) : totalCartCount > 0 ? (
+                  <span className={`${mobileNavBadgeBase} bg-neutral-500 text-white dark:bg-slate-600`} aria-hidden>
+                    {totalCartCount > 99 ? "99+" : totalCartCount}
+                  </span>
+                ) : null}
+              </span>
+              <MobileNavTabLabel>Cart</MobileNavTabLabel>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === VIEWS.MY_PURCHASES}
+              aria-current={activeView === VIEWS.MY_PURCHASES ? "page" : undefined}
+              className={mobileIconTabClass(activeView === VIEWS.MY_PURCHASES)}
+              aria-label={
+                purchasesItemCount > 0
+                  ? `Buying, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
+                  : "Buying"
+              }
+              onClick={() => {
+                goMyPurchases();
+                closeAllMenus();
+              }}
+            >
+              <span className="relative inline-flex h-[22px] min-w-[22px] shrink-0 items-center justify-center">
+                <MobileNavBuyingIcon className="h-[22px] w-[22px] shrink-0" aria-hidden />
+                {purchasesItemCount > 0 ? (
+                  <span className={`${mobileNavBadgeBase} bg-sky-600 text-white dark:bg-sky-500`}>
+                    {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
+                  </span>
+                ) : null}
+              </span>
+              <MobileNavTabLabel>Buying</MobileNavTabLabel>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mobileSellingTabActive}
+              aria-current={mobileSellingTabActive ? "page" : undefined}
+              className={mobileIconTabClass(mobileSellingTabActive)}
+              aria-label={
+                ordersItemCount > 0
+                  ? `Selling, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} alerts`
+                  : "Selling"
+              }
+              onClick={() => {
+                goOrders();
+                closeAllMenus();
+              }}
+            >
+              <span className="relative inline-flex h-[22px] min-w-[22px] shrink-0 items-center justify-center">
+                <MobileNavSellingIcon className="h-[22px] w-[22px] shrink-0" aria-hidden />
+                {ordersItemCount > 0 ? (
+                  <span className={`${mobileNavBadgeBase} bg-emerald-600 text-white dark:bg-emerald-500`}>
+                    {ordersItemCount > 99 ? "99+" : ordersItemCount}
+                  </span>
+                ) : null}
+              </span>
+              <MobileNavTabLabel>Selling</MobileNavTabLabel>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === VIEWS.PROFILE}
+              aria-current={activeView === VIEWS.PROFILE ? "page" : undefined}
+              className={mobileIconTabClass(activeView === VIEWS.PROFILE)}
+              aria-label="Profile"
+              onClick={() => {
+                goOwnProfile();
+                closeAllMenus();
+              }}
+            >
+              <MenuUserIcon className="h-[22px] w-[22px] shrink-0" width={22} height={22} aria-hidden />
+              <MobileNavTabLabel>Profile</MobileNavTabLabel>
             </button>
           </div>
+        </nav>
+
+        {mobileSecondaryNav ? (
+          <div className="border-t border-neutral-200/80 bg-white/95 py-2 dark:border-slate-700 dark:bg-slate-900/95">
+            <div className="app-shell-content-inset">{mobileSecondaryNav}</div>
+          </div>
         ) : null}
+      </div>
+
+      <div className="app-container hidden md:flex h-[4.25rem] items-center justify-between gap-2 md:gap-3">
+        <button
+          type="button"
+          className="rounded-xl px-1 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950"
+          onClick={goMarketplaceRoot}
+          aria-label="Go to marketplace"
+        >
+          <LinkMartLogo className="h-9 w-auto max-w-full shrink-0 object-contain md:h-10 md:max-w-[min(10.5rem,100%)]" />
+        </button>
 
         <div className="hidden min-w-0 flex-1 items-center justify-center overflow-x-auto md:flex">
           <nav className="flex min-w-0 max-w-full items-center justify-center" aria-label="Main">
@@ -729,7 +1023,13 @@ export function LoggedInHeader({
             >
               <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-soft text-xs font-bold text-brand-primary">
                 {user?.avatarUrl ? (
-                  <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
+                  <img
+                    src={user.avatarUrl}
+                    alt=""
+                    className="h-full w-full object-cover"
+                    decoding="async"
+                    sizes="32px"
+                  />
                 ) : (
                   (String(user?.username || "").trim().charAt(0) || "?").toUpperCase()
                 )}
@@ -738,7 +1038,7 @@ export function LoggedInHeader({
             {accountMenuOpen ? (
               <div
                 role="menu"
-                className="absolute right-0 z-50 mt-1.5 w-[min(100vw-1.5rem,18.5rem)] min-w-[17rem] overflow-visible rounded-xl border border-neutral-200/90 bg-white p-1 shadow-[0_4px_24px_rgba(15,23,42,0.08),0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-600 dark:bg-slate-900 dark:shadow-[0_4px_24px_rgba(0,0,0,0.35),0_1px_2px_rgba(0,0,0,0.2)]"
+                className="absolute right-0 z-50 mt-1.5 min-w-0 w-[min(100vw-1.5rem,18.5rem)] overflow-visible rounded-xl border border-neutral-200/90 bg-white p-1 shadow-[0_4px_24px_rgba(15,23,42,0.08),0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-600 dark:bg-slate-900 dark:shadow-[0_4px_24px_rgba(0,0,0,0.35),0_1px_2px_rgba(0,0,0,0.2)] md:min-w-[17rem]"
               >
                 <button
                   type="button"
@@ -834,133 +1134,19 @@ export function LoggedInHeader({
             ) : null}
           </div>
         </div>
-
-        <div className="flex shrink-0 items-center gap-1.5 md:hidden">
-          <button
-            type="button"
-            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 ${activeView === VIEWS.CART ? headerUtilityButtonActive : ""}`}
-            aria-label={
-              cartItemCount > 0
-                ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} new item${cartItemCount === 1 ? "" : "s"}`
-                : totalCartCount > 0
-                  ? `Cart, ${totalCartCount > 99 ? "99 plus" : totalCartCount} item${totalCartCount === 1 ? "" : "s"}`
-                  : "Shopping cart"
-            }
-            title="Cart"
-            onClick={() => {
-              goCart();
-              closeAllMenus();
-            }}
-          >
-            <span className="relative inline-flex">
-              <MenuCartIcon className="h-5 w-5 shrink-0" />
-              {cartItemCount > 0 ? (
-                <span className="absolute -right-2 -top-1.5 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-amber-600 px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm dark:bg-amber-500">
-                  {cartItemCount > 99 ? "99+" : cartItemCount}
-                </span>
-              ) : totalCartCount > 0 ? (
-                <span className="absolute -right-2 -top-1.5 inline-flex min-w-[1rem] items-center justify-center rounded-full border border-neutral-300 bg-white px-1 py-[1px] text-[9px] font-semibold leading-none text-neutral-600 shadow-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                  {totalCartCount > 99 ? "99+" : totalCartCount}
-                </span>
-              ) : null}
-            </span>
-          </button>
-          <button
-            type="button"
-            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 ${activeView === VIEWS.MESSAGES ? headerUtilityButtonActive : ""}`}
-            aria-label="Messages"
-            onClick={() => {
-              setActiveView(VIEWS.MESSAGES);
-              closeAllMenus();
-            }}
-          >
-            <MessagesIcon
-              filled={activeView === VIEWS.MESSAGES}
-              className={activeView === VIEWS.MESSAGES ? "text-emerald-600 dark:text-emerald-300" : ""}
-            />
-          </button>
-          <button
-            type="button"
-            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 ${activeView === VIEWS.NOTIFICATIONS ? headerUtilityButtonActive : ""}`}
-            aria-label="Notifications"
-            onClick={() => {
-              setActiveView(VIEWS.NOTIFICATIONS);
-              closeAllMenus();
-            }}
-          >
-            <NotificationsIcon
-              filled={activeView === VIEWS.NOTIFICATIONS}
-              className={activeView === VIEWS.NOTIFICATIONS ? "text-emerald-600 dark:text-emerald-300" : ""}
-            />
-            {notificationUnreadCount > 0 ? (
-              <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm">
-                {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
-              </span>
-            ) : null}
-          </button>
-          <button
-            type="button"
-            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 ${activeView === VIEWS.FAVORITES ? headerUtilityButtonActive : ""}`}
-            aria-label={
-              favoriteCount > 0
-                ? `My Favorites, ${favoriteCount > 99 ? "99 plus" : favoriteCount} saved`
-                : "My Favorites"
-            }
-            title={favoriteCount > 0 ? `${favoriteCount > 99 ? "99+" : favoriteCount} saved listings` : "Saved listings"}
-            onClick={() => {
-              setActiveView(VIEWS.FAVORITES);
-              closeAllMenus();
-            }}
-          >
-            <HeartIcon
-              filled={activeView === VIEWS.FAVORITES}
-              className={activeView === VIEWS.FAVORITES ? "text-emerald-600 dark:text-emerald-300" : ""}
-            />
-            {favoriteCount > 0 ? (
-              <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
-                {favoriteCount > 99 ? "99+" : favoriteCount}
-              </span>
-            ) : null}
-          </button>
-          <button
-            ref={mobileMenuButtonRef}
-            type="button"
-            className={`${headerUtilityButtonBase} h-11 w-11 shrink-0 overflow-hidden p-0 ${
-              activeView === VIEWS.PROFILE ? "ring-2 ring-primary/30 dark:ring-brand-accent/25" : ""
-            }`}
-            onClick={() => {
-              setMobileMenuOpen((v) => !v);
-            }}
-            aria-expanded={mobileMenuOpen}
-            aria-controls="mobile-nav-menu-panel"
-            aria-label={
-              mobileMenuOpen
-                ? "Close account menu"
-                : activeView === VIEWS.PROFILE
-                  ? "Open account menu (viewing profile)"
-                  : "Open account menu"
-            }
-          >
-            {user?.avatarUrl ? (
-              <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
-            ) : (
-              <span className="inline-flex h-full w-full items-center justify-center bg-brand-soft text-sm font-bold text-brand-primary">
-                {(String(user?.username || "").trim().charAt(0) || "?").toUpperCase()}
-              </span>
-            )}
-          </button>
-        </div>
       </div>
     </header>
 
       {mobileMenuOpen ? (
         <>
+          {/* Semi-transparent overlay — closes drawer on tap (full viewport, behind drawer z-order) */}
           <button
             type="button"
-            className={`fixed inset-x-0 top-[4.25rem] z-[60] bg-slate-900/50 backdrop-blur-[3px] transition-opacity duration-300 ease-out motion-reduce:transition-none md:hidden bottom-[calc(var(--mobile-bottom-nav)+env(safe-area-inset-bottom,0px)+0.5rem)] ${
-              mobileSheetEntered ? "opacity-100" : "opacity-0"
+            className={`fixed inset-0 z-[60] bg-slate-900/55 backdrop-blur-[2px] transition-opacity duration-300 ease-out motion-reduce:transition-none md:hidden ${
+              mobileSheetEntered ? "opacity-100" : "opacity-0 pointer-events-none"
             }`}
             aria-label="Close menu"
+            tabIndex={-1}
             onClick={closeMobileSheetAnimated}
           />
           <div
@@ -968,321 +1154,124 @@ export function LoggedInHeader({
             id="mobile-nav-menu-panel"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="mobile-account-sheet-title"
-            className="fixed inset-x-0 z-[70] flex justify-center px-4 pt-2 md:hidden bottom-[calc(var(--mobile-bottom-nav)+env(safe-area-inset-bottom,0px)+0.5rem)] pointer-events-none"
+            aria-label="Account menu"
+            onTouchStart={onDrawerTouchStart}
+            onTouchMove={onDrawerTouchMove}
+            onTouchEnd={onDrawerTouchEnd}
+            onTouchCancel={() => {
+              setIsDrawerDragging(false);
+              drawerTouchRef.current.axis = "none";
+              setDrawerPullPx(0);
+            }}
+            onTransitionEnd={handleMobileDrawerTransitionEnd}
+            style={
+              drawerUsesPullTransform
+                ? {
+                    transform: `translate3d(${drawerPullPx}px, 0, 0)`,
+                    transition: isDrawerDragging ? "none" : "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+                  }
+                : undefined
+            }
+            className={`fixed inset-y-0 left-0 z-[70] flex h-[100dvh] max-h-[100dvh] w-[82vw] max-w-[22rem] touch-pan-y flex-col overflow-hidden border-r border-neutral-200/35 bg-white shadow-[4px_0_20px_-10px_rgba(15,23,42,0.1)] motion-reduce:transform-none dark:border-slate-700/45 dark:bg-slate-900 dark:shadow-[4px_0_24px_-8px_rgba(0,0,0,0.4)] md:hidden ${
+              drawerUsesPullTransform
+                ? ""
+                : mobileSheetEntered
+                  ? "translate-x-0 transition-transform duration-300 ease-out motion-reduce:duration-75 motion-reduce:transition-none"
+                  : "-translate-x-full pointer-events-none transition-transform duration-300 ease-out motion-reduce:duration-75 motion-reduce:transition-none"
+            } pl-[env(safe-area-inset-left,0px)]`}
           >
-            <div className="app-container flex w-full max-w-7xl justify-center pointer-events-auto">
-              <div
-                ref={mobileSheetSurfaceRef}
-                onTransitionEnd={handleMobileSheetTransitionEnd}
-                className={`max-h-[min(72dvh,calc(100dvh-4.25rem-4rem))] w-full max-w-lg origin-bottom transform overflow-hidden rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-12px_40px_-8px_rgba(15,23,42,0.16)] transition-transform duration-300 ease-out motion-reduce:duration-75 dark:border-slate-600 dark:bg-slate-900 dark:shadow-[0_-12px_40px_-8px_rgba(0,0,0,0.45)] ${
-                  mobileSheetEntered ? "translate-y-0" : "translate-y-full"
-                }`}
-              >
-                <div className="sticky top-0 z-10 border-b border-neutral-100 bg-white/95 px-3 pb-2 pt-2 backdrop-blur-sm dark:border-slate-700/90 dark:bg-slate-900/95">
-                  <div className="flex justify-center pb-2 pt-0.5" aria-hidden>
-                    <span className="h-1 w-9 rounded-full bg-neutral-300 dark:bg-slate-600" />
+            <nav
+              className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top,0px))] [-webkit-overflow-scrolling:touch]"
+              aria-label="Account"
+            >
+              <div className="flex flex-col gap-0.5">
+                <button
+                  ref={mobileDrawerFirstFocusRef}
+                  type="button"
+                  className={mobileSheetMenuItem}
+                  onClick={() => {
+                    goOwnProfile();
+                    finalizeMobileSheetClose();
+                  }}
+                >
+                  <span className={mobileDrawerIconPlain} aria-hidden>
+                    <MenuUserIcon />
+                  </span>
+                  Profile
+                </button>
+                <button
+                  type="button"
+                  className={`${mobileSheetMenuItem} justify-between gap-2`}
+                  aria-expanded={mobileSettingsOpen}
+                  aria-controls="mobile-account-settings"
+                  onClick={() => setMobileSettingsOpen((v) => !v)}
+                >
+                  <span className="flex min-w-0 flex-1 items-center gap-3">
+                    <span className={mobileDrawerIconPlain} aria-hidden>
+                      <MenuSettingsIcon />
+                    </span>
+                    Settings
+                  </span>
+                  <ChevronRightIcon
+                    className={`h-[18px] w-[18px] shrink-0 text-neutral-400 transition-transform dark:text-slate-500 ${mobileSettingsOpen ? "rotate-90" : ""}`}
+                  />
+                </button>
+                {mobileSettingsOpen ? (
+                  <div
+                    id="mobile-account-settings"
+                    className="mx-0.5 mb-1 rounded-xl border border-neutral-200/50 bg-neutral-50/80 p-3 dark:border-slate-600/80 dark:bg-slate-800/60"
+                  >
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Theme</p>
+                    <ThemeToggleGroup theme={theme} setTheme={setTheme} />
+                    <p className="mb-2 mt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Preferences</p>
+                    <p className="text-xs text-neutral-500 dark:text-slate-400">Notification controls will appear here.</p>
                   </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1 pt-0.5">
-                      <h2 id="mobile-account-sheet-title" className="text-base font-semibold text-neutral-900 dark:text-slate-100">
-                        Account
-                      </h2>
-                      <p className="mt-0.5 truncate text-xs text-neutral-500 dark:text-slate-400">Signed in as {accountLabel}</p>
-                    </div>
-                    <button
-                      ref={mobileSheetCloseRef}
-                      type="button"
-                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 text-neutral-600 transition hover:border-neutral-300 hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus:ring-2 focus:ring-brand-primary/35 dark:border-slate-600 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-white"
-                      aria-label="Close menu"
-                      onClick={closeMobileSheetAnimated}
-                    >
-                      <CloseIcon />
-                    </button>
-                  </div>
-                </div>
-                <div className="max-h-[min(calc(72dvh-7rem),calc(100dvh-4.25rem-11rem))] overflow-y-auto overscroll-contain px-2 pb-3 [-webkit-overflow-scrolling:touch]">
-                <div className="flex flex-col gap-1 pt-1">
-            <button
-              type="button"
-              className={`${accountMenuItemBase} rounded-xl`}
-              onClick={() => {
-                goOwnProfile();
-                finalizeMobileSheetClose();
-              }}
-            >
-              <span className={accountMenuIconWrap} aria-hidden>
-                <MenuUserIcon />
-              </span>
-              Profile
-            </button>
-            <button
-              type="button"
-              className={`${accountMenuItemBase} justify-between gap-2 rounded-xl`}
-              onClick={() => {
-                goMyPurchases();
-                finalizeMobileSheetClose();
-              }}
-            >
-              <span className="flex min-w-0 flex-1 items-center gap-3">
-                <span className={accountMenuIconWrap} aria-hidden>
-                  <MenuFileIcon />
-                </span>
-                <span className="truncate">My purchases</span>
-              </span>
-              {purchasesItemCount > 0 ? (
-                <span className="inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-sky-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white dark:bg-sky-500">
-                  {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
-                </span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              className={`${accountMenuItemBase} justify-between gap-2 rounded-xl`}
-              onClick={() => {
-                goOrders();
-                finalizeMobileSheetClose();
-              }}
-            >
-              <span className="flex min-w-0 flex-1 items-center gap-3">
-                <span className={accountMenuIconWrap} aria-hidden>
-                  <MenuOrdersIcon />
-                </span>
-                <span className="truncate">Sales inbox</span>
-              </span>
-              {ordersItemCount > 0 ? (
-                <span className="inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white dark:bg-emerald-500">
-                  {ordersItemCount > 99 ? "99+" : ordersItemCount}
-                </span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              className={`${accountMenuItemBase} justify-between gap-2 rounded-xl`}
-              aria-expanded={mobileSettingsOpen}
-              aria-controls="mobile-account-settings"
-              onClick={() => setMobileSettingsOpen((v) => !v)}
-            >
-              <span className="flex min-w-0 flex-1 items-center gap-3">
-                <span className={accountMenuIconWrap} aria-hidden>
-                  <MenuSettingsIcon />
-                </span>
-                Settings
-              </span>
-              <ChevronRightIcon
-                className={`h-[18px] w-[18px] shrink-0 text-neutral-400 transition-transform dark:text-slate-500 ${mobileSettingsOpen ? "rotate-90" : ""}`}
-              />
-            </button>
-            {mobileSettingsOpen ? (
-              <div
-                id="mobile-account-settings"
-                className="mx-0.5 mb-1 rounded-xl border border-neutral-200/90 bg-neutral-50/90 p-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-600 dark:bg-slate-800/70 dark:shadow-[0_1px_2px_rgba(0,0,0,0.2)]"
-              >
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Theme</p>
-                <ThemeToggleGroup theme={theme} setTheme={setTheme} />
-                <p className="mb-2 mt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Preferences</p>
-                <p className="text-xs text-neutral-500 dark:text-slate-400">Notification controls will appear here.</p>
+                ) : null}
+                <button
+                  type="button"
+                  className={mobileSheetMenuItem}
+                  onClick={() => {
+                    setActiveView(VIEWS.ABOUT);
+                    finalizeMobileSheetClose();
+                  }}
+                >
+                  <span className={mobileDrawerIconPlain} aria-hidden>
+                    <MenuInfoIcon />
+                  </span>
+                  About
+                </button>
+                <button
+                  type="button"
+                  className={mobileSheetMenuItem}
+                  onClick={() => {
+                    setActiveView(VIEWS.TERMS);
+                    finalizeMobileSheetClose();
+                  }}
+                >
+                  <span className={mobileDrawerIconPlain} aria-hidden>
+                    <MenuFileIcon />
+                  </span>
+                  Terms and Conditions
+                </button>
+                <button
+                  type="button"
+                  className={`${mobileSheetMenuItem} mt-0.5 font-medium text-rose-700 hover:bg-rose-50/90 dark:text-rose-400 dark:hover:bg-rose-950/45`}
+                  onClick={() => {
+                    onLogout();
+                    finalizeMobileSheetClose();
+                  }}
+                >
+                  <span className={`${mobileDrawerIconPlain} text-rose-600 dark:text-rose-400`} aria-hidden>
+                    <MenuLogOutIcon />
+                  </span>
+                  Log out
+                </button>
               </div>
-            ) : null}
-            <button
-              type="button"
-              className={`${accountMenuItemBase} rounded-xl`}
-              onClick={() => {
-                setActiveView(VIEWS.ABOUT);
-                finalizeMobileSheetClose();
-              }}
-            >
-              <span className={accountMenuIconWrap} aria-hidden>
-                <MenuInfoIcon />
-              </span>
-              About
-            </button>
-            <button
-              type="button"
-              className={`${accountMenuItemBase} rounded-xl`}
-              onClick={() => {
-                setActiveView(VIEWS.TERMS);
-                finalizeMobileSheetClose();
-              }}
-            >
-              <span className={accountMenuIconWrap} aria-hidden>
-                <MenuFileIcon />
-              </span>
-              Terms & Conditions
-            </button>
-            <button
-              type="button"
-              className={`${accountMenuItemBase} mt-0.5 rounded-xl font-medium text-rose-700 hover:bg-rose-50/90 dark:text-rose-400 dark:hover:bg-rose-950/45`}
-              onClick={() => {
-                onLogout();
-                finalizeMobileSheetClose();
-              }}
-            >
-              <span className={accountMenuIconWrapDanger} aria-hidden>
-                <MenuLogOutIcon />
-              </span>
-              Logout
-            </button>
-                </div>
-                </div>
-              </div>
-            </div>
+            </nav>
           </div>
         </>
       ) : null}
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col md:contents">
       {children}
-    </div>
-    <nav
-      className="relative z-[40] shrink-0 border-t border-neutral-200/90 bg-white/95 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))] pt-1.5 shadow-[0_-4px_24px_rgba(15,23,42,0.06)] backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95 md:hidden"
-      aria-label="Main"
-    >
-      <div className="app-container flex items-stretch px-1">
-        <div
-          className="flex min-h-0 min-w-0 flex-1 items-stretch gap-0.5"
-          role="tablist"
-          aria-label="Home, search, sell, inbox, profile"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={homeTabActive}
-            className={mobileBottomTabClass(homeTabActive)}
-            aria-label="Home — marketplace feed"
-            title="Home"
-            aria-current={homeTabActive ? "page" : undefined}
-            onClick={() => {
-              setAccountMenuOpen(false);
-              setDesktopSettingsOpen(false);
-              if (goMobileHome) goMobileHome();
-              else goBrowse();
-              closeAllMenus();
-            }}
-          >
-            <span
-              className={`relative inline-flex shrink-0 ${
-                homeTabActive ? "text-brand-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
-              }`}
-            >
-              <HomeNavIcon className="h-[22px] w-[22px] shrink-0" />
-            </span>
-            <span className="max-w-full truncate text-center leading-snug">Home</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={searchTabActive}
-            className={mobileBottomTabClass(searchTabActive)}
-            aria-label="Search and filters"
-            title="Search categories and filters"
-            aria-current={searchTabActive ? "page" : undefined}
-            onClick={() => {
-              setAccountMenuOpen(false);
-              setDesktopSettingsOpen(false);
-              if (goMobileSearch) goMobileSearch();
-              else {
-                goBrowse();
-                closeAllMenus();
-              }
-            }}
-          >
-            <span
-              className={`relative inline-flex shrink-0 ${
-                searchTabActive ? "text-brand-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
-              }`}
-            >
-              <SearchNavIcon className="h-[22px] w-[22px] shrink-0" />
-            </span>
-            <span className="max-w-full truncate text-center leading-snug">Search</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={createSellTabActive}
-            className={mobileBottomTabClass(createSellTabActive)}
-            aria-label="Create listing or manage selling"
-            title="Sell"
-            aria-current={createSellTabActive ? "page" : undefined}
-            onClick={() => {
-              setAccountMenuOpen(false);
-              setDesktopSettingsOpen(false);
-              if (goCreateSell) goCreateSell();
-              closeAllMenus();
-            }}
-          >
-            <span
-              className={`relative inline-flex shrink-0 ${
-                createSellTabActive ? "text-brand-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
-              }`}
-            >
-              <CreateSellNavIcon className="h-[22px] w-[22px] shrink-0" />
-            </span>
-            <span className="max-w-full text-[9px] font-semibold leading-tight text-center md:text-[10px]">
-              <span className="block">Create /</span>
-              <span className="block">Sell</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={inboxTabActive}
-            className={mobileBottomTabClass(inboxTabActive)}
-            aria-label={
-              inboxBadgeCount > 0
-                ? `Inbox, ${inboxBadgeCount > 99 ? "99 plus" : inboxBadgeCount} unread or updates`
-                : "Inbox — messages and orders"
-            }
-            title="Messages, notifications, and orders"
-            aria-current={inboxTabActive ? "page" : undefined}
-            onClick={() => {
-              setAccountMenuOpen(false);
-              setDesktopSettingsOpen(false);
-              if (goInbox) goInbox();
-              else {
-                setActiveView(VIEWS.MESSAGES);
-                closeAllMenus();
-              }
-            }}
-          >
-            <span
-              className={`relative inline-flex shrink-0 ${
-                inboxTabActive ? "text-brand-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
-              }`}
-            >
-              <MessagesIcon filled={inboxTabActive} className="h-[22px] w-[22px]" />
-              {inboxBadgeCount > 0 ? (
-                <span className="absolute -right-2 -top-1.5 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-brand-primary px-1 py-[1px] text-[9px] font-bold leading-none text-white shadow-sm">
-                  {inboxBadgeCount > 99 ? "99+" : inboxBadgeCount}
-                </span>
-              ) : null}
-            </span>
-            <span className="max-w-full truncate text-center leading-snug">Inbox</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeView === VIEWS.PROFILE}
-            className={mobileBottomTabClass(activeView === VIEWS.PROFILE)}
-            aria-label="Profile — account and settings"
-            title="Profile"
-            aria-current={activeView === VIEWS.PROFILE ? "page" : undefined}
-            onClick={() => {
-              goOwnProfile();
-              closeAllMenus();
-            }}
-          >
-            <span
-              className={`relative inline-flex shrink-0 ${
-                activeView === VIEWS.PROFILE ? "text-brand-primary dark:text-brand-accent" : "text-neutral-500 dark:text-slate-500"
-              }`}
-            >
-              <MenuUserIcon className="h-5 w-5 shrink-0" />
-            </span>
-            <span className="max-w-full truncate text-center leading-snug">Profile</span>
-          </button>
-        </div>
-      </div>
-    </nav>
     </div>
   );
 }

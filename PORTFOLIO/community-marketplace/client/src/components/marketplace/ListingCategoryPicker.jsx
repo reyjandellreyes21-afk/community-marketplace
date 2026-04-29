@@ -88,6 +88,11 @@ export function ListingCategoryPicker({ value, onChange, invalid }) {
           ref={inputRef}
           id={triggerId}
           type="text"
+          inputMode="search"
+          enterKeyHint="search"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
           role="combobox"
           aria-autocomplete="list"
           aria-haspopup="listbox"
