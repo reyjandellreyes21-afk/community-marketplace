@@ -1,4 +1,3 @@
-import { body, param, query } from "express-validator";
 import { AppError } from "../errors/AppError.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { uploadCommunityCoverImage } from "../lib/communityImageStorage.js";
@@ -219,39 +218,6 @@ function distanceKm(lat1, lng1, lat2, lng2) {
     Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(a));
 }
-
-export const listingsValidators = {
-  list: [
-    query("categories").optional().isString(),
-    query("verticalId").optional().isString(),
-    query("subId").optional().isString(),
-    query("communityId").optional().isUUID(),
-    query("lat").optional().isFloat(),
-    query("lng").optional().isFloat(),
-    query("radiusKm").optional().isFloat({ min: 0.5, max: 500 }),
-  ],
-  create: [
-    body("title").isString().trim().isLength({ min: 2, max: 200 }),
-    body("description").optional().isString().isLength({ max: 8000 }),
-    body("priceCents").isInt({ min: 0 }),
-    body("quantity").isInt({ min: 0 }),
-    body("categories").optional().isString().trim().notEmpty().isLength({ min: 1, max: 32 }),
-    body("verticalId").optional().isString().trim().notEmpty().isLength({ min: 1, max: 32 }),
-    body().custom((_, { req }) => {
-      const categories = String(req.body?.categories ?? "").trim();
-      const verticalId = String(req.body?.verticalId ?? "").trim();
-      if (!categories && !verticalId) throw new Error("Categories is required.");
-      return true;
-    }),
-    body("subId").optional({ values: "null" }).isString().trim(),
-    body("fulfillmentModes").optional().isArray(),
-    body("cityLabel").optional().isString().trim(),
-    body("lat").optional().isFloat(),
-    body("lng").optional().isFloat(),
-    body("imageUrl").optional().isString(),
-  ],
-  idParam: [param("id").isUUID()],
-};
 
 export const listListings = async (req, res, next) => {
   try {
