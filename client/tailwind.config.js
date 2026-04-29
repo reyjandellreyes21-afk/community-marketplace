@@ -1,16 +1,26 @@
 /** @type {import('tailwindcss').Config} */
 /**
- * Responsive policy: mobile-first — unprefixed utilities target phones; `md:` / `lg:` add desktop behavior.
- * Avoid `max-md:` / `max-lg:` (desktop-first). Validate at 360 / 390 / 430; shell baseline `max-w-mobile-baseline` (390px). No `sm:` tier.
+ * MAIN MOBILE-FIRST RULE (mobile view only for base styles):
+ * — Design mobile first; tune at 360 / 390 / 430. Logged-in shell is fluid (`max-w-none`); `max-w-mobile-baseline` = 100% of parent (use `md:`/`lg:` for fixed columns).
+ * — Sanity-check at 360px (narrow) and 430px (wide phone).
+ * — Do not build desktop-first layouts. Add tablet/desktop only via `md:` / `lg:` (progressive enhancement).
+ * — Avoid `max-md:` / `max-lg:` (desktop-first). No `sm:` tier.
  */
 export default {
   darkMode: "class",
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
+    /** Mobile-first: no `sm` breakpoint — unprefixed utilities are mobile; enhance from `md` up only. */
+    screens: {
+      md: "768px",
+      lg: "1024px",
+      xl: "1280px",
+      "2xl": "1536px",
+    },
     extend: {
       maxWidth: {
-        /** Primary mobile shell width — design at 390px; scales down on 360, centers on 430+ */
-        "mobile-baseline": "390px",
+        /** Full-bleed within the mobile shell — do not cap at 390px (parent provides safe padding) */
+        "mobile-baseline": "100%",
       },
       colors: {
         primary: "#1FA6A6",
@@ -19,7 +29,8 @@ export default {
         background: "#F9FAFB",
         surface: "#FFFFFF",
         "text-primary": "#1F2A37",
-        "text-secondary": "#6B7280",
+        /** ≥4.5:1 on white — WCAG AA body text (mobile + desktop) */
+        "text-secondary": "#4B5563",
         border: "#E5E7EB",
         danger: "#EF4444",
         "danger-hover": "#DC2626",
@@ -30,7 +41,7 @@ export default {
         app: "#F9FAFB",
         elevated: "#E5E7EB",
         "border-default": "#E5E7EB",
-        "text-muted": "#64748b",
+        "text-muted": "#475569",
         "brand-primary": "#1FA6A6",
         "brand-hover": "#178585",
         "brand-accent": "#1FA6A6",

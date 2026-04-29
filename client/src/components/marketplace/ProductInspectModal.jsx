@@ -169,7 +169,13 @@ export function ProductInspectModal({
                   aria-label="View larger product image"
                   onClick={() => setImagePreviewOpen(true)}
                 >
-                  <img src={imageUrl} alt="" className="h-full w-full object-cover transition duration-200 hover:scale-[1.02]" />
+                  <img
+                    src={imageUrl}
+                    alt=""
+                    className="h-full w-full object-cover transition duration-200 hover:scale-[1.02]"
+                    decoding="async"
+                    sizes="(max-width: 768px) min(90vw, 12.5rem), 9rem"
+                  />
                 </button>
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">

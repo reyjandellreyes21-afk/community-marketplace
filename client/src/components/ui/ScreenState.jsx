@@ -1,9 +1,74 @@
 import { Button } from "./Button.jsx";
 import { cn } from "../../lib/cn.js";
 import { UI_KIT } from "../../lib/appUiKit.js";
+import { MOBILE_UI } from "../../lib/mobileUi.js";
 
-/** Full-width loading placeholder for a screen or major panel (mobile-friendly). */
-export function ScreenLoading({ message = "Loading…", className = "", minHeight = true }) {
+function CheckCircleIcon(props) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={40}
+      height={40}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...props}
+    >
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+      <polyline points="22 4 12 14.01 9 11.01" />
+    </svg>
+  );
+}
+
+/** Full-width recovery controls on phones; side-by-side from `md` where space allows. */
+const recoveryRowClass = "mt-6 flex w-full max-w-none flex-col gap-3 md:mx-auto md:flex-row md:flex-wrap md:justify-center";
+
+/** Full-width primary recovery on mobile (`Button` default height = 44px tap area). */
+function RecoveryButtons({ primaryAction, secondaryAction }) {
+  if (!primaryAction && !secondaryAction) return null;
+  return (
+    <div className={recoveryRowClass}>
+      {primaryAction ? (
+        <Button
+          type="button"
+          variant="primary"
+          fullWidth
+          className="md:w-auto md:min-w-[10rem]"
+          onClick={primaryAction.onClick}
+        >
+          {primaryAction.label}
+        </Button>
+      ) : null}
+      {secondaryAction ? (
+        <Button
+          type="button"
+          variant="secondary"
+          fullWidth
+          className="md:w-auto md:min-w-[10rem]"
+          onClick={secondaryAction.onClick}
+        >
+          {secondaryAction.label}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Full-width loading placeholder — tuned for mobile shells (`MOBILE_UI.screenStateMin`).
+ * Use inside narrow layouts / browse grids; set `minHeight={false}` for inline strips.
+ */
+export function ScreenLoading({
+  message = "Loading…",
+  className = "",
+  minHeight = true,
+  /** Larger vertical footprint on mobile main surfaces */
+  spacious = false,
+}) {
   return (
     <div
       role="status"
@@ -12,12 +77,12 @@ export function ScreenLoading({ message = "Loading…", className = "", minHeigh
       className={cn(
         UI_KIT.surfaceMuted,
         "flex flex-col items-center justify-center gap-3 border-dashed px-4 py-12 text-center md:py-14",
-        minHeight && "min-h-[12rem]",
+        minHeight && (spacious ? cn(MOBILE_UI.screenStateMin, "py-14 md:py-16") : "min-h-[12rem]"),
         className,
       )}
     >
       <span
-        className="h-9 w-9 animate-spin rounded-full border-2 border-brand-primary border-t-transparent dark:border-brand-accent dark:border-t-transparent"
+        className="h-9 w-9 animate-spin rounded-full border-2 border-brand-primary border-t-transparent motion-reduce:animate-none dark:border-brand-accent dark:border-t-transparent"
         aria-hidden
       />
       <p className="text-sm font-medium text-neutral-600 dark:text-slate-400">{message}</p>
@@ -25,62 +90,112 @@ export function ScreenLoading({ message = "Loading…", className = "", minHeigh
   );
 }
 
-/** Empty state with optional primary / secondary recovery actions. */
-export function ScreenEmpty({ title, description, primaryAction, secondaryAction, className = "" }) {
+/** Empty state with optional primary / secondary recovery (44px targets on mobile). */
+export function ScreenEmpty({ title, description, primaryAction, secondaryAction, spacious = true, className = "" }) {
   return (
     <div
       className={cn(
         UI_KIT.surfaceRaised,
         "flex flex-col items-center justify-center border-dashed px-4 py-10 text-center md:px-6 md:py-14",
+        spacious && MOBILE_UI.screenStateMin,
         className,
       )}
     >
       <p className="text-base font-semibold text-neutral-900 dark:text-slate-100 md:text-lg">{title}</p>
       {description ? (
-        <p className="mt-2 max-w-md text-xs leading-relaxed text-neutral-600 dark:text-slate-400 md:text-sm">{description}</p>
+        <p className="mt-2 max-w-mobile-baseline text-xs leading-relaxed text-neutral-600 dark:text-slate-400 md:max-w-md md:text-sm">
+          {description}
+        </p>
       ) : null}
-      {primaryAction || secondaryAction ? (
-        <div className="mt-6 flex w-full max-w-sm flex-col gap-2 sm:flex-row sm:justify-center">
-          {primaryAction ? (
-            <Button type="button" variant="primary" className="w-full sm:w-auto" onClick={primaryAction.onClick}>
-              {primaryAction.label}
-            </Button>
-          ) : null}
-          {secondaryAction ? (
-            <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={secondaryAction.onClick}>
-              {secondaryAction.label}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+      <RecoveryButtons primaryAction={primaryAction} secondaryAction={secondaryAction} />
     </div>
   );
 }
 
-/** Error state with retry and optional secondary recovery (e.g. go back / browse). */
+/**
+ * Block-level success — use after completing checkout, publishing, etc.
+ * Pair with `InlineSuccess` for lightweight banners.
+ */
+export function ScreenSuccess({
+  title,
+  description,
+  primaryAction,
+  secondaryAction,
+  spacious = true,
+  className = "",
+}) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={cn(
+        UI_KIT.stateSuccess,
+        "flex flex-col items-center justify-center rounded-xl border px-4 py-10 text-center md:px-6 md:py-12",
+        spacious && MOBILE_UI.screenStateMin,
+        className,
+      )}
+    >
+      <span className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+        <CheckCircleIcon className="h-9 w-9" />
+      </span>
+      <p className="text-base font-semibold text-emerald-900 dark:text-emerald-50 md:text-lg">{title}</p>
+      {description ? (
+        <p className="mt-2 max-w-mobile-baseline text-xs leading-relaxed text-emerald-900/90 dark:text-emerald-100/90 md:max-w-md md:text-sm">
+          {description}
+        </p>
+      ) : null}
+      <RecoveryButtons primaryAction={primaryAction} secondaryAction={secondaryAction} />
+    </div>
+  );
+}
+
+/**
+ * Error state with retry + optional secondary recovery (e.g. browse / go back).
+ * Always pass `onRetry` and/or `secondaryAction` on mobile so users aren’t stuck.
+ */
 export function ScreenError({
   title = "Something went wrong",
   message,
   onRetry,
   retryLabel = "Try again",
   secondaryAction,
+  /** Taller layout when the error is the whole mobile surface (adds comfortable vertical rhythm). */
+  spacious = false,
   className = "",
 }) {
   return (
-    <div className={cn("app-alert-error flex flex-col gap-3 text-left", className)} role="alert">
+    <div
+      className={cn(
+        "app-alert-error flex flex-col gap-3 rounded-xl border border-rose-200/90 px-4 py-4 text-left dark:border-rose-900/40",
+        spacious && cn(MOBILE_UI.screenStateMin, "justify-center py-8 md:py-10"),
+        className,
+      )}
+      role="alert"
+    >
       <div>
         <p className="font-semibold text-rose-900 dark:text-rose-50">{title}</p>
         {message ? <p className="mt-1 text-sm text-rose-800 dark:text-rose-100">{message}</p> : null}
+        {!message ? (
+          <p className="mt-1 text-sm text-rose-800/90 dark:text-rose-100/90">
+            Check your connection, then try again. If it keeps happening, use another action below.
+          </p>
+        ) : null}
       </div>
       {onRetry || secondaryAction ? (
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <div className="flex flex-col gap-3 md:flex-row md:flex-wrap">
           {onRetry ? (
-            <Button type="button" variant="primary" size="compact" className="w-full min-h-11 sm:w-auto" onClick={onRetry}>
+            <Button type="button" variant="primary" fullWidth className="md:w-auto md:min-w-[10rem]" onClick={onRetry}>
               {retryLabel}
             </Button>
           ) : null}
           {secondaryAction ? (
-            <Button type="button" variant="secondary" size="compact" className="w-full min-h-11 sm:w-auto" onClick={secondaryAction.onClick}>
+            <Button
+              type="button"
+              variant="secondary"
+              fullWidth
+              className="md:w-auto md:min-w-[10rem]"
+              onClick={secondaryAction.onClick}
+            >
               {secondaryAction.label}
             </Button>
           ) : null}
@@ -93,8 +208,77 @@ export function ScreenError({
 /** Inline success callout (non-blocking). */
 export function InlineSuccess({ children, className = "" }) {
   return (
-    <div className={cn(UI_KIT.stateSuccess, "rounded-xl border px-3 py-2 text-sm", className)} role="status">
+    <div className={cn(UI_KIT.stateSuccess, "rounded-xl border px-3 py-2 text-sm", className)} role="status" aria-live="polite">
       {children}
     </div>
   );
+}
+
+/**
+ * Convenience gate: one of loading → error → success screen → empty → children.
+ * Order matches common flows (don’t show empty while loading). Success is optional full-screen.
+ */
+export function MobileScreenGate({
+  children,
+  isLoading,
+  loadingMessage = "Loading…",
+  loadingSpacious = false,
+  error,
+  errorTitle,
+  onRetry,
+  retryLabel,
+  errorSecondaryAction,
+  /** Full-surface error layout (default true when using this gate for a whole mobile screen). */
+  errorSpacious = true,
+  showSuccessScreen,
+  successTitle,
+  successDescription,
+  successPrimaryAction,
+  successSecondaryAction,
+  successSpacious = true,
+  isEmpty,
+  emptyTitle,
+  emptyDescription,
+  emptyPrimaryAction,
+  emptySecondaryAction,
+  emptySpacious = true,
+}) {
+  if (isLoading) {
+    return <ScreenLoading message={loadingMessage} spacious={loadingSpacious} />;
+  }
+  if (error) {
+    return (
+      <ScreenError
+        title={errorTitle ?? "Something went wrong"}
+        message={typeof error === "string" ? error : undefined}
+        onRetry={onRetry}
+        retryLabel={retryLabel}
+        secondaryAction={errorSecondaryAction}
+        spacious={errorSpacious}
+      />
+    );
+  }
+  if (showSuccessScreen && successTitle) {
+    return (
+      <ScreenSuccess
+        title={successTitle}
+        description={successDescription}
+        primaryAction={successPrimaryAction}
+        secondaryAction={successSecondaryAction}
+        spacious={successSpacious}
+      />
+    );
+  }
+  if (isEmpty && emptyTitle) {
+    return (
+      <ScreenEmpty
+        title={emptyTitle}
+        description={emptyDescription}
+        primaryAction={emptyPrimaryAction}
+        secondaryAction={emptySecondaryAction}
+        spacious={emptySpacious}
+      />
+    );
+  }
+  return children;
 }

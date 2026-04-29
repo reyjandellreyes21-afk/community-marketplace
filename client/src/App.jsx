@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo, Suspense } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import tabLogo from "./assets/new-icon-only.png";
-import heroStudyImage from "./assets/new-auth-landing.png";
+import landingFeaturesPicture from "./assets/new-auth-landing.png?w=360;480;640;768&format=avif;webp;png&quality=80&as=picture";
 import { createSupabaseClient } from "./lib/supabaseClient";
 import {
   isLikelySameCommunityName,
@@ -12,7 +12,16 @@ import {
 import { formatBrowseLabel, getVerticalById, VERTICALS } from "./categoryNav.js";
 import { gradientForId, initialsFromName } from "./communityUi.js";
 import { LoggedInHeader } from "./components/LoggedInHeader.jsx";
-import { PublicListingPage } from "./components/PublicListingPage.jsx";
+import {
+  LazyPublicListingPage,
+  LazyLandingIllustration,
+  LazyCommunityShopListingCard,
+  DeferredProductDetailStack,
+  LazyProductInspectModal,
+  LazyOrderBuyerReviewForm,
+  LazySellerBuyerFeedbackList,
+} from "./appCodeSplit.jsx";
+import { ImagetoolsPicture } from "./components/media/ImagetoolsPicture.jsx";
 import { formatCents } from "./marketplace/money.js";
 import { SELLER_TABS, VIEWS } from "./views.js";
 import {
@@ -71,16 +80,11 @@ import { computeMarketplaceFeedbackForText } from "./lib/marketplaceFeedbackToas
 import { fileToDataUrl } from "./lib/fileToDataUrl.js";
 import { LANDING_DISCOVERY_SLIDES, BROWSE_QUICK_FILTERS } from "./lib/landingDiscoveryData.js";
 import { quickFilterIcon, categoryIcon } from "./components/browse/BrowseFilterIcons.jsx";
-import { MarketplaceProductDetailStack } from "./components/marketplace/MarketplaceProductDetailStack.jsx";
 import { SectionHeading } from "./components/marketplace/SectionHeading.jsx";
 import { FilterOptionButton } from "./components/marketplace/FilterOptionButton.jsx";
-import { CommunityShopListingCard } from "./components/marketplace/CommunityShopListingCard.jsx";
 import { ListingCategoryPicker } from "./components/marketplace/ListingCategoryPicker.jsx";
-import { OrderBuyerReviewForm } from "./components/marketplace/OrderBuyerReviewForm.jsx";
 import { CartSellerSelectAllCheckbox } from "./components/marketplace/CartSellerSelectAllCheckbox.jsx";
 import { SellerProductCard } from "./components/marketplace/SellerProductCard.jsx";
-import { SellerBuyerFeedbackList } from "./components/marketplace/SellerBuyerFeedbackList.jsx";
-import { ProductInspectModal } from "./components/marketplace/ProductInspectModal.jsx";
 import { LandingFeatureRow, LANDING_FEATURE_ROWS } from "./components/landing/LandingFeatureRows.jsx";
 import {
   ChevronDownIcon,
@@ -88,12 +92,17 @@ import {
   ChevronRightIcon,
   EyeHidePasswordIcon,
   EyeShowPasswordIcon,
-  LandingIllustration,
   LandingSiteFooter,
   LinkMartLogo,
 } from "./components/landing/LandingMarketing.jsx";
 import { ScreenLoading, ScreenEmpty, ScreenError } from "./components/ui/ScreenState.jsx";
 import { Button } from "./components/ui/Button.jsx";
+import { MobileFormActions } from "./components/ui/MobileFormActions.jsx";
+import { validateConfirmPassword, validateEmail, validatePasswordClient } from "./lib/formValidation.js";
+import { MobileAppShell } from "./layouts/MobileAppShell.jsx";
+import { useBodyScrollLock } from "./hooks/useBodyScrollLock.js";
+import { useMobileViewport } from "./hooks/useMobileViewport.js";
+import { useCommunityShopPullToRefresh } from "./hooks/useCommunityShopPullToRefresh.js";
 
 /** Best-effort recency for ordering “unseen” pending rows (API field names vary). */
 function orderRowSortMs(o) {
@@ -110,7 +119,7 @@ function formatOrderCompletedAtLabel(iso) {
 }
 
 /** Full milestone context on the Completed tab (placed → processing → done). */
-function OrderCompletedMilestoneList({ order }) {
+const OrderCompletedMilestoneList = memo(function OrderCompletedMilestoneList({ order }) {
   const createdRaw = order?.createdAt ?? order?.created_at;
   const processingRaw = order?.processingEnteredAt ?? order?.processing_entered_at;
   const completedRaw = order?.completedAt ?? order?.completed_at;
@@ -149,7 +158,7 @@ function OrderCompletedMilestoneList({ order }) {
       ) : null}
     </div>
   );
-}
+});
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 const COMMUNITY_MEMBERSHIP_KEY_PREFIX = "community_membership_v1:";
@@ -295,10 +304,14 @@ async function cropImageFileToSquareByRect(file, cropLeft = 0.1, cropTop = 0.1, 
 }
 
 /** Responsive browse layouts: list, comfortable auto-fill grid, or compact auto-fill grid. */
-function communityBrowseGridClass(view) {
+function communityBrowseGridClass(view, mobileTwoColumnBrowse = false) {
   if (view === "list") return "space-y-3 md:space-y-4";
   if (view === "compact") {
     return "grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,10.25rem),1fr))] gap-2 md:gap-3";
+  }
+  /** Mobile shop browse: stable 2-column grid for readable cards at ~360–430px widths. */
+  if (mobileTwoColumnBrowse) {
+    return "grid grid-cols-2 items-stretch gap-2.5 sm:gap-3";
   }
   return "grid items-stretch [grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))] gap-3 md:gap-4 lg:gap-5";
 }
@@ -336,26 +349,29 @@ function sellerListingsGridClass(view) {
 function ProductViewDensityToggle({
   value,
   onChange,
+  /** When false (e.g. mobile), Dense is hidden; compact preference maps to Grid for display. */
+  allowCompact = true,
   groupAriaLabel = "Product layout",
   gridTitle = "Grid — columns fit your screen (comfortable cards)",
   compactTitle = "Compact — more tiles per row, shorter cards",
 }) {
+  const displayValue = !allowCompact && value === "compact" ? "grid" : value;
   const btn = (isActive) =>
-    `inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-md px-2 py-1.5 text-xs font-semibold transition md:min-h-0 md:min-w-0 md:gap-1.5 md:px-2.5 ${
+    `inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md px-2 py-1.5 text-xs font-semibold transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-1 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-900 md:min-h-0 md:min-w-0 md:gap-1.5 md:px-2.5 ${
       isActive
-        ? "bg-brand-soft text-brand-primary shadow-sm dark:bg-slate-800 dark:text-slate-100"
-        : "text-neutral-600 hover:bg-neutral-100 dark:text-slate-400 dark:hover:bg-slate-800"
+        ? "bg-brand-soft text-brand-primary shadow-none dark:bg-slate-800 dark:text-slate-100"
+        : "text-neutral-600 hover:bg-neutral-100/90 dark:text-slate-400 dark:hover:bg-slate-800/80"
     }`;
   const iconCls = "h-4 w-4 shrink-0";
   return (
     <div
-      className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-xl border border-neutral-200/90 bg-white p-1 shadow-sm dark:border-slate-600 dark:bg-slate-900"
+      className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-lg bg-neutral-100/40 p-0.5 dark:bg-slate-800/50 md:rounded-xl md:border md:border-neutral-200/85 md:bg-white md:p-1 md:shadow-sm dark:md:border-slate-600 dark:md:bg-slate-900"
       role="group"
       aria-label={groupAriaLabel}
     >
       <button
         type="button"
-        className={btn(value === "list")}
+        className={btn(displayValue === "list")}
         aria-label="List view"
         title="List — full-width rows"
         onClick={() => onChange("list")}
@@ -367,7 +383,7 @@ function ProductViewDensityToggle({
       </button>
       <button
         type="button"
-        className={btn(value === "grid")}
+        className={btn(displayValue === "grid")}
         aria-label="Grid view"
         title={gridTitle}
         onClick={() => onChange("grid")}
@@ -380,26 +396,28 @@ function ProductViewDensityToggle({
         </svg>
         <span className="hidden pl-1 md:inline">Grid</span>
       </button>
-      <button
-        type="button"
-        className={btn(value === "compact")}
-        aria-label="Compact grid"
-        title={compactTitle}
-        onClick={() => onChange("compact")}
-      >
-        <svg className={iconCls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-          <rect x="2" y="2" width="5" height="5" rx="0.5" />
-          <rect x="9.5" y="2" width="5" height="5" rx="0.5" />
-          <rect x="17" y="2" width="5" height="5" rx="0.5" />
-          <rect x="2" y="9.5" width="5" height="5" rx="0.5" />
-          <rect x="9.5" y="9.5" width="5" height="5" rx="0.5" />
-          <rect x="17" y="9.5" width="5" height="5" rx="0.5" />
-          <rect x="2" y="17" width="5" height="5" rx="0.5" />
-          <rect x="9.5" y="17" width="5" height="5" rx="0.5" />
-          <rect x="17" y="17" width="5" height="5" rx="0.5" />
-        </svg>
-        <span className="hidden pl-1 md:inline">Dense</span>
-      </button>
+      {allowCompact ? (
+        <button
+          type="button"
+          className={btn(value === "compact")}
+          aria-label="Compact grid"
+          title={compactTitle}
+          onClick={() => onChange("compact")}
+        >
+          <svg className={iconCls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <rect x="2" y="2" width="5" height="5" rx="0.5" />
+            <rect x="9.5" y="2" width="5" height="5" rx="0.5" />
+            <rect x="17" y="2" width="5" height="5" rx="0.5" />
+            <rect x="2" y="9.5" width="5" height="5" rx="0.5" />
+            <rect x="9.5" y="9.5" width="5" height="5" rx="0.5" />
+            <rect x="17" y="9.5" width="5" height="5" rx="0.5" />
+            <rect x="2" y="17" width="5" height="5" rx="0.5" />
+            <rect x="9.5" y="17" width="5" height="5" rx="0.5" />
+            <rect x="17" y="17" width="5" height="5" rx="0.5" />
+          </svg>
+          <span className="hidden pl-1 md:inline">Dense</span>
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -611,6 +629,12 @@ function App() {
   }, []);
 
   const [message, setMessage] = useState("");
+  const [authInlineErrors, setAuthInlineErrors] = useState({
+    email: "",
+    password: "",
+    confirmPassword: "",
+    terms: "",
+  });
   const [theme, setTheme] = useState(() => {
     try {
       return typeof window !== "undefined" && readThemeMode() === "dark" ? "dark" : "light";
@@ -1059,15 +1083,6 @@ function App() {
 
     return pickFromPool(communities);
   }, [communities, profileCityProvincePostal, profileCommunityName]);
-  /** Compact header “In [community] / All areas” — only on marketplace browse screens, not Orders/Cart/Profile. */
-  const showCommunityShopHeaderStrip = useMemo(
-    () =>
-      Boolean(shopCommunityId) &&
-      isBrowseLikeView &&
-      activeView !== VIEWS.COMMUNITY_SHOP &&
-      activeView !== VIEWS.FAVORITES,
-    [shopCommunityId, isBrowseLikeView, activeView],
-  );
   const isMemberOfOpenCommunity = useMemo(() => {
     if (!shopCommunityId) return false;
     const sid = String(shopCommunityId);
@@ -2110,12 +2125,14 @@ function App() {
   const openAuthPanel = useCallback((mode) => {
     setAuthMode(mode);
     setMessage("");
+    setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
     setAuthPanelVisible(true);
   }, []);
 
   const closeAuthPanel = useCallback(() => {
     setAuthPanelVisible(false);
     setMessage("");
+    setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
     setShowAuthPassword(false);
     setShowConfirmPassword(false);
   }, []);
@@ -2454,13 +2471,29 @@ function App() {
   const handleAuth = async (event) => {
     event.preventDefault();
     setMessage("");
+    setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
+
+    const emailErr = validateEmail(form.email);
+    if (emailErr) {
+      setAuthInlineErrors((prev) => ({ ...prev, email: emailErr }));
+      return;
+    }
+    const passErr = validatePasswordClient(form.password, { signup: authMode === "signup" });
+    if (passErr) {
+      setAuthInlineErrors((prev) => ({ ...prev, password: passErr }));
+      return;
+    }
     if (authMode === "signup") {
-      if (form.password !== form.confirmPassword) {
-        setMessage("Passwords do not match.");
+      const confirmErr = validateConfirmPassword(form.password, form.confirmPassword);
+      if (confirmErr) {
+        setAuthInlineErrors((prev) => ({ ...prev, confirmPassword: confirmErr }));
         return;
       }
       if (!form.acceptedTerms) {
-        setMessage("You must click the checkbox to accept the Terms of Use and Privacy Policy.");
+        setAuthInlineErrors((prev) => ({
+          ...prev,
+          terms: "Accept the Terms of Use and Privacy Policy to continue.",
+        }));
         return;
       }
     }
@@ -2752,20 +2785,18 @@ function App() {
     }
   }, [activeView]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const isMobile = window.matchMedia("(max-width: 767px)").matches;
-    const lock = activeView === VIEWS.MESSAGES && messagesMobilePane === "thread" && isMobile;
-    if (!lock) return undefined;
-    const prevBodyOverflow = document.body.style.overflow;
-    const prevHtmlOverflow = document.documentElement.style.overflow;
-    document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prevBodyOverflow;
-      document.documentElement.style.overflow = prevHtmlOverflow;
-    };
-  }, [activeView, messagesMobilePane]);
+  const { isMobile: isMobileViewport } = useMobileViewport();
+  useBodyScrollLock(activeView === VIEWS.MESSAGES && messagesMobilePane === "thread" && isMobileViewport);
+
+  /** Mobile browse: always 2-col grid; no dense. Cart/orders/seller: list/grid only — map dense → grid. */
+  const effectiveCommunityBrowseView = isMobileViewport ? "grid" : communityProductsView;
+  const effectiveFavoriteBrowseView = isMobileViewport ? "grid" : favoriteProductsView;
+  const effectiveSellerProductsView =
+    isMobileViewport && sellerProductsView === "compact" ? "grid" : sellerProductsView;
+  const effectiveCommerceFlowViewBuyer =
+    isMobileViewport && commerceFlowViewBuyer === "compact" ? "grid" : commerceFlowViewBuyer;
+  const effectiveCommerceFlowViewSeller =
+    isMobileViewport && commerceFlowViewSeller === "compact" ? "grid" : commerceFlowViewSeller;
 
   const activeChatThread = useMemo(
     () => sortedChatThreads.find((thread) => String(thread.participantId) === String(activeChatUserId)) || null,
@@ -2976,7 +3007,8 @@ function App() {
   }, [user?.id, activeChatUserId, chatComposer, token, ensureDirectConversation]);
 
   /** My purchases vs Sales inbox use separate saved list/grid/dense preferences. */
-  const commerceFlowOrdersView = activeView === VIEWS.MY_PURCHASES ? commerceFlowViewBuyer : commerceFlowViewSeller;
+  const commerceFlowOrdersView =
+    activeView === VIEWS.MY_PURCHASES ? effectiveCommerceFlowViewBuyer : effectiveCommerceFlowViewSeller;
   const setCommerceFlowOrdersView =
     activeView === VIEWS.MY_PURCHASES ? setCommerceFlowViewBuyer : setCommerceFlowViewSeller;
 
@@ -3628,48 +3660,12 @@ function App() {
     loadCommunityShopListings,
   ]);
 
-  /** Mobile: pull down from top of page to refetch listings (same as Refresh). */
-  useEffect(() => {
-    if (!token || activeView !== VIEWS.COMMUNITY_SHOP) return undefined;
-    if (typeof window === "undefined" || !("ontouchstart" in window)) return undefined;
-    let startY = 0;
-    let startScroll = 0;
-    let armed = false;
-    const PTR_COOLDOWN_MS = 2500;
-    const PULL_THRESHOLD_PX = 72;
-    const TOP_TOUCH_MAX_Y = 140;
-
-    const onTouchStart = (e) => {
-      if (listingsBusyRef.current) return;
-      if (window.scrollY > 6) return;
-      const y = e.touches[0]?.clientY ?? 0;
-      if (y > TOP_TOUCH_MAX_Y) return;
-      startY = y;
-      startScroll = window.scrollY;
-      armed = true;
-    };
-
-    const onTouchEnd = (e) => {
-      if (!armed) return;
-      armed = false;
-      if (listingsBusyRef.current) return;
-      if (startScroll > 6 || window.scrollY > 6) return;
-      const endY = e.changedTouches[0]?.clientY ?? startY;
-      const dy = endY - startY;
-      if (dy < PULL_THRESHOLD_PX) return;
-      const now = Date.now();
-      if (now - communityShopPtrLastTriggerRef.current < PTR_COOLDOWN_MS) return;
-      communityShopPtrLastTriggerRef.current = now;
-      void loadCommunityShopListings({ preserveExistingRows: true });
-    };
-
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchend", onTouchEnd);
-    };
-  }, [token, activeView, loadCommunityShopListings]);
+  useCommunityShopPullToRefresh({
+    enabled: Boolean(token && activeView === VIEWS.COMMUNITY_SHOP),
+    listingsBusyRef,
+    cooldownRef: communityShopPtrLastTriggerRef,
+    loadCommunityShopListings,
+  });
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.FAVORITES) return undefined;
@@ -5673,14 +5669,16 @@ function App() {
 
   if (!user && routeListingId) {
     return (
-      <PublicListingPage
-        listingId={routeListingId}
-        onBack={() => navigate("/")}
-        onOpenLogin={() => {
-          navigate("/");
-          openAuthPanel("login");
-        }}
-      />
+      <Suspense fallback={<ScreenLoading message="Loading listing…" spacious />}>
+        <LazyPublicListingPage
+          listingId={routeListingId}
+          onBack={() => navigate("/")}
+          onOpenLogin={() => {
+            navigate("/");
+            openAuthPanel("login");
+          }}
+        />
+      </Suspense>
     );
   }
 
@@ -5690,7 +5688,7 @@ function App() {
         <header className="landing-nav">
           <div className="app-container flex h-[4.25rem] max-w-full items-center justify-between gap-4 pl-[max(1.5rem,env(safe-area-inset-left,0px))] pr-[max(1.5rem,env(safe-area-inset-right,0px))] md:pl-[max(2rem,env(safe-area-inset-left,0px))] md:pr-[max(2rem,env(safe-area-inset-right,0px))] lg:pl-[max(2.5rem,env(safe-area-inset-left,0px))] lg:pr-[max(2.5rem,env(safe-area-inset-right,0px))]">
             <div className="flex min-w-0 items-center">
-              <LinkMartLogo className="h-10 w-auto max-w-[13rem] shrink-0 object-contain md:h-11 md:max-w-[14rem]" />
+              <LinkMartLogo className="h-10 w-auto max-w-full shrink-0 object-contain md:h-11 md:max-w-[min(14rem,100%)]" />
             </div>
             <nav className="flex shrink-0 items-center gap-3 md:gap-4" aria-label="Sign in">
               <button type="button" className="landing-btn-nav-text" onClick={() => openAuthPanel("login")}>
@@ -5703,7 +5701,7 @@ function App() {
           </div>
         </header>
 
-        <main>
+        <main id="main-content">
           <div className="landing-hero-band">
             <div className="app-container px-6 md:px-8 lg:px-12">
               <div className="relative mx-auto w-full max-w-6xl">
@@ -5726,34 +5724,50 @@ function App() {
                     Browse nearby listings
                   </button>
                 </div>
-                <div className="flex w-full max-w-md flex-wrap justify-center gap-x-10 gap-y-8 border-t border-neutral-200/80 pt-9 dark:border-slate-700/80 md:max-w-lg md:gap-x-12 lg:max-w-none lg:justify-start">
-                  <div className="min-w-[5.5rem] text-center lg:text-left">
+                <div className="grid w-full max-w-mobile-baseline grid-cols-3 gap-x-6 gap-y-6 border-t border-neutral-200/80 pt-9 dark:border-slate-700/80 md:max-w-lg md:gap-x-10 lg:max-w-none lg:flex lg:flex-wrap lg:justify-start lg:gap-x-12">
+                  <div className="min-w-0 text-center lg:text-left">
                     <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">8k+</span>
                     <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Local listings</span>
                   </div>
-                  <div className="min-w-[5.5rem] text-center lg:text-left">
+                  <div className="min-w-0 text-center lg:text-left">
                     <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">1.2k+</span>
                     <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Neighborhood sellers</span>
                   </div>
-                  <div className="min-w-[5.5rem] text-center lg:text-left">
+                  <div className="min-w-0 text-center lg:text-left">
                     <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">50+</span>
                     <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Active communities</span>
                   </div>
                 </div>
               </div>
               <div className="flex justify-center lg:justify-end lg:self-start">
-                <div className="w-full max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl">
-                  <LandingIllustration />
+                <div className="w-full max-w-mobile-baseline md:max-w-lg lg:max-w-xl xl:max-w-2xl">
+                  <Suspense
+                    fallback={
+                      <div
+                        className="aspect-[16/10] w-full animate-pulse rounded-[1.75rem] bg-neutral-200/60 dark:bg-slate-700/60"
+                        aria-hidden
+                      />
+                    }
+                  >
+                    <LazyLandingIllustration />
+                  </Suspense>
                 </div>
               </div>
-              <button
-                type="button"
-                className="absolute bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))] left-1/2 z-10 flex h-11 w-11 -translate-x-1/2 items-center justify-center rounded-full border border-neutral-200/90 bg-white/95 text-neutral-600 shadow-md backdrop-blur-sm transition hover:border-neutral-300 hover:bg-white hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-900/95 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-white md:bottom-[calc(2rem+env(safe-area-inset-bottom,0px))]"
-                aria-label="Scroll to content below"
-                onClick={() => document.getElementById("landing-next-section")?.scrollIntoView({ behavior: "smooth", block: "start" })}
-              >
-                <ChevronDownIcon className="h-5 w-5" />
-              </button>
+              <div className="col-span-full flex justify-center pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] pt-8 md:pb-[calc(2rem+env(safe-area-inset-bottom,0px))] md:pt-10">
+                <button
+                  type="button"
+                  className="a11y-focus-ring flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white/95 text-neutral-600 shadow-md backdrop-blur-sm transition motion-reduce:transition-none hover:border-neutral-300 hover:bg-white hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-900/95 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-white"
+                  aria-label="Scroll to content below"
+                  onClick={() => {
+                    const el = document.getElementById("landing-next-section");
+                    if (!el) return;
+                    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+                    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+                  }}
+                >
+                  <ChevronDownIcon className="h-5 w-5" />
+                </button>
+              </div>
                 </section>
               </div>
             </div>
@@ -5768,47 +5782,56 @@ function App() {
               Everything you need to buy and sell locally in one place
             </p>
             <div className="relative mt-10">
-              <button
-                type="button"
-                className="absolute left-0 top-[42%] z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-500 shadow-sm transition hover:border-neutral-300 hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500 md:left-1 md:left-2"
-                aria-label="Previous categories"
-                onClick={() =>
-                  setLandingDiscoverySlide((s) => (s - 1 + LANDING_DISCOVERY_SLIDES.length) % LANDING_DISCOVERY_SLIDES.length)
-                }
-              >
-                <ChevronLeftIcon className="h-5 w-5" />
-              </button>
-              <button
-                type="button"
-                className="absolute right-0 top-[42%] z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-500 shadow-sm transition hover:border-neutral-300 hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500 md:right-1 md:right-2"
-                aria-label="Next categories"
-                onClick={() => setLandingDiscoverySlide((s) => (s + 1) % LANDING_DISCOVERY_SLIDES.length)}
-              >
-                <ChevronRightIcon className="h-5 w-5" />
-              </button>
-              <div className="mx-auto grid w-full max-w-5xl grid-cols-1 justify-items-center gap-12 px-4 md:grid-cols-3 md:gap-x-8 md:gap-y-0 md:gap-x-12 md:px-6">
-                {LANDING_DISCOVERY_SLIDES[landingDiscoverySlide].map((card) => (
-                  <div key={card.title} className="flex w-full max-w-[20rem] flex-col items-center gap-3 text-center md:max-w-none">
-                    {card.logo ? (
-                      <div className="flex h-[4.25rem] w-[4.25rem] shrink-0 items-center justify-center overflow-hidden rounded-2xl p-2">
-                        <img src={card.logo} alt={`${card.title} logo`} className="max-h-full max-w-full object-contain" />
-                      </div>
-                    ) : (
-                      <div className="flex h-[4.25rem] w-[4.25rem] shrink-0 items-center justify-center rounded-2xl bg-brand-soft text-sm font-bold tracking-tight text-brand-primary shadow-sm dark:bg-slate-800 dark:text-brand-accent md:text-base">
-                        {card.badge}
-                      </div>
-                    )}
-                    <h3 className="px-1 text-[15px] font-semibold leading-snug text-brand-accent md:text-base md:whitespace-nowrap md:text-lg">{card.title}</h3>
-                    <p className="text-pretty text-sm leading-relaxed text-neutral-600 dark:text-slate-400">{card.description}</p>
-                  </div>
-                ))}
+              <div className="flex items-center gap-2 md:px-6 lg:px-8">
+                <button
+                  type="button"
+                  className="a11y-focus-ring relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-600 shadow-sm transition motion-reduce:transition-none hover:border-neutral-300 hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500 md:absolute md:left-1 md:top-[42%] md:z-10 md:-translate-y-1/2 lg:left-2"
+                  aria-label="Previous categories"
+                  onClick={() =>
+                    setLandingDiscoverySlide((s) => (s - 1 + LANDING_DISCOVERY_SLIDES.length) % LANDING_DISCOVERY_SLIDES.length)
+                  }
+                >
+                  <ChevronLeftIcon className="h-5 w-5" />
+                </button>
+                <div className="mx-auto grid min-w-0 flex-1 grid-cols-1 justify-items-center gap-12 px-2 md:grid-cols-3 md:gap-x-8 md:gap-y-0 md:gap-x-12 md:px-4 lg:px-6">
+                  {LANDING_DISCOVERY_SLIDES[landingDiscoverySlide].map((card) => (
+                    <div key={card.title} className="flex w-full max-w-xs flex-col items-center gap-3 text-center md:max-w-none">
+                      {card.logo ? (
+                        <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl p-2 md:size-[4.25rem]">
+                          <img
+                            src={card.logo}
+                            alt={`${card.title} logo`}
+                            className="max-h-full max-w-full object-contain"
+                            loading="lazy"
+                            decoding="async"
+                            sizes="64px"
+                          />
+                        </div>
+                      ) : (
+                        <div className="flex size-16 shrink-0 items-center justify-center rounded-2xl bg-brand-soft text-sm font-bold tracking-tight text-brand-primary shadow-sm dark:bg-slate-800 dark:text-brand-accent md:size-[4.25rem] md:text-base">
+                          {card.badge}
+                        </div>
+                      )}
+                      <h3 className="px-1 text-[15px] font-semibold leading-snug text-brand-accent md:text-base md:whitespace-nowrap md:text-lg">{card.title}</h3>
+                      <p className="text-pretty text-sm leading-relaxed text-neutral-600 dark:text-slate-400">{card.description}</p>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="a11y-focus-ring relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-600 shadow-sm transition motion-reduce:transition-none hover:border-neutral-300 hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500 md:absolute md:right-1 md:top-[42%] md:z-10 md:-translate-y-1/2 lg:right-2"
+                  aria-label="Next categories"
+                  onClick={() => setLandingDiscoverySlide((s) => (s + 1) % LANDING_DISCOVERY_SLIDES.length)}
+                >
+                  <ChevronRightIcon className="h-5 w-5" />
+                </button>
               </div>
               <div className="mt-10 flex justify-center gap-2.5">
                 {LANDING_DISCOVERY_SLIDES.map((_, i) => (
                   <button
                     key={i}
                     type="button"
-                    className={`h-2 w-2 rounded-full transition ${i === landingDiscoverySlide ? "bg-neutral-700 dark:bg-slate-200" : "bg-neutral-300 dark:bg-slate-600"}`}
+                    className={`h-2 w-2 rounded-full transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-900 ${i === landingDiscoverySlide ? "bg-neutral-700 dark:bg-slate-200" : "bg-neutral-300 dark:bg-slate-600"}`}
                     aria-label={`Category slide ${i + 1}`}
                     aria-current={i === landingDiscoverySlide}
                     onClick={() => setLandingDiscoverySlide(i)}
@@ -5828,10 +5851,14 @@ function App() {
                 <LandingFeatureRow {...LANDING_FEATURE_ROWS[1]} />
               </div>
               <div className="order-1 flex justify-center px-4 lg:order-2 lg:px-2">
-                <img
-                  src={heroStudyImage}
+                <ImagetoolsPicture
+                  picture={landingFeaturesPicture}
                   alt="Marketplace platform features"
-                  className="h-auto w-full max-w-[280px] object-contain drop-shadow-lg md:max-w-[320px] lg:max-w-[340px]"
+                  className="h-auto w-full max-w-xs object-contain drop-shadow-lg md:max-w-sm lg:max-w-md"
+                  pictureClassName="block w-full max-w-xs md:max-w-sm lg:max-w-md"
+                  sizes="(max-width: 768px) min(100vw - 2rem, 20rem), (max-width: 1024px) 24rem, 28rem"
+                  loading="lazy"
+                  decoding="async"
                 />
               </div>
               <div className="order-3 flex max-w-lg flex-col gap-12 justify-self-center lg:justify-self-start">
@@ -5845,11 +5872,11 @@ function App() {
             <p className="mx-auto mt-5 max-w-lg text-base leading-relaxed text-neutral-600 dark:text-slate-400 md:mt-6">
               Discover trusted local deals, post your items, and connect with your community in just a few taps.
             </p>
-            <div className="mt-10 flex flex-col items-center justify-center gap-4 md:flex-row md:gap-5">
-              <button type="button" className="landing-hero-cta min-w-[12rem] px-10" onClick={() => openAuthPanel("signup")}>
+            <div className="mx-auto mt-10 flex w-full max-w-md flex-col items-stretch justify-center gap-4 md:mx-0 md:max-w-none md:flex-row md:items-center md:justify-center md:gap-5">
+              <button type="button" className="landing-hero-cta w-full px-10 md:w-auto md:min-w-[12rem]" onClick={() => openAuthPanel("signup")}>
                 Create free account
               </button>
-              <button type="button" className="btn-secondary min-w-[12rem] rounded-full px-8 py-3 text-sm" onClick={() => openAuthPanel("login")}>
+              <button type="button" className="btn-secondary w-full rounded-full px-8 py-3 text-sm md:w-auto md:min-w-[12rem]" onClick={() => openAuthPanel("login")}>
                 Log in
               </button>
             </div>
@@ -5872,8 +5899,8 @@ function App() {
               aria-label="Close sign-in dialog"
               onClick={closeAuthPanel}
             />
-            <div className="landing-auth-panel relative z-10 w-full max-w-[26rem]" onClick={(event) => event.stopPropagation()}>
-              <div className="landing-card relative">
+            <div className="landing-auth-panel relative z-10 w-full max-w-md" onClick={(event) => event.stopPropagation()}>
+              <div className="landing-card relative max-h-[min(90dvh,44rem)] overflow-y-auto overflow-x-hidden overscroll-contain">
                 <button type="button" className="landing-auth-close" onClick={closeAuthPanel} aria-label="Close">
                   <span aria-hidden="true">×</span>
                 </button>
@@ -5881,14 +5908,14 @@ function App() {
                   <h2 id="auth-modal-title" className="text-2xl font-bold tracking-tight text-neutral-900 dark:text-slate-100 md:text-[1.65rem]">
                     {authMode === "signup" ? "Create an account" : "Welcome back"}
                   </h2>
-                  <p className="mt-4 max-w-md text-sm leading-relaxed text-neutral-600 dark:text-slate-400 md:text-[15px] md:leading-relaxed">
+                  <p className="mt-4 max-w-mobile-baseline text-sm leading-relaxed text-neutral-600 dark:text-slate-400 md:max-w-md md:text-[15px] md:leading-relaxed">
                     {authMode === "signup"
                       ? "Create your account to post items, manage listings, and connect with buyers in your community."
                       : "Sign in with email or Google to continue buying and selling in your local area."}
                   </p>
                 </div>
 
-                <form onSubmit={handleAuth} className="space-y-5">
+                <form noValidate onSubmit={handleAuth} className="space-y-5">
                 <>
                   <div>
                     <label htmlFor="auth-email" className="mb-1.5 block text-sm font-medium text-neutral-700 dark:text-slate-300">
@@ -5899,12 +5926,30 @@ function App() {
                       name="email"
                       className="landing-input"
                       type="email"
+                      inputMode="email"
+                      enterKeyHint="next"
                       placeholder="you@example.com"
                       autoComplete="email"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      aria-invalid={authInlineErrors.email ? true : undefined}
+                      aria-describedby={authInlineErrors.email ? "auth-email-error" : undefined}
                       value={form.email}
-                      onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
-                      required
+                      onChange={(e) => {
+                        setForm((prev) => ({ ...prev, email: e.target.value }));
+                        setAuthInlineErrors((prev) => ({ ...prev, email: "" }));
+                      }}
+                      onBlur={() => {
+                        const err = validateEmail(form.email);
+                        setAuthInlineErrors((prev) => ({ ...prev, email: err }));
+                      }}
                     />
+                    {authInlineErrors.email ? (
+                      <p id="auth-email-error" className="field-error-text mt-1.5" role="alert">
+                        {authInlineErrors.email}
+                      </p>
+                    ) : null}
                   </div>
                   <div>
                     <label htmlFor="auth-password" className="mb-1.5 block text-sm font-medium text-neutral-700 dark:text-slate-300">
@@ -5916,12 +5961,21 @@ function App() {
                         name="password"
                         className="landing-input pr-11"
                         type={showAuthPassword ? "text" : "password"}
-                        placeholder="At least 8 characters"
-                        minLength={8}
+                        placeholder={authMode === "signup" ? "At least 8 characters" : "Your password"}
+                        minLength={authMode === "signup" ? 8 : undefined}
+                        enterKeyHint={authMode === "signup" ? "next" : "go"}
                         autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+                        aria-invalid={authInlineErrors.password ? true : undefined}
+                        aria-describedby={authInlineErrors.password ? "auth-password-error" : undefined}
                         value={form.password}
-                        onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
-                        required
+                        onChange={(e) => {
+                          setForm((prev) => ({ ...prev, password: e.target.value }));
+                          setAuthInlineErrors((prev) => ({ ...prev, password: "" }));
+                        }}
+                        onBlur={() => {
+                          const err = validatePasswordClient(form.password, { signup: authMode === "signup" });
+                          setAuthInlineErrors((prev) => ({ ...prev, password: err }));
+                        }}
                       />
                       <button
                         type="button"
@@ -5934,6 +5988,11 @@ function App() {
                         {showAuthPassword ? <EyeHidePasswordIcon /> : <EyeShowPasswordIcon />}
                       </button>
                     </div>
+                    {authInlineErrors.password ? (
+                      <p id="auth-password-error" className="field-error-text mt-1.5" role="alert">
+                        {authInlineErrors.password}
+                      </p>
+                    ) : null}
                   </div>
                   {authMode === "signup" && (
                     <>
@@ -5949,10 +6008,19 @@ function App() {
                             type={showConfirmPassword ? "text" : "password"}
                             placeholder="Re-enter your password"
                             minLength={8}
+                            enterKeyHint="go"
                             autoComplete="new-password"
+                            aria-invalid={authInlineErrors.confirmPassword ? true : undefined}
+                            aria-describedby={authInlineErrors.confirmPassword ? "auth-confirm-password-error" : undefined}
                             value={form.confirmPassword}
-                            onChange={(e) => setForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
-                            required
+                            onChange={(e) => {
+                              setForm((prev) => ({ ...prev, confirmPassword: e.target.value }));
+                              setAuthInlineErrors((prev) => ({ ...prev, confirmPassword: "" }));
+                            }}
+                            onBlur={() => {
+                              const err = validateConfirmPassword(form.password, form.confirmPassword);
+                              setAuthInlineErrors((prev) => ({ ...prev, confirmPassword: err }));
+                            }}
                           />
                           <button
                             type="button"
@@ -5965,6 +6033,11 @@ function App() {
                             {showConfirmPassword ? <EyeHidePasswordIcon /> : <EyeShowPasswordIcon />}
                           </button>
                         </div>
+                        {authInlineErrors.confirmPassword ? (
+                          <p id="auth-confirm-password-error" className="field-error-text mt-1.5" role="alert">
+                            {authInlineErrors.confirmPassword}
+                          </p>
+                        ) : null}
                       </div>
                       <label className="flex items-start gap-2.5 rounded-xl border border-neutral-200/80 bg-neutral-50/70 px-3 py-2.5 text-sm text-neutral-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                         <input
@@ -5972,8 +6045,12 @@ function App() {
                           name="acceptedTerms"
                           className="mt-0.5 h-4 w-4 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
                           checked={form.acceptedTerms}
-                          onChange={(e) => setForm((prev) => ({ ...prev, acceptedTerms: e.target.checked }))}
-                          required
+                          onChange={(e) => {
+                            setForm((prev) => ({ ...prev, acceptedTerms: e.target.checked }));
+                            setAuthInlineErrors((prev) => ({ ...prev, terms: "" }));
+                          }}
+                          aria-invalid={authInlineErrors.terms ? true : undefined}
+                          aria-describedby={authInlineErrors.terms ? "auth-terms-error" : undefined}
                         />
                         <span>
                           I accept the{" "}
@@ -5987,34 +6064,41 @@ function App() {
                           .
                         </span>
                       </label>
+                      {authInlineErrors.terms ? (
+                        <p id="auth-terms-error" className="field-error-text mt-2 px-0.5" role="alert">
+                          {authInlineErrors.terms}
+                        </p>
+                      ) : null}
                     </>
                   )}
                 </>
-                {message && (
+                {message ? (
                   <p className="app-alert-error" role="alert">
                     {message}
                   </p>
-                )}
-                <button
-                  type="submit"
-                  className="landing-btn-primary"
-                  disabled={authLoading}
-                  aria-busy={authLoading || undefined}
-                >
-                  {authLoading ? (
-                    <span className="inline-flex items-center justify-center gap-2">
-                      <span
-                        className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white border-t-transparent"
-                        aria-hidden
-                      />
-                      {authMode === "signup" ? "Creating account…" : "Signing in…"}
-                    </span>
-                  ) : authMode === "signup" ? (
-                    "Create account"
-                  ) : (
-                    "Log in"
-                  )}
-                </button>
+                ) : null}
+                <MobileFormActions className="rounded-b-xl">
+                  <button
+                    type="submit"
+                    className="landing-btn-primary w-full"
+                    disabled={authLoading}
+                    aria-busy={authLoading || undefined}
+                  >
+                    {authLoading ? (
+                      <span className="inline-flex items-center justify-center gap-2">
+                        <span
+                          className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white border-t-transparent motion-reduce:animate-none"
+                          aria-hidden
+                        />
+                        {authMode === "signup" ? "Creating account…" : "Signing in…"}
+                      </span>
+                    ) : authMode === "signup" ? (
+                      "Create account"
+                    ) : (
+                      "Log in"
+                    )}
+                  </button>
+                </MobileFormActions>
                 </form>
 
                 {authMode !== "signup" && (
@@ -6028,7 +6112,7 @@ function App() {
                     <div className="flex flex-col items-center gap-3">
                       {GOOGLE_CLIENT_ID ? (
                         <div
-                          className="flex min-h-[44px] w-full max-w-[320px] justify-center [&>div]:w-full [&>div]:flex [&>div]:justify-center"
+                          className="flex min-h-[44px] w-full max-w-xs justify-center [&>div]:w-full [&>div]:flex [&>div]:justify-center"
                           ref={googleBtnRef}
                         />
                       ) : (
@@ -6052,6 +6136,7 @@ function App() {
                         onClick={() => {
                           setAuthMode("login");
                           setMessage("");
+                          setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
                           setShowAuthPassword(false);
                           setShowConfirmPassword(false);
                           setForm((prev) => ({ ...prev, confirmPassword: "" }));
@@ -6069,6 +6154,7 @@ function App() {
                         onClick={() => {
                           setAuthMode("signup");
                           setMessage("");
+                          setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
                           setShowAuthPassword(false);
                           setShowConfirmPassword(false);
                         }}
@@ -6087,12 +6173,12 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen min-h-[100dvh] bg-neutral-200/85 dark:bg-black md:bg-app md:dark:bg-slate-950">
+    <div className="min-h-screen min-h-[100dvh] w-full bg-neutral-200/90 dark:bg-black md:bg-app md:dark:bg-slate-950">
       {publishFlash ? (
         <div
           role="status"
           aria-live="polite"
-          className={`fixed left-1/2 top-[calc(4.25rem+env(safe-area-inset-top,0px)+0.5rem)] z-[60] w-[min(100vw-2rem,26rem)] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-2xl border border-emerald-200/80 bg-white/95 shadow-[0_22px_50px_-14px_rgba(5,150,105,0.35),0_8px_16px_-8px_rgba(15,23,42,0.12)] backdrop-blur-xl ring-1 ring-emerald-500/[0.08] transition-[opacity,transform] duration-[350ms] ease-out dark:border-emerald-500/25 dark:bg-slate-900/95 dark:shadow-[0_22px_50px_-14px_rgba(0,0,0,0.55),0_0_0_1px_rgba(16,185,129,0.12)] dark:ring-emerald-400/10 ${publishFlashExiting ? "pointer-events-none translate-y-[-6px] opacity-0" : "translate-y-0 opacity-100"}`}
+          className={`fixed left-1/2 top-[max(0.5rem,calc(4.25rem+env(safe-area-inset-top,0px)+0.5rem))] z-[60] w-[calc(100vw-env(safe-area-inset-left,0px)-env(safe-area-inset-right,0px)-2rem)] -translate-x-1/2 overflow-hidden rounded-2xl border border-emerald-200/80 bg-white/95 shadow-[0_22px_50px_-14px_rgba(5,150,105,0.35),0_8px_16px_-8px_rgba(15,23,42,0.12)] backdrop-blur-xl ring-1 ring-emerald-500/[0.08] transition-[opacity,transform] duration-[350ms] ease-out md:max-w-lg dark:border-emerald-500/25 dark:bg-slate-900/95 dark:shadow-[0_22px_50px_-14px_rgba(0,0,0,0.55),0_0_0_1px_rgba(16,185,129,0.12)] dark:ring-emerald-400/10 ${publishFlashExiting ? "pointer-events-none translate-y-[-6px] opacity-0" : "translate-y-0 opacity-100"}`}
         >
           <div className="relative flex items-start gap-3 px-4 pb-3 pt-4 md:gap-3.5 md:px-5 md:pb-3.5 md:pt-4">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-600/30 ring-2 ring-white/25 dark:ring-emerald-400/20">
@@ -6123,10 +6209,10 @@ function App() {
           </div>
         </div>
       ) : null}
-      <div className="relative mx-auto flex h-[100dvh] max-h-[100dvh] min-h-0 w-full max-w-mobile-baseline flex-col overflow-hidden bg-app pl-[max(0.75rem,env(safe-area-inset-left,0px))] pr-[max(0.75rem,env(safe-area-inset-right,0px))] shadow-[0_0_0_1px_rgba(15,23,42,0.06)] dark:bg-slate-950 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.05)] md:h-auto md:max-h-none md:max-w-none md:overflow-visible md:min-h-0 md:bg-transparent md:pl-0 md:pr-0 md:shadow-none">
+      <MobileAppShell>
       {marketplaceToasts.length > 0 ? (
         <div
-          className="pointer-events-none fixed left-3 right-3 bottom-[calc(var(--mobile-bottom-nav)+env(safe-area-inset-bottom,0px)+0.75rem)] z-[70] flex max-h-[min(70vh,calc(100vh-10rem))] flex-col gap-2 overflow-y-auto md:left-4 md:right-4 md:left-auto md:right-6 md:bottom-6 md:w-[24rem]"
+          className="pointer-events-none fixed safe-fixed-x bottom-[max(1rem,calc(env(safe-area-inset-bottom,0px)+0.75rem))] z-[70] flex max-h-[min(70vh,calc(100dvh-10rem))] flex-col gap-2 overflow-y-auto md:left-auto md:right-6 md:bottom-6 md:w-[24rem]"
           role="region"
           aria-label="Notifications"
           aria-live="polite"
@@ -6169,11 +6255,6 @@ function App() {
         goOrders={goOrders}
         goMyPurchases={goMyPurchases}
         goCart={goCart}
-        goMobileHome={goMobileHome}
-        goMobileSearch={goMobileSearch}
-        goCreateSell={goCreateSell}
-        goInbox={goInbox}
-        browseFiltersOpen={mobileCommunityFiltersOpen}
         inboxBadgeCount={inboxNavBadgeCount}
         cartItemCount={recentlyAddedCartListingIds.length}
         purchasesItemCount={purchaseNavBadgeCount}
@@ -6185,29 +6266,22 @@ function App() {
         onLogout={logout}
         getDisplayNameFromUser={getDisplayNameFromUser}
         onNavigateHome={() => navigate("/")}
-        communityShopName={
-          showCommunityShopHeaderStrip ? toTitleCase(activeCommunity?.name?.trim()) || "Community" : null
-        }
-        onLeaveCommunityShop={
-          showCommunityShopHeaderStrip ? leaveCommunityToGlobalMarketplace : undefined
-        }
       >
-      <main className="app-container flex-1 min-h-0 overflow-y-auto overscroll-y-contain space-y-4 pt-4 pb-[max(2.75rem,calc(var(--mobile-bottom-nav)+1.25rem+env(safe-area-inset-bottom,0px)))] md:space-y-6 md:py-8 md:pb-12">
+      <main
+        id="main-content"
+        className={`${UI_KIT.mobileMainScroll} app-container scroll-pt-2 scroll-pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] space-y-4 bg-white pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] dark:bg-slate-950 md:scroll-pb-0 md:scroll-pt-0 md:space-y-6 md:bg-transparent md:py-8 md:pb-12 md:dark:bg-transparent`}
+      >
         {isBrowseLikeView && activeView !== VIEWS.FAVORITES && (
-          <section
-            className={`${UI_KIT.viewSection} space-y-4 md:space-y-6 ${
-              activeView === VIEWS.COMMUNITY_SHOP ? "border-0 ring-0" : ""
-            }`}
-          >
+          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
             <div className="space-y-4">
               {activeView === VIEWS.COMMUNITY_SHOP ? (
                 <div
-                  className={`${UI_KIT.surfaceRaised} relative overflow-hidden border border-[#7cded9]/60 bg-gradient-to-r from-[#e6fbfb] via-[#edf8ff] to-[#eaf2ff] p-3 transition-opacity duration-200 dark:border-[#1f3c56] dark:bg-gradient-to-r dark:from-[#0f2234] dark:via-[#11283d] dark:to-[#16324a] md:p-4 lg:p-5 ${
+                  className={`relative overflow-hidden border transition-opacity duration-200 max-lg:rounded-xl max-lg:border-neutral-200/70 max-lg:bg-white max-lg:p-2.5 max-lg:shadow-sm max-lg:dark:border-slate-700 max-lg:dark:bg-slate-900 border-[#7cded9]/60 bg-gradient-to-r from-[#e6fbfb] via-[#edf8ff] to-[#eaf2ff] p-3 md:p-4 lg:p-5 dark:border-[#1f3c56] dark:bg-gradient-to-r dark:from-[#0f2234] dark:via-[#11283d] dark:to-[#16324a] max-lg:bg-none ${
                     mobileCommunityFiltersOpen ? "pointer-events-none opacity-40 lg:pointer-events-auto lg:opacity-100" : ""
                   }`}
                 >
-                  <div className="relative z-10 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
-                    <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-start md:gap-4 lg:gap-5">
+                  <div className="relative z-10 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+                    <div className="flex min-w-0 flex-1 flex-col gap-2 md:flex-row md:items-start md:gap-4 lg:gap-5">
                       <button
                         type="button"
                         className="hidden min-h-[44px] shrink-0 items-center justify-center rounded-full bg-brand-primary px-3.5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-primary/90 md:min-h-0 md:justify-start md:py-2 lg:mt-0.5 lg:inline-flex lg:w-auto dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
@@ -6218,21 +6292,25 @@ function App() {
                       <div className="min-w-0 flex-1 space-y-2 border-neutral-200 md:space-y-2 lg:border-l lg:pl-5 dark:lg:border-slate-600">
                         <div className="flex items-start justify-between gap-2 lg:flex-col lg:items-stretch lg:justify-start lg:gap-2">
                           <div className="min-w-0 flex-1 lg:flex-none">
-                            <h2 className="text-xl font-semibold tracking-tight text-[#123a5f] dark:text-[#e9f7ff] lg:text-2xl">
+                            <h2 className="text-lg font-semibold tracking-tight text-neutral-900 max-lg:leading-snug dark:text-slate-100 lg:text-xl lg:text-[#123a5f] lg:dark:text-[#e9f7ff] lg:text-2xl">
                               {toTitleCase(activeCommunity?.name?.trim()) || "Community"}
                             </h2>
                             {activeCommunityLocaleLine ? (
-                              <p className="mt-1 text-sm text-[#2a597f] dark:text-[#9fc3d9]">{activeCommunityLocaleLine}</p>
+                              <p className="mt-0.5 line-clamp-1 text-xs text-neutral-500 dark:text-slate-400 lg:mt-1 lg:line-clamp-none lg:text-sm lg:text-[#2a597f] lg:dark:text-[#9fc3d9]">
+                                {activeCommunityLocaleLine}
+                              </p>
                             ) : null}
                           </div>
-                          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-start pt-0.5 lg:w-full lg:justify-start lg:self-auto lg:pt-0">
+                          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 self-start pt-0.5 max-lg:justify-start lg:w-full lg:justify-start lg:gap-2 lg:self-auto lg:pt-0">
                             {isMemberOfOpenCommunity ? (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/80 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300">
-                                ● Joined member
+                              <span className="inline-flex items-center rounded-md border border-emerald-200/90 bg-emerald-50/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800 max-lg:normal-case max-lg:tracking-normal dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300 lg:gap-1 lg:rounded-full lg:border-emerald-300/80 lg:px-2.5 lg:py-1 lg:text-xs lg:normal-case lg:tracking-normal">
+                                <span className="max-lg:hidden">● Joined member</span>
+                                <span className="lg:hidden">Joined</span>
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-neutral-300/80 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                                ○ Not a member yet
+                              <span className="inline-flex items-center gap-1 rounded-md border border-neutral-200/80 bg-neutral-50/80 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600 max-lg:normal-case dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400 lg:rounded-full lg:border-neutral-300/80 lg:bg-white lg:px-2.5 lg:py-1 lg:text-xs lg:text-neutral-700 dark:lg:text-slate-300">
+                                <span className="max-lg:hidden">○ Not a member yet</span>
+                                <span className="lg:hidden">Visitor</span>
                               </span>
                             )}
                             {activeCommunity?.createdBy &&
@@ -6250,18 +6328,17 @@ function App() {
                         </div>
                         {/* Mobile: compact actions below "How this shop works" */}
                         <div className="flex flex-col gap-1.5 lg:hidden">
-                          <div className="flex flex-row items-center gap-1.5">
+                          <div className="flex flex-row items-center gap-2">
                             <button
                               type="button"
-                              className={`inline-flex min-h-9 items-center justify-center rounded-full bg-brand-primary px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90 ${
+                              className={`inline-flex min-h-[44px] min-w-0 items-center justify-center rounded-lg px-1 text-xs font-semibold text-brand-primary underline decoration-brand-primary/30 underline-offset-2 transition hover:text-brand-primary/80 hover:decoration-brand-primary/50 dark:text-brand-accent dark:decoration-brand-accent/40 ${
                                 activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "")
                                     ? "w-full"
                                     : "min-w-0 flex-1 truncate"
                               }`}
                               onClick={() => leaveCommunityToGlobalMarketplace()}
                             >
-                              <span className="md:hidden">← Communities</span>
-                              <span className="hidden md:inline">← All communities</span>
+                              ← Communities
                             </button>
                             {!isMemberOfOpenCommunity ? (
                               <button
@@ -6347,12 +6424,14 @@ function App() {
               ) : activeView === VIEWS.FAVORITES ? null : (
                 <>
                   <div>
-                    <h2 className="whitespace-nowrap text-2xl font-semibold text-neutral-900 dark:text-slate-100">Marketplace</h2>
+                    <h2 className="min-w-0 text-2xl font-semibold text-neutral-900 dark:text-slate-100 md:whitespace-nowrap">Marketplace</h2>
                   </div>
-                  <div className={`${UI_KIT.surfaceCard} p-4`}>
+                  <div className={`${UI_KIT.surfaceCard} p-3 md:p-4 max-md:border-0 max-md:bg-transparent max-md:shadow-none max-md:ring-0`}>
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-brand-primary md:text-base">Communities</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500 md:text-sm md:normal-case md:tracking-normal md:text-brand-primary">
+                      Communities
+                    </p>
                     <p className="mt-1 text-sm text-neutral-600 dark:text-slate-400 md:text-base">
                       LinkMart is a neighborhood marketplace where members can discover local products, join community shops, and buy with COD pickup or delivery.
                     </p>
@@ -6364,32 +6443,34 @@ function App() {
                 ) : null}
                 {!(communitiesLoading && communities.length === 0) && communities.length > 0 ? (
                   <div className="mt-4 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end md:justify-between">
-                    <div className="relative min-w-0 flex-1 md:max-w-md">
+                    <div className="flex min-w-0 flex-1 flex-col gap-1 md:max-w-md">
                       <label htmlFor="community-directory-search" className="sr-only">
                         Search communities
                       </label>
-                      <input
-                        id="community-directory-search"
-                        type="search"
-                        autoComplete="off"
-                        placeholder="Search by name or location…"
-                        value={communityDirectoryQuery}
-                        onChange={(e) => setCommunityDirectoryQuery(e.target.value)}
-                        className="input-base w-full py-2 pl-3 pr-9 text-sm"
-                      />
-                      {communityDirectoryQuery.trim() ? (
-                        <button
-                          type="button"
-                          className="absolute right-1.5 top-1/2 inline-flex h-8 min-w-[2rem] -translate-y-1/2 items-center justify-center rounded-md text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                          aria-label="Clear search"
-                          onClick={() => setCommunityDirectoryQuery("")}
-                        >
-                          Clear
-                        </button>
-                      ) : null}
+                      <div className="input-base flex min-h-0 min-w-0 items-center gap-1 py-2 pl-3 pr-2 focus-within:border-brand-primary focus-within:ring-2 focus-within:ring-brand-primary/25 dark:focus-within:border-brand-primary">
+                        <input
+                          id="community-directory-search"
+                          type="search"
+                          autoComplete="off"
+                          placeholder="Search by name or location…"
+                          value={communityDirectoryQuery}
+                          onChange={(e) => setCommunityDirectoryQuery(e.target.value)}
+                          className="min-h-0 min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500"
+                        />
+                        {communityDirectoryQuery.trim() ? (
+                          <button
+                            type="button"
+                            className="inline-flex shrink-0 items-center justify-center rounded-md px-2 py-1.5 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                            aria-label="Clear search"
+                            onClick={() => setCommunityDirectoryQuery("")}
+                          >
+                            Clear
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                      <p className="text-xs text-neutral-500 dark:text-slate-400" aria-live="polite">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 md:justify-end">
+                      <p className="min-w-0 text-xs text-neutral-500 dark:text-slate-400" aria-live="polite">
                         {directoryCommunities.length === communities.length
                           ? `${communities.length} ${communities.length === 1 ? "community" : "communities"}`
                           : `${directoryCommunities.length} of ${communities.length} shown`}
@@ -6401,7 +6482,7 @@ function App() {
                         id="community-directory-sort"
                         value={communityDirectorySort}
                         onChange={(e) => setCommunityDirectorySort(e.target.value)}
-                        className="input-base min-w-[10.5rem] py-2 pl-3 pr-8 text-sm"
+                        className="input-base w-full min-w-0 py-2 pl-3 pr-8 text-sm md:w-auto md:min-w-[10.5rem]"
                       >
                         <option value="name">Name (A–Z)</option>
                         <option value="members">Most members</option>
@@ -6449,7 +6530,14 @@ function App() {
                           >
                             <div className="relative aspect-[16/9] max-h-[9.5rem] w-full shrink-0 overflow-hidden rounded-lg shadow-inner ring-1 ring-black/5 transition group-hover:ring-brand-primary/30 dark:ring-white/10 md:max-h-[10rem]">
                               {c.imageUrl ? (
-                                <img src={c.imageUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                                <img
+                                  src={c.imageUrl}
+                                  alt=""
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                  decoding="async"
+                                  sizes="(max-width: 768px) 28vw, 120px"
+                                />
                               ) : (
                                 <div
                                   className="flex h-full w-full items-center justify-center text-base font-bold tracking-tight text-white md:text-xl"
@@ -6543,7 +6631,7 @@ function App() {
                 } lg:visible lg:scale-100 lg:opacity-100`}
               >
                 <div className="flex min-h-0 min-w-0 flex-1 max-h-full items-center justify-center lg:contents lg:max-h-none">
-                  <div className="flex min-h-0 w-full max-w-md flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-[0_24px_64px_-12px_rgba(15,23,42,0.45)] ring-1 ring-black/[0.04] pointer-events-auto max-h-[min(88dvh,40rem)] dark:border-slate-600 dark:bg-slate-900 dark:ring-white/[0.06] lg:contents lg:max-h-none lg:max-w-none lg:rounded-none lg:border-0 lg:bg-transparent lg:shadow-none lg:ring-0">
+                  <div className="flex min-h-0 w-full max-w-mobile-baseline flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-[0_24px_64px_-12px_rgba(15,23,42,0.45)] ring-1 ring-black/[0.04] pointer-events-auto max-h-[min(88dvh,40rem)] dark:border-slate-600 dark:bg-slate-900 dark:ring-white/[0.06] md:max-w-md lg:contents lg:max-h-none lg:max-w-none lg:rounded-none lg:border-0 lg:bg-transparent lg:shadow-none lg:ring-0">
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:contents">
                   <div className="shrink-0 border-b border-neutral-100 bg-neutral-50/80 px-3 pb-3 pt-2.5 dark:border-slate-700/80 dark:bg-slate-800/40 lg:hidden lg:border-0 lg:bg-transparent lg:p-0">
                     <div className="mb-3 flex items-start justify-between gap-2">
@@ -6654,7 +6742,11 @@ function App() {
                 {activeView === VIEWS.FAVORITES ? (
                   <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My Favorites</h2>
                 ) : null}
-                <div className="lg:hidden">
+                <div
+                  className={
+                    activeView === VIEWS.COMMUNITY_SHOP && isMobileViewport ? "hidden" : "lg:hidden"
+                  }
+                >
                   <button
                     type="button"
                     className="inline-flex min-h-[44px] w-full touch-manipulation items-center justify-center gap-2 rounded-xl border border-neutral-300/90 bg-white px-3.5 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 active:scale-[0.98] motion-reduce:active:scale-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
@@ -6705,6 +6797,7 @@ function App() {
                     message={favoritesFetchError}
                     onRetry={() => void refreshFavorites()}
                     secondaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
+                    spacious
                   />
                 ) : null}
                 {activeView !== VIEWS.FAVORITES && listingsError ? (
@@ -6717,6 +6810,7 @@ function App() {
                         : undefined
                     }
                     secondaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
+                    spacious
                   />
                 ) : null}
                 {(activeView === VIEWS.FAVORITES
@@ -6743,6 +6837,19 @@ function App() {
                       </div>
                     ) : null}
                     <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      {activeView === VIEWS.COMMUNITY_SHOP && isMobileViewport ? (
+                        <button
+                          type="button"
+                          className="inline-flex min-h-[44px] min-w-[44px] touch-manipulation items-center justify-center gap-1.5 rounded-xl border border-neutral-200/90 bg-white px-3 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 active:scale-[0.98] dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                          onClick={() => setMobileCommunityFiltersOpen(true)}
+                          aria-label="Browse and filter listings"
+                        >
+                          <svg className="h-4 w-4 shrink-0 text-brand-primary dark:text-brand-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M7 12h10M10 18h4" />
+                          </svg>
+                          <span className="max-[380px]:sr-only">Filters</span>
+                        </button>
+                      ) : null}
                       {activeView === VIEWS.COMMUNITY_SHOP ? (
                         <button
                           type="button"
@@ -6753,7 +6860,7 @@ function App() {
                           onClick={() => refreshCommunityShopListings()}
                         >
                           <svg
-                            className={`h-3.5 w-3.5 shrink-0 ${listingsLoading || listingsRefreshing ? "animate-spin" : ""}`}
+                            className={`h-3.5 w-3.5 shrink-0 motion-reduce:animate-none ${listingsLoading || listingsRefreshing ? "animate-spin" : ""}`}
                             viewBox="0 0 24 24"
                             fill="none"
                             stroke="currentColor"
@@ -6769,29 +6876,46 @@ function App() {
                           Refresh
                         </button>
                       ) : null}
-                      <ProductViewDensityToggle
-                        value={activeView === VIEWS.FAVORITES ? favoriteProductsView : communityProductsView}
-                        onChange={activeView === VIEWS.FAVORITES ? setFavoriteProductsView : setCommunityProductsView}
-                      />
+                      {!isMobileViewport ? (
+                        <ProductViewDensityToggle
+                          value={activeView === VIEWS.FAVORITES ? favoriteProductsView : communityProductsView}
+                          onChange={activeView === VIEWS.FAVORITES ? setFavoriteProductsView : setCommunityProductsView}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 ) : null}
                 {(activeView === VIEWS.FAVORITES
                   ? !(favoritesLoading && strictFavoritesList.length === 0) && !favoritesFetchError && visibleFavoritesListings.length > 0
                   : !listingsError && visibleBrowseListings.length > 0) ? (
+                  <Suspense
+                    fallback={<ScreenLoading message="Loading products…" minHeight={false} className="min-h-[10rem]" />}
+                  >
                   <div
                     className={
                       activeView === VIEWS.FAVORITES
-                        ? favoritesGridClass(favoriteProductsView)
-                        : communityBrowseGridClass(communityProductsView)
+                        ? favoritesGridClass(effectiveFavoriteBrowseView)
+                        : communityBrowseGridClass(effectiveCommunityBrowseView, isMobileViewport)
                     }
                   >
                     {(activeView === VIEWS.FAVORITES ? visibleFavoritesListings : visibleBrowseListings).map((l) => (
-                      <CommunityShopListingCard
+                      <LazyCommunityShopListingCard
                         key={l.id}
                         listing={l}
-                        gridMode={(activeView === VIEWS.FAVORITES ? favoriteProductsView : communityProductsView) !== "list"}
-                        compactGrid={(activeView === VIEWS.FAVORITES ? favoriteProductsView : communityProductsView) === "compact"}
+                        gridMode={
+                          (activeView === VIEWS.FAVORITES ? effectiveFavoriteBrowseView : effectiveCommunityBrowseView) !==
+                          "list"
+                        }
+                        compactGrid={
+                          (activeView === VIEWS.FAVORITES ? effectiveFavoriteBrowseView : effectiveCommunityBrowseView) ===
+                          "compact"
+                        }
+                        mobileOwnerActionsInMenu={
+                          isMobileViewport &&
+                          activeView === VIEWS.COMMUNITY_SHOP &&
+                          effectiveCommunityBrowseView !== "list"
+                        }
+                        softBrowseChrome={isMobileViewport && activeView === VIEWS.COMMUNITY_SHOP}
                         isFavorite={favoriteIds.has(l.id)}
                         showActions
                         currentUserId={user?.id || ""}
@@ -6843,6 +6967,7 @@ function App() {
                       />
                     ))}
                   </div>
+                  </Suspense>
                 ) : null}
                 {(activeView === VIEWS.FAVORITES
                   ? !(favoritesLoading && strictFavoritesList.length === 0) && !favoritesFetchError && visibleFavoritesListings.length === 0
@@ -7005,6 +7130,9 @@ function App() {
                     </div>
                     <input
                       type="search"
+                      inputMode="search"
+                      enterKeyHint="search"
+                      autoComplete="off"
                       value={messagePeopleSearch}
                       onChange={(e) => setMessagePeopleSearch(e.target.value)}
                       className="input-base h-9 w-full text-xs"
@@ -7046,7 +7174,13 @@ function App() {
                   ) : null}
                   {usersError ? (
                     <div className="px-2 pb-2">
-                      <ScreenError title="Couldn’t load people" message={usersError} onRetry={() => void reloadUsersList()} />
+                      <ScreenError
+                        title="Couldn’t load people"
+                        message={usersError}
+                        onRetry={() => void reloadUsersList()}
+                        secondaryAction={{ label: "Dismiss", onClick: () => setUsersError("") }}
+                        spacious
+                      />
                     </div>
                   ) : null}
                   {!usersError ? (
@@ -7288,6 +7422,7 @@ function App() {
                 message={favoritesFetchError}
                 onRetry={() => void refreshFavorites()}
                 secondaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
+                spacious
               />
             ) : null}
             {!(favoritesLoading && strictFavoritesList.length === 0) && !favoritesFetchError && strictFavoritesList.length === 0 ? (
@@ -7299,16 +7434,21 @@ function App() {
             ) : null}
             {strictFavoritesList.length > 0 ? (
               <>
-                <div className="flex justify-end">
-                  <ProductViewDensityToggle value={favoriteProductsView} onChange={setFavoriteProductsView} />
-                </div>
-                <div className={favoritesGridClass(favoriteProductsView)}>
+                {!isMobileViewport ? (
+                  <div className="flex justify-end">
+                    <ProductViewDensityToggle value={favoriteProductsView} onChange={setFavoriteProductsView} />
+                  </div>
+                ) : null}
+                <Suspense
+                  fallback={<ScreenLoading message="Loading favorites…" minHeight={false} className="min-h-[10rem]" />}
+                >
+                <div className={favoritesGridClass(effectiveFavoriteBrowseView)}>
                   {strictFavoritesList.map((l) => (
-                    <CommunityShopListingCard
+                    <LazyCommunityShopListingCard
                       key={l.id}
                       listing={l}
-                      gridMode={favoriteProductsView !== "list"}
-                      compactGrid={favoriteProductsView === "compact"}
+                      gridMode={effectiveFavoriteBrowseView !== "list"}
+                      compactGrid={effectiveFavoriteBrowseView === "compact"}
                       isFavorite={favoriteIds.has(l.id)}
                       showActions
                       currentUserId={user?.id || ""}
@@ -7360,14 +7500,15 @@ function App() {
                     />
                   ))}
                 </div>
+                </Suspense>
               </>
             ) : null}
           </section>
         )}
 
         {activeView === VIEWS.MY_LISTINGS && (
-          <section className="space-y-6 md:space-y-8">
-            <form noValidate onSubmit={handleCreateListing} className="grid gap-4 md:grid-cols-2">
+          <section className="w-full min-w-0 max-w-none space-y-6 md:space-y-8">
+            <form noValidate onSubmit={handleCreateListing} className="grid w-full min-w-0 max-w-none gap-5 md:grid-cols-2 md:gap-4">
               <div id="listing-section-photos" className="md:col-span-2">
                 <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Upload Product</h2>
                 <div className="mb-2 flex items-end justify-between gap-2">
@@ -7432,14 +7573,20 @@ function App() {
                     <div className="flex flex-col gap-3">
                       <div className="flex flex-wrap items-start gap-3">
                         <div className="flex flex-col items-start gap-1.5">
-                          <div className="group relative shrink-0 overflow-hidden rounded-xl ring-1 ring-neutral-200/90 transition hover:ring-brand-primary/50 dark:ring-slate-600 dark:hover:ring-brand-accent/40">
+                          <div className="group relative shrink-0 overflow-hidden rounded-xl border border-neutral-200/85 transition hover:border-primary/45 dark:border-slate-600 dark:hover:border-brand-accent/45">
                             <button
                               type="button"
-                              className="block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:focus-visible:ring-brand-accent/50"
+                              className="block w-full focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary/45 dark:focus-visible:ring-brand-accent/45"
                               aria-label="Cover photo options"
                               onClick={() => setListingPhotoActionModal({ open: true, variant: "cover", extraId: "" })}
                             >
-                              <img src={listingImagePreviewUrl} alt="" className="h-32 w-32 object-cover object-center md:h-36 md:w-36" />
+                              <img
+                                src={listingImagePreviewUrl}
+                                alt=""
+                                className="h-32 w-32 object-cover object-center md:h-36 md:w-36"
+                                decoding="async"
+                                sizes="144px"
+                              />
                               <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-brand-primary/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white dark:bg-brand-accent/80">Cover photo</span>
                             </button>
                             <button
@@ -7471,14 +7618,20 @@ function App() {
                           </p>
                         </div>
                         {listingExtraImages.map((item) => (
-                          <div key={item.id} className="group relative shrink-0 overflow-hidden rounded-xl ring-1 ring-neutral-200/90 transition hover:ring-brand-primary/50 dark:ring-slate-600 dark:hover:ring-brand-accent/40">
+                          <div key={item.id} className="group relative shrink-0 overflow-hidden rounded-xl border border-neutral-200/85 transition hover:border-primary/45 dark:border-slate-600 dark:hover:border-brand-accent/45">
                             <button
                               type="button"
-                              className="block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:focus-visible:ring-brand-accent/50"
+                              className="block w-full focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary/45 dark:focus-visible:ring-brand-accent/45"
                               aria-label="Photo options"
                               onClick={() => setListingPhotoActionModal({ open: true, variant: "extra", extraId: item.id })}
                             >
-                              <img src={item.previewUrl} alt="" className="h-32 w-32 object-cover object-center md:h-36 md:w-36" />
+                              <img
+                                src={item.previewUrl}
+                                alt=""
+                                className="h-32 w-32 object-cover object-center md:h-36 md:w-36"
+                                decoding="async"
+                                sizes="144px"
+                              />
                             </button>
                             <button
                               type="button"
@@ -7540,7 +7693,7 @@ function App() {
                       role="dialog"
                       aria-modal="true"
                       aria-labelledby="listing-photo-options-title"
-                      className="relative z-10 w-full max-w-md rounded-2xl border border-neutral-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900 md:p-6"
+                      className="relative z-10 w-full max-w-mobile-baseline rounded-2xl border border-neutral-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900 md:max-w-md md:p-6"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 pr-2">
@@ -7792,7 +7945,12 @@ function App() {
               <div id="listing-section-details" className="md:col-span-2">
                 <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Details *</p>
                 <input
+                  id="listing-title"
+                  name="title"
                   className={`input-base w-full ${listingFieldErrors.title ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
+                  type="text"
+                  enterKeyHint="next"
+                  autoComplete="off"
                   value={listingForm.title}
                   placeholder="e.g. Preloved study table, iPhone 11 64GB, Rice cooker"
                   onChange={(e) => {
@@ -7800,8 +7958,14 @@ function App() {
                     if (listingFieldErrors.title) setListingFieldErrors((prev) => ({ ...prev, title: "" }));
                   }}
                   minLength={2}
+                  aria-invalid={listingFieldErrors.title ? true : undefined}
+                  aria-describedby={listingFieldErrors.title ? "listing-title-error" : undefined}
                 />
-                {listingFieldErrors.title ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.title}</p> : null}
+                {listingFieldErrors.title ? (
+                  <p id="listing-title-error" className="field-error-text mt-1" role="alert">
+                    {listingFieldErrors.title}
+                  </p>
+                ) : null}
               </div>
               <div className="md:col-span-2">
                 <ListingCategoryPicker
@@ -7812,12 +7976,19 @@ function App() {
                     if (listingFieldErrors.categories) setListingFieldErrors((prev) => ({ ...prev, categories: "" }));
                   }}
                 />
-                {listingFieldErrors.categories ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.categories}</p> : null}
+                {listingFieldErrors.categories ? (
+                  <p className="field-error-text mt-1" role="alert">
+                    {listingFieldErrors.categories}
+                  </p>
+                ) : null}
               </div>
               <div className="md:col-span-2">
                 <label className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Description (optional)</label>
                 <textarea
+                  id="listing-description"
+                  name="description"
                   className="input-base min-h-[5rem] w-full"
+                  enterKeyHint="done"
                   value={listingForm.description}
                   placeholder="Add key details buyers need: condition, size/specs, inclusions, issue disclosures, meetup area."
                   onChange={(e) => setListingForm((p) => ({ ...p, description: e.target.value }))}
@@ -7826,15 +7997,15 @@ function App() {
                 />
                 <p className="mt-1 text-right text-[11px] text-neutral-500 dark:text-slate-400">{listingDescriptionCount}/500</p>
               </div>
-              <div className="md:col-span-2 overflow-hidden divide-y divide-neutral-200/80 dark:divide-slate-700">
-                <div id="listing-section-pricing" className="grid grid-cols-1 gap-4 border-t border-neutral-200/80 p-3 md:grid-cols-2 dark:border-slate-700">
+              <div className="md:col-span-2 mt-2 border-t border-neutral-200/65 pt-4 divide-y divide-neutral-200/65 dark:border-slate-700 dark:divide-slate-700">
+                <div id="listing-section-pricing" className="grid grid-cols-1 gap-4 py-5 md:grid-cols-2 md:py-4">
                   <div className="min-w-0">
                   <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Pricing *</p>
                   <div
                     className={`flex min-w-0 overflow-hidden rounded-xl border bg-white transition dark:bg-slate-950 ${
                       listingFieldErrors.pricePesos
-                        ? "border-rose-400 focus-within:border-rose-500 focus-within:ring-2 focus-within:ring-rose-200 dark:border-rose-500/70 dark:focus-within:ring-rose-500/30"
-                        : "border-neutral-200 focus-within:border-brand-primary focus-within:ring-2 focus-within:ring-brand-primary/25 dark:border-slate-600 dark:focus-within:border-brand-primary dark:focus-within:ring-brand-primary/25"
+                        ? "border-rose-400 focus-within:border-rose-500 focus-within:ring-1 focus-within:ring-rose-200 dark:border-rose-500/70 dark:focus-within:ring-rose-500/30"
+                        : "border-neutral-200/95 focus-within:border-brand-primary focus-within:ring-1 focus-within:ring-brand-primary/30 dark:border-slate-600 dark:focus-within:border-brand-primary dark:focus-within:ring-brand-primary/28"
                     }`}
                   >
                     <span
@@ -7858,13 +8029,19 @@ function App() {
                       }}
                     />
                   </div>
-                  {listingFieldErrors.pricePesos ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.pricePesos}</p> : null}
+                  {listingFieldErrors.pricePesos ? (
+                    <p className="field-error-text mt-1" role="alert">
+                      {listingFieldErrors.pricePesos}
+                    </p>
+                  ) : null}
                   </div>
                 <div className="min-w-0">
                   <label className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Quantity *</label>
                   <input
                     className={`input-base w-full text-left ${listingFieldErrors.quantity ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
                     type="number"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     min={0}
                     step={1}
                     placeholder="e.g. 1, 3, 10"
@@ -7902,10 +8079,14 @@ function App() {
                       </div>
                     </div>
                   ) : null}
-                  {listingFieldErrors.quantity ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{listingFieldErrors.quantity}</p> : null}
+                  {listingFieldErrors.quantity ? (
+                    <p className="field-error-text mt-1" role="alert">
+                      {listingFieldErrors.quantity}
+                    </p>
+                  ) : null}
                 </div>
               </div>
-              <div id="listing-section-fulfillment" className="p-3">
+              <div id="listing-section-fulfillment" className="py-5 md:py-4">
                 <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Fulfillment *</p>
                 <div className="mt-2 flex flex-wrap items-center gap-4">
                   <button
@@ -7942,11 +8123,11 @@ function App() {
                 <p className="mt-2 text-xs text-neutral-500 dark:text-slate-400">Choose how buyers can receive the item.</p>
                 {listingFieldErrors.fulfillment ? <p className="mt-2 text-xs font-medium text-rose-600 dark:text-rose-400">{listingFieldErrors.fulfillment}</p> : null}
               </div>
-              <div className="p-3">
+              <div className="py-1">
                 <div
                   role="button"
                   tabIndex={0}
-                  className="flex cursor-pointer items-center justify-between gap-3 rounded-md px-2 py-1"
+                  className="flex cursor-pointer items-center justify-between gap-3 rounded-lg px-0 py-1"
                   onClick={() => setListingAdvancedOpen((prev) => !prev)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
@@ -7963,8 +8144,8 @@ function App() {
                   </span>
                 </div>
                 {listingAdvancedOpen ? (
-                  <div className="mt-3 space-y-3 border-t border-neutral-200/80 pt-3 dark:border-slate-700">
-                    <div id="listing-section-variants" className="p-3">
+                  <div className="mt-3 space-y-3 border-t border-neutral-200/65 pt-4 dark:border-slate-700">
+                    <div id="listing-section-variants" className="py-1">
                       <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Variants</p>
                       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                         <div className="min-w-0">
@@ -8025,7 +8206,7 @@ function App() {
                         )}
                       </div>
                     </div>
-                    <div id="listing-section-processing" className="border-t border-neutral-200/80 p-3 dark:border-slate-700">
+                    <div id="listing-section-processing" className="border-t border-neutral-200/65 py-4 dark:border-slate-700">
                       <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Processing (Order type)</p>
                       <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
                         <div className="min-w-0">
@@ -8058,18 +8239,20 @@ function App() {
                 ) : null}
               </div>
               </div>
-              <div id="listing-section-publish" className="md:col-span-2 border-t border-neutral-200/80 px-3 py-2.5 dark:border-slate-700">
-                <div className="flex w-fit items-center justify-start gap-2">
+              <div id="listing-section-publish" className="md:col-span-2">
+                <MobileFormActions className="border-t border-neutral-200/65 px-0 dark:border-slate-700">
+                <div className="flex w-full flex-col gap-2 md:flex-row md:w-auto md:items-center md:justify-start">
                   <button
                     type="submit"
-                    className="btn-primary"
+                    className="btn-primary w-full md:w-auto"
                     disabled={listingSaving}
+                    aria-busy={listingSaving || undefined}
                   >
                     {listingSaving ? (editingListingId ? "Saving…" : "Publishing…") : editingListingId ? "Save changes" : "Publish listing"}
                   </button>
                   <button
                     type="button"
-                    className="btn-secondary"
+                    className="btn-secondary w-full md:w-auto"
                     disabled={listingSaving}
                     onClick={() => {
                       if (listingFormDirty) {
@@ -8115,10 +8298,11 @@ function App() {
                     Cancel
                   </button>
                 </div>
+                <p className="mt-2 text-left text-xs text-neutral-600 dark:text-slate-300">
+                  Required complete: <span className="font-semibold text-neutral-800 dark:text-slate-100">{listingRequiredCompletedCount}/{listingRequiredTotalCount}</span>
+                </p>
+                </MobileFormActions>
               </div>
-              <p className="md:col-span-2 text-left text-xs text-neutral-600 dark:text-slate-300">
-                Required complete: <span className="font-semibold text-neutral-800 dark:text-slate-100">{listingRequiredCompletedCount}/{listingRequiredTotalCount}</span>
-              </p>
             </form>
           </section>
         )}
@@ -8131,6 +8315,7 @@ function App() {
                 <ProductViewDensityToggle
                   value={commerceFlowViewBuyer}
                   onChange={setCommerceFlowViewBuyer}
+                  allowCompact={!isMobileViewport}
                   groupAriaLabel="Cart line layout"
                   gridTitle="Grid — two columns for readable cart cards"
                   compactTitle="Dense — three columns for a compact overview"
@@ -8215,13 +8400,13 @@ function App() {
                         </label>
                         <p className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-slate-300">{sellerLabel}</p>
                       </div>
-                      <div className={commerceFlowLineItemsClass(commerceFlowViewBuyer, { variant: "cart" })}>
+                      <div className={commerceFlowLineItemsClass(effectiveCommerceFlowViewBuyer, { variant: "cart" })}>
                         {orderedItems.map((item) => {
                           const lid = String(item.listingId);
                           const isRecentlyAdded = recentlyAddedCartListingIds.includes(lid);
                           const isRemoving = cartRemovingListingIds.includes(lid);
-                          const cfList = commerceFlowViewBuyer === "list";
-                          const cfCompact = commerceFlowViewBuyer === "compact";
+                          const cfList = effectiveCommerceFlowViewBuyer === "list";
+                          const cfCompact = effectiveCommerceFlowViewBuyer === "compact";
                           const thumbClass = cfList
                             ? "h-20 w-20"
                             : cfCompact
@@ -8253,7 +8438,14 @@ function App() {
                                 className={`${thumbClass} shrink-0 overflow-hidden rounded-xl border border-border bg-primary-soft/40 dark:border-slate-700 dark:bg-slate-800`}
                               >
                                 {item.imageUrl ? (
-                                  <img src={item.imageUrl} alt={item.title || "Cart item"} className="h-full w-full object-cover" />
+                                  <img
+                                    src={item.imageUrl}
+                                    alt={item.title || "Cart item"}
+                                    className="h-full w-full object-cover"
+                                    loading="lazy"
+                                    decoding="async"
+                                    sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
+                                  />
                                 ) : (
                                   <div className="flex h-full w-full items-center justify-center text-[10px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                                     No image
@@ -8266,7 +8458,7 @@ function App() {
                                     Newly added
                                   </span>
                                 ) : null}
-                                <MarketplaceProductDetailStack
+                                <DeferredProductDetailStack
                                   title={item.title || "Product"}
                                   priceCents={item.unitPriceCents}
                                   description={item.description}
@@ -8459,6 +8651,7 @@ function App() {
                 message={ordersFetchError}
                 onRetry={() => void refetchOrders()}
                 secondaryAction={{ label: "Go home", onClick: goMobileHome }}
+                spacious
               />
             ) : null}
             <div className="flex flex-col gap-3">
@@ -8496,8 +8689,9 @@ function App() {
                 </div>
                 <div className="shrink-0 self-center md:self-start">
                   <ProductViewDensityToggle
-                    value={commerceFlowOrdersView}
+                    value={activeView === VIEWS.MY_PURCHASES ? commerceFlowViewBuyer : commerceFlowViewSeller}
                     onChange={setCommerceFlowOrdersView}
+                    allowCompact={!isMobileViewport}
                     groupAriaLabel={
                       activeView === VIEWS.MY_PURCHASES ? "My purchases line layout" : "Sales inbox line layout"
                     }
@@ -8854,7 +9048,14 @@ function App() {
                                     className={`${orderThumbClass} shrink-0 overflow-hidden rounded-xl border border-border bg-primary-soft/40 dark:border-slate-700 dark:bg-slate-800`}
                                   >
                                   {String(cardListing.imageUrl || "").trim() ? (
-                                    <img src={cardListing.imageUrl} alt={cardListing.title || "Order item"} className="h-full w-full object-cover" />
+                                    <img
+                                      src={cardListing.imageUrl}
+                                      alt={cardListing.title || "Order item"}
+                                      className="h-full w-full object-cover"
+                                      loading="lazy"
+                                      decoding="async"
+                                      sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
+                                    />
                                   ) : (
                                     <div className="flex h-full w-full items-center justify-center text-[10px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                                       No image
@@ -8868,7 +9069,7 @@ function App() {
                                       Recently updated
                                     </span>
                                   ) : null}
-                                  <MarketplaceProductDetailStack
+                                  <DeferredProductDetailStack
                                     title={cardListing.title || "Product"}
                                     priceCents={cardListing.priceCents}
                                     description={cardListing.description}
@@ -9082,13 +9283,15 @@ function App() {
                                   </div>
                                 ) : null}
                                 {ordersRole === "buyer" && ordersStatusTab === "completed" && String(o.status || "") === "completed" ? (
-                                  <OrderBuyerReviewForm
-                                    orderId={o.id}
-                                    initialReview={o.buyerReview}
-                                    onSubmit={submitOrderReview}
-                                    disabled={!token}
-                                    compact={multicolOrderCard}
-                                  />
+                                  <Suspense fallback={null}>
+                                    <LazyOrderBuyerReviewForm
+                                      orderId={o.id}
+                                      initialReview={o.buyerReview}
+                                      onSubmit={submitOrderReview}
+                                      disabled={!token}
+                                      compact={multicolOrderCard}
+                                    />
+                                  </Suspense>
                                 ) : null}
                                 {ordersRole === "seller" && ordersStatusTab === "completed" && o.buyerReview?.rating ? (
                                   <div
@@ -9387,9 +9590,9 @@ function App() {
         )}
 
         {activeView === VIEWS.PROFILE && (
-          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start">
-              <div className="space-y-4 rounded-2xl border border-neutral-200/90 bg-white p-4 shadow-sm md:space-y-6 dark:border-slate-600 dark:bg-slate-900/80">
+          <section className="w-full min-w-0 max-w-none space-y-6 md:space-y-6 lg:space-y-8">
+            <div className="grid w-full min-w-0 max-w-none gap-6 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start lg:gap-8">
+              <div className="min-w-0 space-y-6 bg-transparent p-0 md:space-y-6 lg:rounded-2xl lg:border lg:border-neutral-200/60 lg:bg-white lg:p-5 lg:shadow-sm dark:lg:border-slate-600 dark:lg:bg-slate-900/80">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">
                     {isViewingSellerProfile ? "Seller profile" : "Profile"}
@@ -9400,7 +9603,7 @@ function App() {
                     </button>
                   ) : null}
                   {profileRenderUser && !profileEditing && !isViewingSellerProfile ? (
-                    <button type="button" className="btn-secondary shrink-0" onClick={openProfileEdit}>
+                    <button type="button" className="btn-secondary w-full min-w-0 shrink-0 md:w-auto" onClick={openProfileEdit}>
                       Edit profile
                     </button>
                   ) : null}
@@ -9417,7 +9620,13 @@ function App() {
                     <div className="relative h-16 w-16 shrink-0 md:row-span-2 md:self-start">
                       <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-xl font-bold text-brand-primary ring-1 ring-brand-border">
                         {profileDraft.avatarUrl ? (
-                          <img src={profileDraft.avatarUrl} alt="Profile avatar preview" className="h-full w-full object-cover" />
+                          <img
+                            src={profileDraft.avatarUrl}
+                            alt="Profile avatar preview"
+                            className="h-full w-full object-cover"
+                            decoding="async"
+                            sizes="112px"
+                          />
                         ) : (
                           (String(profileDraft.username || "").trim().charAt(0) || String(user?.username || "").trim().charAt(0) || "?").toUpperCase()
                         )}
@@ -9448,7 +9657,7 @@ function App() {
                         id="profile-username-inline"
                         name="username"
                         type="text"
-                        className="input-base h-9 min-w-[13rem] text-sm font-semibold"
+                        className="input-base h-9 w-full min-w-0 text-sm font-semibold md:min-w-[13rem]"
                         value={profileDraft.username}
                         onChange={(e) => {
                           const value = e.target.value;
@@ -9493,7 +9702,7 @@ function App() {
                         <input
                           id="profile-phone-inline"
                           name="phone"
-                          type="text"
+                          type="tel"
                           inputMode="numeric"
                           autoComplete="tel-national"
                           className="w-full border-0 bg-transparent p-0 text-sm outline-none placeholder:text-neutral-400 dark:placeholder:text-slate-500"
@@ -9508,7 +9717,7 @@ function App() {
                           }}
                         />
                       </div>
-                      {profileFieldErrors.phone ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{profileFieldErrors.phone}</p> : null}
+                      {profileFieldErrors.phone ? <p className="field-error-text mt-1">{profileFieldErrors.phone}</p> : null}
                     </div>
                     <div className="min-w-0 md:order-2">
                       <label className="mb-1.5 block text-xs font-medium text-neutral-600 dark:text-slate-400" htmlFor="profile-email-inline">
@@ -9518,6 +9727,7 @@ function App() {
                         id="profile-email-inline"
                         name="email"
                         type="email"
+                        inputMode="email"
                         readOnly
                         aria-readonly="true"
                         className="input-base h-9 cursor-default border-0 read-only:border-0 read-only:bg-neutral-50 read-only:text-neutral-700 dark:read-only:bg-slate-900/50 dark:read-only:text-slate-300"
@@ -10234,23 +10444,34 @@ function App() {
                       {profileError}
                     </p>
                   ) : null}
-                  <div className="sticky bottom-0 z-10 flex flex-wrap justify-end gap-2 border-t border-neutral-200/80 bg-white/95 pt-5 backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95">
-                    <button type="submit" className="btn-primary min-w-[7rem]" disabled={profileSaving}>
+                  <MobileFormActions className="flex flex-col gap-2 pt-5 md:static md:flex-row md:flex-wrap md:justify-end md:border-0 md:bg-transparent md:p-0 md:pt-0 md:shadow-none md:backdrop-blur-none">
+                    <button
+                      type="submit"
+                      className="btn-primary w-full min-w-0 md:w-auto md:min-w-[7rem]"
+                      disabled={profileSaving}
+                      aria-busy={profileSaving || undefined}
+                    >
                       {profileSaving ? "Saving…" : "Save changes"}
                     </button>
-                    <button type="button" className="btn-secondary min-w-[7rem]" disabled={profileSaving} onClick={cancelProfileEdit}>
+                    <button type="button" className="btn-secondary w-full min-w-0 md:w-auto md:min-w-[7rem]" disabled={profileSaving} onClick={cancelProfileEdit}>
                       Cancel
                     </button>
-                  </div>
+                  </MobileFormActions>
                 </form>
                   </div>
                 </div>
               ) : (
                 <div className="space-y-6">
-                  <div className={`flex flex-col items-center gap-4 p-5 text-center ${UI_KIT.surfaceRaised}`}>
-                    <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-2xl font-bold text-brand-primary ring-1 ring-brand-border">
+                  <div className="flex flex-col items-center gap-4 border-b border-neutral-200/35 pb-8 text-center dark:border-slate-700/35 md:rounded-xl md:border md:border-neutral-200/50 md:bg-white md:p-5 md:pb-5 md:shadow-sm dark:md:border-slate-700/60 dark:md:bg-slate-900/50">
+                    <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-brand-soft text-2xl font-bold text-brand-primary">
                       {profileRenderUser.avatarUrl ? (
-                        <img src={profileRenderUser.avatarUrl} alt="Profile avatar" className="h-full w-full object-cover" />
+                        <img
+                          src={profileRenderUser.avatarUrl}
+                          alt="Profile avatar"
+                          className="h-full w-full object-cover"
+                          decoding="async"
+                          sizes="96px"
+                        />
                       ) : (
                         (String(profileRenderUser?.username || "").trim().charAt(0) || "?").toUpperCase()
                       )}
@@ -10337,10 +10558,9 @@ function App() {
                       </div>
                     </div>
                   </div>
-                  <div className={`${UI_KIT.surfaceCard} px-4 py-4`}>
-                    <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">About</h3>
-                    <div className="mt-3 border-t border-neutral-200/80 dark:border-slate-700/80" />
-                    <ul className="mt-3 space-y-3 text-sm text-neutral-800 dark:text-slate-200">
+                  <div className="border-b border-neutral-200/35 pb-8 pt-2 dark:border-slate-700/35 md:rounded-xl md:border md:border-neutral-200/50 md:bg-white md:px-4 md:py-4 md:shadow-sm dark:md:border-slate-700 dark:md:bg-[#0f2234]/95">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">About</h3>
+                    <ul className="mt-4 space-y-3 text-sm text-neutral-800 dark:text-slate-200">
                       <li className="flex items-center gap-2">
                         <svg className="h-4 w-4 text-neutral-500 dark:text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                           <rect x="3" y="4" width="18" height="18" rx="2" />
@@ -10378,12 +10598,11 @@ function App() {
                       ) : null}
                     </ul>
                   </div>
-                  <div className={`${UI_KIT.surfaceCard} px-4 py-4`}>
-                    <h3 className="text-lg font-semibold text-neutral-900 dark:text-slate-100">Dashboard</h3>
-                    <div className="mt-3 border-t border-neutral-200/80 dark:border-slate-700/80" />
-                    <ul className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="pb-2 pt-2 dark:border-slate-700/35 md:rounded-xl md:border md:border-neutral-200/50 md:bg-white md:px-4 md:py-4 md:shadow-sm dark:md:border-slate-700 dark:md:bg-[#0f2234]/95">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Dashboard</h3>
+                    <ul className="mt-4 grid grid-cols-2 gap-2.5 md:gap-3">
                       {profileDashboardStats.map((stat) => (
-                        <li key={stat.key} className="rounded-xl border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/50">
+                        <li key={stat.key} className="rounded-lg bg-neutral-50/50 px-3 py-3 dark:bg-slate-800/35 md:rounded-xl md:bg-neutral-50/75 md:dark:bg-slate-800/45">
                           <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">{stat.label}</p>
                           <p className="mt-1 text-xl font-semibold tabular-nums text-neutral-900 dark:text-slate-100">{stat.value}</p>
                         </li>
@@ -10397,7 +10616,7 @@ function App() {
             )}
               </div>
               {!isViewingSellerProfile ? (
-              <aside className="min-w-0 space-y-4 rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-slate-900/80">
+              <aside className="min-w-0 space-y-4 border-t border-neutral-200/35 pt-8 dark:border-slate-700/35 lg:rounded-2xl lg:border lg:border-neutral-200/70 lg:bg-white lg:p-5 lg:pt-5 lg:shadow-sm dark:lg:border-slate-600 dark:lg:bg-slate-900/80">
                 <div className="flex flex-wrap gap-2" role="tablist" aria-label="Seller hub: products and buyer feedback">
                   {[
                     { id: SELLER_TABS.PRODUCTS, label: "Products" },
@@ -10408,7 +10627,11 @@ function App() {
                       type="button"
                       role="tab"
                       aria-selected={sellerTab === id}
-                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${sellerTab === id ? UI_KIT.tabActive : UI_KIT.tabIdle}`}
+                      className={`min-h-[44px] rounded-full px-4 py-2 text-sm font-medium transition md:min-h-0 md:px-3 md:py-1.5 ${
+                        sellerTab === id
+                          ? UI_KIT.tabActive
+                          : "border-0 bg-neutral-100/55 text-neutral-600 hover:bg-neutral-100 dark:bg-slate-800/55 dark:text-slate-400 dark:hover:bg-slate-800 md:border md:border-neutral-200/85 md:bg-transparent md:hover:bg-neutral-50 dark:md:border-slate-600"
+                      }`}
                       onClick={() => setSellerTab(id)}
                     >
                       {label}
@@ -10416,13 +10639,14 @@ function App() {
                   ))}
                 </div>
                 {sellerTab === SELLER_TABS.PRODUCTS && (
-                  <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 dark:border-slate-700 dark:bg-slate-900/40">
+                  <div className="space-y-3 md:rounded-xl md:border md:border-neutral-200/60 md:bg-neutral-50/40 md:p-4 md:shadow-sm dark:md:border-slate-700 dark:md:bg-slate-900/40">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">Listings & quantity</p>
                       <div className="flex items-center gap-2">
                         <ProductViewDensityToggle
                           value={sellerProductsView}
                           onChange={setSellerProductsView}
+                          allowCompact={!isMobileViewport}
                           gridTitle="Grid — large photos, full details on each card"
                           compactTitle="Dense — small tiles; use View for long descriptions"
                         />
@@ -10465,18 +10689,19 @@ function App() {
                           message={sellerListingsFetchError}
                           onRetry={() => void refetchSellerListings()}
                           secondaryAction={{ label: "Open My listings", onClick: () => setActiveView(VIEWS.MY_LISTINGS) }}
+                          spacious={false}
                         />
                       </div>
                     ) : null}
                     {sellerListings.length ? (
-                      <ul className={sellerListingsGridClass(sellerProductsView)}>
+                      <ul className={sellerListingsGridClass(effectiveSellerProductsView)}>
                         {sellerListings.map((l) => {
                           return (
                             <SellerProductCard
                               key={l.id}
                               listing={l}
-                              gridMode={sellerProductsView !== "list"}
-                              compactGrid={sellerProductsView === "compact"}
+                              gridMode={effectiveSellerProductsView !== "list"}
+                              compactGrid={effectiveSellerProductsView === "compact"}
                               onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
                               onEdit={() => beginEditSellerListing(l)}
                               onDelete={() => deleteSellerListingById(l.id)}
@@ -10522,7 +10747,15 @@ function App() {
                     ) : null}
                   </div>
                 )}
-                {sellerTab === SELLER_TABS.FEEDBACK && <SellerBuyerFeedbackList token={token} />}
+                {sellerTab === SELLER_TABS.FEEDBACK && (
+                  <Suspense
+                    fallback={
+                      <ScreenLoading message="Loading feedback…" minHeight={false} className="min-h-[8rem] py-6" />
+                    }
+                  >
+                    <LazySellerBuyerFeedbackList token={token} />
+                  </Suspense>
+                )}
               </aside>
               ) : null}
             </div>
@@ -10531,10 +10764,12 @@ function App() {
 
       </main>
       </LoggedInHeader>
-      </div>
+      </MobileAppShell>
 
       {productInspect ? (
-        <ProductInspectModal open onClose={closeProductInspect} {...productInspect} />
+        <Suspense fallback={null}>
+          <LazyProductInspectModal open onClose={closeProductInspect} {...productInspect} />
+        </Suspense>
       ) : null}
 
       {buyerCancelConfirmOpen ? (
@@ -10546,7 +10781,7 @@ function App() {
             onClick={() => setBuyerCancelConfirmOpen(false)}
           />
           <div
-            className="relative z-10 w-full max-w-md rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900"
+            className="relative z-10 w-full max-w-mobile-baseline rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900 md:max-w-md"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 id="buyer-cancel-confirm-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
@@ -10592,7 +10827,7 @@ function App() {
             onClick={() => setLeaveCommunityConfirmOpen(false)}
           />
           <div
-            className="relative z-10 w-full max-w-md rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900"
+            className="relative z-10 w-full max-w-mobile-baseline rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900 md:max-w-md"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 id="leave-community-confirm-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
@@ -10643,6 +10878,8 @@ function App() {
               src={quickAddListing.imageUrl}
               alt={quickAddListing.title || "Product image"}
               className="max-h-[88vh] w-full rounded-2xl border border-white/30 object-contain shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
+              decoding="async"
+              sizes="100vw"
             />
             <button
               type="button"
@@ -10703,6 +10940,8 @@ function App() {
                           src={quickAddListing.imageUrl}
                           alt={quickAddListing.title || "Product"}
                           className="h-full w-full object-cover transition duration-200 hover:scale-[1.02]"
+                          decoding="async"
+                          sizes="(max-width: 768px) 100vw, 8rem"
                         />
                       </button>
                     ) : (
@@ -10711,7 +10950,7 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <MarketplaceProductDetailStack
+                  <DeferredProductDetailStack
                     title={quickAddListing.title || "Product"}
                     priceCents={quickAddListing.priceCents}
                     description={quickAddListing.description}
@@ -11205,3 +11444,4 @@ function App() {
 }
 
 export default App;
+  

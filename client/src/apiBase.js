@@ -1,7 +1,5 @@
-const defaultApiUrl = () => {
-  if (!import.meta.env.DEV) return "http://localhost:4000/api/v1";
-  return "http://127.0.0.1:4000/api/v1";
-};
+/** Same-origin `/api/v1` works with the Vite dev proxy and production reverse proxies; avoids localhost on devices/Capacitor. */
+const defaultApiUrl = () => "/api/v1";
 
 /**
  * Resolves the API base including `/api/v1`.

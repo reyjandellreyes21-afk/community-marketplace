@@ -424,7 +424,14 @@ export function SellerProductCard({
           <div className="flex min-w-0 gap-3">
             <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-[#1f3c56] dark:bg-[#11283d] ${imgBox}`}>
               {imageUrl ? (
-                <img src={imageUrl} alt={listing.title || "Product"} className="h-full w-full object-cover" />
+                <img
+                  src={imageUrl}
+                  alt={listing.title || "Product"}
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                  decoding="async"
+                  sizes="(max-width: 768px) 42vw, min(240px, 18vw)"
+                />
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">No image</div>
               )}
@@ -437,7 +444,14 @@ export function SellerProductCard({
         <div className={`flex min-w-0 flex-col ${mainGap} ${isComfortableGrid || compactGrid ? "md:h-full" : ""}`}>
           <div className={`shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 dark:border-[#1f3c56] dark:bg-[#11283d] ${imgBox}`}>
             {imageUrl ? (
-              <img src={imageUrl} alt={listing.title || "Product"} className="h-full w-full object-cover" />
+              <img
+                src={imageUrl}
+                alt={listing.title || "Product"}
+                className="h-full w-full object-cover"
+                loading="lazy"
+                decoding="async"
+                sizes="(max-width: 768px) 42vw, min(240px, 18vw)"
+              />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">No image</div>
             )}

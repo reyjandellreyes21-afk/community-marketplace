@@ -26,10 +26,10 @@
     --safe-right: env(safe-area-inset-right, 0px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     --safe-left: env(safe-area-inset-left, 0px);
-    /* Logged-in mobile: bottom tab bar row height (5 tabs + safe area padding on nav) */
-    --mobile-bottom-nav: 4rem;
-    /* Align with tailwind max-w-mobile-baseline — validate layouts at 360 / 390 / 430 */
-    --mobile-baseline-width: 390px;
+    /* Logged-in mobile: bottom tab bar chrome (tabs + vertical padding; safe bottom added again in --mobile-nav-stack-bottom) */
+    --mobile-bottom-nav: 4.25rem;
+    /* Tab bar + safe-area — single anchor for sheets, overlays, and main scroll padding */
+    --mobile-nav-stack-bottom: calc(var(--mobile-bottom-nav) + env(safe-area-inset-bottom, 0px));
   }
 
   .dark {
@@ -62,6 +62,11 @@
     display: none; /* Chrome, Safari, Opera */
   }
 
+  /* Skip link: hidden until focused — keyboard / external switch access on small viewports. */
+  .skip-to-main {
+    @apply sr-only focus:not-sr-only focus:fixed focus:z-[9999] focus:left-[max(0.75rem,env(safe-area-inset-left,0px))] focus:top-[max(0.75rem,env(safe-area-inset-top,0px))] focus:rounded-lg focus:bg-primary focus:px-4 focus:py-3 focus:text-sm focus:font-semibold focus:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:focus:bg-brand-accent dark:focus:text-slate-900 dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950;
+  }
+
   /* Mobile filter drawer: less intrusive scrollbar */
   .drawer-scroll {
     scrollbar-width: thin;
@@ -84,8 +89,31 @@
     background: transparent;
   }
 
+  /*
+   * Mobile app shell: fluid width (full viewport minus safe horizontal inset) — validate at 360 / 390 / 430.
+   * Layout: [.mobile-app-top-header] (menu row + optional [.mobile-app-secondary-nav]) → [main scroll].
+   * Light, full-bleed chrome — no heavy outer ring/shadow on phones.
+   */
+  .mobile-app-shell {
+    @apply relative isolate mx-auto flex h-[100dvh] max-h-[100dvh] min-h-screen min-h-[100dvh] w-full max-w-none flex-col overflow-hidden bg-white pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)] dark:bg-slate-950 md:h-auto md:max-h-none md:min-h-0 md:max-w-none md:overflow-visible md:bg-transparent md:pl-0 md:pr-0;
+  }
+
+  .mobile-app-top-header {
+    @apply shrink-0;
+  }
+
+  .mobile-app-secondary-nav {
+    @apply shrink-0 border-b border-neutral-200/40 bg-white/95 backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95;
+  }
+
+  /* Header / nav row inset — one layer only (avoid stacking with main px) */
+  .app-shell-content-inset {
+    @apply w-full px-3 md:px-6;
+  }
+
+  /* Main column: comfortable mobile gutters; desktop max width */
   .app-container {
-    @apply mx-auto w-full max-w-7xl px-3 md:px-6;
+    @apply mx-auto w-full max-w-none px-3 md:max-w-7xl md:px-6;
   }
 
   .app-card {
@@ -93,12 +121,12 @@
   }
 
   .app-card-interactive {
-    @apply app-card transition duration-200 ease-in-out hover:-translate-y-px hover:scale-[1.01] hover:border-primary/35 dark:hover:border-[#2a5a7b] dark:hover:shadow-[0_8px_24px_rgba(0,0,0,0.3)];
+    @apply app-card transition duration-200 ease-in-out motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:hover:scale-100 hover:-translate-y-px hover:scale-[1.01] hover:border-primary/35 dark:hover:border-[#2a5a7b] dark:hover:shadow-[0_8px_24px_rgba(0,0,0,0.3)] motion-reduce:hover:shadow-sm dark:motion-reduce:hover:shadow-[0_1px_2px_rgba(0,0,0,0.22),0_8px_20px_rgba(0,0,0,0.22)];
   }
 
-  /* Buttons: min 44×44pt touch target on mobile; compact tightens from md up only */
+  /* Buttons: min 44×44pt touch target on mobile; compact tightens from md up only; pressed = active scale + brightness */
   .btn-base {
-    @apply inline-flex min-h-[44px] min-w-0 touch-manipulation items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold leading-snug transition duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary/35 active:scale-[0.97] motion-reduce:active:scale-100 disabled:active:scale-100;
+    @apply inline-flex min-h-[44px] min-w-0 touch-manipulation items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold leading-snug transition duration-200 ease-in-out motion-reduce:transition-none focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] active:brightness-[0.94] motion-reduce:active:scale-100 disabled:active:scale-100 disabled:active:brightness-100 dark:active:brightness-110 dark:disabled:active:brightness-100 dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-950;
   }
 
   .btn-primary {
@@ -119,6 +147,11 @@
 
   .btn-accent {
     @apply btn-base bg-accent text-white hover:bg-accent-hover;
+  }
+
+  /* Icon-only control — 44×44px tap target; pair with btn-* variants */
+  .btn-icon-only {
+    @apply !h-[var(--ui-touch-target)] !min-h-[var(--ui-touch-target)] !w-[var(--ui-touch-target)] !min-w-[var(--ui-touch-target)] !max-w-[var(--ui-touch-target)] !shrink-0 !px-0 !py-0;
   }
 
   .badge-success {
@@ -144,11 +177,15 @@
 
   /* Inputs: 44px min height on small screens; dense layouts can override with h-9 etc. */
   .input-base {
-    @apply box-border min-h-[44px] w-full touch-manipulation rounded-[var(--ui-radius)] border border-neutral-200 bg-white px-3 py-2.5 text-sm leading-snug text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/25 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 md:min-h-10;
+    @apply box-border min-h-[44px] w-full touch-manipulation rounded-[var(--ui-radius)] border border-neutral-200/95 bg-white px-3 py-2.5 text-base leading-snug text-neutral-900 outline-none placeholder:text-neutral-500 focus-visible:border-brand-primary focus-visible:ring-1 focus-visible:ring-brand-primary/35 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-400 md:min-h-10 md:text-sm;
+  }
+
+  .textarea-base {
+    @apply input-base min-h-[6.5rem] resize-y py-3 text-base md:text-sm;
   }
 
   .label-base {
-    @apply mb-1.5 block text-sm font-medium leading-snug text-neutral-700 dark:text-slate-300;
+    @apply mb-1.5 block text-sm font-medium leading-snug text-primary dark:text-brand-accent;
   }
 
   /* Screen sections — stack rhythm + type scale */
@@ -168,8 +205,9 @@
     @apply mt-1 text-sm leading-relaxed text-text-secondary dark:text-slate-400;
   }
 
+  /* Mobile: stronger label/background contrast (WCAG AA); md+ keeps lighter meta. */
   .meta-label {
-    @apply text-xs uppercase tracking-wide text-neutral-500 dark:text-slate-400;
+    @apply text-xs uppercase tracking-wide text-neutral-700 dark:text-slate-200 md:text-neutral-500 md:dark:text-slate-400;
   }
 
   /* Landing page: flat white below hero — matches “Choose your target exam” card surface */
@@ -209,11 +247,11 @@
   }
 
   .landing-input {
-    @apply w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-900 shadow-sm outline-none placeholder:text-neutral-400 focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/25 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500;
+    @apply min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-base text-neutral-900 shadow-sm outline-none placeholder:text-neutral-500 focus:border-brand-primary focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-400 md:text-sm;
   }
 
   .landing-btn-primary {
-    @apply inline-flex h-12 w-full touch-manipulation items-center justify-center rounded-full bg-brand-primary text-sm font-semibold text-white shadow-md shadow-brand-primary/25 transition hover:bg-brand-hover active:scale-[0.98] motion-reduce:active:scale-100 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100;
+    @apply inline-flex h-12 w-full touch-manipulation items-center justify-center rounded-full bg-brand-primary text-sm font-semibold text-white shadow-md shadow-brand-primary/25 transition motion-reduce:transition-none hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white active:scale-[0.98] motion-reduce:active:scale-100 dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100;
   }
 
   .landing-btn-nav-text {
@@ -225,7 +263,7 @@
   }
 
   .landing-auth-close {
-    @apply absolute right-2 top-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus:ring-2 focus:ring-brand-primary/35 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100;
+    @apply absolute right-2 top-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-neutral-600 transition motion-reduce:transition-none hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100 dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950;
   }
 
   .landing-auth-panel {
@@ -258,6 +296,11 @@
   /* Status / alert strips — readable on dark backgrounds */
   .app-alert-error {
     @apply rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-900/55 dark:bg-rose-950/45 dark:text-rose-100;
+  }
+
+  /* Inline field errors — readable on small viewports; use with `FormField` or manual `id`+`role="alert"` */
+  .field-error-text {
+    @apply break-words text-sm font-medium leading-snug text-rose-600 dark:text-rose-400;
   }
 
   .app-alert-success {
@@ -308,5 +351,51 @@
     animation-name: publish-toast-progress;
     animation-timing-function: linear;
     animation-fill-mode: forwards;
+  }
+
+  /**
+   * Mobile + keyboard: high-contrast focus ring for one-off controls (use with `focus:outline-none`).
+   * Full `btn-base` / `.input-base` already include `focus-visible` styles.
+   */
+  .a11y-focus-ring {
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950;
+  }
+}
+
+/* prefers-reduced-motion: respect system setting for mobile shell, modals, and decorative motion */
+@media (prefers-reduced-motion: reduce) {
+  .landing-auth-panel {
+    animation: none;
+  }
+  .publish-toast-progress {
+    animation: none;
+  }
+}
+
+/* viewport-fit=cover (see index.html): env() insets for notches & gesture bars */
+@layer utilities {
+  .safe-area-pt {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .safe-area-pb {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .safe-area-pl {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+  .safe-area-pr {
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  .safe-area-px {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  /**
+   * Fixed horizontal inset: max(token, safe) so floating UI clears curved edges & Dynamic Island sides.
+   * Pair with `fixed` + `bottom`/`top`; reset left/right at `md:` when using desktop offsets.
+   */
+  .safe-fixed-x {
+    left: max(0.75rem, env(safe-area-inset-left, 0px));
+    right: max(0.75rem, env(safe-area-inset-right, 0px));
   }
 }

@@ -10,11 +10,22 @@ const VARIANT_CLASS = {
     "rounded-[var(--ui-radius)] border border-border bg-primary-soft/40 p-4 text-sm leading-relaxed dark:border-[#1f3c56] dark:bg-[#11283d]/65",
 };
 
+const PADDING_CLASS = {
+  default: "",
+  none: "!p-0 md:!p-0",
+  sm: "!p-3 text-sm leading-relaxed md:!p-4",
+};
+
 /**
- * Content surface with shared radius, border, type rhythm.
+ * Content surface with shared radius (`--ui-radius-lg` on default), border, and mobile type rhythm.
  * `interactive` adds hover affordance; `raised` / `muted` match marketplace surfaces.
+ * `padding` overrides inner spacing for edge-to-edge media (`none`) or tighter stacks (`sm`).
  */
-export const Card = forwardRef(function Card({ as: Comp = "div", variant = "default", className, ...props }, ref) {
+export const Card = forwardRef(function Card(
+  { as: Comp = "div", variant = "default", padding = "default", className, ...props },
+  ref,
+) {
   const base = VARIANT_CLASS[variant] || VARIANT_CLASS.default;
-  return <Comp ref={ref} className={cn(base, className)} {...props} />;
+  const pad = PADDING_CLASS[padding] ?? PADDING_CLASS.default;
+  return <Comp ref={ref} className={cn(base, pad, className)} {...props} />;
 });
