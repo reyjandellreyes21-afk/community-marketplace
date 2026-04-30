@@ -398,7 +398,7 @@ export function SellerProductCard({
         Edit
       </button>
       <button type="button" className={isListLayout ? listActionBtn() : gridNeutral} onClick={() => setSaleOpen((prev) => !prev)}>
-        Sale
+        Discount
       </button>
       <button type="button" className={isListLayout ? listActionBtn("danger") : gridDanger} onClick={onDelete}>
         Delete
@@ -423,8 +423,8 @@ export function SellerProductCard({
       <button
         type="button"
         className={`${denseIconNeutral} ${saleOpen ? "ring-1 ring-amber-400/70 ring-offset-1 ring-offset-white dark:ring-amber-500/55 dark:ring-offset-slate-900" : ""}`}
-        title={saleOpen ? "Close sale options" : "Sale or discount"}
-        aria-label={saleOpen ? "Close sale options" : "Sale or discount"}
+        title={saleOpen ? "Close discount options" : "Discount"}
+        aria-label={saleOpen ? "Close discount options" : "Discount"}
         aria-expanded={saleOpen}
         onClick={() => setSaleOpen((prev) => !prev)}
       >

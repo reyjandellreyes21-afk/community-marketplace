@@ -526,6 +526,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {import('react').ReactNode} [props.children] Main scroll region (below the sticky header and mobile tab row)
  * @param {import('react').ReactNode} [props.mobileSecondaryNav] Optional strip below the top header (mobile only)
  * @param {(collapsed: boolean) => void} [props.onMobileBrowseNavCollapsedChange] Fires when mobile primary+secondary chrome finishes collapsing/expanding (shop-like views).
+ * @param {number} [props.mobileSecondaryDragX] Horizontal drag offset for secondary nav swipe gestures.
  * @param {boolean} [props.hideNavigationChrome] Hide top nav/header chrome (content only).
  */
 export function LoggedInHeader({
@@ -555,6 +556,7 @@ export function LoggedInHeader({
   onNavigateHome,
   mobileSecondaryNav = null,
   onMobileBrowseNavCollapsedChange,
+  mobileSecondaryDragX = 0,
   hideNavigationChrome = false,
   children,
 }) {
@@ -579,11 +581,9 @@ export function LoggedInHeader({
     width: 320,
   });
   const swipeCloseAfterTransitionRef = useRef(false);
-  /** Mobile Shop / Community shop: live scroll-linked hide offset (0..mobile chrome height). */
-  const mobileChromeRef = useRef(null);
-  const mainScrollLastYRef = useRef(0);
-  const [mobileShopBrowseNavOffset, setMobileShopBrowseNavOffset] = useState(0);
-  const [mobileShopBrowseNavCollapsed, setMobileShopBrowseNavCollapsed] = useState(false);
+  /** Mobile Shop / Community shop: live scroll-linked hide offset (0..primary row height only). */
+  const mobilePrimaryNavRef = useRef(null);
+  const [mobilePrimaryScrollY, setMobilePrimaryScrollY] = useState(0);
 
   const closeAllMenus = useCallback(() => {
     setAccountMenuOpen(false);
@@ -765,15 +765,14 @@ export function LoggedInHeader({
   const mobileShopTabActive =
     activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP;
 
-  /** When true, scroll on `#main-content` can hide the full mobile header (primary row + icon tab row + optional `mobileSecondaryNav`). */
+  /** When true, scroll on `#main-content` can hide the primary utility row only (not the icon tab row). */
   const mobileShopBrowseScrollCollapseActive =
     activeView === VIEWS.BROWSE ||
     activeView === VIEWS.COMMUNITY_SHOP;
 
   useEffect(() => {
     if (!mobileShopBrowseScrollCollapseActive || mobileMenuOpen) {
-      setMobileShopBrowseNavOffset(0);
-      setMobileShopBrowseNavCollapsed(false);
+      setMobilePrimaryScrollY(0);
       return undefined;
     }
     const main = document.getElementById("main-content");
@@ -783,43 +782,28 @@ export function LoggedInHeader({
 
     const onScroll = () => {
       if (mq.matches) {
-        mainScrollLastYRef.current = 0;
-        setMobileShopBrowseNavOffset(0);
-        setMobileShopBrowseNavCollapsed((prev) => (prev ? false : prev));
+        setMobilePrimaryScrollY(0);
         return;
       }
       const y = Math.max(0, main.scrollTop || 0);
-      const chromeHeight = mobileChromeRef.current?.offsetHeight ?? 0;
+      const chromeHeight = mobilePrimaryNavRef.current?.offsetHeight ?? 0;
+      const maxH = Math.max(0, chromeHeight);
       const maxScrollableY = Math.max(0, (main.scrollHeight || 0) - (main.clientHeight || 0));
-      const canStablyCollapse = maxScrollableY > chromeHeight + 2;
+      const canStablyCollapse = maxScrollableY > maxH + 2;
       if (!canStablyCollapse) {
-        mainScrollLastYRef.current = y;
-        setMobileShopBrowseNavOffset(0);
-        setMobileShopBrowseNavCollapsed((prev) => (prev ? false : prev));
+        setMobilePrimaryScrollY(0);
         return;
       }
-      const delta = y - mainScrollLastYRef.current;
-      mainScrollLastYRef.current = y;
-      if (Math.abs(delta) < 1.5) return;
-      const dampedDelta = delta * 0.55;
-      setMobileShopBrowseNavOffset((prev) => {
-        const next = Math.min(Math.max(prev + dampedDelta, 0), Math.max(0, chromeHeight));
-        const collapsedNext = next > 10;
-        setMobileShopBrowseNavCollapsed((collapsedPrev) =>
-          collapsedPrev === collapsedNext ? collapsedPrev : collapsedNext
-        );
-        return Math.abs(next - prev) < 1.5 ? prev : next;
-      });
+      // Track absolute scroll Y; hide amount is derived later from measured primary-row height.
+      setMobilePrimaryScrollY(y);
     };
 
-    mainScrollLastYRef.current = Math.max(0, main.scrollTop || 0);
     onScroll();
     main.addEventListener("scroll", onScroll, { passive: true });
 
     const onMm = () => {
       if (mq.matches) {
-        setMobileShopBrowseNavOffset(0);
-        setMobileShopBrowseNavCollapsed((prev) => (prev ? false : prev));
+        setMobilePrimaryScrollY(0);
       }
     };
     mq.addEventListener("change", onMm);
@@ -829,10 +813,6 @@ export function LoggedInHeader({
       mq.removeEventListener("change", onMm);
     };
   }, [mobileShopBrowseScrollCollapseActive, mobileMenuOpen, activeView]);
-
-  useEffect(() => {
-    onMobileBrowseNavCollapsedChange?.(mobileShopBrowseNavCollapsed);
-  }, [mobileShopBrowseNavCollapsed, onMobileBrowseNavCollapsedChange]);
 
   const mobileSellingTabActive =
     activeView === VIEWS.ORDERS ||
@@ -851,6 +831,29 @@ export function LoggedInHeader({
 
   const drawerUsesPullTransform =
     mobileSheetEntered && (isDrawerDragging || drawerPullPx !== 0);
+  const SWIPE_HIDE_DISTANCE_PX = 120;
+  const COLLAPSED_OFFSET_PX = 6;
+  const primaryNavHeight = Math.max(0, mobilePrimaryNavRef.current?.offsetHeight ?? 0);
+  const scrollProgress = primaryNavHeight > 0 ? Math.min(1, mobilePrimaryScrollY / primaryNavHeight) : 0;
+  /** Rightward swipe (positive drag X) tucks the primary row only; secondary tab nav stays put. */
+  const swipeProgress = Math.max(0, Math.min(1, (mobileSecondaryDragX || 0) / SWIPE_HIDE_DISTANCE_PX));
+  const dragHideOffset = primaryNavHeight * swipeProgress;
+  const scrollHideOffset = primaryNavHeight * scrollProgress;
+  const mobileChromeOffset =
+    mobileShopBrowseScrollCollapseActive && !mobileMenuOpen
+      ? Math.max(scrollHideOffset, dragHideOffset)
+      : 0;
+  const mobileShopBrowseNavCollapsed = mobileChromeOffset > COLLAPSED_OFFSET_PX;
+  useEffect(() => {
+    onMobileBrowseNavCollapsedChange?.(mobileShopBrowseNavCollapsed);
+  }, [mobileShopBrowseNavCollapsed, onMobileBrowseNavCollapsedChange]);
+  const primaryNavPullStyle =
+    mobileShopBrowseScrollCollapseActive && !mobileMenuOpen
+      ? {
+          transform: `translate3d(0, -${mobileChromeOffset}px, 0)`,
+          marginBottom: `-${mobileChromeOffset}px`,
+        }
+      : undefined;
 
   useEffect(() => {
     const el = mobileMenuPanelRef.current;
@@ -874,30 +877,26 @@ export function LoggedInHeader({
         Mobile only (md:hidden): primary + secondary chrome — grid 0fr/1fr collapse (smoother than max-height).
         Desktop header is a sibling block with md:flex — unchanged.
       */}
-      <div
-        ref={mobileChromeRef}
-        className="md:hidden grid shrink-0 grid-rows-[1fr] will-change-transform"
-        style={
-          mobileShopBrowseScrollCollapseActive && !mobileMenuOpen
-            ? {
-                transform: `translate3d(0, -${mobileShopBrowseNavOffset}px, 0)`,
-                marginBottom: `-${mobileShopBrowseNavOffset}px`,
-              }
-            : undefined
-        }
-      >
+      <div className="md:hidden grid shrink-0 grid-rows-[1fr]">
         <div className="min-h-0 overflow-hidden">
         <div className="flex flex-col">
         <div
-          className={`app-shell-content-inset flex w-full max-w-full items-center gap-2 overflow-hidden transition-[max-height,opacity,transform] duration-300 ease-out motion-reduce:transition-none ${
+          ref={mobilePrimaryNavRef}
+          className={`app-shell-content-inset flex w-full max-w-full items-center gap-2 overflow-hidden ${
+            mobileShopBrowseScrollCollapseActive && !mobileMenuOpen
+              ? "will-change-transform transition-none"
+              : "will-change-auto transition-[max-height,opacity,transform,margin-bottom] duration-300 ease-out motion-reduce:transition-none"
+          } ${
             hideMobilePrimaryRow
               ? "pointer-events-none max-h-0 -translate-y-1 opacity-0"
               : "h-[4.25rem] max-h-[4.25rem] translate-y-0 opacity-100"
           }`}
+          style={primaryNavPullStyle}
           aria-hidden={hideMobilePrimaryRow ? true : undefined}
         >
           <button
             ref={mobileMenuButtonRef}
+            id="mobile-menu-toggle"
             type="button"
             className={`${headerUtilityButtonBase} h-11 w-11 min-h-[var(--ui-touch-target,44px)] min-w-[var(--ui-touch-target,44px)] shrink-0 ${mobileMenuOpen ? headerUtilityButtonActive : "text-neutral-500 dark:text-slate-500"}`}
             aria-expanded={mobileMenuOpen}

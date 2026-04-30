@@ -766,10 +766,55 @@ function App() {
     horizontal: false,
     baseView: VIEWS.BROWSE,
   });
+  const secondaryDragRafRef = useRef(0);
+  const secondaryDragPendingXRef = useRef(0);
+  const swipeSettleTimerRef = useRef(0);
   const [mobileSecondarySlideClass, setMobileSecondarySlideClass] = useState("");
   const [mobileSecondaryDragX, setMobileSecondaryDragX] = useState(0);
   const [mobileSecondaryDragging, setMobileSecondaryDragging] = useState(false);
+  /** True while `<main>` animates transform back to 0 after a cancelled swipe. */
+  const [mobileSecondarySwipeSettling, setMobileSecondarySwipeSettling] = useState(false);
   const previousViewForMarketplaceScrollResetRef = useRef(activeView);
+  const swipePreviewNeighbors = useMemo(() => {
+    const index = secondaryMobileNavOrder.indexOf(secondarySwipeNavView);
+    if (index === -1) return { prev: "", next: "" };
+    return {
+      prev: secondaryMobileNavOrder[index - 1] || "",
+      next: secondaryMobileNavOrder[index + 1] || "",
+    };
+  }, [secondaryMobileNavOrder, secondarySwipeNavView]);
+  const swipePreviewLabelForView = useCallback(
+    (view) => {
+      switch (view) {
+        case VIEWS.BROWSE:
+        case VIEWS.COMMUNITY_SHOP:
+        case VIEWS.FAVORITES:
+          return "Shop";
+        case VIEWS.CART:
+          return "Add to cart";
+        case VIEWS.MY_PURCHASES:
+          return "Purchases";
+        case VIEWS.ORDERS:
+          return "Orders";
+        case VIEWS.NOTIFICATIONS:
+          return "Notifications";
+        case VIEWS.PROFILE:
+          return "Profile";
+        default:
+          return "";
+      }
+    },
+    [],
+  );
+  const swipePreviewDirection = mobileSecondaryDragX < 0 ? "next" : mobileSecondaryDragX > 0 ? "prev" : "";
+  const swipePreviewView =
+    swipePreviewDirection === "next"
+      ? swipePreviewNeighbors.next
+      : swipePreviewDirection === "prev"
+        ? swipePreviewNeighbors.prev
+        : "";
+  const swipePreviewLabel = swipePreviewLabelForView(swipePreviewView);
+  const swipePreviewProgress = Math.min(1, Math.abs(mobileSecondaryDragX) / 120);
   useEffect(() => {
     const prev = previousActiveViewRef.current;
     const next = secondarySwipeNavView;
@@ -2758,6 +2803,16 @@ function App() {
       });
     }
   }, []);
+  const openUploadAtTop = useCallback(() => {
+    setActiveView(VIEWS.MY_LISTINGS);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const main = document.getElementById("main-content");
+        if (main) main.scrollTop = 0;
+        window.scrollTo(0, 0);
+      });
+    }
+  }, []);
 
   const goInbox = useCallback(() => {
     setMobileCommunityFiltersOpen(false);
@@ -2939,10 +2994,45 @@ function App() {
   useBodyScrollLock(activeView === VIEWS.MESSAGES && messagesMobilePane === "thread" && isMobileViewport);
   useEffect(() => {
     if (!isMobileViewport) return undefined;
-    if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(activeView)) return undefined;
     if (!secondaryMobileNavOrder.includes(secondarySwipeNavView)) return undefined;
     const main = document.getElementById("main-content");
     if (!main) return undefined;
+    const flushDragFrame = () => {
+      if (secondaryDragRafRef.current) {
+        window.cancelAnimationFrame(secondaryDragRafRef.current);
+        secondaryDragRafRef.current = 0;
+      }
+    };
+    const scheduleDragUpdate = (nextX) => {
+      secondaryDragPendingXRef.current = nextX;
+      if (secondaryDragRafRef.current) return;
+      secondaryDragRafRef.current = window.requestAnimationFrame(() => {
+        secondaryDragRafRef.current = 0;
+        setMobileSecondaryDragX(secondaryDragPendingXRef.current);
+      });
+    };
+
+    const settleSwipeRelease = (fromX) => {
+      if (swipeSettleTimerRef.current) {
+        window.clearTimeout(swipeSettleTimerRef.current);
+        swipeSettleTimerRef.current = 0;
+      }
+      if (Math.abs(fromX) < 1) {
+        setMobileSecondaryDragX(0);
+        setMobileSecondarySwipeSettling(false);
+        return;
+      }
+      setMobileSecondarySwipeSettling(true);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setMobileSecondaryDragX(0);
+          swipeSettleTimerRef.current = window.setTimeout(() => {
+            setMobileSecondarySwipeSettling(false);
+            swipeSettleTimerRef.current = 0;
+          }, 280);
+        });
+      });
+    };
 
     const onTouchStart = (e) => {
       if (e.touches.length !== 1) return;
@@ -2960,6 +3050,11 @@ function App() {
         };
         return;
       }
+      if (swipeSettleTimerRef.current) {
+        window.clearTimeout(swipeSettleTimerRef.current);
+        swipeSettleTimerRef.current = 0;
+      }
+      setMobileSecondarySwipeSettling(false);
       secondarySwipeRef.current = {
         x: t.clientX,
         y: t.clientY,
@@ -2985,7 +3080,7 @@ function App() {
         state.tracking = false;
         return;
       }
-      if (!state.horizontal && Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      if (!state.horizontal && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2) {
         state.horizontal = true;
         setMobileSecondaryDragging(true);
       }
@@ -2995,38 +3090,69 @@ function App() {
       const index = baseIndex === -1 ? secondaryMobileNavOrder.indexOf(secondarySwipeNavView) : baseIndex;
       const atFirst = index <= 0;
       const atLast = index >= secondaryMobileNavOrder.length - 1;
-      const edgeResistance = (atFirst && dx > 0) || (atLast && dx < 0) ? 0.35 : 1;
-      const effectiveDx = dx * edgeResistance;
-      setMobileSecondaryDragX(effectiveDx);
+      const edgeResistance = (atFirst && dx > 0) || (atLast && dx < 0) ? 0.82 : 1;
+      const maxDrag = Math.max(120, Math.floor((state.width || window.innerWidth || 360) * 0.92));
+      const effectiveDx = Math.max(-maxDrag, Math.min(maxDrag, dx * edgeResistance));
+      scheduleDragUpdate(effectiveDx);
     };
 
     const onTouchEnd = () => {
-      const { tracking, horizontal, dx, dy, t, width, baseView } = secondarySwipeRef.current;
+      const snap = secondarySwipeRef.current;
+      const pending = secondaryDragPendingXRef.current;
       secondarySwipeRef.current = {
         x: 0, y: 0, dx: 0, dy: 0, t: 0, width: 0, tracking: false, horizontal: false, baseView: secondarySwipeNavView,
       };
+      flushDragFrame();
+      setMobileSecondaryDragX(pending);
       setMobileSecondaryDragging(false);
-      setMobileSecondaryDragX(0);
-      if (!tracking || !horizontal) return;
+
+      if (!snap.tracking || !snap.horizontal) {
+        settleSwipeRelease(pending);
+        return;
+      }
+      const { dx, dy, t, width, baseView } = snap;
       const elapsed = Math.max(1, Date.now() - Number(t || Date.now()));
       const velocityX = dx / elapsed;
       const index = secondaryMobileNavOrder.indexOf(baseView || secondarySwipeNavView);
-      if (index === -1) return;
-      const shouldCommitByDistance = Math.abs(dx) > Math.max(56, Number(width || 0) * 0.2) && Math.abs(dx) > Math.abs(dy) * 1.35;
-      const shouldCommitByVelocity = Math.abs(velocityX) > 0.35 && Math.abs(dx) > 18;
-      if (!shouldCommitByDistance && !shouldCommitByVelocity) return;
-      const nextIndex = (dx < 0 || velocityX < 0) ? index + 1 : index - 1;
-      if (nextIndex < 0 || nextIndex >= secondaryMobileNavOrder.length) return;
+      if (index === -1) {
+        settleSwipeRelease(pending);
+        return;
+      }
+      const shouldCommitByDistance =
+        Math.abs(dx) > Math.max(36, Number(width || 0) * 0.12) && Math.abs(dx) > Math.abs(dy) * 1.15;
+      const shouldCommitByVelocity = Math.abs(velocityX) > 0.22 && Math.abs(dx) > 12;
+      if (!shouldCommitByDistance && !shouldCommitByVelocity) {
+        settleSwipeRelease(pending);
+        return;
+      }
+      const nextIndex = dx < 0 || velocityX < 0 ? index + 1 : index - 1;
+      if (nextIndex < 0 || nextIndex >= secondaryMobileNavOrder.length) {
+        settleSwipeRelease(pending);
+        return;
+      }
       const nextView = secondaryMobileNavOrder[nextIndex];
-      if (nextView !== secondarySwipeNavView) goSecondaryMobileNavView(nextView);
+      if (nextView !== secondarySwipeNavView) {
+        if (swipeSettleTimerRef.current) {
+          window.clearTimeout(swipeSettleTimerRef.current);
+          swipeSettleTimerRef.current = 0;
+        }
+        setMobileSecondarySwipeSettling(false);
+        setMobileSecondaryDragX(0);
+        goSecondaryMobileNavView(nextView);
+      } else {
+        settleSwipeRelease(pending);
+      }
     };
 
     const onTouchCancel = () => {
+      const pending = secondaryDragPendingXRef.current;
+      flushDragFrame();
       secondarySwipeRef.current = {
         x: 0, y: 0, dx: 0, dy: 0, t: 0, width: 0, tracking: false, horizontal: false, baseView: secondarySwipeNavView,
       };
       setMobileSecondaryDragging(false);
-      setMobileSecondaryDragX(0);
+      setMobileSecondaryDragX(pending);
+      settleSwipeRelease(pending);
     };
 
     main.addEventListener("touchstart", onTouchStart, { passive: true });
@@ -3034,6 +3160,11 @@ function App() {
     main.addEventListener("touchend", onTouchEnd, { passive: true });
     main.addEventListener("touchcancel", onTouchCancel, { passive: true });
     return () => {
+      flushDragFrame();
+      if (swipeSettleTimerRef.current) {
+        window.clearTimeout(swipeSettleTimerRef.current);
+        swipeSettleTimerRef.current = 0;
+      }
       main.removeEventListener("touchstart", onTouchStart);
       main.removeEventListener("touchmove", onTouchMove);
       main.removeEventListener("touchend", onTouchEnd);
@@ -5169,6 +5300,12 @@ function App() {
         extra.listingStockQty != null && Number.isFinite(Number(extra.listingStockQty))
           ? Number(extra.listingStockQty)
           : null,
+      listingSoldQty:
+        extra.listingSoldQty != null && Number.isFinite(Number(extra.listingSoldQty))
+          ? Number(extra.listingSoldQty)
+          : Number.isFinite(Number(listingLike.soldCount))
+          ? Number(listingLike.soldCount)
+          : null,
       showBuyerCommerceActions: Boolean(extra.showBuyerCommerceActions),
       showSellerCommerceActions: Boolean(extra.showSellerCommerceActions),
       onAddToCart: typeof extra.onAddToCart === "function" ? extra.onAddToCart : undefined,
@@ -5229,6 +5366,8 @@ function App() {
             if (!prev || String(prev.listingId) !== listingIdForFetch) return prev;
             const qtyFresh =
               fresh.quantity != null && Number.isFinite(Number(fresh.quantity)) ? Math.max(0, Number(fresh.quantity)) : null;
+            const soldFresh =
+              fresh.soldCount != null && Number.isFinite(Number(fresh.soldCount)) ? Math.max(0, Number(fresh.soldCount)) : null;
             const apiRow = effective !== fresh ? effective : fresh;
             const apiGallery = resolveListingGalleryUrls(apiRow);
             const urlsPrev = Array.isArray(prev.imageUrls) ? prev.imageUrls : [];
@@ -5258,6 +5397,7 @@ function App() {
               optionNameB: fresh.optionNameB ?? prev.optionNameB,
               optionValuesB: fresh.optionValuesB ?? prev.optionValuesB,
               listingStockQty: qtyFresh != null ? qtyFresh : prev.listingStockQty,
+              listingSoldQty: soldFresh != null ? soldFresh : prev.listingSoldQty,
               quantity:
                 String(prev.quantityLabel || "")
                   .trim()
@@ -5537,7 +5677,7 @@ function App() {
       setListingEditOverlayOpen(true);
     } else {
       setListingEditOverlayOpen(false);
-      setActiveView(VIEWS.MY_LISTINGS);
+      openUploadAtTop();
       navigate("/", { replace: true });
     }
   };
@@ -5547,8 +5687,12 @@ function App() {
     if (!token) return;
     setListingPublishError("");
     const nextErrors = {};
-    const optValsA = splitOptionValuesCsv(listingForm.optionValuesA);
-    const optValsB = listingSecondOptionOpen ? splitOptionValuesCsv(listingForm.optionValuesB) : [];
+    const draftOptA = String(listingOptionValueDraftA || "").trim();
+    const draftOptB = String(listingOptionValueDraftB || "").trim();
+    const optValsABase = splitOptionValuesCsv(listingForm.optionValuesA);
+    const optValsBBase = listingSecondOptionOpen ? splitOptionValuesCsv(listingForm.optionValuesB) : [];
+    const optValsA = draftOptA ? [...optValsABase, draftOptA] : optValsABase;
+    const optValsB = listingSecondOptionOpen ? (draftOptB ? [...optValsBBase, draftOptB] : optValsBBase) : [];
     const nameATrim = String(listingForm.optionNameA || "").trim();
     const nameBTrim = listingSecondOptionOpen ? String(listingForm.optionNameB || "").trim() : "";
     const dupA = findDuplicateChoiceCaseInsensitive(optValsA);
@@ -5655,8 +5799,8 @@ function App() {
       const primaryImageUrl = imageUrls[0] || "";
       const optionNameA = String(listingForm.optionNameA || "").trim();
       const optionNameB = listingSecondOptionOpen ? String(listingForm.optionNameB || "").trim() : "";
-      const optionValuesA = splitOptionValuesCsv(listingForm.optionValuesA).slice(0, 30);
-      const optionValuesB = listingSecondOptionOpen ? splitOptionValuesCsv(listingForm.optionValuesB).slice(0, 30) : [];
+      const optionValuesA = optValsA.slice(0, 30);
+      const optionValuesB = listingSecondOptionOpen ? optValsB.slice(0, 30) : [];
       const variantsPayload = [];
       if (optionNameA && optionValuesA.length) variantsPayload.push({ type: optionNameA, choices: optionValuesA });
       if (listingSecondOptionOpen && optionNameB && optionValuesB.length) {
@@ -7171,6 +7315,7 @@ function App() {
         getDisplayNameFromUser={getDisplayNameFromUser}
         onNavigateHome={() => navigate("/")}
         onMobileBrowseNavCollapsedChange={setMobileTopChromeCollapsed}
+        mobileSecondaryDragX={mobileSecondaryDragX}
         hideNavigationChrome={activeView === VIEWS.PRODUCT_DETAIL || listingEditOverlayOpen || quickAddModalOpen}
       >
       {isMobileViewport && mobilePullRefreshing ? (
@@ -7194,15 +7339,36 @@ function App() {
         style={
           isMobileViewport &&
           secondaryMobileNavOrder.includes(secondarySwipeNavView) &&
-          (mobileSecondaryDragging || mobileSecondaryDragX !== 0)
+          (mobileSecondaryDragging || mobileSecondaryDragX !== 0 || mobileSecondarySwipeSettling)
             ? {
                 transform: `translate3d(${mobileSecondaryDragX}px, 0, 0)`,
-                transition: mobileSecondaryDragging ? "none" : undefined,
-                willChange: mobileSecondaryDragging ? "transform" : undefined,
+                transition: mobileSecondaryDragging
+                  ? "none"
+                  : mobileSecondarySwipeSettling
+                    ? "transform 0.22s cubic-bezier(0.32, 0.72, 0, 1)"
+                    : undefined,
+                willChange: mobileSecondaryDragging || mobileSecondarySwipeSettling ? "transform" : undefined,
               }
             : undefined
         }
       >
+        {isMobileViewport &&
+        mobileSecondaryDragging &&
+        swipePreviewLabel &&
+        secondaryMobileNavOrder.includes(secondarySwipeNavView) ? (
+          <div
+            className={`pointer-events-none fixed top-1/2 z-[64] -translate-y-1/2 rounded-full border border-neutral-200/80 bg-white/96 px-3 py-1.5 text-xs font-semibold text-neutral-700 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/96 dark:text-slate-200 ${
+              swipePreviewDirection === "next" ? "right-2" : "left-2"
+            }`}
+            style={{
+              opacity: 0.2 + swipePreviewProgress * 0.8,
+              transform: `translate3d(${swipePreviewDirection === "next" ? 12 - swipePreviewProgress * 12 : -12 + swipePreviewProgress * 12}px, -50%, 0)`,
+            }}
+            aria-hidden
+          >
+            {swipePreviewLabel}
+          </div>
+        ) : null}
         {activeView === VIEWS.PRODUCT_DETAIL && productInspect && !listingEditOverlayOpen && !quickAddModalOpen ? (
           <section
             className={`w-full min-w-0 ${lockMainScrollForOverlay ? "flex min-h-0 flex-1 flex-col" : ""}`}
@@ -7979,6 +8145,7 @@ function App() {
                           activeView === VIEWS.COMMUNITY_SHOP &&
                           effectiveCommunityBrowseView !== "list"
                         }
+                        disableGallerySwipe={activeView === VIEWS.COMMUNITY_SHOP}
                         softBrowseChrome={isMobileViewport && activeView === VIEWS.COMMUNITY_SHOP}
                         browseSummaryGrid={
                           isMobileViewport &&
@@ -8701,7 +8868,35 @@ function App() {
             >
               <div id="listing-section-photos" className="md:col-span-2">
                 <div className="mb-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Photos *</p>
+                  {!listingEditOverlayOpen ? (
+                    <button
+                      type="button"
+                      className="z-10 inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-50 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
+                      aria-label="Back"
+                      onClick={() => {
+                        if (listingSaving) return;
+                        setActiveView(VIEWS.PROFILE);
+                      }}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.25"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-7 w-7"
+                        aria-hidden
+                      >
+                        <path d="M19 12H5" />
+                        <path d="M11 6l-6 6 6 6" />
+                      </svg>
+                    </button>
+                  ) : null}
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">
+                    Photos *
+                  </p>
                 </div>
                 <div
                   className={`rounded-xl border border-dashed bg-white/80 transition dark:bg-slate-900/60 ${
@@ -9372,7 +9567,7 @@ function App() {
                       type="text"
                       autoComplete="off"
                       className={`input-base min-h-[44px] w-full ${listingFieldErrors.optionNameA ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
-                      placeholder="Type a preset name — closest match is suggested"
+                      placeholder="Add variant type"
                       aria-label="Variant type"
                       value={listingForm.optionNameA}
                       onChange={(e) => {
@@ -9435,26 +9630,7 @@ function App() {
                     <label className="label-base" htmlFor="listing-variant-choice-draft-a">
                       Variant choices
                     </label>
-                    <input
-                      id="listing-variant-choice-draft-a"
-                      className="input-base min-h-[44px] w-full min-w-0"
-                      placeholder="Type a choice, then Enter or comma"
-                      value={listingOptionValueDraftA}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === ",") {
-                          e.preventDefault();
-                          addListingOptionValue("A", listingOptionValueDraftA);
-                        }
-                      }}
-                      onChange={(e) => setListingOptionValueDraftA(e.target.value)}
-                      aria-label="Add variant choice"
-                    />
-                    {listingFieldErrors.optionValuesA ? (
-                      <p className="field-error-text" role="alert">
-                        {listingFieldErrors.optionValuesA}
-                      </p>
-                    ) : null}
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="input-base flex min-h-[44px] w-full min-w-0 flex-wrap items-center gap-1.5 px-2 py-1.5">
                       {splitOptionValuesCsv(listingForm.optionValuesA).map((value) => (
                         <button
                           key={`a-tag-${value}`}
@@ -9466,7 +9642,26 @@ function App() {
                           <span aria-hidden>×</span>
                         </button>
                       ))}
+                      <input
+                        id="listing-variant-choice-draft-a"
+                        className="min-w-[8rem] flex-1 border-0 bg-transparent px-1 py-1 text-sm text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500"
+                        placeholder={splitOptionValuesCsv(listingForm.optionValuesA).length > 0 ? "" : "Add choice"}
+                        value={listingOptionValueDraftA}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            addListingOptionValue("A", listingOptionValueDraftA);
+                          }
+                        }}
+                        onChange={(e) => setListingOptionValueDraftA(e.target.value)}
+                        aria-label="Add variant choice"
+                      />
                     </div>
+                    {listingFieldErrors.optionValuesA ? (
+                      <p className="field-error-text" role="alert">
+                        {listingFieldErrors.optionValuesA}
+                      </p>
+                    ) : null}
                     {getListingOptionValueSuggestions(listingForm.optionNameA).filter(
                       (value) =>
                         !splitOptionValuesCsv(listingForm.optionValuesA).some((c) => c.toLowerCase() === value.toLowerCase()),
@@ -9504,7 +9699,7 @@ function App() {
                         type="text"
                         autoComplete="off"
                         className={`input-base min-h-[44px] w-full ${listingFieldErrors.optionNameB ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
-                        placeholder="Type a preset name — closest match is suggested"
+                        placeholder="Add variant type"
                         aria-label="Second variant type"
                         value={listingForm.optionNameB}
                         onChange={(e) => {
@@ -9567,26 +9762,7 @@ function App() {
                       <label className="label-base" htmlFor="listing-variant-choice-draft-b">
                         Second variant choices
                       </label>
-                      <input
-                        id="listing-variant-choice-draft-b"
-                        className="input-base min-h-[44px] w-full min-w-0"
-                        placeholder="Type a choice, then Enter or comma"
-                        value={listingOptionValueDraftB}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === ",") {
-                            e.preventDefault();
-                            addListingOptionValue("B", listingOptionValueDraftB);
-                          }
-                        }}
-                        onChange={(e) => setListingOptionValueDraftB(e.target.value)}
-                        aria-label="Add second variant choice"
-                      />
-                      {listingFieldErrors.optionValuesB ? (
-                        <p className="field-error-text" role="alert">
-                          {listingFieldErrors.optionValuesB}
-                        </p>
-                      ) : null}
-                      <div className="flex flex-wrap gap-1.5">
+                      <div className="input-base flex min-h-[44px] w-full min-w-0 flex-wrap items-center gap-1.5 px-2 py-1.5">
                         {splitOptionValuesCsv(listingForm.optionValuesB).map((value) => (
                           <button
                             key={`b-tag-${value}`}
@@ -9598,7 +9774,26 @@ function App() {
                             <span aria-hidden>×</span>
                           </button>
                         ))}
+                        <input
+                          id="listing-variant-choice-draft-b"
+                          className="min-w-[8rem] flex-1 border-0 bg-transparent px-1 py-1 text-sm text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500"
+                          placeholder={splitOptionValuesCsv(listingForm.optionValuesB).length > 0 ? "" : "Add choice"}
+                          value={listingOptionValueDraftB}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === ",") {
+                              e.preventDefault();
+                              addListingOptionValue("B", listingOptionValueDraftB);
+                            }
+                          }}
+                          onChange={(e) => setListingOptionValueDraftB(e.target.value)}
+                          aria-label="Add second variant choice"
+                        />
                       </div>
+                      {listingFieldErrors.optionValuesB ? (
+                        <p className="field-error-text" role="alert">
+                          {listingFieldErrors.optionValuesB}
+                        </p>
+                      ) : null}
                       {getListingOptionValueSuggestions(listingForm.optionNameB).filter(
                         (value) =>
                           !splitOptionValuesCsv(listingForm.optionValuesB).some((c) => c.toLowerCase() === value.toLowerCase()),
@@ -9920,7 +10115,7 @@ function App() {
                   const someSelected = selectedCount > 0 && !allSelected;
                   const sellerLabel = orderedItems[0]?.sellerLabel || "Unknown seller";
                   return (
-                    <div key={sellerId} className={`${UI_KIT.surfaceCard} p-3.5`}>
+                    <div key={sellerId} className="space-y-2">
                       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-neutral-200/80 pb-2 dark:border-slate-700/80">
                         <label className="inline-flex shrink-0 cursor-pointer items-center">
                           <CartSellerSelectAllCheckbox
@@ -9935,7 +10130,7 @@ function App() {
                       <div
                         className={`${commerceFlowLineItemsClass(effectiveCommerceFlowViewBuyer, { variant: "cart" })} ${lmBrowseViewShellClass(
                           effectiveCommerceFlowViewBuyer === "list" ? "list" : "grid",
-                        )}`}
+                        )} ${effectiveCommerceFlowViewBuyer === "list" ? "" : "grid-cols-2"}`}
                       >
                         {orderedItems.map((item) => {
                           const lid = String(item.listingId);
@@ -9943,18 +10138,46 @@ function App() {
                           const isRemoving = cartRemovingListingIds.includes(lid);
                           const cfList = effectiveCommerceFlowViewBuyer === "list";
                           const cfCompact = effectiveCommerceFlowViewBuyer === "compact";
+                          const maxAvailableQty = Math.max(
+                            1,
+                            Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : Number(item.quantity) || 1,
+                          );
+                          const openCartItemInspect = () => {
+                            const listingForQuick = {
+                              ...item,
+                              id: item.listingId,
+                              priceCents: item.unitPriceCents,
+                            };
+                            const stockAvail =
+                              Number(item.listingQuantity) >= 0
+                                ? Math.max(0, Number(item.listingQuantity))
+                                : Math.max(0, Number(item.quantity) || 0);
+                            openProductInspect(listingForQuick, {
+                              quantity: Number(item.quantity) || 1,
+                              comment: String(item.comment || "").trim(),
+                              commentSectionRequired: true,
+                              commentHeading: "Your note to the seller",
+                              subtitle: "Cart",
+                              listingStockQty: stockAvail,
+                              showBuyerCommerceActions: true,
+                              onAddToCart: () => {
+                                openQuickAddModal(listingForQuick, "cart");
+                              },
+                              onBuyNow: () => {
+                                openQuickAddModal(listingForQuick, "buy");
+                              },
+                            });
+                          };
                           const thumbClass = cfList
-                            ? "h-20 w-20"
-                            : cfCompact
-                              ? "h-12 w-12 md:h-14 md:w-14"
-                              : "h-16 w-16 md:h-[4.5rem] md:w-[4.5rem]";
+                            ? "aspect-[4/3] w-[6.5rem] min-[400px]:aspect-square min-[400px]:h-[7.5rem] min-[400px]:w-[7.5rem] min-[400px]:max-h-[7.5rem] min-[400px]:max-w-[7.5rem] min-[400px]:shrink-0"
+                            : "lm-product-card-media aspect-square w-full min-h-0";
                           return (
                             <div
                               key={item.listingId}
-                              className={`flex gap-2 transition-opacity duration-[2000ms] md:gap-3 ${
+                              className={`transition-opacity duration-[2000ms] ${
                                 cfList
-                                  ? "items-center rounded-xl px-2 py-2.5 md:px-2.5"
-                                  : "h-full min-h-0 flex-1 items-start rounded-xl border border-border bg-surface p-2 shadow-sm md:items-center md:p-2.5 dark:border-slate-700/70 dark:bg-slate-900/50"
+                                  ? "relative lm-card lm-list-card lm-product-card-list flex items-start gap-3 p-3 md:gap-3.5"
+                                  : "relative lm-card lm-grid-card lm-product-card lm-product-card--feed h-full min-h-0 flex-1 p-0"
                               } ${
                                 isRecentlyAdded ? "bg-primary-soft dark:bg-primary/15" : ""
                               } ${
@@ -9964,95 +10187,136 @@ function App() {
                               <input
                                 type="checkbox"
                                 className={`h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500 ${
-                                  cfList ? "" : "mt-0.5 md:mt-0"
+                                  cfList
+                                    ? "absolute left-4 top-4 z-10 bg-white/90 dark:bg-slate-900/90"
+                                    : "absolute left-2 top-2 z-10 bg-white/90 dark:bg-slate-900/90"
                                 }`}
                                 checked={Boolean(cartItemSelection[lid])}
                                 onChange={() => toggleCartListingSelected(item.listingId)}
                                 aria-label={`Select ${item.title || "product"}`}
                               />
-                              <div className={`relative ${thumbClass} shrink-0`}>
+                              <button
+                                type="button"
+                                className={
+                                  cfList
+                                    ? `lm-product-media lm-product-media--soft relative ${thumbClass} shrink-0 overflow-hidden cursor-pointer`
+                                    : `${thumbClass} lm-product-card--tap`
+                                }
+                                aria-label={`View details: ${item.title || "product"}`}
+                                onClick={openCartItemInspect}
+                              >
                                 <ProductListingMedia
                                   listing={item}
-                                  variant="list"
+                                  variant={cfList ? "list" : "grid"}
                                   className="absolute inset-0 min-h-0"
                                   loading="lazy"
                                   sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
                                 />
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                {isRecentlyAdded ? (
-                                  <span className="mb-1 inline-flex items-center rounded-full border border-primary/40 bg-primary-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary dark:border-primary/55 dark:bg-primary/20 dark:text-primary-soft">
-                                    Newly added
-                                  </span>
-                                ) : null}
-                                <DeferredProductDetailStack
-                                  title={item.title || "Product"}
-                                  priceCents={item.unitPriceCents}
-                                  description={item.description}
-                                  hideDescription
-                                  fulfillmentModes={item.fulfillmentModes}
-                                  orderType={item.orderType}
-                                  processingTime={item.processingTime}
-                                  optionNameA={item.optionNameA}
-                                  optionValuesA={item.optionValuesA}
-                                  optionNameB={item.optionNameB}
-                                  optionValuesB={item.optionValuesB}
-                                  listingMetaDensity="compact"
-                                />
+                              </button>
+                              <div
+                                className={
+                                  cfList
+                                    ? "flex w-full min-w-0 flex-col gap-1 min-[400px]:min-w-0 min-[400px]:flex-1"
+                                    : "lm-product-card-body"
+                                }
+                              >
                                 <div
-                                  className={`mt-1 space-y-0.5 text-neutral-600 dark:text-slate-400 ${
-                                    cfCompact ? "text-[10px] leading-snug md:text-[11px]" : "text-xs"
-                                  }`}
+                                  className="w-full min-w-0 text-left touch-manipulation"
+                                  role="button"
+                                  tabIndex={0}
+                                  aria-label={`View details: ${item.title || "product"}`}
+                                  onClick={openCartItemInspect}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      openCartItemInspect();
+                                    }
+                                  }}
                                 >
-                                  {removeSaleMetaLines(item.description)?.trim() ? (
-                                    <p className="line-clamp-2 text-pretty">
-                                      Description: {removeSaleMetaLines(item.description)}
-                                    </p>
+                                  {isRecentlyAdded ? (
+                                    <span className="mb-1 inline-flex items-center rounded-full border border-primary/40 bg-primary-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary dark:border-primary/55 dark:bg-primary/20 dark:text-primary-soft">
+                                      Newly added
+                                    </span>
                                   ) : null}
-                                  {String(item.comment || "").trim() ? (
-                                    <p className="line-clamp-2 text-pretty">
-                                      Comment: {String(item.comment || "").trim()}
-                                    </p>
-                                  ) : null}
-                                  <button
-                                    type="button"
-                                    className="btn-secondary mt-1.5 touch-manipulation self-start px-3 py-1.5 text-xs"
-                                    onClick={() => {
-                                      const listingForQuick = {
-                                        ...item,
-                                        id: item.listingId,
-                                        priceCents: item.unitPriceCents,
-                                      };
-                                      const stockAvail =
-                                        Number(item.listingQuantity) >= 0
-                                          ? Math.max(0, Number(item.listingQuantity))
-                                          : Math.max(0, Number(item.quantity) || 0);
-                                      openProductInspect(listingForQuick, {
-                                        quantity: Number(item.quantity) || 1,
-                                        comment: String(item.comment || "").trim(),
-                                        commentSectionRequired: true,
-                                        commentHeading: "Your note to the seller",
-                                        subtitle: "Cart",
-                                        listingStockQty: stockAvail,
-                                        showBuyerCommerceActions: true,
-                                        onAddToCart: () => {
-                                          openQuickAddModal(listingForQuick, "cart");
-                                        },
-                                        onBuyNow: () => {
-                                          openQuickAddModal(listingForQuick, "buy");
-                                        },
-                                      });
-                                    }}
-                                  >
-                                    View details
-                                  </button>
+                                  <DeferredProductDetailStack
+                                    variant="card"
+                                    title={item.title || "Product"}
+                                    titleEnd={
+                                      cfList ? (
+                                        <div className="flex items-center gap-0.5">
+                                          <button
+                                            type="button"
+                                            className="inline-flex h-7 w-7 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                            aria-label="Decrease quantity"
+                                            disabled={cartQtySavingId === lid || (Number(item.quantity) || 0) <= 0}
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              setCartQtyEdit({ id: null, str: "" });
+                                              void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1);
+                                            }}
+                                          >
+                                            −
+                                          </button>
+                                          <span
+                                            className="inline-flex h-7 min-w-[2.25rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-xs font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
+                                            aria-label={`Quantity for ${item.title || "product"}`}
+                                          >
+                                            {cartQtyEdit.id === lid ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            className="inline-flex h-7 w-7 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                            aria-label="Increase quantity"
+                                            disabled={cartQtySavingId === lid || (Number(item.quantity) || 0) >= maxAvailableQty}
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              setCartQtyEdit({ id: null, str: "" });
+                                              void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1);
+                                            }}
+                                          >
+                                            +
+                                          </button>
+                                        </div>
+                                      ) : null
+                                    }
+                                    priceCents={item.unitPriceCents}
+                                    description={item.description}
+                                    hideDescription
+                                    fulfillmentModes={item.fulfillmentModes}
+                                    orderType={item.orderType}
+                                    processingTime={item.processingTime}
+                                    optionNameA={item.optionNameA}
+                                    optionValuesA={item.optionValuesA}
+                                    optionNameB={item.optionNameB}
+                                    optionValuesB={item.optionValuesB}
+                                    browseStackMode={cfList ? "listMobile" : null}
+                                    compactListMeta={cfList}
+                                    quantityRow={
+                                      cfList ? (
+                                        <p className="text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300">
+                                          <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">
+                                            Stock
+                                          </span>
+                                          <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
+                                          <span className="tabular-nums font-semibold text-text-primary dark:text-slate-100">
+                                            {Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : "—"}
+                                          </span>
+                                        </p>
+                                      ) : null
+                                    }
+                                    listingMetaDensity="compact"
+                                  />
                                 </div>
-                                <div className="mt-1 flex flex-wrap items-center gap-2">
-                                  <span className="text-xs text-text-secondary dark:text-slate-400">Qty</span>
-                                  <div className="inline-flex items-center gap-1.5">
+                                <div className={`mt-1.5 ${cfList ? "hidden" : "flex items-center justify-between gap-2"}`}>
+                                  <span className="text-[11px] font-medium text-text-secondary dark:text-slate-400">
+                                    Quantity
+                                  </span>
+                                  <div className="flex items-center gap-0.5">
                                     <button
                                       type="button"
-                                      className="inline-flex h-11 w-11 touch-manipulation items-center justify-center rounded-xl border border-primary/45 bg-surface text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-8 md:w-8 md:text-sm"
+                                      className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
                                       aria-label="Decrease quantity"
                                       disabled={cartQtySavingId === lid || (Number(item.quantity) || 0) <= 0}
                                       onClick={() => {
@@ -10062,87 +10326,19 @@ function App() {
                                     >
                                       −
                                     </button>
-                                    <input
-                                      type="text"
-                                      inputMode="numeric"
-                                      pattern="[0-9]*"
-                                      className="input-base h-11 w-16 rounded-xl border-primary/45 bg-surface px-1 text-center text-sm text-text-primary focus:border-primary focus:ring-primary/25 md:h-8 md:w-14 md:text-xs"
-                                      value={cartQtyEdit.id === lid ? cartQtyEdit.str : String(Number(item.quantity) || 1)}
-                                      disabled={cartQtySavingId === lid}
+                                    <span
+                                      className="inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
                                       aria-label={`Quantity for ${item.title || "product"}`}
-                                      onFocus={() => {
-                                        setCartQtyEdit({
-                                          id: lid,
-                                          str: String(Number(item.quantity) || 1),
-                                        });
-                                      }}
-                                      onChange={(e) => {
-                                        const raw = String(e.target.value || "").replace(/\D/g, "");
-                                        setCartQtyEdit({ id: lid, str: raw === "" ? "" : raw });
-                                        if (!raw) return;
-                                        const parsed = Number(raw);
-                                        if (!Number.isFinite(parsed) || parsed < 0) return;
-                                        const maxCap = Math.max(
-                                          1,
-                                          Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : Number(item.quantity) || 1,
-                                        );
-                                        if (cartQtyCommitTimersRef.current[lid]) {
-                                          clearTimeout(cartQtyCommitTimersRef.current[lid]);
-                                        }
-                                        cartQtyCommitTimersRef.current[lid] = setTimeout(() => {
-                                          void setCartLineQuantity(item.listingId, Math.min(maxCap, parsed));
-                                        }, 250);
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (e.key !== "Enter") return;
-                                        e.preventDefault();
-                                        const maxCap = Math.max(
-                                          1,
-                                          Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : Number(item.quantity) || 1,
-                                        );
-                                        const str = cartQtyEdit.id === lid ? cartQtyEdit.str : String(Number(item.quantity) || 1);
-                                        const parsed = Number(str);
-                                        if (cartQtyCommitTimersRef.current[lid]) {
-                                          clearTimeout(cartQtyCommitTimersRef.current[lid]);
-                                          delete cartQtyCommitTimersRef.current[lid];
-                                        }
-                                        setCartQtyEdit({ id: null, str: "" });
-                                        if (!Number.isFinite(parsed) || parsed < 0) {
-                                          void setCartLineQuantity(item.listingId, Number(item.quantity) || 1);
-                                          return;
-                                        }
-                                        void setCartLineQuantity(item.listingId, Math.min(maxCap, parsed));
-                                      }}
-                                      onBlur={() => {
-                                        const maxCap = Math.max(
-                                          1,
-                                          Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : Number(item.quantity) || 1,
-                                        );
-                                        const str = cartQtyEdit.id === lid ? cartQtyEdit.str : String(Number(item.quantity) || 1);
-                                        const parsed = Number(str);
-                                        if (cartQtyCommitTimersRef.current[lid]) {
-                                          clearTimeout(cartQtyCommitTimersRef.current[lid]);
-                                          delete cartQtyCommitTimersRef.current[lid];
-                                        }
-                                        setCartQtyEdit({ id: null, str: "" });
-                                        if (!Number.isFinite(parsed) || parsed < 0) {
-                                          void setCartLineQuantity(item.listingId, Number(item.quantity) || 1);
-                                          return;
-                                        }
-                                        void setCartLineQuantity(item.listingId, Math.min(maxCap, parsed));
-                                      }}
-                                    />
+                                    >
+                                      {cartQtyEdit.id === lid ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
+                                    </span>
                                     <button
                                       type="button"
-                                      className="inline-flex h-11 w-11 touch-manipulation items-center justify-center rounded-xl border border-primary/45 bg-surface text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-8 md:w-8 md:text-sm"
+                                      className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
                                       aria-label="Increase quantity"
                                       disabled={
                                         cartQtySavingId === lid ||
-                                        (Number(item.quantity) || 0) >=
-                                          Math.max(
-                                            1,
-                                            Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : Number(item.quantity) || 1,
-                                          )
+                                        (Number(item.quantity) || 0) >= maxAvailableQty
                                       }
                                       onClick={() => {
                                         setCartQtyEdit({ id: null, str: "" });
@@ -10152,9 +10348,6 @@ function App() {
                                       +
                                     </button>
                                   </div>
-                                  <span className="text-[11px] text-text-secondary dark:text-slate-500">
-                                    In stock: {Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : "—"}
-                                  </span>
                                 </div>
                               </div>
                             </div>
@@ -10296,7 +10489,7 @@ function App() {
                 secondaryAction={
                   activeView === VIEWS.MY_PURCHASES
                     ? { label: "View cart", onClick: goCart }
-                    : { label: "Upload", onClick: () => setActiveView(VIEWS.MY_LISTINGS) }
+                    : { label: "Upload", onClick: openUploadAtTop }
                 }
               />
             ) : null}
@@ -10318,7 +10511,7 @@ function App() {
                 secondaryAction={
                   activeView === VIEWS.MY_PURCHASES
                     ? { label: "View cart", onClick: goCart }
-                    : { label: "Upload", onClick: () => setActiveView(VIEWS.MY_LISTINGS) }
+                    : { label: "Upload", onClick: openUploadAtTop }
                 }
               />
             ) : null}
@@ -11135,9 +11328,25 @@ function App() {
             <div className="grid w-full min-w-0 max-w-none gap-6 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start lg:gap-8">
               <div className="min-w-0 space-y-6 bg-transparent p-0 md:space-y-6 lg:rounded-2xl lg:border lg:border-neutral-200/60 lg:bg-white lg:p-5 lg:shadow-sm dark:lg:border-slate-600 dark:lg:bg-slate-900/80">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">
-                    {isViewingSellerProfile ? "Seller profile" : "Profile"}
-                  </h2>
+                  <div className="flex items-center gap-2">
+                    {!isViewingSellerProfile ? (
+                      <button
+                        type="button"
+                        className="inline-flex h-10 w-10 items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-100 md:hidden"
+                        aria-label="Open menu"
+                        onClick={() => document.getElementById("mobile-menu-toggle")?.click()}
+                      >
+                        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                          <line x1="4" x2="20" y1="6" y2="6" />
+                          <line x1="4" x2="20" y1="12" y2="12" />
+                          <line x1="4" x2="20" y1="18" y2="18" />
+                        </svg>
+                      </button>
+                    ) : null}
+                    <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">
+                      {isViewingSellerProfile ? "Seller profile" : "Profile"}
+                    </h2>
+                  </div>
                   {isViewingSellerProfile ? (
                     <button type="button" className="btn-secondary shrink-0" onClick={goBackFromSellerProfile}>
                       ← Back
@@ -12396,8 +12605,12 @@ function App() {
                           type="button"
                           className="btn-primary shrink-0 text-sm"
                           onClick={() => {
-                            setProfileUploadProductNotice("");
-                            setActiveView(VIEWS.MY_LISTINGS);
+                            if (!String(profileCommunityName || "").trim()) {
+                              setProfileUploadProductNotice("Tip: set your community in Profile so uploads can be matched to your local shop.");
+                            } else {
+                              setProfileUploadProductNotice("");
+                            }
+                            openUploadAtTop();
                           }}
                         >
                           Upload
@@ -12434,7 +12647,7 @@ function App() {
                           title="Couldn’t load your listings"
                           message={sellerListingsFetchError}
                           onRetry={() => void refetchSellerListings()}
-                          secondaryAction={{ label: "Open My listings", onClick: () => setActiveView(VIEWS.MY_LISTINGS) }}
+                          secondaryAction={{ label: "Open My listings", onClick: openUploadAtTop }}
                           spacious={false}
                         />
                       </div>
@@ -12492,7 +12705,7 @@ function App() {
                         className="mt-3"
                         title="No listings yet"
                         description="Publish photos, price, and pickup or delivery options so neighbors can buy from you."
-                        primaryAction={{ label: "Upload", onClick: () => setActiveView(VIEWS.MY_LISTINGS) }}
+                        primaryAction={{ label: "Upload", onClick: openUploadAtTop }}
                         secondaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
                       />
                     ) : null}
@@ -12665,7 +12878,7 @@ function App() {
       {quickAddModalOpen && quickAddListing ? (
         <div className="fixed inset-0 z-[90] h-[100dvh] overflow-y-auto bg-white dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="quick-add-modal-title">
           <div
-            className="relative z-10 min-h-full w-full bg-white px-4 pt-0 pb-5 dark:bg-slate-900 md:px-4 md:pb-[max(1rem,env(safe-area-inset-bottom))]"
+            className="relative z-10 min-h-full w-full bg-white px-4 pt-0 pb-[calc(6.75rem+env(safe-area-inset-bottom,0px))] dark:bg-slate-900 md:px-4 md:pb-[max(1rem,env(safe-area-inset-bottom))]"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sticky top-0 z-[40] -mx-4 mb-0 flex items-center gap-2.5 border-b border-neutral-200 bg-white px-4 py-2.5 shadow-sm dark:border-slate-700 dark:bg-slate-950">
@@ -12692,11 +12905,11 @@ function App() {
               </button>
               <div className="min-w-0 flex-1">
                 <h2 id="quick-add-modal-title" className="text-sm font-semibold text-neutral-900 dark:text-slate-100">
-                  {quickActionType === "buy" ? "Buy now" : "Add to cart"}
+                  {quickActionType === "buy" ? "Place order" : "Add to cart"}
                 </h2>
               </div>
             </div>
-            <div className="space-y-3">
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
               <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/60">
                 <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-start">
                   <div className="relative mx-auto h-36 w-full max-w-[20rem] shrink-0 md:mx-0 md:h-32 md:w-32 md:max-w-none">
@@ -12909,26 +13122,28 @@ function App() {
                   onChange={(e) => setQuickAddComment(e.target.value)}
                 />
               </div>
-              <button
-                type="button"
-                className="btn-primary w-full"
-                disabled={quickAddSubmitting}
-                aria-busy={quickAddSubmitting}
-                onClick={submitQuickAddOrder}
-              >
-                {quickAddSubmitting
-                  ? quickActionType === "buy"
-                    ? "Placing order…"
-                    : "Adding…"
-                  : quickActionType === "buy"
-                    ? "Place order"
-                    : "Add to cart"}
-              </button>
-              {quickAddInlineError ? (
-                <p className="app-alert-error text-sm" role="alert">
-                  {quickAddInlineError}
-                </p>
-              ) : null}
+              <div className="max-md:fixed max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:z-[70] mt-auto border-t border-neutral-200/90 bg-white/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/85 dark:border-slate-600/90 dark:bg-slate-900/95 dark:shadow-none md:mx-0 md:border-0 md:bg-transparent md:px-0 md:pb-0 md:pt-0 md:shadow-none md:backdrop-blur-0">
+                <button
+                  type="button"
+                  className="btn-primary w-full"
+                  disabled={quickAddSubmitting}
+                  aria-busy={quickAddSubmitting}
+                  onClick={submitQuickAddOrder}
+                >
+                  {quickAddSubmitting
+                    ? quickActionType === "buy"
+                      ? "Placing order…"
+                      : "Adding…"
+                    : quickActionType === "buy"
+                      ? "Place order"
+                      : "Add to cart"}
+                </button>
+                {quickAddInlineError ? (
+                  <p className="app-alert-error mt-2 text-sm" role="alert">
+                    {quickAddInlineError}
+                  </p>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>

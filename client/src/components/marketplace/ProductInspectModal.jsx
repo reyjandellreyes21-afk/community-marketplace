@@ -23,7 +23,7 @@ const GALLERY_HORIZONTAL_LOCK_PX = 10;
 /**
  * Read-only product detail: gallery, pricing, listing fields aligned with upload form (category, fulfillment,
  * order type, processing, variants), description, optional note.
- * Optional footer: buyer (Add to cart / Buy now) or seller (Sale / Edit). Dismiss: header ×, backdrop, or Esc.
+ * Optional footer: buyer (Add to cart / Place order) or seller (Discount / Edit). Dismiss: header ×, backdrop, or Esc.
  */
 export function ProductInspectModal({
   open,
@@ -47,6 +47,8 @@ export function ProductInspectModal({
   subtitle = "",
   /** When set, used to disable buyer add/buy when out of stock. */
   listingStockQty = null,
+  /** Total sold units for this listing. */
+  listingSoldQty = null,
   showBuyerCommerceActions = false,
   showSellerCommerceActions = false,
   onAddToCart,
@@ -68,6 +70,8 @@ export function ProductInspectModal({
   onToggleFavorite,
 }) {
   const [salePickerOpen, setSalePickerOpen] = useState(false);
+  const [showOtherSaleOptions, setShowOtherSaleOptions] = useState(false);
+  const [customDiscountDraft, setCustomDiscountDraft] = useState("");
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewLoadFailed, setImagePreviewLoadFailed] = useState(false);
   const [galleryThumbIdx, setGalleryThumbIdx] = useState(0);
@@ -123,7 +127,11 @@ export function ProductInspectModal({
   }, [open, onClose, imagePreviewOpen]);
 
   useEffect(() => {
-    if (!open) setSalePickerOpen(false);
+    if (!open) {
+      setSalePickerOpen(false);
+      setShowOtherSaleOptions(false);
+      setCustomDiscountDraft("");
+    }
   }, [open]);
 
   useEffect(() => {
@@ -338,6 +346,8 @@ export function ProductInspectModal({
   const showCommentBlock = commentSectionRequired || commentTrim.length > 0;
   const stock =
     listingStockQty != null && Number.isFinite(Number(listingStockQty)) ? Math.max(0, Number(listingStockQty)) : null;
+  const soldQty =
+    listingSoldQty != null && Number.isFinite(Number(listingSoldQty)) ? Math.max(0, Number(listingSoldQty)) : null;
   const isOutOfStock = stock != null && stock <= 0;
   const quantityNumber = quantity != null && Number.isFinite(Number(quantity)) ? Number(quantity) : null;
   const showQuantityLine = quantityNumber != null;
@@ -348,11 +358,23 @@ export function ProductInspectModal({
   const hasBuyerHandlers = showBuyerCommerceActions && (typeof onAddToCart === "function" || typeof onBuyNow === "function");
   const hasSellerHandlers =
     showSellerCommerceActions && (typeof onEditListing === "function" || typeof onSaleSelect === "function");
+  const primaryQuickSalePercents = useMemo(() => [5, 10, 15, 25, 50], []);
+  const otherQuickSalePercents = useMemo(
+    () => SALE_PERCENT_OPTIONS.filter((percent) => !primaryQuickSalePercents.includes(Number(percent))),
+    [primaryQuickSalePercents],
+  );
+  const customDiscountValue = Number(customDiscountDraft);
+  const customDiscountValid =
+    Number.isFinite(customDiscountValue) &&
+    Number.isInteger(customDiscountValue) &&
+    customDiscountValue >= 1 &&
+    customDiscountValue <= 99;
   const showActionFooter = hasBuyerHandlers || hasSellerHandlers;
 
   const fulfillmentModesArr = Array.isArray(fulfillmentModes) ? fulfillmentModes : [];
   const offersPickup = fulfillmentModesArr.includes("pickup");
   const offersDelivery = fulfillmentModesArr.includes("delivery");
+  const fulfillmentSummary = offersPickup && offersDelivery ? "Pick-up, COD delivery" : offersDelivery ? "COD delivery" : "Pick-up";
   const categoryTrim = String(categoryLabel || "").trim();
   const orderTypeNorm = String(orderType || "in_stock").trim();
   const processingTrim = String(processingTime || "").trim();
@@ -363,12 +385,16 @@ export function ProductInspectModal({
       : processingTrim
         ? "Estimated ready time"
         : "";
+  const orderTypeDisplay = orderTypeReadable || "In stock";
+  const availabilitySummary = orderTypeReadable === "In stock" ? "Ready now" : "Made on order";
   const nameATrim = String(optionNameA || "").trim();
   const nameBTrim = String(optionNameB || "").trim();
   const variantValsA = normalizeListingOptionValues(optionValuesA);
   const variantValsB = normalizeListingOptionValues(optionValuesB);
-  const hasVariantDetailRows =
-    (Boolean(nameATrim) && variantValsA.length > 0) || (Boolean(nameBTrim) && variantValsB.length > 0);
+  const variantChoicesAText = variantValsA.length > 0 ? variantValsA.join(", ") : "";
+  const variantChoicesBText = variantValsB.length > 0 ? variantValsB.join(", ") : "";
+  const hasAnyVariantData =
+    Boolean(nameATrim) || Boolean(nameBTrim) || Boolean(variantChoicesAText) || Boolean(variantChoicesBText);
 
   return (
     <div
@@ -675,21 +701,6 @@ export function ProductInspectModal({
                       </button>
                     )}
                     {galleryMulti && !imagePreviewOpen ? (
-                      <div
-                        className="pointer-events-none absolute bottom-1.5 left-0 right-0 z-[5] flex justify-center gap-1"
-                        aria-hidden
-                      >
-                        {galleryUrls.map((_, i) => (
-                          <span
-                            key={`inspect-ph-${i}`}
-                            className={`h-1 w-1 rounded-full shadow-sm ${
-                              i === galleryThumbIdx ? "bg-white" : "bg-white/55"
-                            }`}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                    {galleryMulti && !imagePreviewOpen ? (
                       <>
                         <button
                           type="button"
@@ -789,6 +800,22 @@ export function ProductInspectModal({
                   </div>
                 ) : null}
               </div>
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                {categoryTrim ? (
+                  <span className="rounded-full border border-amber-300/80 bg-amber-100/80 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-300">
+                    {categoryTrim}
+                  </span>
+                ) : null}
+                <span className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-[11px] font-semibold text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100">
+                  {orderTypeDisplay}
+                </span>
+                <span className="rounded-full border border-neutral-300/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                  {processingTrim ? `${processingLabel || "Processing"}: ${processingTrim}` : availabilitySummary}
+                </span>
+                <span className="rounded-full border border-neutral-300/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                  {fulfillmentSummary}
+                </span>
+              </div>
               {showQuantityLine ? (
                 <p className="text-xs text-neutral-600 dark:text-slate-400">
                   <span className="font-semibold text-neutral-700 dark:text-slate-300">{quantityLabel}:</span>{" "}
@@ -806,56 +833,64 @@ export function ProductInspectModal({
                   ) : null}
                 </p>
               ) : null}
+              {soldQty != null ? (
+                <p className="text-xs text-neutral-600 dark:text-slate-400">
+                  <span className="font-semibold text-neutral-700 dark:text-slate-300">Sold:</span>{" "}
+                  <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{soldQty}</span>
+                </p>
+              ) : null}
             </div>
           </div>
 
           <div className="mt-3.5 space-y-2.5 min-[390px]:mt-4 min-[390px]:space-y-3 md:mt-5 md:space-y-4">
             <div className="space-y-2.5 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
               <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
-                Listing details
-              </h3>
-              <div className="space-y-1.5 text-[13px] min-[390px]:text-sm">
-                <p className="flex items-baseline justify-between gap-2">
-                  <span className="shrink-0 font-semibold text-neutral-600 dark:text-slate-400">Category</span>
-                  <span className="text-right text-neutral-900 dark:text-slate-100">{categoryTrim || "—"}</span>
-                </p>
-                <p className="flex items-baseline justify-between gap-2">
-                  <span className="shrink-0 font-semibold text-neutral-600 dark:text-slate-400">Pick-up</span>
-                  <span className="text-right text-neutral-900 dark:text-slate-100">{offersPickup ? "Yes" : "No"}</span>
-                </p>
-                <p className="flex items-baseline justify-between gap-2">
-                  <span className="shrink-0 font-semibold text-neutral-600 dark:text-slate-400">COD delivery</span>
-                  <span className="text-right text-neutral-900 dark:text-slate-100">{offersDelivery ? "Yes" : "No"}</span>
-                </p>
-                <p className="flex items-baseline justify-between gap-2">
-                  <span className="shrink-0 font-semibold text-neutral-600 dark:text-slate-400">Availability</span>
-                  <span className="text-right text-neutral-900 dark:text-slate-100">{orderTypeReadable === "In stock" ? "Ready now (in stock)" : "Made/prepared on order"}</span>
-                </p>
-                {processingTrim ? (
-                  <p className="flex items-baseline justify-between gap-2">
-                    <span className="shrink-0 font-semibold text-neutral-600 dark:text-slate-400">{processingLabel || "Processing"}</span>
-                    <span className="text-right text-neutral-900 dark:text-slate-100">{processingTrim}</span>
-                  </p>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="space-y-2.5 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
-              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
                 Product variants
               </h3>
-              {hasVariantDetailRows ? (
-                <ListingProductMetaExtras
-                  orderType={orderType}
-                  processingTime={processingTime}
-                  optionNameA={optionNameA}
-                  optionValuesA={optionValuesA}
-                  optionNameB={optionNameB}
-                  optionValuesB={optionValuesB}
-                  density="card"
-                  truncateValueLists={false}
-                  variantsOnly
-                />
+              {hasAnyVariantData ? (
+                <div className="space-y-2">
+                  {nameATrim || variantValsA.length > 0 ? (
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold text-neutral-800 dark:text-slate-100">{nameATrim || "Variant"}</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {variantValsA.length > 0 ? (
+                          variantValsA.map((choice) => (
+                            <span
+                              key={`variant-a-${choice}`}
+                              className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
+                            >
+                              {choice}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs text-neutral-500 dark:text-slate-400">No choices set.</span>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                  {(nameATrim || variantValsA.length > 0) && (nameBTrim || variantValsB.length > 0) ? (
+                    <div className="h-px w-full bg-neutral-200/80 dark:bg-slate-700/80" aria-hidden />
+                  ) : null}
+                  {nameBTrim || variantValsB.length > 0 ? (
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold text-neutral-800 dark:text-slate-100">{nameBTrim || "Variant"}</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {variantValsB.length > 0 ? (
+                          variantValsB.map((choice) => (
+                            <span
+                              key={`variant-b-${choice}`}
+                              className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
+                            >
+                              {choice}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs text-neutral-500 dark:text-slate-400">No choices set.</span>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               ) : (
                 <p className="text-sm text-neutral-500 dark:text-slate-400">No product variants.</p>
               )}
@@ -914,22 +949,117 @@ export function ProductInspectModal({
           </div>
         </div>
 
-        <div className="shrink-0 border-t border-neutral-200/80 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 min-[390px]:px-4 min-[390px]:pt-2.5 min-[430px]:px-5 dark:border-[#1f3c56]/85 md:px-5 md:pb-4 md:pt-3">
+        <div className="sticky bottom-0 z-20 shrink-0 border-t border-neutral-200/80 bg-white/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/85 min-[390px]:px-4 min-[390px]:pt-2.5 min-[430px]:px-5 dark:border-[#1f3c56]/85 dark:bg-[#0f2234]/95 dark:shadow-none md:static md:bg-transparent md:px-5 md:pb-4 md:pt-3 md:shadow-none md:backdrop-blur-0">
           {hasSellerHandlers ? (
             <div className="space-y-2">
+              {salePickerOpen && typeof onSaleSelect === "function" ? (
+                <div className="overflow-x-auto rounded-xl border border-amber-200/80 bg-amber-50/80 p-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">
+                    Apply discount
+                  </p>
+                  <div className="flex min-w-max flex-wrap gap-1.5">
+                    {primaryQuickSalePercents.map((percent) => (
+                      <button
+                        key={percent}
+                        type="button"
+                        className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                        onClick={() => {
+                          onSaleSelect(percent);
+                          setCustomDiscountDraft("");
+                          setSalePickerOpen(false);
+                        }}
+                      >
+                        {percent}%
+                      </button>
+                    ))}
+                    {otherQuickSalePercents.length > 0 ? (
+                      <button
+                        type="button"
+                        className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                        aria-expanded={showOtherSaleOptions}
+                        onClick={() => setShowOtherSaleOptions((prev) => !prev)}
+                      >
+                        {showOtherSaleOptions ? "Hide options" : "More options"}
+                      </button>
+                    ) : null}
+                  </div>
+                  {showOtherSaleOptions && otherQuickSalePercents.length > 0 ? (
+                    <div className="mt-1.5 flex min-w-max flex-wrap gap-1.5">
+                      {otherQuickSalePercents.map((percent) => (
+                        <button
+                          key={`other-${percent}`}
+                          type="button"
+                          className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                          onClick={() => {
+                            onSaleSelect(percent);
+                            setCustomDiscountDraft("");
+                            setShowOtherSaleOptions(false);
+                            setSalePickerOpen(false);
+                          }}
+                        >
+                          {percent}%
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={1}
+                      max={99}
+                      step={1}
+                      inputMode="numeric"
+                      placeholder="Custom %"
+                      className="h-8 w-24 rounded-md border border-amber-300/90 bg-white px-2 text-xs font-semibold text-amber-900 outline-none transition placeholder:text-amber-500/80 focus:border-amber-400 focus:ring-2 focus:ring-amber-300/40 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-100 dark:placeholder:text-amber-300/70"
+                      value={customDiscountDraft}
+                      onChange={(e) => {
+                        const digits = String(e.target.value || "").replace(/[^\d]/g, "");
+                        if (!digits) {
+                          setCustomDiscountDraft("");
+                          return;
+                        }
+                        setCustomDiscountDraft(String(Math.min(99, Number(digits))));
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="h-8 rounded-md border border-amber-300/90 bg-white px-2.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                      disabled={!customDiscountValid}
+                      onClick={() => {
+                        if (!customDiscountValid) return;
+                        onSaleSelect(customDiscountValue);
+                        setCustomDiscountDraft("");
+                        setShowOtherSaleOptions(false);
+                        setSalePickerOpen(false);
+                      }}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="flex w-full flex-row items-stretch gap-2">
                 {typeof onSaleSelect === "function" ? (
                   <button
                     type="button"
                     className="min-h-[56px] flex-1 rounded-lg border border-amber-300 px-3 py-2 text-[11px] font-semibold leading-none text-amber-800 transition hover:bg-amber-50 dark:border-amber-500/50 dark:text-amber-200 dark:hover:bg-amber-950/35 md:min-h-12 flex flex-col items-center justify-center gap-1"
                     aria-expanded={salePickerOpen}
-                    onClick={() => setSalePickerOpen((v) => !v)}
+                    onClick={() =>
+                      setSalePickerOpen((v) => {
+                        const next = !v;
+                        if (!next) {
+                          setShowOtherSaleOptions(false);
+                          setCustomDiscountDraft("");
+                        }
+                        return next;
+                      })
+                    }
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
                       <path d="M20.6 13.4L12.4 21.6a2 2 0 0 1-2.8 0L2.4 14.4a2 2 0 0 1 0-2.8L10.6 3.4a2 2 0 0 1 1.4-.6H19a2 2 0 0 1 2 2v7a2 2 0 0 1-.4 1.2z" />
                       <circle cx="16.5" cy="7.5" r="1.25" />
                     </svg>
-                    Sale
+                    Discount
                   </button>
                 ) : null}
                 {typeof onEditListing === "function" ? (
@@ -946,28 +1076,6 @@ export function ProductInspectModal({
                   </button>
                 ) : null}
               </div>
-              {salePickerOpen && typeof onSaleSelect === "function" ? (
-                <div className="overflow-x-auto rounded-xl border border-amber-200/80 bg-amber-50/80 p-2 dark:border-amber-500/30 dark:bg-amber-500/10">
-                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">
-                    Quick discount
-                  </p>
-                  <div className="flex min-w-max flex-wrap gap-1.5">
-                    {SALE_PERCENT_OPTIONS.map((percent) => (
-                      <button
-                        key={percent}
-                        type="button"
-                        className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
-                        onClick={() => {
-                          onSaleSelect(percent);
-                          setSalePickerOpen(false);
-                        }}
-                      >
-                        {percent}%
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
             </div>
           ) : null}
 
@@ -1003,7 +1111,7 @@ export function ProductInspectModal({
                           ? buyNowDisabledReason
                           : undefined
                     }
-                    aria-label={isOutOfStock ? "Out of stock" : "Buy now"}
+                    aria-label={isOutOfStock ? "Out of stock" : "Place order"}
                     className={`min-h-[56px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-[11px] font-semibold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-12 flex flex-col items-center justify-center gap-1 ${
                       isOutOfStock
                         ? "cursor-not-allowed opacity-50"
@@ -1016,7 +1124,7 @@ export function ProductInspectModal({
                       <path d="M6 8h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 8z" />
                       <path d="M9 8V6a3 3 0 0 1 6 0v2" />
                     </svg>
-                    {isOutOfStock ? "Out of stock" : "Buy now"}
+                    {isOutOfStock ? "Out of stock" : "Place order"}
                   </button>
                 ) : null}
               </div>

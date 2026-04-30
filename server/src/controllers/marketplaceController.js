@@ -106,6 +106,63 @@ function normalizeDbImageUrls(raw) {
   return [];
 }
 
+/**
+ * Normalize DB array-ish values to string[].
+ * Supports native arrays, JSON-string arrays, and Postgres array literals like "{Small,Medium}".
+ */
+function normalizeDbTextArray(raw) {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) {
+    return raw.map((x) => String(x || "").trim()).filter(Boolean);
+  }
+  if (typeof raw !== "string") return [];
+  const t = raw.trim();
+  if (!t) return [];
+  if (t.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(t);
+      if (Array.isArray(parsed)) return parsed.map((x) => String(x || "").trim()).filter(Boolean);
+    } catch {
+      // continue to other parsers
+    }
+  }
+  if (t.startsWith("{") && t.endsWith("}")) {
+    const inner = t.slice(1, -1);
+    if (!inner.trim()) return [];
+    const out = [];
+    let cur = "";
+    let inQuotes = false;
+    let escaping = false;
+    for (let i = 0; i < inner.length; i += 1) {
+      const ch = inner[i];
+      if (escaping) {
+        cur += ch;
+        escaping = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaping = true;
+        continue;
+      }
+      if (ch === '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (ch === "," && !inQuotes) {
+        const v = cur.trim();
+        if (v) out.push(v);
+        cur = "";
+        continue;
+      }
+      cur += ch;
+    }
+    const tail = cur.trim();
+    if (tail) out.push(tail);
+    return out.map((x) => String(x || "").trim()).filter(Boolean);
+  }
+  return [t];
+}
+
 const MAX_LISTING_OPTION_CHOICES = 30;
 
 function normalizeUniqueChoiceList(raw) {
@@ -201,24 +258,24 @@ function mergeAndValidateListingVariants(body, existing) {
       ? Array.isArray(body.optionValuesA)
         ? body.optionValuesA
         : []
-      : normalizeUniqueChoiceList(Array.isArray(ex.option_values_a) ? ex.option_values_a : []);
+      : normalizeUniqueChoiceList(normalizeDbTextArray(ex.option_values_a));
   const valsB =
     body.optionValuesB !== undefined
       ? Array.isArray(body.optionValuesB)
         ? body.optionValuesB
         : []
-      : normalizeUniqueChoiceList(Array.isArray(ex.option_values_b) ? ex.option_values_b : []);
+      : normalizeUniqueChoiceList(normalizeDbTextArray(ex.option_values_b));
 
   return validateListingVariantGroups(nameA, valsA, nameB, valsB);
 }
 
 function buildVariantsArrayFromRow(row) {
   const out = [];
-  const na = String(row?.option_name_a ?? "").trim();
-  const va = Array.isArray(row?.option_values_a) ? normalizeUniqueChoiceList(row.option_values_a) : [];
+  const na = String(row?.option_name_a ?? row?.optionNameA ?? "").trim();
+  const va = normalizeUniqueChoiceList(normalizeDbTextArray(row?.option_values_a ?? row?.optionValuesA));
   if (na && va.length) out.push({ type: na, choices: va });
-  const nb = String(row?.option_name_b ?? "").trim();
-  const vb = Array.isArray(row?.option_values_b) ? normalizeUniqueChoiceList(row.option_values_b) : [];
+  const nb = String(row?.option_name_b ?? row?.optionNameB ?? "").trim();
+  const vb = normalizeUniqueChoiceList(normalizeDbTextArray(row?.option_values_b ?? row?.optionValuesB));
   if (nb && vb.length) out.push({ type: nb, choices: vb });
   return out;
 }
@@ -344,6 +401,7 @@ const LISTINGS_OPTIONAL_PRODUCT_COLUMNS = [
   "option_values_b",
   "order_type",
   "processing_time",
+  "sold_count",
 ];
 const CART_LISTING_REQUIRED_SELECT =
   "id,seller_id,title,description,image_url,price_cents,quantity,status,fulfillment_modes";
@@ -386,6 +444,7 @@ const listingRowToApi = (row) => ({
   description: row.description,
   priceCents: row.price_cents,
   quantity: row.quantity,
+  soldCount: Math.max(0, Number(row.sold_count) || 0),
   categories: row.categories ?? row.vertical_id,
   verticalId: row.vertical_id,
   subId: row.sub_id,
@@ -396,13 +455,13 @@ const listingRowToApi = (row) => ({
   lng: row.lng,
   imageUrl: row.image_url,
   imageUrls: dedupeListingImageUrlsOrdered(normalizeDbImageUrls(row.image_urls)).slice(0, LISTING_IMAGE_URLS_CAP),
-  optionNameA: String(row.option_name_a ?? "").trim(),
-  optionValuesA: Array.isArray(row.option_values_a) ? row.option_values_a.map(String) : [],
-  optionNameB: String(row.option_name_b ?? "").trim(),
-  optionValuesB: Array.isArray(row.option_values_b) ? row.option_values_b.map(String) : [],
+  optionNameA: String(row.option_name_a ?? row.optionNameA ?? "").trim(),
+  optionValuesA: normalizeDbTextArray(row.option_values_a ?? row.optionValuesA).map(String),
+  optionNameB: String(row.option_name_b ?? row.optionNameB ?? "").trim(),
+  optionValuesB: normalizeDbTextArray(row.option_values_b ?? row.optionValuesB).map(String),
   variants: buildVariantsArrayFromRow(row),
-  orderType: String(row.order_type ?? "in_stock").trim() || "in_stock",
-  processingTime: String(row.processing_time ?? "").trim(),
+  orderType: String(row.order_type ?? row.orderType ?? "in_stock").trim() || "in_stock",
+  processingTime: String(row.processing_time ?? row.processingTime ?? "").trim(),
   communityId: row.community_id ?? null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -755,6 +814,7 @@ export const createListing = async (req, res, next) => {
       option_values_b: mergedVariants.option_values_b,
       order_type: orderType,
       processing_time: processingTime,
+      sold_count: 0,
       // Keep insert compatible with DB constraint: active|paused|sold.
       status: "active",
     };
@@ -1447,15 +1507,29 @@ export const patchOrder = async (req, res, next) => {
     const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(id, patch);
     if (uerr) throw new AppError(500, uerr.message);
     if (patch.status === "completed") {
-      const { data: listing } = await supabaseAdmin.from("listings").select("quantity").eq("id", order.listing_id).maybeSingle();
+      const { data: listing } = await supabaseAdmin
+        .from("listings")
+        .select("quantity,sold_count")
+        .eq("id", order.listing_id)
+        .maybeSingle();
       if (listing && typeof listing.quantity === "number") {
         const newQty = Math.max(0, listing.quantity - order.quantity);
+        const soldCountBase = Math.max(0, Number(listing.sold_count) || 0);
+        const nextSoldCount = soldCountBase + Math.max(0, Number(order.quantity) || 0);
         const listingPatch = {
           quantity: newQty,
+          sold_count: nextSoldCount,
           updated_at: new Date().toISOString(),
           ...(newQty === 0 ? { status: "sold" } : {}),
         };
-        await supabaseAdmin.from("listings").update(listingPatch).eq("id", order.listing_id);
+        const { error: listingUpdateErr } = await supabaseAdmin
+          .from("listings")
+          .update(listingPatch)
+          .eq("id", order.listing_id);
+        if (listingUpdateErr && isListingsSchemaCacheOrMissingColumnError(listingUpdateErr)) {
+          const { sold_count, ...patchWithoutSoldCount } = listingPatch;
+          await supabaseAdmin.from("listings").update(patchWithoutSoldCount).eq("id", order.listing_id);
+        }
       }
     }
     const shouldConsolidate =
