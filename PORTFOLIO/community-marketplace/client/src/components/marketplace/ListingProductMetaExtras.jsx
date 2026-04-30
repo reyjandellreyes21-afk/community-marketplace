@@ -41,6 +41,10 @@ export function ListingProductMetaExtras({
     density === "compact"
       ? `${UI_KIT.chipMuted} py-px text-[10px] leading-tight`
       : `${UI_KIT.chipMuted} max-md:py-px max-md:text-[10px] max-md:leading-tight`;
+  const timingChip =
+    density === "compact"
+      ? "inline-flex items-center rounded-sm border border-brand-primary/45 bg-brand-primary/12 px-2 py-px text-[10px] font-semibold leading-tight text-brand-primary dark:border-brand-accent/45 dark:bg-brand-accent/15 dark:text-slate-100"
+      : "inline-flex items-center rounded-sm border border-brand-primary/45 bg-brand-primary/12 px-2 py-0.5 text-[10px] font-semibold leading-tight text-brand-primary min-[380px]:text-xs dark:border-brand-accent/45 dark:bg-brand-accent/15 dark:text-slate-100";
 
   const formatValues = (vals) => {
     const s = vals.join(", ");
@@ -52,22 +56,21 @@ export function ListingProductMetaExtras({
     <div className={`min-w-0 ${density === "card" ? "space-y-1.5" : "space-y-1"}`}>
       {showReadyIn ? (
         <div className={chipWrap}>
-          <span className={chip} title={`Ready in: ${proc}`}>
-            Ready in:{" "}
-            <span className="font-medium text-text-primary dark:text-slate-100">{proc}</span>
+          <span className={timingChip} title={`Ready in: ${proc}`}>
+            Ready in: <span className="ml-1 font-semibold">{proc}</span>
           </span>
         </div>
       ) : null}
       {showPreOrder ? (
         <div className={chipWrap}>
-          <span className={chip} title={proc ? undefined : "Pre-order listing"}>
+          <span className={timingChip} title={proc ? undefined : "Pre-order listing"}>
             Pre-order
             {proc ? (
               <>
                 <span className="mx-1 opacity-60" aria-hidden>
-                  ·
+                  :
                 </span>
-                <span className="font-medium text-text-primary dark:text-slate-100">{proc}</span>
+                <span className="font-semibold">{proc}</span>
               </>
             ) : null}
           </span>

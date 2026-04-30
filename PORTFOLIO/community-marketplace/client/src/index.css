@@ -174,7 +174,7 @@
    * Use overflow-x-hidden (not overflow-hidden) so in-card popovers/menus are not clipped vertically.
    */
   .lm-card {
-    @apply min-w-0 overflow-x-hidden rounded-[var(--ui-radius-lg)] border border-neutral-200/85 bg-white text-sm leading-relaxed shadow-none transition-[border-color,box-shadow,background-color] duration-200 ease-out dark:border-slate-600/70 dark:bg-[#0f2234] md:rounded-2xl md:shadow-sm md:shadow-slate-900/[0.04] dark:md:shadow-none;
+    @apply min-w-0 overflow-x-hidden rounded-none border border-neutral-200/85 bg-white text-sm leading-relaxed shadow-none transition-[border-color,box-shadow,background-color] duration-200 ease-out dark:border-slate-600/70 dark:bg-[#0f2234] md:shadow-sm md:shadow-slate-900/[0.04] dark:md:shadow-none;
   }
 
   /** Whole-card press targets (row buttons, linked tiles) — touch-friendly active + focus ring */
@@ -184,7 +184,7 @@
 
   /** Product / listing hero frame — pair with aspect-* or fixed h-* on the same node */
   .lm-card-media {
-    @apply relative shrink-0 overflow-hidden rounded-xl border border-neutral-200/90 bg-neutral-100 dark:border-slate-600/75 dark:bg-[#11283d];
+    @apply relative shrink-0 overflow-hidden rounded-none border border-neutral-200/90 bg-neutral-100 dark:border-slate-600/75 dark:bg-[#11283d];
   }
 
   /** Soft ring variant for browse grids (less boxy than full border) */
@@ -321,7 +321,7 @@
    * Grid: square; list: square thumb (parent sets `h-* w-*`); feed: compose `lm-product-card-media`.
    */
   .lm-product-media {
-    @apply relative shrink-0 overflow-hidden rounded-[var(--ui-radius-lg)] border border-neutral-200/90 bg-neutral-100 dark:border-slate-600/75 dark:bg-[#11283d];
+    @apply relative shrink-0 overflow-hidden rounded-none border border-neutral-200/90 bg-neutral-100 dark:border-slate-600/75 dark:bg-[#11283d];
   }
 
   .lm-product-media-grid {
@@ -334,7 +334,7 @@
 
   /** Lighter ring for browse (non-feed) */
   .lm-product-media--soft {
-    @apply rounded-[var(--ui-radius-lg)] border-0 bg-background ring-1 ring-neutral-200/50 dark:bg-[#11283d] dark:ring-slate-600/45 md:rounded-xl md:border md:border-border md:ring-0 dark:md:border-[#1f3c56];
+    @apply rounded-none border-0 bg-background ring-1 ring-neutral-200/50 dark:bg-[#11283d] dark:ring-slate-600/45 md:border md:border-border md:ring-0 dark:md:border-[#1f3c56];
   }
 
   /** Optional composition aliases — roots usually already include `.lm-card` */
@@ -378,7 +378,7 @@
 
   /** Flush top image: rounded top corners only; subtle separator before body */
   .lm-product-card--feed .lm-product-card-media {
-    @apply rounded-t-[var(--ui-radius-lg)] rounded-b-none border-b border-neutral-200/80 dark:border-slate-600/55 md:rounded-t-2xl;
+    @apply rounded-none border-b border-neutral-200/80 dark:border-slate-600/55;
   }
 
   .lm-product-card-media--ring {

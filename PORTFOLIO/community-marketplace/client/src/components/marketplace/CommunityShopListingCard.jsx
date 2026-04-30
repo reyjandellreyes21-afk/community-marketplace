@@ -35,6 +35,8 @@ export function CommunityShopListingCard({
   browseSummaryGrid = false,
   /** Mobile marketplace browse: tighter grid/list density, aspect images, secondary owner CTAs. */
   mobileCardUx = false,
+  /** Disable in-card gallery swipe/dots for specific contexts (e.g. Home > Community). */
+  disableGallerySwipe = false,
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
@@ -49,6 +51,7 @@ export function CommunityShopListingCard({
   const galleryUrls = useMemo(() => resolveListingGalleryUrls(listing), [listing]);
   const galleryUrlsKey = galleryUrls.join("|");
   const galleryMulti = galleryUrls.length > 1;
+  const canSwipeGallery = galleryMulti && !disableGallerySwipe;
   const [cardPhotoIdx, setCardPhotoIdx] = useState(0);
   const heroPointerStartRef = useRef({ x: 0, y: 0 });
   const suppressHeroClickRef = useRef(false);
@@ -72,7 +75,7 @@ export function CommunityShopListingCard({
 
   const onCardHeroPointerUp = useCallback(
     (e) => {
-      if (!galleryMulti) return;
+      if (!canSwipeGallery) return;
       const dx = e.clientX - heroPointerStartRef.current.x;
       const dy = e.clientY - heroPointerStartRef.current.y;
       if (Math.abs(dx) >= CARD_GALLERY_SWIPE_MIN_PX && Math.abs(dx) > Math.abs(dy)) {
@@ -81,7 +84,7 @@ export function CommunityShopListingCard({
         else goCardGalleryPrev();
       }
     },
-    [galleryMulti, goCardGalleryNext, goCardGalleryPrev],
+    [canSwipeGallery, goCardGalleryNext, goCardGalleryPrev],
   );
 
   const onCardHeroInspectClick = useCallback(() => {
@@ -240,7 +243,7 @@ export function CommunityShopListingCard({
               {favoriteHeartSvg}
             </button>
           ) : null}
-          {galleryMulti ? (
+          {canSwipeGallery ? (
             <div
               className="pointer-events-none absolute bottom-1.5 left-0 right-0 z-[5] flex justify-center gap-1"
               aria-hidden
@@ -258,13 +261,13 @@ export function CommunityShopListingCard({
               type="button"
               className={imageInspectBtnClass}
               aria-label={
-                galleryMulti
+                canSwipeGallery
                   ? `View details: ${listing.title || "product"}. Swipe photo left or right for more images.`
                   : `View details: ${listing.title || "product"}`
               }
-              style={galleryMulti ? { touchAction: "manipulation" } : undefined}
-              onPointerDown={galleryMulti ? onCardHeroPointerDown : undefined}
-              onPointerUp={galleryMulti ? onCardHeroPointerUp : undefined}
+              style={canSwipeGallery ? { touchAction: "manipulation" } : undefined}
+              onPointerDown={canSwipeGallery ? onCardHeroPointerDown : undefined}
+              onPointerUp={canSwipeGallery ? onCardHeroPointerUp : undefined}
               onClick={onCardHeroInspectClick}
             >
               <ProductListingMedia
@@ -280,7 +283,7 @@ export function CommunityShopListingCard({
                 loading="lazy"
               />
             </button>
-          ) : galleryMulti ? (
+          ) : canSwipeGallery ? (
             <div
               className="absolute inset-0 min-h-0"
               style={{ touchAction: "manipulation" }}
@@ -314,7 +317,7 @@ export function CommunityShopListingCard({
             />
           )}
         </div>
-        {mobileUx && galleryMulti ? (
+        {mobileUx && canSwipeGallery ? (
           <p
             className="w-full min-w-0 text-center text-[10px] font-semibold tabular-nums text-neutral-500 dark:text-slate-400 md:hidden"
             aria-live="polite"
@@ -335,36 +338,27 @@ export function CommunityShopListingCard({
         >
           <MarketplaceProductDetailStack
             variant="card"
-            browseStackMode={mobileUx ? (gridMode ? "gridMobile" : "listMobile") : null}
-            compactListMeta={isListMode}
+            browseStackMode={mobileUx ? "listMobile" : null}
+            compactListMeta={isListMode || mobileUx}
             title={listing.title || "Untitled product"}
             titleEnd={favoriteTitleEnd}
             priceCents={listing.priceCents}
-            categoryLabel={categoryShortLabel}
+            categoryLabel={mobileUx ? "" : categoryShortLabel}
             description={listing.description}
             fulfillmentModes={listing.fulfillmentModes}
             orderType={listing.orderType}
             processingTime={listing.processingTime}
-            optionNameA={listing.optionNameA}
-            optionValuesA={listing.optionValuesA}
-            optionNameB={listing.optionNameB}
-            optionValuesB={listing.optionValuesB}
+            optionNameA=""
+            optionValuesA={[]}
+            optionNameB=""
+            optionValuesB={[]}
             quantityRow={
               <div className="min-w-0">
-                {isListMode ? null : <p className="product-meta-label">Stock</p>}
-                <div className={`${isListMode ? "" : "mt-0.5"} flex flex-wrap items-center gap-2`}>
-                  <p className={isListMode ? "text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300" : "product-meta-value"}>
-                    {isListMode ? (
-                      <>
-                        <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">Stock</span>
-                        <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
-                        <span className="tabular-nums font-semibold text-text-primary dark:text-slate-100">{stockQty}</span>
-                      </>
-                    ) : mobileUx && gridMode ? (
-                      `Stock: ${stockQty}`
-                    ) : (
-                      stockQty
-                    )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300">
+                    <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">Stock</span>
+                    <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
+                    <span className="tabular-nums font-semibold text-text-primary dark:text-slate-100">{stockQty}</span>
                   </p>
                   {isOutOfStock ? (
                     <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-600 min-[380px]:text-xs dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
@@ -452,7 +446,7 @@ export function CommunityShopListingCard({
                         setOwnerMenuOpen(false);
                       }}
                     >
-                      {saleOpen ? "Hide sale" : "Sale"}
+                      {saleOpen ? "Hide discount" : "Discount"}
                     </button>
                     <button
                       type="button"
@@ -537,7 +531,7 @@ export function CommunityShopListingCard({
                   });
                 }}
               >
-                Sale
+                Discount
               </button>
               <button
                 type="button"
