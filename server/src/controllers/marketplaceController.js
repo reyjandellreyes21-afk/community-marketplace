@@ -1,6 +1,7 @@
 import { AppError } from "../errors/AppError.js";
 import { supabaseAdmin } from "../lib/supabase.js";
-import { uploadCommunityCoverImage } from "../lib/communityImageStorage.js";
+import { uploadCommunityCoverImage, uploadListingImage } from "../lib/communityImageStorage.js";
+import { displayNameForStoragePath } from "../lib/storagePathLabel.js";
 import { findConflictingCommunity, isLikelySameCommunityName } from "../lib/communityNameSimilarity.js";
 import { doesProfileAddressMatchCommunity } from "../lib/profileListingCommunity.js";
 
@@ -58,6 +59,51 @@ function dedupeListingImageUrlsOrdered(urls) {
     out.push(trimmed);
   }
   return out;
+}
+
+const LISTING_IMAGE_URLS_CAP = 6;
+
+/**
+ * Body sends `imageUrl` (cover) plus `imageUrls`. The client usually sends the **full gallery** in `imageUrls`
+ * (cover first). Prefixing `primary` again would duplicate slot 1 and can shift/truncate to fewer than 6 unique URLs after dedupe.
+ */
+function mergePayloadListingImageUrls(primaryStr, rawUrlsIn) {
+  const primary = String(primaryStr ?? "").trim();
+  const rawUrls = Array.isArray(rawUrlsIn)
+    ? rawUrlsIn.map((x) => String(x ?? "").trim()).filter(Boolean)
+    : [];
+  if (rawUrls.length === 0) {
+    return dedupeListingImageUrlsOrdered(primary ? [primary] : []).slice(0, LISTING_IMAGE_URLS_CAP);
+  }
+  const first = rawUrls[0];
+  if (primary && first && normalizeListingImageUrlKey(first) === normalizeListingImageUrlKey(primary)) {
+    return dedupeListingImageUrlsOrdered(rawUrls).slice(0, LISTING_IMAGE_URLS_CAP);
+  }
+  return dedupeListingImageUrlsOrdered(primary ? [primary, ...rawUrls] : rawUrls).slice(0, LISTING_IMAGE_URLS_CAP);
+}
+
+/**
+ * DB/json drivers may return `image_urls` as a native array, jsonb array, or a JSON string — normalize to ordered URLs.
+ */
+function normalizeDbImageUrls(raw) {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) {
+    return raw.map((x) => String(x || "").trim()).filter(Boolean);
+  }
+  if (typeof raw === "string") {
+    const t = raw.trim();
+    if (!t) return [];
+    if (t.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(t);
+        if (Array.isArray(parsed)) return parsed.map((x) => String(x || "").trim()).filter(Boolean);
+      } catch {
+        /* fall through to single URL */
+      }
+    }
+    return [t];
+  }
+  return [];
 }
 
 const MAX_LISTING_OPTION_CHOICES = 30;
@@ -280,8 +326,18 @@ async function updateOrderRowRetryWithoutMissingColumns(id, patch) {
 }
 
 const ALLOWED_LISTING_STATUSES = new Set(["active", "paused", "sold"]);
+
+function isListingsSchemaCacheOrMissingColumnError(error) {
+  const msg = String(error?.message || "");
+  return (
+    error?.code === "PGRST204" ||
+    /schema cache/i.test(msg) ||
+    /Could not find the '[^']+' column of 'listings'/i.test(msg)
+  );
+}
+
+/** Optional listing columns omitted when DB schema lags (excluding image_urls — handled in its own retry step). */
 const LISTINGS_OPTIONAL_PRODUCT_COLUMNS = [
-  "image_urls",
   "option_name_a",
   "option_values_a",
   "option_name_b",
@@ -339,7 +395,7 @@ const listingRowToApi = (row) => ({
   lat: row.lat,
   lng: row.lng,
   imageUrl: row.image_url,
-  imageUrls: Array.isArray(row.image_urls) ? row.image_urls.map(String) : [],
+  imageUrls: dedupeListingImageUrlsOrdered(normalizeDbImageUrls(row.image_urls)).slice(0, LISTING_IMAGE_URLS_CAP),
   optionNameA: String(row.option_name_a ?? "").trim(),
   optionValuesA: Array.isArray(row.option_values_a) ? row.option_values_a.map(String) : [],
   optionNameB: String(row.option_name_b ?? "").trim(),
@@ -397,7 +453,7 @@ const buyerReviewRowToApi = (row) => {
 /** Snapshot fields from `listings` row (snake_case) for order responses — keeps thumbnails working without extra client fetches. */
 function orderListingSnapshotFromDbRow(row) {
   if (!row) return { listingTitle: null, listingImageUrl: "", listingImageUrls: [] };
-  const imageUrls = Array.isArray(row.image_urls) ? row.image_urls.map(String) : [];
+  const imageUrls = dedupeListingImageUrlsOrdered(normalizeDbImageUrls(row.image_urls)).slice(0, LISTING_IMAGE_URLS_CAP);
   const primary = String(row.image_url || "").trim() || String(imageUrls[0] || "").trim();
   return {
     listingTitle: String(row.title || "").trim() || null,
@@ -624,6 +680,37 @@ export const getListing = async (req, res, next) => {
   }
 };
 
+/** POST multipart field `images` (1–6 files) → Supabase Storage; returns public URLs in order. */
+export const uploadListingImages = async (req, res, next) => {
+  try {
+    const files = req.files;
+    if (!Array.isArray(files) || files.length === 0) {
+      throw new AppError(400, "Add at least one image file (use field name images).");
+    }
+    if (files.length > 6) throw new AppError(400, "Too many images (max 6).");
+
+    const { data: profRows } = await supabaseAdmin
+      .from("profiles")
+      .select("first_name,middle_name,last_name,username")
+      .eq("id", req.user.id)
+      .limit(1);
+    const profile = Array.isArray(profRows) && profRows[0] ? profRows[0] : null;
+    let displayName = displayNameForStoragePath(profile, null);
+    if (!displayName) {
+      const { data: authLookup, error: authLookupErr } = await supabaseAdmin.auth.admin.getUserById(req.user.id);
+      if (!authLookupErr && authLookup?.user) displayName = displayNameForStoragePath(null, authLookup.user);
+    }
+
+    const urls = [];
+    for (const file of files) {
+      urls.push(await uploadListingImage(file.buffer, file.mimetype, req.user.id, displayName));
+    }
+    res.json({ urls });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const createListing = async (req, res, next) => {
   try {
     const categoryId = String(req.body.categories || req.body.verticalId || "").trim();
@@ -635,7 +722,7 @@ export const createListing = async (req, res, next) => {
       ? req.body.imageUrls.map((x) => String(x || "").trim()).filter(Boolean)
       : [];
     const primaryFromBody = String(req.body.imageUrl ?? "").trim();
-    const imageUrls = dedupeListingImageUrlsOrdered(primaryFromBody ? [primaryFromBody, ...rawImageUrls] : rawImageUrls).slice(0, 6);
+    const imageUrls = mergePayloadListingImageUrls(primaryFromBody, rawImageUrls);
     const imageUrl = imageUrls[0] || "";
     const orderType = String(req.body.orderType || "in_stock").trim() === "pre_order" ? "pre_order" : "in_stock";
     const processingTime = String(req.body.processingTime ?? "").trim().slice(0, 120);
@@ -680,11 +767,16 @@ export const createListing = async (req, res, next) => {
       row.community_id = cid;
     }
     let { data, error } = await supabaseAdmin.from("listings").insert(row).select("*").single();
-    if (error?.code === "PGRST204" || /schema cache/i.test(String(error?.message || ""))) {
-      // Backward-compatible fallback for environments where new product columns are not migrated yet.
+    if (isListingsSchemaCacheOrMissingColumnError(error)) {
       const fallback = { ...row };
       for (const col of LISTINGS_OPTIONAL_PRODUCT_COLUMNS) delete fallback[col];
       ({ data, error } = await supabaseAdmin.from("listings").insert(fallback).select("*").single());
+    }
+    if (isListingsSchemaCacheOrMissingColumnError(error) && Object.prototype.hasOwnProperty.call(row, "image_urls")) {
+      const withoutGallery = { ...row };
+      delete withoutGallery.image_urls;
+      for (const col of LISTINGS_OPTIONAL_PRODUCT_COLUMNS) delete withoutGallery[col];
+      ({ data, error } = await supabaseAdmin.from("listings").insert(withoutGallery).select("*").single());
     }
     if (error?.code === "PGRST205") {
       throw new AppError(
@@ -692,10 +784,10 @@ export const createListing = async (req, res, next) => {
         "Listings table missing (products are stored here). In Supabase: SQL Editor → paste and run repo file supabase/sql_editor_all_in_one.sql → Run. Then try Publish again.",
       );
     }
-    if (error?.code === "PGRST204" || /schema cache/i.test(String(error?.message || ""))) {
+    if (isListingsSchemaCacheOrMissingColumnError(error)) {
       throw new AppError(
         503,
-        "Listings product fields are not ready in DB yet. Apply migration `supabase/migrations/20260430235900_listings_add_product_fields.sql` and run `NOTIFY pgrst, 'reload schema';`.",
+        "Listings `image_urls` (or product fields) are missing in the database. In Supabase SQL Editor run `supabase/migrations/20260502100000_listings_ensure_image_urls.sql` (or full `20260430235900_listings_add_product_fields.sql`), then `NOTIFY pgrst, 'reload schema';` or wait for the API schema cache to refresh.",
       );
     }
     if (error) throw new AppError(400, error.message);
@@ -729,13 +821,14 @@ export const updateListing = async (req, res, next) => {
       const rawUrls = Array.isArray(req.body.imageUrls)
         ? req.body.imageUrls.map((x) => String(x || "").trim()).filter(Boolean)
         : [];
-      const imageUrls = dedupeListingImageUrlsOrdered(primary ? [primary, ...rawUrls] : rawUrls).slice(0, 6);
+      const imageUrls = mergePayloadListingImageUrls(primary, rawUrls);
       patch.image_urls = imageUrls;
       if (imageUrls.length > 0) patch.image_url = imageUrls[0];
     } else if (req.body.imageUrls != null) {
-      const imageUrls = dedupeListingImageUrlsOrdered(
+      const imageUrls = mergePayloadListingImageUrls(
+        "",
         Array.isArray(req.body.imageUrls) ? req.body.imageUrls.map((x) => String(x || "").trim()).filter(Boolean) : [],
-      ).slice(0, 6);
+      );
       patch.image_urls = imageUrls;
       if (imageUrls.length > 0) patch.image_url = imageUrls[0];
     } else if (req.body.imageUrl != null) {
@@ -774,10 +867,22 @@ export const updateListing = async (req, res, next) => {
     }
     patch.updated_at = new Date().toISOString();
     let { data, error } = await supabaseAdmin.from("listings").update(patch).eq("id", id).select("*").single();
-    if (error?.code === "PGRST204" || /schema cache/i.test(String(error?.message || ""))) {
+    if (isListingsSchemaCacheOrMissingColumnError(error)) {
       const fallbackPatch = { ...patch };
       for (const col of LISTINGS_OPTIONAL_PRODUCT_COLUMNS) delete fallbackPatch[col];
       ({ data, error } = await supabaseAdmin.from("listings").update(fallbackPatch).eq("id", id).select("*").single());
+    }
+    if (isListingsSchemaCacheOrMissingColumnError(error) && Object.prototype.hasOwnProperty.call(patch, "image_urls")) {
+      const withoutGallery = { ...patch };
+      delete withoutGallery.image_urls;
+      for (const col of LISTINGS_OPTIONAL_PRODUCT_COLUMNS) delete withoutGallery[col];
+      ({ data, error } = await supabaseAdmin.from("listings").update(withoutGallery).eq("id", id).select("*").single());
+    }
+    if (isListingsSchemaCacheOrMissingColumnError(error)) {
+      throw new AppError(
+        503,
+        "Database schema is missing listing columns (e.g. `image_urls`). Apply migration `supabase/migrations/20260502100000_listings_ensure_image_urls.sql` in Supabase SQL Editor, then run `NOTIFY pgrst, 'reload schema';`.",
+      );
     }
     if (error) throw new AppError(400, error.message);
     res.json({ listing: listingRowToApi(data) });

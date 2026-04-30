@@ -48,7 +48,7 @@ async function readApiPayload(response) {
   }
 }
 
-export async function apiRequest(path, { method = "GET", token, body, headers = {} } = {}) {
+export async function apiRequest(path, { method = "GET", token, body, headers = {}, cache } = {}) {
   const requestHeaders = { ...headers };
   if (token) requestHeaders.Authorization = `Bearer ${token}`;
   const hasBody = body !== undefined;
@@ -59,6 +59,7 @@ export async function apiRequest(path, { method = "GET", token, body, headers = 
     method,
     headers: requestHeaders,
     body: hasBody ? (body instanceof FormData ? body : JSON.stringify(body)) : undefined,
+    ...(cache !== undefined ? { cache } : {}),
   });
   const payload = await readApiPayload(response);
   if (!response.ok) {

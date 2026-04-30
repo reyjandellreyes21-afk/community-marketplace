@@ -100,8 +100,42 @@ const storageFolderForUser = (userId) => {
   return createHash("sha256").update(s).digest("hex").slice(0, 40);
 };
 
+/** Sanitized single path segment; returns "" if nothing usable remains (no default label). */
+const sanitizeNameFolderSegmentStrict = (raw) =>
+  String(raw ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9._-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+
+/** First 8 hex chars of user id (or hash) so same display name → distinct folders. */
+const shortIdFromUserId = (userId) => {
+  const raw = String(userId ?? "").trim().replace(/-/g, "");
+  if (/^[0-9a-f]{32}$/i.test(raw)) return raw.slice(0, 8).toLowerCase();
+  return createHash("sha256").update(String(userId)).digest("hex").slice(0, 8);
+};
+
 /**
- * Upload a community cover image to Supabase Storage (public bucket).
+ * `SanitizedName-abc12345` when displayName resolves; otherwise stable id folder (UUID/hash).
+ * @param {string} displayName
+ * @param {string} userId
+ */
+const folderSegmentForNamedUpload = (displayName, userId) => {
+  const fallbackFolder = storageFolderForUser(userId);
+  const trimmed = String(displayName ?? "").trim();
+  if (!trimmed) return fallbackFolder;
+  const namePart = sanitizeNameFolderSegmentStrict(trimmed);
+  if (!namePart) return fallbackFolder;
+  const combined = `${namePart}-${shortIdFromUserId(userId)}`;
+  return combined.slice(0, 100);
+};
+
+/**
+ * Upload a community cover image to Supabase Storage (public bucket), under `communities/{user}/…`.
  * @param {Buffer} buffer
  * @param {string} mimetype
  * @param {string} userId
@@ -114,7 +148,7 @@ export async function uploadCommunityCoverImage(buffer, mimetype, userId) {
 
   const folder = storageFolderForUser(userId);
   const runUpload = () =>
-    supabaseAdmin.storage.from(bucket).upload(`${folder}/${randomUUID()}.${ext}`, buffer, {
+    supabaseAdmin.storage.from(bucket).upload(`communities/${folder}/${randomUUID()}.${ext}`, buffer, {
       contentType: mimetype,
       upsert: false,
     });
@@ -137,6 +171,112 @@ export async function uploadCommunityCoverImage(buffer, mimetype, userId) {
       throw new AppError(
         500,
         'Supabase Storage rejected the request URL ("requested path is invalid"). Set SUPABASE_URL to https://<project-ref>.supabase.co with no trailing slash and no extra path (see server .env.example). If you are opening a file URL in the browser, it must include /storage/v1/object/public/… per the Supabase Storage docs.',
+      );
+    }
+    if (isLikelyMissingBucketMessage(msg)) {
+      throw new AppError(
+        500,
+        `Storage bucket "${bucket}" is not usable after create/retry (${msg}). Confirm SUPABASE_SERVICE_ROLE_KEY, run the storage migration, or set COMMUNITY_IMAGES_BUCKET to an existing public bucket.`,
+      );
+    }
+    throw new AppError(500, msg || "Image upload failed.");
+  }
+  const { data: pub } = supabaseAdmin.storage.from(bucket).getPublicUrl(data.path);
+  return pub.publicUrl;
+}
+
+/**
+ * Upload a listing gallery image to the same public bucket, under `listings/{name-userid}/{uuid}.ext`.
+ * @param {Buffer} buffer
+ * @param {string} mimetype
+ * @param {string} userId
+ * @param {string} [displayName]
+ * @returns {Promise<string>} public URL
+ */
+export async function uploadListingImage(buffer, mimetype, userId, displayName = "") {
+  const bucket = config.communityImagesBucket;
+  const ext = extForMime(mimetype);
+  if (!ext) throw new AppError(400, "Only JPEG, PNG, WebP, or GIF images are allowed.");
+
+  const folder = folderSegmentForNamedUpload(displayName, userId);
+  const objectPath = `listings/${folder}/${randomUUID()}.${ext}`;
+  const runUpload = () =>
+    supabaseAdmin.storage.from(bucket).upload(objectPath, buffer, {
+      contentType: mimetype,
+      upsert: false,
+    });
+
+  await ensureCommunityImagesBucket();
+  let { data, error } = await runUpload();
+
+  if (error && isLikelyMissingBucketMessage(error.message)) {
+    invalidateBucketCache();
+    await ensureCommunityImagesBucket();
+    ({ data, error } = await runUpload());
+  }
+
+  if (error) {
+    const msg =
+      typeof error === "string"
+        ? error
+        : error.message || (typeof error.error === "string" ? error.error : "") || String(error);
+    if (/requested path is invalid/i.test(msg)) {
+      throw new AppError(
+        500,
+        'Supabase Storage rejected the request URL ("requested path is invalid"). Set SUPABASE_URL to https://<project-ref>.supabase.co with no trailing slash and no extra path (see server .env.example).',
+      );
+    }
+    if (isLikelyMissingBucketMessage(msg)) {
+      throw new AppError(
+        500,
+        `Storage bucket "${bucket}" is not usable after create/retry (${msg}). Confirm SUPABASE_SERVICE_ROLE_KEY, run the storage migration, or set COMMUNITY_IMAGES_BUCKET to an existing public bucket.`,
+      );
+    }
+    throw new AppError(500, msg || "Image upload failed.");
+  }
+  const { data: pub } = supabaseAdmin.storage.from(bucket).getPublicUrl(data.path);
+  return pub.publicUrl;
+}
+
+/**
+ * Upload a profile avatar to the same public bucket, under `avatar/{full-name-shortid}/{uuid}.ext`.
+ * @param {Buffer} buffer
+ * @param {string} mimetype
+ * @param {string} userId
+ * @param {string} [displayName] Display/full name for folder (sanitized); falls back to a stable id segment if empty.
+ * @returns {Promise<string>} public URL
+ */
+export async function uploadAvatarImage(buffer, mimetype, userId, displayName = "") {
+  const bucket = config.communityImagesBucket;
+  const ext = extForMime(mimetype);
+  if (!ext) throw new AppError(400, "Only JPEG, PNG, WebP, or GIF images are allowed.");
+
+  const folder = folderSegmentForNamedUpload(displayName, userId);
+  const objectPath = `avatar/${folder}/${randomUUID()}.${ext}`;
+  const runUpload = () =>
+    supabaseAdmin.storage.from(bucket).upload(objectPath, buffer, {
+      contentType: mimetype,
+      upsert: false,
+    });
+
+  await ensureCommunityImagesBucket();
+  let { data, error } = await runUpload();
+
+  if (error && isLikelyMissingBucketMessage(error.message)) {
+    invalidateBucketCache();
+    await ensureCommunityImagesBucket();
+    ({ data, error } = await runUpload());
+  }
+
+  if (error) {
+    const msg =
+      typeof error === "string"
+        ? error
+        : error.message || (typeof error.error === "string" ? error.error : "") || String(error);
+    if (/requested path is invalid/i.test(msg)) {
+      throw new AppError(
+        500,
+        'Supabase Storage rejected the request URL ("requested path is invalid"). Set SUPABASE_URL to https://<project-ref>.supabase.co with no trailing slash and no extra path (see server .env.example).',
       );
     }
     if (isLikelyMissingBucketMessage(msg)) {

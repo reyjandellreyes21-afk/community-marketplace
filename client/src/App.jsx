@@ -24,7 +24,12 @@ import {
 import { ImagetoolsPicture } from "./components/media/ImagetoolsPicture.jsx";
 import { StableMediaImage, StableAvatar } from "./components/media/StableMediaImage.jsx";
 import { ProductListingMedia } from "./components/media/ProductListingMedia.jsx";
-import { enrichListingSnapshotForOrderCard, resolveListingCoverImageUrl } from "./lib/listingImageUrl.js";
+import {
+  enrichListingSnapshotForOrderCard,
+  LISTING_MAX_IMAGES,
+  resolveListingCoverImageUrl,
+  resolveListingGalleryUrls,
+} from "./lib/listingImageUrl.js";
 import { formatCents } from "./marketplace/money.js";
 import { SELLER_TABS, VIEWS } from "./views.js";
 import {
@@ -79,7 +84,12 @@ import {
   orderMatchesOrdersStatusTab,
 } from "./lib/orderAttentionStorage.js";
 import { computeMarketplaceFeedbackForText } from "./lib/marketplaceFeedbackToast.js";
-import { fileToDataUrl } from "./lib/fileToDataUrl.js";
+import {
+  ensureImageFileUnderMaxBytes,
+  MAX_AVATAR_IMAGE_BYTES,
+  MAX_LISTING_COMMUNITY_IMAGE_BYTES,
+} from "./lib/compressImageFile.js";
+import { resolveListingImagesForSave } from "./lib/resolveListingImagesForSave.js";
 import { LANDING_DISCOVERY_SLIDES, BROWSE_QUICK_FILTERS } from "./lib/landingDiscoveryData.js";
 import { quickFilterIcon, categoryIcon } from "./components/browse/BrowseFilterIcons.jsx";
 import { SectionHeading } from "./components/marketplace/SectionHeading.jsx";
@@ -246,9 +256,8 @@ const LISTING_OPTION_VALUE_SUGGESTIONS = {
 const LISTING_PROCESSING_TIME_PRESETS = ["1 day", "2-3 days", "5-7 days", "2 weeks"];
 /** Shortcut presets for in-stock “Ready in” (estimated ready time). */
 const LISTING_READY_IN_PRESETS = ["Same day", "2 hours", "Tomorrow", "1–2 days"];
-/** Upload form: one-tap quantity quick picks (1 / 5 / 10). */
-const LISTING_QUANTITY_PRESETS = [1, 5, 10];
-const LISTING_MAX_IMAGES = 6;
+/** Upload form: one-tap quantity quick picks — low counts + common stock levels. */
+const LISTING_QUANTITY_PRESETS = [1, 2, 5, 10, 25, 50, 100];
 
 function normalizeListingImageUrlKey(url) {
   const s = String(url || "").trim();
@@ -1548,8 +1557,8 @@ function App() {
   );
 
   const loadCommunityShopListings = useCallback(
-    async ({ preserveExistingRows = false, cancelledRef } = {}) => {
-      if (!token || activeView !== VIEWS.COMMUNITY_SHOP) return;
+    async ({ preserveExistingRows = false, cancelledRef, force = false } = {}) => {
+      if (!token || (!force && activeView !== VIEWS.COMMUNITY_SHOP)) return;
       const inCommunity = !!shopCommunityId;
       const hasVertical = browseVerticalId != null;
       setListingsError("");
@@ -2005,6 +2014,7 @@ function App() {
   });
   const profileAvatarCropViewportRef = useRef(null);
   const [profileAvatarCropApplyError, setProfileAvatarCropApplyError] = useState("");
+  const [profileAvatarCropUploading, setProfileAvatarCropUploading] = useState(false);
   const todayIsoDate = useMemo(() => {
     const now = new Date();
     const y = now.getFullYear();
@@ -3045,6 +3055,12 @@ function App() {
   const effectiveCommerceFlowViewSeller =
     isMobileViewport && commerceFlowViewSeller === "compact" ? "grid" : commerceFlowViewSeller;
 
+  /** Use a single active scroll surface while overlays are open (product detail on mobile, or edit overlay on any viewport). */
+  const lockMainScrollForOverlay =
+    (isMobileViewport && activeView === VIEWS.PRODUCT_DETAIL && Boolean(productInspect)) ||
+    listingEditOverlayOpen ||
+    quickAddModalOpen;
+
   const activeChatThread = useMemo(
     () => sortedChatThreads.find((thread) => String(thread.participantId) === String(activeChatUserId)) || null,
     [sortedChatThreads, activeChatUserId],
@@ -3902,6 +3918,7 @@ function App() {
 
   useEffect(() => {
     if (!user || shopCommunityId || !joinedShopCommunityId) return undefined;
+    if (skipAutoCommunityBrowseRef.current) return undefined;
     setShopCommunityId(String(joinedShopCommunityId));
     if (activeView === VIEWS.BROWSE) setActiveView(VIEWS.COMMUNITY_SHOP);
     return undefined;
@@ -3917,6 +3934,14 @@ function App() {
     setActiveView(VIEWS.COMMUNITY_SHOP);
     return undefined;
   }, [user, activeView, shopCommunityId, listingCommunityFromProfile.id]);
+
+  /** If user opened the global directory (`leaveCommunityToGlobalMarketplace`) but there is no profile listing community, the skip ref is only cleared by the effect above when `listingCommunityFromProfile.id` is set — reset here so it does not stick forever. */
+  useEffect(() => {
+    if (!skipAutoCommunityBrowseRef.current) return undefined;
+    if (activeView !== VIEWS.BROWSE || shopCommunityId) return undefined;
+    if (!listingCommunityFromProfile.id) skipAutoCommunityBrowseRef.current = false;
+    return undefined;
+  }, [activeView, shopCommunityId, listingCommunityFromProfile.id]);
 
   useEffect(() => {
     if (!shopCommunityId) {
@@ -4951,6 +4976,9 @@ function App() {
       view: sourceView,
       shopCommunityId: sourceCommunityId,
     };
+    if (activeView === VIEWS.PRODUCT_DETAIL && productInspect) {
+      closeProductInspect();
+    }
     setQuickAddListing(listing);
     setQuickActionType(mode);
     setQuickOrderFulfillmentType(initialFulfillment);
@@ -5098,11 +5126,12 @@ function App() {
         listingLike.cityLabel ??
         ""
     ).trim();
+    const openGallery = resolveListingGalleryUrls(listingLike);
     setProductInspect({
       listingId: String(listingLike.id || ""),
       title: String(listingLike.title || "Product"),
-      imageUrl: listingLike.imageUrl,
-      imageUrls: Array.isArray(listingLike.imageUrls) ? listingLike.imageUrls : [],
+      imageUrl: openGallery[0] ?? listingLike.imageUrl ?? listingLike.image_url,
+      imageUrls: [...openGallery],
       priceCents,
       categoryLabel: getListingCategoryShortLabel(listingLike.verticalId, listingLike.subId),
       description: String(listingLike.description || ""),
@@ -5163,7 +5192,88 @@ function App() {
           : undefined,
     });
     setActiveView(VIEWS.PRODUCT_DETAIL);
-  }, [activeView, closeProductInspect, user?.id, usersById, favoriteIds, toggleFavorite, shopCommunityId]);
+
+    const listingIdForFetch = String(listingLike.id || "").trim();
+    if (listingIdForFetch) {
+      void (async () => {
+        try {
+          const data = await apiRequest(`/listings/${encodeURIComponent(listingIdForFetch)}`, {
+            token: token || undefined,
+            cache: "no-store",
+          });
+          const fresh = data?.listing;
+          if (!fresh) return;
+          const publicUrls = Array.isArray(fresh.imageUrls) ? fresh.imageUrls : [];
+          const sellerMatch =
+            Boolean(token) &&
+            String(user?.id || "").length > 0 &&
+            String(fresh.sellerId ?? listingLike?.sellerId ?? "") === String(user?.id || "");
+          let effective = fresh;
+          if (sellerMatch) {
+            try {
+              const mineData = await apiRequest("/me/listings", { token, cache: "no-store" });
+              const row = (mineData.listings || []).find((l) => String(l.id) === listingIdForFetch);
+              const mineUrls = Array.isArray(row?.imageUrls) ? row.imageUrls : [];
+              if (row && mineUrls.length > publicUrls.length) {
+                effective = {
+                  ...fresh,
+                  imageUrl: row.imageUrl != null ? row.imageUrl : fresh.imageUrl,
+                  imageUrls: mineUrls,
+                };
+              }
+            } catch {
+              /* ignore seller gallery fallback */
+            }
+          }
+          setProductInspect((prev) => {
+            if (!prev || String(prev.listingId) !== listingIdForFetch) return prev;
+            const qtyFresh =
+              fresh.quantity != null && Number.isFinite(Number(fresh.quantity)) ? Math.max(0, Number(fresh.quantity)) : null;
+            const apiRow = effective !== fresh ? effective : fresh;
+            const apiGallery = resolveListingGalleryUrls(apiRow);
+            const urlsPrev = Array.isArray(prev.imageUrls) ? prev.imageUrls : [];
+            const coverHint =
+              String(
+                (effective !== fresh ? effective.imageUrl : fresh.imageUrl) ?? prev.imageUrl ?? "",
+              ).trim() || String(prev.imageUrl || "").trim();
+            const unifiedGallery = resolveListingGalleryUrls({
+              imageUrl: coverHint,
+              imageUrls: [...apiGallery, ...urlsPrev],
+            });
+            const nextImageUrl = unifiedGallery[0] ?? prev.imageUrl;
+            const nextImageUrls = [...unifiedGallery];
+            return {
+              ...prev,
+              title: String(fresh.title || prev.title),
+              imageUrl: nextImageUrl,
+              imageUrls: nextImageUrls,
+              priceCents: Number(fresh.priceCents ?? prev.priceCents) || 0,
+              description: String(fresh.description ?? prev.description),
+              categoryLabel: getListingCategoryShortLabel(fresh.verticalId, fresh.subId),
+              fulfillmentModes: fresh.fulfillmentModes ?? prev.fulfillmentModes,
+              orderType: fresh.orderType ?? prev.orderType,
+              processingTime: fresh.processingTime ?? prev.processingTime,
+              optionNameA: fresh.optionNameA ?? prev.optionNameA,
+              optionValuesA: fresh.optionValuesA ?? prev.optionValuesA,
+              optionNameB: fresh.optionNameB ?? prev.optionNameB,
+              optionValuesB: fresh.optionValuesB ?? prev.optionValuesB,
+              listingStockQty: qtyFresh != null ? qtyFresh : prev.listingStockQty,
+              quantity:
+                String(prev.quantityLabel || "")
+                  .trim()
+                  .toLowerCase() === "stock listed" && qtyFresh != null
+                  ? qtyFresh
+                  : prev.quantity,
+            };
+          });
+        } catch (err) {
+          if (import.meta.env.DEV) {
+            console.warn("[openProductInspect] listing detail refresh failed:", err?.message || err);
+          }
+        }
+      })();
+    }
+  }, [activeView, closeProductInspect, user?.id, usersById, favoriteIds, toggleFavorite, shopCommunityId, token]);
 
   useEffect(() => {
     if (!productInspect) return;
@@ -5421,6 +5531,9 @@ function App() {
     );
     clearMarketplaceToasts();
     if (launchedFromProductFlow) {
+      if (activeView === VIEWS.PRODUCT_DETAIL && productInspect) {
+        closeProductInspect();
+      }
       setListingEditOverlayOpen(true);
     } else {
       setListingEditOverlayOpen(false);
@@ -5530,24 +5643,16 @@ function App() {
     setListingSaving(true);
     clearMarketplaceToasts();
     try {
-      let imageUrl = "";
-      if (listingImageFile) {
-        imageUrl = await fileToDataUrl(listingImageFile);
-      } else if (listingImagePreviewUrl) {
-        imageUrl = String(listingImagePreviewUrl).trim();
-      }
-      const extraImageUrls = (
-        await Promise.all(
-          listingExtraImages.map(async (item) => {
-            if (item?.file) return fileToDataUrl(item.file);
-            const rawUrl = String(item?.previewUrl || "").trim();
-            if (!rawUrl || rawUrl.startsWith("blob:")) return "";
-            return rawUrl;
-          }),
-        )
-      ).filter(Boolean);
-      const imageUrls = dedupeListingImageUrlsOrdered([imageUrl, ...extraImageUrls].filter(Boolean)).slice(0, LISTING_MAX_IMAGES);
-      const primaryImageUrl = imageUrls[0] || String(imageUrl || "").trim();
+      const imageUrls = await resolveListingImagesForSave(
+        token,
+        {
+          coverFile: listingImageFile,
+          coverPreviewUrl: listingImagePreviewUrl,
+          extraItems: listingExtraImages,
+        },
+        (urls) => dedupeListingImageUrlsOrdered(urls).slice(0, LISTING_MAX_IMAGES),
+      );
+      const primaryImageUrl = imageUrls[0] || "";
       const optionNameA = String(listingForm.optionNameA || "").trim();
       const optionNameB = listingSecondOptionOpen ? String(listingForm.optionNameB || "").trim() : "";
       const optionValuesA = splitOptionValuesCsv(listingForm.optionValuesA).slice(0, 30);
@@ -5649,6 +5754,14 @@ function App() {
             const anchor = document.getElementById(`listing-card-${originListingId}`);
             if (anchor) anchor.scrollIntoView({ block: "center", behavior: "smooth" });
           });
+        }
+        if (token) {
+          if (originView === VIEWS.COMMUNITY_SHOP) {
+            void loadCommunityShopListings({ preserveExistingRows: false, force: true });
+          }
+          if (originView === VIEWS.FAVORITES) {
+            void refreshFavorites();
+          }
         }
       } else {
         goOwnProfile();
@@ -5930,13 +6043,24 @@ function App() {
         pushMarketplaceToast(`You can upload up to ${LISTING_MAX_IMAGES} images.`);
         return;
       }
-      const valid = (f) => String(f?.type || "").startsWith("image/") && f.size <= 5 * 1024 * 1024;
-      const candidates = incoming.slice(0, remaining).filter(valid);
-      if (!candidates.length) {
-        pushMarketplaceToast("Please choose valid image files up to 5MB each.");
-        return;
-      }
       void (async () => {
+        const processed = [];
+        for (const f of incoming.slice(0, remaining)) {
+          if (!String(f?.type || "").startsWith("image/")) continue;
+          try {
+            processed.push(
+              await ensureImageFileUnderMaxBytes(f, MAX_LISTING_COMMUNITY_IMAGE_BYTES, { maxLongEdge: 2560 }),
+            );
+          } catch {
+            pushMarketplaceToast("Could not process an image. Try a different file.");
+            return;
+          }
+        }
+        const candidates = processed;
+        if (!candidates.length) {
+          pushMarketplaceToast("Please choose valid image files (JPEG, PNG, WebP, or GIF).");
+          return;
+        }
         const usedHashes = new Set();
         if (String(listingCoverContentHash || "").trim()) usedHashes.add(listingCoverContentHash);
         else if (listingImageFile) {
@@ -6128,6 +6252,7 @@ function App() {
 
   const closeProfileAvatarCropEditor = useCallback(() => {
     setProfileAvatarCropApplyError("");
+    setProfileAvatarCropUploading(false);
     setProfileAvatarCropEditor((prev) => {
       if (prev.sourcePreviewOwned && String(prev.sourcePreviewUrl || "").startsWith("blob:")) {
         URL.revokeObjectURL(prev.sourcePreviewUrl);
@@ -6183,26 +6308,33 @@ function App() {
     });
   }, []);
 
-  const handleProfileAvatarChange = (event) => {
+  const handleProfileAvatarChange = async (event) => {
     const file = event.target.files?.[0];
+    event.target.value = "";
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       setProfileError("Please choose an image file.");
       return;
     }
-    const MAX_AVATAR_FILE_BYTES = 3 * 1024 * 1024;
-    if (file.size > MAX_AVATAR_FILE_BYTES) {
-      setProfileError("Image is too large. Please choose one smaller than 3MB.");
-      return;
+    try {
+      const ready = await ensureImageFileUnderMaxBytes(file, MAX_AVATAR_IMAGE_BYTES, { maxLongEdge: 2048 });
+      const previewUrl = URL.createObjectURL(ready);
+      void openProfileAvatarCropEditor(ready, previewUrl, { sourcePreviewOwned: true });
+      setProfileError("");
+    } catch {
+      setProfileError("Could not process that image. Try a different file.");
     }
-    const previewUrl = URL.createObjectURL(file);
-    void openProfileAvatarCropEditor(file, previewUrl, { sourcePreviewOwned: true });
-    setProfileError("");
-    event.target.value = "";
   };
 
   const applyProfileAvatarCropEditor = useCallback(async () => {
     if (!profileAvatarCropEditor.open || !profileAvatarCropEditor.sourceFile) return;
+    const effectiveToken = token || readAuthToken() || "";
+    if (!effectiveToken) {
+      setProfileAvatarCropApplyError("Your session expired. Please log in again.");
+      return;
+    }
+    setProfileAvatarCropApplyError("");
+    setProfileAvatarCropUploading(true);
     try {
       const cropped = await cropImageFileToSquareByRect(
         profileAvatarCropEditor.sourceFile,
@@ -6210,14 +6342,25 @@ function App() {
         profileAvatarCropEditor.cropTop,
         profileAvatarCropEditor.cropSize,
       );
-      const dataUrl = await fileToDataUrl(cropped);
-      setProfileDraft((prev) => ({ ...prev, avatarUrl: String(dataUrl || "") }));
+      const fd = new FormData();
+      fd.append("avatar", cropped, cropped.name || "avatar.jpg");
+      const data = await apiRequest("/auth/me/avatar", { method: "POST", token: effectiveToken, body: fd });
+      const nextUrl = String(data?.user?.avatarUrl || "").trim();
+      if (nextUrl) {
+        setProfileDraft((prev) => ({ ...prev, avatarUrl: nextUrl }));
+        setUser((prev) => ({ ...(prev || {}), ...(data.user || {}), avatarUrl: nextUrl }));
+      }
       closeProfileAvatarCropEditor();
       setProfileError("");
-    } catch {
-      setProfileAvatarCropApplyError("Could not apply crop. Please try another image.");
+    } catch (e) {
+      const msg = e && typeof e.message === "string" ? e.message.trim() : "";
+      setProfileAvatarCropApplyError(
+        msg && msg.length < 220 ? msg : "Could not save avatar. Please try again.",
+      );
+    } finally {
+      setProfileAvatarCropUploading(false);
     }
-  }, [closeProfileAvatarCropEditor, profileAvatarCropEditor]);
+  }, [closeProfileAvatarCropEditor, profileAvatarCropEditor, token, setUser]);
 
   const handleProfileSubmit = async (event) => {
     event.preventDefault();
@@ -7028,7 +7171,7 @@ function App() {
         getDisplayNameFromUser={getDisplayNameFromUser}
         onNavigateHome={() => navigate("/")}
         onMobileBrowseNavCollapsedChange={setMobileTopChromeCollapsed}
-        hideNavigationChrome={activeView === VIEWS.PRODUCT_DETAIL}
+        hideNavigationChrome={activeView === VIEWS.PRODUCT_DETAIL || listingEditOverlayOpen || quickAddModalOpen}
       >
       {isMobileViewport && mobilePullRefreshing ? (
         <div
@@ -7042,6 +7185,10 @@ function App() {
       <main
         id="main-content"
         className={`${UI_KIT.mobileMainScroll} app-container scroll-pt-2 scroll-pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] space-y-5 bg-white pt-4 pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] dark:bg-slate-950 md:scroll-pb-0 md:scroll-pt-0 md:space-y-6 md:bg-transparent md:py-8 md:pb-12 md:dark:bg-transparent ${
+          lockMainScrollForOverlay
+            ? "!overflow-y-hidden !space-y-0 !pt-0 !pb-0 !scroll-pt-0 !scroll-pb-0 flex flex-col min-h-0"
+            : ""
+        } ${
           isMobileViewport && !mobileSecondaryDragging ? mobileSecondarySlideClass : ""
         }`}
         style={
@@ -7056,9 +7203,17 @@ function App() {
             : undefined
         }
       >
-        {activeView === VIEWS.PRODUCT_DETAIL && productInspect ? (
-          <section className="w-full min-w-0">
-            <Suspense fallback={<ScreenLoading message="Loading product…" minHeight={false} className="min-h-[10rem]" />}>
+        {activeView === VIEWS.PRODUCT_DETAIL && productInspect && !listingEditOverlayOpen && !quickAddModalOpen ? (
+          <section
+            className={`w-full min-w-0 ${lockMainScrollForOverlay ? "flex min-h-0 flex-1 flex-col" : ""}`}
+          >
+            <Suspense
+              fallback={
+                <div className={lockMainScrollForOverlay ? "flex min-h-0 flex-1 flex-col" : ""}>
+                  <ScreenLoading message="Loading product…" minHeight={false} className="min-h-[10rem]" />
+                </div>
+              }
+            >
               <LazyProductInspectModal open fullScreen onClose={closeProductInspect} {...productInspect} />
             </Suspense>
           </section>
@@ -7848,27 +8003,24 @@ function App() {
                           openProductInspect(l, {
                             quantity: stockListed,
                             quantityLabel: "Stock listed",
-                            subtitle: activeView === VIEWS.FAVORITES ? "Saved listing" : "Marketplace listing",
+                            subtitle: activeView === VIEWS.FAVORITES ? "Saved listing" : "",
                             listingStockQty: stockListed,
                             showBuyerCommerceActions: !isOwn,
                             showSellerCommerceActions: isOwn,
                             onAddToCart: isOwn
                               ? undefined
                               : () => {
-                                  closeProductInspect();
                                   openQuickAddModal(l, "cart");
                                 },
                             onBuyNow: isOwn
                               ? undefined
                               : () => {
-                                  closeProductInspect();
                                   openQuickAddModal(l, "buy");
                                 },
                             buyNowDisabled: !isOwn && buyNowBlocked,
                             buyNowDisabledReason: !isOwn ? buyNowBlockedReason : "",
                             onEditListing: isOwn
                               ? () => {
-                                  closeProductInspect();
                                   beginEditSellerListing(l);
                                 }
                               : undefined,
@@ -8447,20 +8599,17 @@ function App() {
                           onAddToCart: isOwn
                             ? undefined
                             : () => {
-                                closeProductInspect();
                                 openQuickAddModal(l, "cart");
                               },
                           onBuyNow: isOwn
                             ? undefined
                             : () => {
-                                closeProductInspect();
                                 openQuickAddModal(l, "buy");
                               },
                           buyNowDisabled: !isOwn && buyNowBlocked,
                           buyNowDisabledReason: !isOwn ? buyNowBlockedReason : "",
                           onEditListing: isOwn
                             ? () => {
-                                closeProductInspect();
                                 beginEditSellerListing(l);
                               }
                             : undefined,
@@ -8485,19 +8634,16 @@ function App() {
           <section
             className={
               listingEditOverlayOpen
-                ? "fixed inset-0 z-[130] overflow-y-auto bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-slate-950 md:flex md:items-start md:justify-center md:bg-black/55 md:p-6"
+                ? "fixed inset-0 z-[130] h-[100dvh] overflow-y-auto bg-white px-4 pt-0 pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-slate-950 md:px-4 md:pb-[max(1rem,env(safe-area-inset-bottom))]"
                 : "w-full min-w-0 max-w-none space-y-6 md:space-y-8"
             }
           >
             {listingEditOverlayOpen ? (
-              <div className="sticky top-0 z-[1] -mx-4 mb-3 flex items-center justify-between border-b border-neutral-200 bg-white px-4 py-2.5 dark:border-slate-700 dark:bg-slate-950 md:mx-0 md:mb-4 md:w-full md:max-w-5xl md:rounded-t-2xl md:border md:px-5">
-                <h2 className="text-sm font-semibold text-neutral-900 dark:text-slate-100">
-                  {editingListingId ? "Edit listing" : "Create listing"}
-                </h2>
+              <div className="sticky top-0 z-[40] -mx-4 mb-0 flex items-center gap-2.5 border-b border-neutral-200 bg-white px-4 py-2.5 shadow-sm dark:border-slate-700 dark:bg-slate-950">
                 <button
                   type="button"
-                  className="btn-icon-only inline-flex items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-                  aria-label="Close listing editor"
+                  className="inline-flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-50 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
+                  aria-label="Back"
                   onClick={() => {
                     if (listingSaving) return;
                     setListingEditOverlayOpen(false);
@@ -8508,11 +8654,27 @@ function App() {
                     }
                   }}
                 >
-                  <span aria-hidden className="text-lg leading-none">×</span>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.25"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-7 w-7"
+                    aria-hidden
+                  >
+                    <path d="M19 12H5" />
+                    <path d="M11 6l-6 6 6 6" />
+                  </svg>
                 </button>
+                <h2 className="text-sm font-semibold text-neutral-900 dark:text-slate-100">
+                  Edit
+                </h2>
               </div>
             ) : null}
-            <div className={listingEditOverlayOpen ? "mx-auto w-full max-w-5xl rounded-2xl bg-white md:border md:border-neutral-200 md:p-5 md:shadow-2xl dark:bg-slate-950 dark:md:border-slate-700" : ""}>
+            <div className={listingEditOverlayOpen ? "w-full bg-white dark:bg-slate-950" : ""}>
             {listingPublishError ? (
               <ScreenError
                 title="Couldn’t save your listing"
@@ -8538,7 +8700,6 @@ function App() {
               className="grid w-full min-w-0 max-w-none gap-5 md:grid-cols-2 md:gap-4"
             >
               <div id="listing-section-photos" className="md:col-span-2">
-                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Upload</h2>
                 <div className="mb-2">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Photos *</p>
                 </div>
@@ -9875,11 +10036,9 @@ function App() {
                                         listingStockQty: stockAvail,
                                         showBuyerCommerceActions: true,
                                         onAddToCart: () => {
-                                          closeProductInspect();
                                           openQuickAddModal(listingForQuick, "cart");
                                         },
                                         onBuyNow: () => {
-                                          closeProductInspect();
                                           openQuickAddModal(listingForQuick, "buy");
                                         },
                                       });
@@ -10769,21 +10928,18 @@ function App() {
                                         onAddToCart:
                                           buyerCanShop && listingIdStr
                                             ? () => {
-                                                closeProductInspect();
                                                 openQuickAddModal(forQuick, "cart");
                                               }
                                             : undefined,
                                         onBuyNow:
                                           buyerCanShop && listingIdStr
                                             ? () => {
-                                                closeProductInspect();
                                                 openQuickAddModal(forQuick, "buy");
                                               }
                                             : undefined,
                                         onEditListing:
                                           isOrderSeller && listingIdStr
                                             ? () => {
-                                                closeProductInspect();
                                                 beginEditSellerListing(forQuick);
                                               }
                                             : undefined,
@@ -11021,7 +11177,7 @@ function App() {
                     <span className="font-semibold text-neutral-800 dark:text-slate-100">*</span> Required fields. Optional fields are labeled.
                   </div>
                   <div className={`grid grid-cols-1 items-end gap-4 p-5 md:grid-cols-[minmax(12rem,1fr)_minmax(14rem,1fr)] ${UI_KIT.surfaceRaised}`}>
-                    <div className="relative mx-auto h-16 w-16 shrink-0 md:col-span-2 md:self-center">
+                    <div className="relative isolate mx-auto h-32 w-32 shrink-0 md:col-span-2 md:self-center">
                       <StableAvatar
                         square
                         src={profileDraft.avatarUrl}
@@ -11031,9 +11187,9 @@ function App() {
                           String(user?.username || "").trim().charAt(0) ||
                           "?"
                         ).toUpperCase()}
-                        className="h-16 w-16 text-xl ring-1 ring-brand-border"
-                        textClassName="text-xl"
-                        sizes="64px"
+                        className="relative z-0 h-32 w-32 text-3xl ring-2 ring-brand-border"
+                        textClassName="text-3xl"
+                        sizes="128px"
                       />
                       <input
                         ref={profileAvatarInputRef}
@@ -11044,12 +11200,23 @@ function App() {
                       />
                       <button
                         type="button"
-                        aria-label="Change photo"
-                        className="absolute -bottom-1 -right-1 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white bg-neutral-900 text-white shadow-md transition hover:bg-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary dark:border-slate-900 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                        aria-label="Edit avatar"
+                        className="absolute bottom-2 right-2 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full border-2 border-white/95 bg-neutral-900/95 text-white shadow-lg backdrop-blur-[2px] ring-1 ring-black/10 transition hover:bg-neutral-800 hover:ring-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary dark:border-slate-950/90 dark:bg-slate-100/95 dark:text-slate-900 dark:hover:bg-white dark:ring-white/20"
                         onClick={() => profileAvatarInputRef.current?.click()}
                       >
-                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m-7-7h14" />
+                        <svg
+                          className="h-5 w-5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.75"
+                          aria-hidden
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
+                          />
                         </svg>
                       </button>
                     </div>
@@ -11859,6 +12026,12 @@ function App() {
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Crop profile image</p>
                           <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">Move and resize the square crop before saving your avatar.</p>
+                          {![profileDraft.firstName, profileDraft.middleName, profileDraft.lastName].some((x) => String(x || "").trim()) &&
+                          !String(profileDraft.username || "").trim() ? (
+                            <p className="mt-2 text-xs text-amber-800 dark:text-amber-200/90">
+                              Tip: add your name or username in the profile form so files are stored under a searchable folder in your bucket.
+                            </p>
+                          ) : null}
                         </div>
                         <button
                           type="button"
@@ -11996,11 +12169,21 @@ function App() {
                       </div>
                       <div className="mt-4 flex flex-col items-stretch gap-2">
                         <div className="flex items-center justify-end gap-2">
-                          <button type="button" className="btn-secondary" onClick={() => closeProfileAvatarCropEditor()}>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={profileAvatarCropUploading}
+                            onClick={() => closeProfileAvatarCropEditor()}
+                          >
                             Cancel
                           </button>
-                          <button type="button" className="btn-primary" onClick={() => void applyProfileAvatarCropEditor()}>
-                            Apply crop
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            disabled={profileAvatarCropUploading}
+                            onClick={() => void applyProfileAvatarCropEditor()}
+                          >
+                            {profileAvatarCropUploading ? "Saving…" : "Apply crop"}
                           </button>
                         </div>
                         {profileAvatarCropApplyError ? (
@@ -12292,7 +12475,6 @@ function App() {
                                   listingStockQty: stockListed,
                                   showSellerCommerceActions: true,
                                   onEditListing: () => {
-                                    closeProductInspect();
                                     beginEditSellerListing(l);
                                   },
                                   onSaleSelect: (pct) => {
@@ -12457,47 +12639,62 @@ function App() {
             )}
             <button
               type="button"
-              className="absolute right-2 top-2 inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full border border-white/35 bg-black/45 text-lg leading-none text-white transition hover:bg-black/60 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
-              aria-label="Close image preview"
+              className="absolute left-4 top-5 z-10 inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center text-white transition hover:text-white/85 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
+              aria-label="Back"
               onClick={() => setQuickAddImagePreviewOpen(false)}
             >
-              <span aria-hidden>×</span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.25"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-7 w-7 drop-shadow-[0_2px_6px_rgba(0,0,0,0.55)]"
+                aria-hidden
+              >
+                <path d="M19 12H5" />
+                <path d="M11 6l-6 6 6 6" />
+              </svg>
             </button>
           </div>
         </div>
       ) : null}
 
       {quickAddModalOpen && quickAddListing ? (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 md:p-6" role="dialog" aria-modal="true" aria-labelledby="quick-add-modal-title">
-          <button
-            type="button"
-            className="absolute inset-0 bg-neutral-900/45 backdrop-blur-[2px] dark:bg-black/55"
-            aria-label="Close add to cart dialog"
-            onClick={closeQuickAddModal}
-          />
+        <div className="fixed inset-0 z-[90] h-[100dvh] overflow-y-auto bg-white dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="quick-add-modal-title">
           <div
-            className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900"
+            className="relative z-10 min-h-full w-full bg-white px-4 pt-0 pb-5 dark:bg-slate-900 md:px-4 md:pb-[max(1rem,env(safe-area-inset-bottom))]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h2 id="quick-add-modal-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
-                  {quickActionType === "buy" ? "Complete your order" : "Add to cart"}
-                </h2>
-                <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">
-                  {quickActionType === "buy"
-                    ? "Pay COD when you receive your order."
-                    : "You can check out from your cart anytime."}
-                </p>
-              </div>
+            <div className="sticky top-0 z-[40] -mx-4 mb-0 flex items-center gap-2.5 border-b border-neutral-200 bg-white px-4 py-2.5 shadow-sm dark:border-slate-700 dark:bg-slate-950">
               <button
                 type="button"
-                className="btn-icon-only inline-flex shrink-0 items-center justify-center rounded-xl border border-neutral-200/90 text-lg leading-none text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100 md:!h-9 md:!min-h-9 md:!w-9 md:!max-w-9"
-                aria-label="Close add to cart dialog"
+                className="inline-flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-50 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
+                aria-label="Back"
                 onClick={closeQuickAddModal}
               >
-                <span aria-hidden>×</span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.25"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-7 w-7"
+                  aria-hidden
+                >
+                  <path d="M19 12H5" />
+                  <path d="M11 6l-6 6 6 6" />
+                </svg>
               </button>
+              <div className="min-w-0 flex-1">
+                <h2 id="quick-add-modal-title" className="text-sm font-semibold text-neutral-900 dark:text-slate-100">
+                  {quickActionType === "buy" ? "Buy now" : "Add to cart"}
+                </h2>
+              </div>
             </div>
             <div className="space-y-3">
               <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/60">
@@ -12782,10 +12979,30 @@ function App() {
                   className="block w-full max-w-lg cursor-pointer text-sm text-neutral-700 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-brand-soft file:px-3 file:py-2 file:text-sm file:font-medium file:text-brand-primary dark:text-slate-300 dark:file:bg-slate-800 dark:file:text-slate-200"
                   type="file"
                   accept="image/jpeg,image/png,image/webp,image/gif"
-                  onChange={(e) => setCommunityImageFile(e.target.files?.[0] ?? null)}
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    e.target.value = "";
+                    if (!f) {
+                      setCommunityImageFile(null);
+                      return;
+                    }
+                    if (!String(f.type || "").startsWith("image/")) {
+                      pushMarketplaceToast("Please choose a JPEG, PNG, WebP, or GIF image.");
+                      return;
+                    }
+                    try {
+                      const ready = await ensureImageFileUnderMaxBytes(f, MAX_LISTING_COMMUNITY_IMAGE_BYTES, {
+                        maxLongEdge: 2560,
+                      });
+                      setCommunityImageFile(ready);
+                    } catch {
+                      pushMarketplaceToast("Could not process that image. Try a different file.");
+                    }
+                  }}
                 />
                 <p className="mt-1 text-[11px] text-neutral-500 dark:text-slate-500">
-                  JPEG, PNG, WebP, or GIF — up to 5 MB. Optional; communities without a photo use a color placeholder.
+                  JPEG, PNG, WebP, or GIF — large files are compressed to fit 5 MB. Optional; communities without a photo
+                  use a color placeholder.
                 </p>
                 {communityImageFile ? (
                   <p className="mt-1 text-xs text-neutral-600 dark:text-slate-400">Selected: {communityImageFile.name}</p>

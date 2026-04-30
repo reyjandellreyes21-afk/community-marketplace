@@ -16,7 +16,10 @@ export const errorHandler = (err, _req, res, _next) => {
     statusCode = 400;
     code = "UPLOAD_ERROR";
     if (err.code === "LIMIT_FILE_SIZE") message = "Image must be 5 MB or smaller.";
-    else if (err.code === "LIMIT_UNEXPECTED_FILE") message = "Unexpected file field. Use the image field for uploads.";
+    else     if (err.code === "LIMIT_UNEXPECTED_FILE") {
+      message =
+        "Unexpected file field. Use avatar for profile photos, image for community cover, or images (max 6) for listing photos.";
+    }
     else message = err.message || "Upload failed.";
   }
 
