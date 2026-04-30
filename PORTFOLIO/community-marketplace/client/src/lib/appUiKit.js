@@ -1,9 +1,9 @@
 export const UI_KIT = {
   /** Fluid mobile column — use `mobile-app-shell` (full width + safe horizontal inset); outer background is on the App root. */
   mobileAppShell: "mobile-app-shell",
-  /** Main scroll region — `pb` / `scroll-pb` clear home indicator + comfortable end-of-list breathing room. */
+  /** Main scroll region — mobile shells `<main>` as scrollport; md+ uses document scroll so wheel works over content (see overscroll). */
   mobileMainScroll:
-    "relative flex-1 min-h-0 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-y-contain",
+    "relative flex-1 min-h-0 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-y-contain md:overflow-y-visible md:overscroll-y-auto",
   /**
    * Mobile: full-bleed, spacing + light dividers only (no boxed card).
    * md+: optional subtle card for wider layouts.

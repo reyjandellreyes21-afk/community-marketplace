@@ -7,29 +7,13 @@ import { ScreenEmpty, ScreenError, InlineSuccess, ScreenLoading } from "./ui/Scr
 import { ProductListingMedia } from "./media/ProductListingMedia.jsx";
 import { PublicListingDetailSkeleton } from "./marketplace/MobileBrowseSkeleton.jsx";
 import { ListingProductMetaExtras } from "./marketplace/ListingProductMetaExtras.jsx";
+import { resolveListingGalleryUrls } from "../lib/listingImageUrl.js";
 
 const API_URL = getApiV1Base();
 
-function listingGalleryUrls(listing) {
-  if (!listing) return [];
-  const seen = new Set();
-  const out = [];
-  const push = (u) => {
-    const s = String(u || "").trim();
-    if (!s || seen.has(s)) return;
-    seen.add(s);
-    out.push(s);
-  };
-  push(listing.imageUrl);
-  if (Array.isArray(listing.imageUrls)) {
-    for (const u of listing.imageUrls) push(u);
-  }
-  return out.slice(0, 12);
-}
-
 function PublicListingDetailBody({ listing, publicHeroImageIdx, setPublicHeroImageIdx, onOpenLogin }) {
   const categoryShort = getListingCategoryShortLabel(listing.verticalId, listing.subId);
-  const galleryUrls = useMemo(() => listingGalleryUrls(listing), [listing]);
+  const galleryUrls = useMemo(() => resolveListingGalleryUrls(listing), [listing]);
   const heroIdx =
     galleryUrls.length > 0 ? Math.min(publicHeroImageIdx, galleryUrls.length - 1) : 0;
   const heroSrc = galleryUrls[heroIdx] || "";

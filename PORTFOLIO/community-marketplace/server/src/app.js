@@ -1,9 +1,11 @@
 import cors from "cors";
 import express from "express";
 import morgan from "morgan";
+import { uploadMyAvatar } from "./controllers/authController.js";
 import { createCommunity, listCommunities } from "./controllers/marketplaceController.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandlers.js";
 import { requireAuth } from "./middleware/auth.js";
+import { avatarUpload } from "./middleware/avatarUpload.js";
 import { communityImageUpload } from "./middleware/communityImageUpload.js";
 import { assignRequestId } from "./middleware/requestId.js";
 import { globalApiLimiter, writeLimiter } from "./middleware/rateLimit.js";
@@ -28,6 +30,17 @@ const communityPostChain = [
 for (const path of ["/api/v1/communities", "/api/v1/communities/", "/api/communities", "/api/communities/"]) {
   app.get(path, listCommunities);
   app.post(path, ...communityPostChain);
+}
+
+/** Profile avatar: registered here so multipart POST matches reliably (same idea as communities above). */
+const avatarPostChain = [
+  requireAuth,
+  writeLimiter,
+  avatarUpload.single("avatar"),
+  uploadMyAvatar,
+];
+for (const path of ["/api/v1/auth/me/avatar", "/api/auth/me/avatar"]) {
+  app.post(path, ...avatarPostChain);
 }
 
 app.get("/health", (_req, res) => {

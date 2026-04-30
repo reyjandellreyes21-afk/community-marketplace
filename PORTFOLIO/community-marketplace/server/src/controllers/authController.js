@@ -1,6 +1,8 @@
 import { OAuth2Client } from "google-auth-library";
 import { config } from "../config/config.js";
 import { AppError } from "../errors/AppError.js";
+import { uploadAvatarImage } from "../lib/communityImageStorage.js";
+import { displayNameForStoragePath } from "../lib/storagePathLabel.js";
 import { syncSellerListingsCommunityId } from "../lib/profileListingCommunity.js";
 import { supabaseAdmin, supabaseAuth } from "../lib/supabase.js";
 import { splitGoogleDisplayName, userToClient } from "../utils/displayName.js";
@@ -326,6 +328,48 @@ export const googleAuth = async (req, res, next) => {
       user: profile ? profileToClient(profile) : authUserToClient(googleData.user),
       token: googleData.session.access_token,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const uploadMyAvatar = async (req, res, next) => {
+  try {
+    if (!req.file?.buffer) {
+      throw new AppError(400, "Missing image file.");
+    }
+    const existingProfile = await getProfileById(req.user.id);
+    let displayName = displayNameForStoragePath(existingProfile, null);
+    let authUserForMetadata = null;
+    if (!displayName) {
+      const { data: authLookup, error: authLookupErr } = await supabaseAdmin.auth.admin.getUserById(req.user.id);
+      if (!authLookupErr && authLookup?.user) {
+        authUserForMetadata = authLookup.user;
+        displayName = displayNameForStoragePath(null, authUserForMetadata);
+      }
+    }
+    const publicUrl = await uploadAvatarImage(req.file.buffer, req.file.mimetype, req.user.id, displayName);
+    if (existingProfile) {
+      const { error } = await supabaseAdmin.from("profiles").update({ avatar_url: publicUrl }).eq("id", req.user.id);
+      if (error) throw new AppError(500, error.message || "Failed to update profile.");
+      const data = await getProfileById(req.user.id);
+      if (!data) throw new AppError(500, "Failed to load updated profile.");
+      return res.json({ user: profileToClient(data) });
+    }
+    let authUser = authUserForMetadata;
+    if (!authUser) {
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.getUserById(req.user.id);
+      if (authError || !authData?.user) throw new AppError(401, "User no longer exists.", null, "UNAUTHORIZED");
+      authUser = authData.user;
+    }
+    const existingMeta = authUser.user_metadata || {};
+    const { data: updatedAuth, error: updateAuthError } = await supabaseAdmin.auth.admin.updateUserById(req.user.id, {
+      user_metadata: { ...existingMeta, avatar_url: publicUrl },
+    });
+    if (updateAuthError || !updatedAuth?.user) {
+      throw new AppError(500, updateAuthError?.message || "Failed to update profile.");
+    }
+    return res.json({ user: authUserToClient(updatedAuth.user) });
   } catch (error) {
     next(error);
   }

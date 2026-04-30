@@ -806,6 +806,41 @@
  * minimum motion, without altering md+ desktop layout intent.
  */
 @media (max-width: 767px) {
+  /*
+   * Hide every scrollbar on small viewports; scrolling still works (touch, wheel, keyboard).
+   * Unlayered. `*::-webkit-scrollbar` alone loses to `.drawer-scroll::-webkit-scrollbar` (higher
+   * specificity) — must reset `.drawer-scroll` and pseudo-elements explicitly.
+   */
+  html {
+    scrollbar-gutter: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+  .drawer-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .drawer-scroll::-webkit-scrollbar,
+  .drawer-scroll::-webkit-scrollbar-thumb,
+  .drawer-scroll::-webkit-scrollbar-track,
+  .drawer-scroll::-webkit-scrollbar-corner {
+    display: none;
+    width: 0;
+    height: 0;
+    background: transparent;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
   /* Default document links: higher-contrast teal for AA body text on white / dark surfaces */
   :where(.mobile-app-shell, .landing-shell, .app-container) a.text-brand-primary,
   :where(.mobile-app-shell, .landing-shell, .app-container) a.text-primary {

@@ -1,9 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getListingCategoryShortLabel } from "../../categoryNav.js";
 import { UI_KIT } from "../../lib/appUiKit.js";
 import { SALE_PERCENT_OPTIONS } from "../../lib/listingSaleMeta.js";
+import { resolveListingGalleryUrls } from "../../lib/listingImageUrl.js";
 import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
 import { MarketplaceProductDetailStack } from "./MarketplaceProductDetailStack.jsx";
+
+/** Minimum horizontal movement (px) to count as swipe vs tap-to-view-details — aligned with `ProductInspectModal`. */
+const CARD_GALLERY_SWIPE_MIN_PX = 48;
 
 export function CommunityShopListingCard({
   listing,
@@ -41,6 +45,53 @@ export function CommunityShopListingCard({
   const isOwner = String(listing.sellerId || "") === String(currentUserId || "");
   const stockQty = Math.max(0, Number(listing.quantity) || 0);
   const isOutOfStock = stockQty <= 0;
+
+  const galleryUrls = useMemo(() => resolveListingGalleryUrls(listing), [listing]);
+  const galleryUrlsKey = galleryUrls.join("|");
+  const galleryMulti = galleryUrls.length > 1;
+  const [cardPhotoIdx, setCardPhotoIdx] = useState(0);
+  const heroPointerStartRef = useRef({ x: 0, y: 0 });
+  const suppressHeroClickRef = useRef(false);
+
+  useEffect(() => {
+    setCardPhotoIdx(0);
+  }, [listing?.id, galleryUrlsKey]);
+
+  const displayGallerySrc = galleryUrls[cardPhotoIdx] || galleryUrls[0] || "";
+
+  const goCardGalleryPrev = useCallback(() => {
+    setCardPhotoIdx((i) => Math.max(0, i - 1));
+  }, []);
+  const goCardGalleryNext = useCallback(() => {
+    setCardPhotoIdx((i) => Math.min(galleryUrls.length - 1, i + 1));
+  }, [galleryUrls.length]);
+
+  const onCardHeroPointerDown = useCallback((e) => {
+    heroPointerStartRef.current = { x: e.clientX, y: e.clientY };
+  }, []);
+
+  const onCardHeroPointerUp = useCallback(
+    (e) => {
+      if (!galleryMulti) return;
+      const dx = e.clientX - heroPointerStartRef.current.x;
+      const dy = e.clientY - heroPointerStartRef.current.y;
+      if (Math.abs(dx) >= CARD_GALLERY_SWIPE_MIN_PX && Math.abs(dx) > Math.abs(dy)) {
+        suppressHeroClickRef.current = true;
+        if (dx < 0) goCardGalleryNext();
+        else goCardGalleryPrev();
+      }
+    },
+    [galleryMulti, goCardGalleryNext, goCardGalleryPrev],
+  );
+
+  const onCardHeroInspectClick = useCallback(() => {
+    if (suppressHeroClickRef.current) {
+      suppressHeroClickRef.current = false;
+      return;
+    }
+    onInspect?.();
+  }, [onInspect]);
+
   const customSaleValue = Number(customSalePercent);
   const customSaleValid =
     Number.isFinite(customSaleValue) &&
@@ -189,15 +240,36 @@ export function CommunityShopListingCard({
               {favoriteHeartSvg}
             </button>
           ) : null}
+          {galleryMulti ? (
+            <div
+              className="pointer-events-none absolute bottom-1.5 left-0 right-0 z-[5] flex justify-center gap-1"
+              aria-hidden
+            >
+              {galleryUrls.map((_, i) => (
+                <span
+                  key={`${listing?.id || "l"}-ph-${i}`}
+                  className={`h-1 w-1 rounded-full shadow-sm ${i === cardPhotoIdx ? "bg-white" : "bg-white/55"}`}
+                />
+              ))}
+            </div>
+          ) : null}
           {imageOpensInspect ? (
             <button
               type="button"
               className={imageInspectBtnClass}
-              aria-label={`View details: ${listing.title || "product"}`}
-              onClick={() => onInspect?.()}
+              aria-label={
+                galleryMulti
+                  ? `View details: ${listing.title || "product"}. Swipe photo left or right for more images.`
+                  : `View details: ${listing.title || "product"}`
+              }
+              style={galleryMulti ? { touchAction: "manipulation" } : undefined}
+              onPointerDown={galleryMulti ? onCardHeroPointerDown : undefined}
+              onPointerUp={galleryMulti ? onCardHeroPointerUp : undefined}
+              onClick={onCardHeroInspectClick}
             >
               <ProductListingMedia
                 listing={listing}
+                src={displayGallerySrc}
                 variant={gridMode ? "grid" : "list"}
                 feed={useFeedLayout}
                 fillFrame={Boolean(gridMode && !useFeedLayout)}
@@ -208,6 +280,26 @@ export function CommunityShopListingCard({
                 loading="lazy"
               />
             </button>
+          ) : galleryMulti ? (
+            <div
+              className="absolute inset-0 min-h-0"
+              style={{ touchAction: "manipulation" }}
+              onPointerDown={onCardHeroPointerDown}
+              onPointerUp={onCardHeroPointerUp}
+            >
+              <ProductListingMedia
+                listing={listing}
+                src={displayGallerySrc}
+                variant={gridMode ? "grid" : "list"}
+                feed={useFeedLayout}
+                fillFrame={Boolean(gridMode && !useFeedLayout)}
+                softChrome={Boolean(softBrowseChrome && !useFeedLayout)}
+                ring={Boolean(useFeedLayout && softBrowseChrome)}
+                className="pointer-events-none absolute inset-0 min-h-0"
+                sizes="(max-width: 767px) 45vw, min(240px, 18vw)"
+                loading="lazy"
+              />
+            </div>
           ) : (
             <ProductListingMedia
               listing={listing}
@@ -222,6 +314,14 @@ export function CommunityShopListingCard({
             />
           )}
         </div>
+        {mobileUx && galleryMulti ? (
+          <p
+            className="w-full min-w-0 text-center text-[10px] font-semibold tabular-nums text-neutral-500 dark:text-slate-400 md:hidden"
+            aria-live="polite"
+          >
+            {cardPhotoIdx + 1}/{galleryUrls.length}
+          </p>
+        ) : null}
         <div
           className={`min-w-0 flex-1 ${
             useFeedLayout

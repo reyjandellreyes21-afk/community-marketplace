@@ -10,6 +10,7 @@ import {
   createOrder,
   deleteExpense,
   deleteListing,
+  uploadListingImages,
   getCourierModes,
   getListing,
   getMeOrderAttention,
@@ -39,6 +40,7 @@ import {
 } from "../controllers/marketplaceController.js";
 import { optionalAuth, requireAuth } from "../middleware/auth.js";
 import { communityImageUpload } from "../middleware/communityImageUpload.js";
+import { listingImagesUpload } from "../middleware/listingImagesUpload.js";
 import { writeLimiter } from "../middleware/rateLimit.js";
 import { validate } from "../middleware/validate.js";
 import { listingsValidators, marketplaceRouteValidators } from "../schemas/marketplaceSchemas.js";
@@ -59,11 +61,18 @@ marketplaceRouter.patch(
 );
 
 marketplaceRouter.get("/listings", optionalAuth, listingsValidators.list, validate, listListings);
-marketplaceRouter.get("/listings/:id", listingsValidators.idParam, validate, getListing);
+marketplaceRouter.get("/listings/:id", optionalAuth, listingsValidators.idParam, validate, getListing);
 
 marketplaceRouter.get("/users", requireAuth, marketplaceRouteValidators.listUsers, validate, listUsersDirectory);
 
 marketplaceRouter.get("/me/listings", requireAuth, listMyListings);
+marketplaceRouter.post(
+  "/me/listings/images",
+  requireAuth,
+  writeLimiter,
+  listingImagesUpload.array("images", 6),
+  uploadListingImages,
+);
 marketplaceRouter.post(
   "/me/listings",
   requireAuth,

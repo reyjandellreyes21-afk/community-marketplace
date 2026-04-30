@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   formatPesoWhole,
@@ -9,24 +9,16 @@ import {
 } from "../../lib/listingSaleMeta.js";
 
 import { UI_KIT } from "../../lib/appUiKit.js";
+import { resolveListingGalleryUrls } from "../../lib/listingImageUrl.js";
+import { ChevronLeftIcon, ChevronRightIcon } from "../landing/LandingMarketing.jsx";
 import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
 import { ListingProductMetaExtras } from "./ListingProductMetaExtras.jsx";
 
-function dedupeListingGalleryUrls(primary, extraUrls) {
-  const seen = new Set();
-  const out = [];
-  const push = (u) => {
-    const s = String(u || "").trim();
-    if (!s || seen.has(s)) return;
-    seen.add(s);
-    out.push(s);
-  };
-  push(primary);
-  if (Array.isArray(extraUrls)) {
-    for (const u of extraUrls) push(u);
-  }
-  return out.slice(0, 12);
-}
+/** Rubber-band: higher = closer to 1:1 drag at first/last slide (was 0.33 — felt like it wouldn’t pull far). */
+const GALLERY_DRAG_EDGE_RESISTANCE = 0.78;
+
+/** Once horizontal intent wins, lock so vertical scroll / browser gestures don’t steal the drag. */
+const GALLERY_HORIZONTAL_LOCK_PX = 10;
 
 /**
  * Read-only product detail: gallery, pricing, listing fields aligned with upload form (category, fulfillment,
@@ -79,11 +71,37 @@ export function ProductInspectModal({
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewLoadFailed, setImagePreviewLoadFailed] = useState(false);
   const [galleryThumbIdx, setGalleryThumbIdx] = useState(0);
+  const heroContainerRef = useRef(null);
+  const suppressHeroClickRef = useRef(false);
+  const heroPointerStartRef = useRef({ x: 0, y: 0 });
+  const heroGestureMovedRef = useRef(false);
+  const heroDragActiveRef = useRef(false);
 
-  const galleryUrls = useMemo(
-    () => dedupeListingGalleryUrls(imageUrl, imageUrls),
-    [imageUrl, imageUrls]
+  const lightboxStageRef = useRef(null);
+  const lightboxPointerStartRef = useRef({ x: 0, y: 0 });
+  const lightboxGestureMovedRef = useRef(false);
+  const lightboxDragActiveRef = useRef(false);
+
+  const galleryThumbIdxRef = useRef(0);
+  const heroHorizontalLockRef = useRef(false);
+  const lightboxHorizontalLockRef = useRef(false);
+  const [heroDragPx, setHeroDragPx] = useState(0);
+  const [heroStripDragging, setHeroStripDragging] = useState(false);
+  const [lightboxDragPx, setLightboxDragPx] = useState(0);
+  const [lightboxStripDragging, setLightboxStripDragging] = useState(false);
+
+  const imageUrlsSignature = useMemo(
+    () =>
+      Array.isArray(imageUrls)
+        ? imageUrls.map((u) => String(u || "").trim()).join("\u0001")
+        : "",
+    [imageUrls],
   );
+  const galleryUrls = useMemo(
+    () => resolveListingGalleryUrls({ imageUrl, imageUrls }),
+    [imageUrl, imageUrls, imageUrlsSignature],
+  );
+  const galleryUrlsKey = useMemo(() => galleryUrls.join("|"), [galleryUrls]);
   const displayImageUrl = galleryUrls[galleryThumbIdx] || galleryUrls[0] || "";
   const saleMeta = parseSaleMetaFromDescription(description);
   const currentPesos = Math.floor((Number(priceCents) || 0) / 100);
@@ -92,11 +110,17 @@ export function ProductInspectModal({
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (imagePreviewOpen) {
+        e.preventDefault();
+        setImagePreviewOpen(false);
+      } else {
+        onClose();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, imagePreviewOpen]);
 
   useEffect(() => {
     if (!open) setSalePickerOpen(false);
@@ -113,9 +137,198 @@ export function ProductInspectModal({
   useEffect(() => {
     if (!open) return;
     setGalleryThumbIdx(0);
-  }, [open, galleryUrls.join("|")]);
+  }, [open, galleryUrlsKey]);
+
+  useEffect(() => {
+    galleryThumbIdxRef.current = galleryThumbIdx;
+  }, [galleryThumbIdx]);
+
+  useEffect(() => {
+    setHeroDragPx(0);
+  }, [galleryThumbIdx]);
+
+  useEffect(() => {
+    setLightboxDragPx(0);
+  }, [galleryThumbIdx, imagePreviewOpen]);
+
+  const goGalleryPrev = () => {
+    setGalleryThumbIdx((i) => Math.max(0, i - 1));
+  };
+  const goGalleryNext = () => {
+    setGalleryThumbIdx((i) => Math.min(galleryUrls.length - 1, i + 1));
+  };
+
+  const applyEdgeResistance = (dx, idx, len) => {
+    let d = dx;
+    if (idx === 0 && d > 0) d *= GALLERY_DRAG_EDGE_RESISTANCE;
+    if (idx === len - 1 && d < 0) d *= GALLERY_DRAG_EDGE_RESISTANCE;
+    return d;
+  };
+
+  /** ~14% of width: easier to complete a slide than the old 20% capped at 56px. */
+  const commitThresholdFromEl = (el) => {
+    const w = el?.clientWidth ?? 0;
+    if (w <= 0) return 40;
+    return Math.min(80, Math.max(24, w * 0.14));
+  };
+
+  const onHeroStripPointerDown = (e) => {
+    if (galleryUrls.length <= 1) return;
+    if (e.button != null && e.button !== 0) return;
+    heroDragActiveRef.current = true;
+    heroHorizontalLockRef.current = false;
+    setHeroStripDragging(true);
+    heroGestureMovedRef.current = false;
+    heroPointerStartRef.current = { x: e.clientX, y: e.clientY };
+    setHeroDragPx(0);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const onHeroStripPointerMove = (e) => {
+    if (!heroDragActiveRef.current || galleryUrls.length <= 1) return;
+    const dx = e.clientX - heroPointerStartRef.current.x;
+    const dy = e.clientY - heroPointerStartRef.current.y;
+    if (Math.hypot(dx, dy) > 6) heroGestureMovedRef.current = true;
+    if (
+      !heroHorizontalLockRef.current &&
+      Math.abs(dx) >= GALLERY_HORIZONTAL_LOCK_PX &&
+      Math.abs(dx) > Math.abs(dy) * 1.05
+    ) {
+      heroHorizontalLockRef.current = true;
+    }
+    const idx = galleryThumbIdxRef.current;
+    const d = applyEdgeResistance(dx, idx, galleryUrls.length);
+    setHeroDragPx(d);
+    if (e.cancelable && (heroHorizontalLockRef.current || (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)))) {
+      e.preventDefault();
+    }
+  };
+
+  const onHeroStripPointerUp = (e) => {
+    if (!heroDragActiveRef.current) return;
+    heroDragActiveRef.current = false;
+    heroHorizontalLockRef.current = false;
+    const dx = e.clientX - heroPointerStartRef.current.x;
+    const idx = galleryThumbIdxRef.current;
+    const n = galleryUrls.length;
+    const t = commitThresholdFromEl(heroContainerRef.current);
+    let navigated = false;
+    if (dx < -t && idx < n - 1) {
+      goGalleryNext();
+      navigated = true;
+    } else if (dx > t && idx > 0) {
+      goGalleryPrev();
+      navigated = true;
+    }
+    setHeroStripDragging(false);
+    setHeroDragPx(0);
+    if (navigated) suppressHeroClickRef.current = true;
+    else if (heroGestureMovedRef.current && Math.abs(dx) > 10) suppressHeroClickRef.current = true;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const onHeroStripPointerCancel = (e) => {
+    if (!heroDragActiveRef.current) return;
+    heroDragActiveRef.current = false;
+    heroHorizontalLockRef.current = false;
+    setHeroStripDragging(false);
+    setHeroDragPx(0);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const onLightboxStripPointerDown = (e) => {
+    if (galleryUrls.length <= 1) return;
+    if (e.button != null && e.button !== 0) return;
+    lightboxDragActiveRef.current = true;
+    lightboxHorizontalLockRef.current = false;
+    setLightboxStripDragging(true);
+    lightboxGestureMovedRef.current = false;
+    lightboxPointerStartRef.current = { x: e.clientX, y: e.clientY };
+    setLightboxDragPx(0);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const onLightboxStripPointerMove = (e) => {
+    if (!lightboxDragActiveRef.current || galleryUrls.length <= 1) return;
+    const dx = e.clientX - lightboxPointerStartRef.current.x;
+    const dy = e.clientY - lightboxPointerStartRef.current.y;
+    if (Math.hypot(dx, dy) > 6) lightboxGestureMovedRef.current = true;
+    if (
+      !lightboxHorizontalLockRef.current &&
+      Math.abs(dx) >= GALLERY_HORIZONTAL_LOCK_PX &&
+      Math.abs(dx) > Math.abs(dy) * 1.05
+    ) {
+      lightboxHorizontalLockRef.current = true;
+    }
+    const idx = galleryThumbIdxRef.current;
+    const d = applyEdgeResistance(dx, idx, galleryUrls.length);
+    setLightboxDragPx(d);
+    if (e.cancelable && (lightboxHorizontalLockRef.current || (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)))) {
+      e.preventDefault();
+    }
+  };
+
+  const onLightboxStripPointerUp = (e) => {
+    if (!lightboxDragActiveRef.current) return;
+    lightboxDragActiveRef.current = false;
+    lightboxHorizontalLockRef.current = false;
+    const dx = e.clientX - lightboxPointerStartRef.current.x;
+    const idx = galleryThumbIdxRef.current;
+    const n = galleryUrls.length;
+    const t = commitThresholdFromEl(lightboxStageRef.current);
+    if (dx < -t && idx < n - 1) goGalleryNext();
+    else if (dx > t && idx > 0) goGalleryPrev();
+    setLightboxStripDragging(false);
+    setLightboxDragPx(0);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const onLightboxStripPointerCancel = (e) => {
+    if (!lightboxDragActiveRef.current) return;
+    lightboxDragActiveRef.current = false;
+    lightboxHorizontalLockRef.current = false;
+    setLightboxStripDragging(false);
+    setLightboxDragPx(0);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const onHeroImageActivate = () => {
+    if (suppressHeroClickRef.current) {
+      suppressHeroClickRef.current = false;
+      return;
+    }
+    setImagePreviewOpen(true);
+  };
 
   if (!open) return null;
+
+  const galleryMulti = galleryUrls.length > 1;
+  const canGalleryPrev = galleryThumbIdx > 0;
+  const canGalleryNext = galleryThumbIdx < galleryUrls.length - 1;
 
   const descPlain = removeSaleMetaLines(description);
   const sellerUsernameTrim = String(sellerUsername || "").trim();
@@ -161,7 +374,7 @@ export function ProductInspectModal({
     <div
       className={
         fullScreen
-          ? "w-full"
+          ? "flex w-full min-h-0 flex-1 flex-col max-md:h-full max-md:w-[calc(100%+1.75rem)] max-md:self-stretch max-md:-mx-3.5 md:mx-0 md:w-full"
           : "fixed inset-0 z-[95] flex items-end justify-center p-0 md:items-center md:p-4"
       }
       role={fullScreen ? "region" : "dialog"}
@@ -180,32 +393,79 @@ export function ProductInspectModal({
       <div
         className={`relative z-10 flex w-full flex-col ${
           fullScreen
-            ? "mx-auto min-h-[calc(100dvh-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] max-w-screen-lg rounded-none border-0 bg-white shadow-none dark:bg-slate-950"
+            ? "mx-auto w-full max-w-screen-lg rounded-none border-0 bg-white shadow-none dark:bg-slate-950 max-md:max-h-[100dvh] max-md:min-h-0 max-md:flex-1 max-md:overflow-hidden md:min-h-[calc(100dvh-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]"
             : "max-h-[min(88dvh,42rem)] max-w-lg rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-[#1f3c56] dark:bg-[#0f2234] md:max-h-[min(90dvh,44rem)] md:rounded-2xl md:shadow-[0_20px_60px_rgba(15,23,42,0.22)]"
         } ${UI_KIT.surfaceFloating}`}
         onClick={(e) => e.stopPropagation()}
       >
         {imagePreviewOpen && String(displayImageUrl || "").trim() ? (
           <div
-            className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl p-3 md:p-4"
+            className="fixed inset-0 z-[220] flex h-[100dvh] w-screen items-center justify-center pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)]"
             role="dialog"
             aria-modal="true"
             aria-label="Product image preview"
           >
             <button
               type="button"
-              className="absolute inset-0 rounded-2xl bg-neutral-950/80 backdrop-blur-[1px]"
+              className="absolute inset-0 bg-neutral-950/95 backdrop-blur-[1px]"
               aria-label="Close image preview"
               onClick={() => setImagePreviewOpen(false)}
             />
-            <div className="relative z-10 w-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
+            <div
+              ref={lightboxStageRef}
+              className="relative z-10 h-full w-full max-w-none touch-pan-y"
+              onClick={(e) => e.stopPropagation()}
+            >
               {!imagePreviewLoadFailed ? (
-                <img
-                  src={displayImageUrl}
-                  alt={title || "Product image"}
-                  className="max-h-[88vh] w-full min-h-[12rem] rounded-2xl border border-white/30 object-contain shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
-                  onError={() => setImagePreviewLoadFailed(true)}
-                />
+                galleryMulti ? (
+                  <div className="relative h-full min-h-0 w-full overflow-hidden rounded-none border-0 shadow-none">
+                    <div
+                      className="flex h-full min-h-0 touch-none select-none will-change-transform"
+                      style={{
+                        width: `${galleryUrls.length * 100}%`,
+                        transform: `translate3d(calc(-${(galleryThumbIdx * 100) / galleryUrls.length}% + ${lightboxDragPx}px), 0, 0)`,
+                        transition: lightboxStripDragging
+                          ? "none"
+                          : "transform 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+                      }}
+                    >
+                      {galleryUrls.map((url, i) => (
+                        <div
+                          key={`lb-${i}-${String(url).slice(-24)}`}
+                          className="flex h-full min-h-0 shrink-0 items-center justify-center bg-neutral-950/20"
+                          style={{ width: `${100 / galleryUrls.length}%` }}
+                        >
+                          <img
+                            src={url}
+                            alt={i === 0 ? title || "Product image" : ""}
+                            className="h-full w-full object-contain"
+                            onError={() => setImagePreviewLoadFailed(true)}
+                            draggable={false}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="absolute inset-0 z-[4] cursor-grab bg-transparent active:cursor-grabbing"
+                      aria-hidden
+                      tabIndex={-1}
+                      onPointerDown={onLightboxStripPointerDown}
+                      onPointerMove={onLightboxStripPointerMove}
+                      onPointerUp={onLightboxStripPointerUp}
+                      onPointerCancel={onLightboxStripPointerCancel}
+                      style={{ touchAction: "none" }}
+                    />
+                  </div>
+                ) : (
+                  <img
+                    src={displayImageUrl}
+                    alt={title || "Product image"}
+                    className="h-full w-full min-h-0 rounded-none border-0 object-contain shadow-none"
+                    onError={() => setImagePreviewLoadFailed(true)}
+                    draggable={false}
+                  />
+                )
               ) : (
                 <div
                   className="flex min-h-[40vh] w-full items-center justify-center rounded-2xl border border-white/20 bg-neutral-900/50 text-sm text-white/70"
@@ -215,13 +475,56 @@ export function ProductInspectModal({
                   Image unavailable
                 </div>
               )}
+              {galleryMulti ? (
+                <>
+                  <button
+                    type="button"
+                    className={`absolute left-2.5 top-1/2 z-20 flex h-11 w-11 min-h-[44px] min-w-[44px] -translate-y-1/2 items-center justify-center rounded-full border border-white/45 bg-black/55 text-white shadow-[0_2px_12px_rgba(0,0,0,0.35)] ring-1 ring-black/25 backdrop-blur-[2px] transition hover:bg-black/70 active:scale-[0.96] motion-reduce:active:scale-100 md:left-3 ${
+                      !canGalleryPrev ? "pointer-events-none opacity-30" : ""
+                    }`}
+                    aria-label="Previous product photo"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      goGalleryPrev();
+                    }}
+                  >
+                    <ChevronLeftIcon className="h-6 w-6 shrink-0 opacity-95" />
+                  </button>
+                  <button
+                    type="button"
+                    className={`absolute right-2.5 top-1/2 z-20 flex h-11 w-11 min-h-[44px] min-w-[44px] -translate-y-1/2 items-center justify-center rounded-full border border-white/45 bg-black/55 text-white shadow-[0_2px_12px_rgba(0,0,0,0.35)] ring-1 ring-black/25 backdrop-blur-[2px] transition hover:bg-black/70 active:scale-[0.96] motion-reduce:active:scale-100 md:right-12 ${
+                      !canGalleryNext ? "pointer-events-none opacity-30" : ""
+                    }`}
+                    aria-label="Next product photo"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      goGalleryNext();
+                    }}
+                  >
+                    <ChevronRightIcon className="h-6 w-6 shrink-0 opacity-95" />
+                  </button>
+                </>
+              ) : null}
               <button
                 type="button"
-                className="absolute right-2 top-2 inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full border border-white/35 bg-black/45 text-lg leading-none text-white transition hover:bg-black/60 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
-                aria-label="Close image preview"
+                className="absolute left-4 top-5 z-10 inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center text-white transition hover:text-white/85 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
+                aria-label="Back"
                 onClick={() => setImagePreviewOpen(false)}
               >
-                <span aria-hidden>×</span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.25"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-7 w-7 drop-shadow-[0_2px_6px_rgba(0,0,0,0.55)]"
+                  aria-hidden
+                >
+                  <path d="M19 12H5" />
+                  <path d="M11 6l-6 6 6 6" />
+                </svg>
               </button>
             </div>
           </div>
@@ -233,66 +536,190 @@ export function ProductInspectModal({
           </p>
         ) : null}
         <div className="flex min-w-0 shrink-0 items-start justify-between gap-2.5 border-b border-neutral-200/80 px-3 pb-2 pt-2.5 min-[390px]:gap-3 min-[390px]:px-4 min-[390px]:pb-2.5 min-[390px]:pt-3 min-[430px]:px-5 dark:border-[#1f3c56]/85 md:px-5 md:pb-3 md:pt-4">
-          <div className="min-w-0 flex-1 pr-2">
-            <h2
-              id="product-inspect-title"
-              className="break-words text-pretty text-[15px] font-semibold leading-snug text-neutral-900 min-[390px]:text-base dark:text-slate-100 md:text-lg"
+          <button
+            type="button"
+            className="inline-flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-50 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
+            aria-label="Back"
+            onClick={onClose}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.25"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-7 w-7"
+              aria-hidden
             >
-              {title || "Product"}
-            </h2>
-            {subtitle ? (
-              <p className="mt-0.5 line-clamp-2 break-words text-xs text-neutral-500 dark:text-slate-400">{subtitle}</p>
-            ) : null}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {typeof onToggleFavorite === "function" ? (
-              <button
-                type="button"
-                className={`btn-icon-only inline-flex items-center justify-center rounded-xl border text-lg leading-none transition md:!h-9 md:!min-h-9 md:!w-9 md:!max-w-9 ${
-                  isFavorite
-                    ? "border-rose-200/90 bg-rose-50 text-rose-600 hover:border-rose-300 hover:bg-rose-100 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:border-rose-400/60 dark:hover:bg-rose-500/20"
-                    : "border-neutral-200/90 text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-                }`}
-                aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
-                onClick={() => onToggleFavorite()}
-              >
-                <span aria-hidden>{isFavorite ? "♥" : "♡"}</span>
-              </button>
-            ) : null}
+              <path d="M19 12H5" />
+              <path d="M11 6l-6 6 6 6" />
+            </svg>
+          </button>
+          {typeof onToggleFavorite === "function" ? (
             <button
               type="button"
-              className="btn-icon-only inline-flex shrink-0 items-center justify-center rounded-xl border border-neutral-200/90 text-lg leading-none text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-100 md:!h-9 md:!min-h-9 md:!w-9 md:!max-w-9"
-              aria-label={showActionFooter ? "Close product details" : "Close product details"}
-              onClick={onClose}
+              className={`inline-flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center transition [-webkit-tap-highlight-color:transparent] md:h-9 md:min-h-0 md:min-w-0 md:w-9 ${
+                isFavorite
+                  ? "text-rose-600 hover:text-rose-700 dark:text-rose-300 dark:hover:text-rose-200"
+                  : "text-neutral-500 hover:text-neutral-800 dark:text-slate-400 dark:hover:text-slate-100"
+              }`}
+              aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+              onClick={() => onToggleFavorite()}
             >
-              <span aria-hidden>×</span>
+              <span aria-hidden className={`text-[24px] leading-none ${isFavorite ? "drop-shadow-[0_1px_2px_rgba(190,24,93,0.28)]" : ""}`}>
+                {isFavorite ? "♥" : "♡"}
+              </span>
             </button>
-          </div>
+          ) : (
+            <span className="h-11 w-11 md:h-9 md:w-9" aria-hidden />
+          )}
         </div>
 
-        <div className={`drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-2.5 min-[390px]:px-4 min-[390px]:py-3 min-[430px]:px-5 md:px-5 md:py-4 ${fullScreen ? "pb-[max(6rem,calc(env(safe-area-inset-bottom,0px)+5.5rem))]" : ""}`}>
+        <div
+          className={`drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-2.5 min-[390px]:px-4 min-[390px]:py-3 min-[430px]:px-5 md:px-5 md:py-4 ${
+            fullScreen
+              ? "max-md:pt-0 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] md:pb-5"
+              : ""
+          }`}
+        >
           <div className={`flex flex-col gap-3 md:flex-row md:items-start md:gap-4 ${fullScreen ? "lg:gap-6" : ""}`}>
-            <div className={`mx-auto flex w-full shrink-0 flex-col ${fullScreen ? "max-w-[13rem] min-[390px]:max-w-[14.5rem] min-[430px]:max-w-[16rem] md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]" : "max-w-[12.5rem] md:mx-0 md:max-w-none"}`}>
-              <div className={`relative mx-auto aspect-square w-full shrink-0 ${fullScreen ? "max-w-[13rem] min-[390px]:max-w-[14.5rem] min-[430px]:max-w-[16rem] md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]" : "max-w-[12.5rem] md:mx-0 md:h-36 md:w-36 md:max-w-none md:aspect-auto"}`}>
+            <div
+              className={`mx-auto flex w-full shrink-0 flex-col ${
+                fullScreen
+                  ? "max-md:-mx-3 max-md:w-[calc(100%+1.5rem)] max-md:max-w-none min-[390px]:max-md:-mx-4 min-[390px]:max-md:w-[calc(100%+2rem)] min-[430px]:max-md:-mx-5 min-[430px]:max-md:w-[calc(100%+2.5rem)] md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
+                  : "max-w-[12.5rem] md:mx-0 md:max-w-none"
+              }`}
+            >
+              <div
+                className={`relative mx-auto aspect-square w-full shrink-0 ${
+                  fullScreen
+                    ? "max-md:max-w-none md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
+                    : "max-w-[12.5rem] md:mx-0 md:h-36 md:w-36 md:max-w-none md:aspect-auto"
+                }`}
+              >
                 {String(displayImageUrl || "").trim() ? (
-                  <button
-                    type="button"
-                    className="absolute inset-0 cursor-zoom-in touch-pan-y"
-                    aria-label="View larger product image"
-                    onClick={() => setImagePreviewOpen(true)}
-                    style={{ touchAction: "pan-y" }}
-                  >
-                    <ProductListingMedia
-                      listing={{ title, imageUrl: displayImageUrl, imageUrls: galleryUrls }}
-                      src={displayImageUrl}
-                      variant="grid"
-                      fillFrame
-                      className="absolute inset-0 min-h-0"
-                      imageClassName="transition duration-200 hover:scale-[1.02]"
-                      sizes="(max-width: 768px) min(90vw, 12.5rem), 9rem"
-                      loading="eager"
-                    />
-                  </button>
+                  <>
+                    {galleryMulti && !imagePreviewOpen ? (
+                      <div
+                        ref={heroContainerRef}
+                        className="relative aspect-square w-full overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10"
+                      >
+                        <div
+                          className="flex h-full touch-none select-none will-change-transform"
+                          style={{
+                            width: `${galleryUrls.length * 100}%`,
+                            transform: `translate3d(calc(-${(galleryThumbIdx * 100) / galleryUrls.length}% + ${heroDragPx}px), 0, 0)`,
+                            transition: heroStripDragging
+                              ? "none"
+                              : "transform 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+                          }}
+                        >
+                          {galleryUrls.map((url, i) => (
+                            <div
+                              key={`hero-g-${i}-${String(url).slice(-28)}`}
+                              className="h-full shrink-0"
+                              style={{ width: `${100 / galleryUrls.length}%` }}
+                            >
+                              <img
+                                src={url}
+                                alt={i === 0 ? title || "Product" : ""}
+                                className="h-full w-full object-cover select-none"
+                                draggable={false}
+                                loading={i === 0 ? "eager" : "lazy"}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          className="absolute inset-0 z-[4] cursor-grab bg-transparent active:cursor-grabbing"
+                          aria-label="View larger product image. Drag left or right for more photos."
+                          onPointerDown={onHeroStripPointerDown}
+                          onPointerMove={onHeroStripPointerMove}
+                          onPointerUp={onHeroStripPointerUp}
+                          onPointerCancel={onHeroStripPointerCancel}
+                          onClick={onHeroImageActivate}
+                          style={{ touchAction: "none" }}
+                        />
+                        <p
+                          className="pointer-events-none absolute bottom-2 right-2 z-[6] rounded-full border border-white/30 bg-black/65 px-2.5 py-1 text-xs font-semibold tabular-nums text-white shadow-[0_2px_10px_rgba(0,0,0,0.45)] backdrop-blur-[2px] min-[390px]:bottom-2.5 min-[390px]:right-2.5 min-[390px]:text-[13px]"
+                          aria-live="polite"
+                        >
+                          {galleryThumbIdx + 1}/{galleryUrls.length}
+                        </p>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="relative z-0 aspect-square w-full cursor-zoom-in overflow-hidden rounded-none touch-pan-y ring-1 ring-black/5 dark:ring-white/10"
+                        aria-label="View larger product image"
+                        onClick={onHeroImageActivate}
+                        style={{ touchAction: "pan-x pan-y" }}
+                      >
+                        <ProductListingMedia
+                          listing={{ title, imageUrl: displayImageUrl, imageUrls: galleryUrls }}
+                          src={displayImageUrl}
+                          variant="grid"
+                          fillFrame
+                          className="pointer-events-none absolute inset-0 min-h-0"
+                          imageClassName="transition duration-200 hover:scale-[1.02]"
+                          sizes={
+                            fullScreen
+                              ? "(max-width: 768px) min(100vw, 64rem), 12rem"
+                              : "(max-width: 768px) min(90vw, 12.5rem), 9rem"
+                          }
+                          loading="eager"
+                        />
+                      </button>
+                    )}
+                    {galleryMulti && !imagePreviewOpen ? (
+                      <div
+                        className="pointer-events-none absolute bottom-1.5 left-0 right-0 z-[5] flex justify-center gap-1"
+                        aria-hidden
+                      >
+                        {galleryUrls.map((_, i) => (
+                          <span
+                            key={`inspect-ph-${i}`}
+                            className={`h-1 w-1 rounded-full shadow-sm ${
+                              i === galleryThumbIdx ? "bg-white" : "bg-white/55"
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                    {galleryMulti && !imagePreviewOpen ? (
+                      <>
+                        <button
+                          type="button"
+                          className={`absolute left-2.5 top-1/2 z-20 flex h-11 w-11 min-h-[44px] min-w-[44px] -translate-y-1/2 items-center justify-center rounded-full border border-white/45 bg-black/55 text-white shadow-[0_2px_12px_rgba(0,0,0,0.35)] ring-1 ring-black/25 backdrop-blur-[2px] transition hover:bg-black/70 active:scale-[0.96] motion-reduce:active:scale-100 ${
+                            !canGalleryPrev ? "pointer-events-none opacity-35" : ""
+                          }`}
+                          aria-label="Previous product photo"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            goGalleryPrev();
+                          }}
+                        >
+                          <ChevronLeftIcon className="h-6 w-6 shrink-0 opacity-95" />
+                        </button>
+                        <button
+                          type="button"
+                          className={`absolute right-2.5 top-1/2 z-20 flex h-11 w-11 min-h-[44px] min-w-[44px] -translate-y-1/2 items-center justify-center rounded-full border border-white/45 bg-black/55 text-white shadow-[0_2px_12px_rgba(0,0,0,0.35)] ring-1 ring-black/25 backdrop-blur-[2px] transition hover:bg-black/70 active:scale-[0.96] motion-reduce:active:scale-100 ${
+                            !canGalleryNext ? "pointer-events-none opacity-35" : ""
+                          }`}
+                          aria-label="Next product photo"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            goGalleryNext();
+                          }}
+                        >
+                          <ChevronRightIcon className="h-6 w-6 shrink-0 opacity-95" />
+                        </button>
+                      </>
+                    ) : null}
+                  </>
                 ) : (
                   <ProductListingMedia
                     listing={{ title, imageUrl: "", imageUrls: [] }}
@@ -307,7 +734,7 @@ export function ProductInspectModal({
                 <div
                   className={`mt-2 flex gap-1.5 overflow-x-auto pb-0.5 pt-0.5 [-webkit-overflow-scrolling:touch] ${
                     fullScreen
-                      ? "max-w-[13rem] min-[390px]:max-w-[14.5rem] min-[430px]:max-w-[16rem] md:max-w-[12rem] lg:max-w-[14rem]"
+                      ? "w-full max-md:justify-center md:max-w-[12rem] lg:max-w-[14rem]"
                       : "max-w-[12.5rem] md:max-w-[9rem]"
                   }`}
                   role="list"
@@ -320,7 +747,7 @@ export function ProductInspectModal({
                       role="listitem"
                       aria-label={`Photo ${i + 1} of ${galleryUrls.length}`}
                       aria-current={i === galleryThumbIdx ? "true" : undefined}
-                      className={`h-12 w-12 shrink-0 overflow-hidden rounded-lg border-2 transition ${
+                      className={`h-14 w-14 shrink-0 overflow-hidden rounded-none border-2 transition ${
                         i === galleryThumbIdx
                           ? "border-brand-primary ring-1 ring-brand-primary/30 dark:border-brand-accent dark:ring-brand-accent/25"
                           : "border-transparent opacity-85 hover:opacity-100"
@@ -334,6 +761,17 @@ export function ProductInspectModal({
               ) : null}
             </div>
             <div className="min-w-0 flex-1 space-y-1.5 min-[430px]:space-y-2 md:space-y-2">
+              <div className="min-w-0">
+                <h2
+                  id="product-inspect-title"
+                  className="break-words text-pretty text-[1.12rem] font-bold leading-tight tracking-tight text-neutral-900 min-[390px]:text-xl dark:text-slate-100 md:text-2xl"
+                >
+                  {title || "Product"}
+                </h2>
+                {subtitle ? (
+                  <p className="mt-0.5 line-clamp-2 break-words text-xs text-neutral-500 dark:text-slate-400">{subtitle}</p>
+                ) : null}
+              </div>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <p className="text-[1.06rem] font-bold tabular-nums text-brand-primary min-[390px]:text-lg dark:text-brand-accent md:text-xl">
                   {formatPesoWhole(priceCents)}
@@ -424,13 +862,11 @@ export function ProductInspectModal({
             </div>
 
             {descPlain ? (
-              <section
-                className={`rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-2.5 min-[390px]:p-3 dark:border-[#1f3c56] dark:bg-[#11283d]/65 md:p-3.5`}
-              >
+              <section className="space-y-1.5">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-                  From the seller
+                  Description
                 </h3>
-                <p className="mt-1.5 whitespace-pre-wrap break-words text-pretty text-sm leading-relaxed text-neutral-800 dark:text-slate-200 md:mt-2">
+                <p className="whitespace-pre-wrap break-words text-pretty text-sm leading-relaxed text-neutral-800 dark:text-slate-200">
                   {descPlain}
                 </p>
               </section>
@@ -481,23 +917,31 @@ export function ProductInspectModal({
         <div className="shrink-0 border-t border-neutral-200/80 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 min-[390px]:px-4 min-[390px]:pt-2.5 min-[430px]:px-5 dark:border-[#1f3c56]/85 md:px-5 md:pb-4 md:pt-3">
           {hasSellerHandlers ? (
             <div className="space-y-2">
-              <div className="flex w-full flex-col gap-2 md:flex-row md:items-stretch md:gap-2">
+              <div className="flex w-full flex-row items-stretch gap-2">
                 {typeof onSaleSelect === "function" ? (
                   <button
                     type="button"
-                    className="min-h-[44px] flex-1 rounded-lg border border-amber-300 px-3 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-50 dark:border-amber-500/50 dark:text-amber-200 dark:hover:bg-amber-950/35 md:min-h-10"
+                    className="min-h-[56px] flex-1 rounded-lg border border-amber-300 px-3 py-2 text-[11px] font-semibold leading-none text-amber-800 transition hover:bg-amber-50 dark:border-amber-500/50 dark:text-amber-200 dark:hover:bg-amber-950/35 md:min-h-12 flex flex-col items-center justify-center gap-1"
                     aria-expanded={salePickerOpen}
                     onClick={() => setSalePickerOpen((v) => !v)}
                   >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
+                      <path d="M20.6 13.4L12.4 21.6a2 2 0 0 1-2.8 0L2.4 14.4a2 2 0 0 1 0-2.8L10.6 3.4a2 2 0 0 1 1.4-.6H19a2 2 0 0 1 2 2v7a2 2 0 0 1-.4 1.2z" />
+                      <circle cx="16.5" cy="7.5" r="1.25" />
+                    </svg>
                     Sale
                   </button>
                 ) : null}
                 {typeof onEditListing === "function" ? (
                   <button
                     type="button"
-                    className="min-h-[44px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-10"
+                    className="min-h-[56px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-[11px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-12 flex flex-col items-center justify-center gap-1"
                     onClick={() => onEditListing()}
                   >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
+                      <path d="M12 20h9" />
+                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                    </svg>
                     Edit listing
                   </button>
                 ) : null}
@@ -533,14 +977,19 @@ export function ProductInspectModal({
                 hasSellerHandlers ? "mt-2 border-t border-neutral-200/50 pt-2 dark:border-[#1f3c56]/55" : ""
               }
             >
-              <div className="flex w-full flex-col gap-2 md:flex-row md:items-stretch md:gap-2">
+              <div className="flex w-full flex-row items-stretch gap-2">
                 {typeof onAddToCart === "function" ? (
                   <button
                     type="button"
-                    className="min-h-[44px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-10"
+                    className="min-h-[56px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-[11px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-12 flex flex-col items-center justify-center gap-1"
                     disabled={isOutOfStock}
                     onClick={() => onAddToCart()}
                   >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
+                      <circle cx="9" cy="20" r="1" />
+                      <circle cx="17" cy="20" r="1" />
+                      <path d="M3 4h2l2.2 10.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 7H7.1" />
+                    </svg>
                     {isOutOfStock ? "Unavailable" : "Add to cart"}
                   </button>
                 ) : null}
@@ -555,7 +1004,7 @@ export function ProductInspectModal({
                           : undefined
                     }
                     aria-label={isOutOfStock ? "Out of stock" : "Buy now"}
-                    className={`min-h-[44px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-sm font-semibold text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-10 ${
+                    className={`min-h-[56px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-[11px] font-semibold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-12 flex flex-col items-center justify-center gap-1 ${
                       isOutOfStock
                         ? "cursor-not-allowed opacity-50"
                         : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
@@ -563,6 +1012,10 @@ export function ProductInspectModal({
                     disabled={isOutOfStock}
                     onClick={() => onBuyNow()}
                   >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
+                      <path d="M6 8h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 8z" />
+                      <path d="M9 8V6a3 3 0 0 1 6 0v2" />
+                    </svg>
                     {isOutOfStock ? "Out of stock" : "Buy now"}
                   </button>
                 ) : null}
@@ -572,7 +1025,14 @@ export function ProductInspectModal({
 
           {!showActionFooter ? (
             <div className="flex justify-stretch md:justify-end">
-              <button type="button" className="btn-primary touch-manipulation w-full md:w-auto md:min-w-[7rem]" onClick={onClose}>
+              <button
+                type="button"
+                className="btn-primary touch-manipulation w-full md:w-auto md:min-w-[7rem] min-h-[56px] md:min-h-12 text-[11px] leading-none flex flex-col items-center justify-center gap-1"
+                onClick={onClose}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
+                  <path d="M20 6L9 17l-5-5" />
+                </svg>
                 Done
               </button>
             </div>
