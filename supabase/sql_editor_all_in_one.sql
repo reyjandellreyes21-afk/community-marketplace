@@ -53,11 +53,12 @@ CREATE INDEX IF NOT EXISTS user_listing_favorites_user_idx ON public.user_listin
 CREATE TABLE IF NOT EXISTS public.cart_items (
   user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   listing_id uuid NOT NULL REFERENCES public.listings (id) ON DELETE CASCADE,
+  variant_signature text NOT NULL DEFAULT '' CHECK (char_length(variant_signature) <= 512),
   quantity integer NOT NULL DEFAULT 1 CHECK (quantity >= 1),
   comment text NOT NULL DEFAULT '' CHECK (char_length(comment) <= 2000),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (user_id, listing_id)
+  PRIMARY KEY (user_id, listing_id, variant_signature)
 );
 
 CREATE INDEX IF NOT EXISTS cart_items_user_idx ON public.cart_items (user_id);
@@ -115,6 +116,24 @@ ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS processing_entered_at timesta
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS completed_at timestamptz;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS cancelled_at timestamptz;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS buyer_receipt_acknowledged_at timestamptz;
+
+-- Buyer note + canonical variant line (migrations 20260430121000_orders_buyer_comment +
+-- 20260502120000_orders_variant_signature). Safe to re-run.
+ALTER TABLE public.orders
+  ADD COLUMN IF NOT EXISTS buyer_comment text NOT NULL DEFAULT '' CHECK (char_length(buyer_comment) <= 2000);
+
+ALTER TABLE public.orders
+  ADD COLUMN IF NOT EXISTS variant_signature text NOT NULL DEFAULT '';
+
+ALTER TABLE public.orders
+  DROP CONSTRAINT IF EXISTS orders_variant_signature_len;
+
+ALTER TABLE public.orders
+  ADD CONSTRAINT orders_variant_signature_len
+  CHECK (char_length(variant_signature) <= 512);
+
+CREATE INDEX IF NOT EXISTS orders_listing_variant_sig_idx
+  ON public.orders (listing_id, variant_signature);
 
 CREATE TABLE IF NOT EXISTS public.seller_expenses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

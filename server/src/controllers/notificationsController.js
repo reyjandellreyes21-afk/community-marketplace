@@ -34,8 +34,10 @@ export const listNotifications = async (req, res, next) => {
 
     const { data, error } = await q;
     if (error?.code === "PGRST205") {
-      return res.status(503).json({
+      /* 200 so the client can read schemaMissing; apiRequest treats 503 as thrown Error. */
+      return res.json({
         notifications: [],
+        unreadCount: 0,
         schemaMissing: true,
         note: "Apply migration `supabase/migrations/20260427154500_notifications_backend.sql`.",
       });

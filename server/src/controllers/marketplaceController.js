@@ -4,6 +4,7 @@ import { uploadCommunityCoverImage, uploadListingImage } from "../lib/communityI
 import { displayNameForStoragePath } from "../lib/storagePathLabel.js";
 import { findConflictingCommunity, isLikelySameCommunityName } from "../lib/communityNameSimilarity.js";
 import { doesProfileAddressMatchCommunity } from "../lib/profileListingCommunity.js";
+import { variantSignatureFromBuyerComment } from "../lib/variantSignature.js";
 
 /** PostgREST: table missing from API schema (migrations not applied or `NOTIFY pgrst, 'reload schema';` needed). */
 const isSchemaMissingError = (error) =>
@@ -16,6 +17,19 @@ const isBuyerCommentMissingError = (error) => {
   return /buyer_comment/i.test(msg) && (error.code === "PGRST204" || /schema cache/i.test(msg));
 };
 
+const isVariantSignatureMissingError = (error) => {
+  if (!error) return false;
+  const msg = String(error.message || "");
+  return /variant_signature/i.test(msg) && (error.code === "PGRST204" || /schema cache/i.test(msg));
+};
+
+/** Prefer stored column; fall back to parsing buyer_comment (matches cart_items.variant_signature semantics). */
+function effectiveVariantSignatureFromOrderRow(row) {
+  const db = String(row?.variant_signature ?? "").trim();
+  if (db) return db.slice(0, 512);
+  return variantSignatureFromBuyerComment(String(row?.buyer_comment ?? ""));
+}
+
 /** PostgREST returns "Could not find the 'col' column of 'orders' in the schema cache" when migrations lag. */
 const ORDERS_MISSING_COLUMN_RE = /Could not find the '([^']+)' column of 'orders'/i;
 const ORDERS_MISSING_COLUMN_RE_DQ = /Could not find the "([^"]+)" column of "orders"/i;
@@ -27,6 +41,7 @@ const ORDER_UPDATE_OPTIONAL_COLUMNS = [
   "cancelled_at",
   "buyer_receipt_acknowledged_at",
   "buyer_comment",
+  "variant_signature",
 ];
 
 function postgrestErrorText(error) {
@@ -533,6 +548,7 @@ const orderRowToApi = (row, reviewRow = null, listingMeta = null) => ({
   codDeliveryCents: row.cod_delivery_cents,
   acceptedBidId: row.accepted_bid_id,
   comment: String(row.buyer_comment ?? "").trim(),
+  variantSignature: String(row.variant_signature ?? "").trim(),
   buyerReceiptAcknowledgedAt: row.buyer_receipt_acknowledged_at ?? null,
   buyerReview: buyerReviewRowToApi(reviewRow),
   processingEnteredAt: row.processing_entered_at ?? null,
@@ -1065,6 +1081,7 @@ async function enrichCartRowsForApi(rows) {
     const meta = listingRowToApi(listing);
     out.push({
       listingId: String(row.listing_id),
+      variantSignature: String(row.variant_signature ?? ""),
       sellerId: sid,
       sellerLabel,
       title: String(listing.title || "Product"),
@@ -1107,6 +1124,8 @@ export const addCartItem = async (req, res, next) => {
     const listingId = String(req.body.listingId);
     const addQty = req.body.quantity != null ? Number(req.body.quantity) : 1;
     const comment = String(req.body.comment || "").trim().slice(0, 2000);
+    const sigFromBody = String(req.body.variantSignature ?? "").trim().slice(0, 512);
+    const variantSig = sigFromBody || variantSignatureFromBuyerComment(comment);
     if (!Number.isFinite(addQty) || addQty < 1) throw new AppError(400, "Invalid quantity.");
     const { data: listing, error: lerr } = await supabaseAdmin.from("listings").select("*").eq("id", listingId).maybeSingle();
     if (lerr) throw new AppError(500, lerr.message);
@@ -1119,6 +1138,7 @@ export const addCartItem = async (req, res, next) => {
       .select("quantity,comment")
       .eq("user_id", req.user.id)
       .eq("listing_id", listingId)
+      .eq("variant_signature", variantSig)
       .maybeSingle();
     if (cErr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
     if (cErr) throw new AppError(500, cErr.message);
@@ -1128,16 +1148,46 @@ export const addCartItem = async (req, res, next) => {
     if (newQty < 1) throw new AppError(400, "Not enough stock.");
     const mergedComment = comment || String(existing?.comment || "").trim();
     const now = new Date().toISOString();
-    const { error: uerr } = await supabaseAdmin.from("cart_items").upsert(
-      {
-        user_id: req.user.id,
-        listing_id: listingId,
-        quantity: newQty,
-        comment: mergedComment,
-        updated_at: now,
-      },
-      { onConflict: "user_id,listing_id" },
-    );
+    const rowPayload = {
+      user_id: req.user.id,
+      listing_id: listingId,
+      variant_signature: variantSig,
+      quantity: newQty,
+      comment: mergedComment,
+      updated_at: now,
+    };
+    // Explicit update/insert avoids PostgREST `upsert` requiring a matching UNIQUE/PK on exactly these columns
+    // (partial migrations or stale PK on `(user_id, listing_id)` otherwise trigger ON CONFLICT errors).
+    let uerr = null;
+    if (existing) {
+      ({ error: uerr } = await supabaseAdmin
+        .from("cart_items")
+        .update({ quantity: newQty, comment: mergedComment, updated_at: now })
+        .eq("user_id", req.user.id)
+        .eq("listing_id", listingId)
+        .eq("variant_signature", variantSig));
+    } else {
+      ({ error: uerr } = await supabaseAdmin.from("cart_items").insert(rowPayload));
+      if (
+        uerr &&
+        /duplicate key|unique constraint/i.test(String(uerr.message || ""))
+      ) {
+        const { data: updatedRows, error: upErr } = await supabaseAdmin
+          .from("cart_items")
+          .update({ quantity: newQty, comment: mergedComment, updated_at: now })
+          .eq("user_id", req.user.id)
+          .eq("listing_id", listingId)
+          .eq("variant_signature", variantSig)
+          .select("listing_id");
+        uerr = upErr;
+        if (!upErr && (!updatedRows || updatedRows.length === 0)) {
+          throw new AppError(
+            400,
+            "Cart cannot store multiple variant lines for the same listing until the database is migrated. Run the SQL that adds `cart_items.variant_signature` and primary key (user_id, listing_id, variant_signature).",
+          );
+        }
+      }
+    }
     if (uerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
     if (uerr) throw new AppError(400, uerr.message);
     const { data: rows } = await supabaseAdmin.from("cart_items").select("*").eq("user_id", req.user.id);
@@ -1151,7 +1201,13 @@ export const addCartItem = async (req, res, next) => {
 export const removeCartItem = async (req, res, next) => {
   try {
     const listingId = String(req.params.listingId);
-    const { error } = await supabaseAdmin.from("cart_items").delete().eq("user_id", req.user.id).eq("listing_id", listingId);
+    const variantSig = String(req.query.variantSignature ?? "").slice(0, 512);
+    const { error } = await supabaseAdmin
+      .from("cart_items")
+      .delete()
+      .eq("user_id", req.user.id)
+      .eq("listing_id", listingId)
+      .eq("variant_signature", variantSig);
     if (error?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
     if (error) throw new AppError(500, error.message);
     res.status(204).send();
@@ -1163,6 +1219,7 @@ export const removeCartItem = async (req, res, next) => {
 export const patchCartItem = async (req, res, next) => {
   try {
     const listingId = String(req.params.listingId);
+    const variantSig = String(req.query.variantSignature ?? "").slice(0, 512);
     const newQty = req.body.quantity != null ? Number(req.body.quantity) : NaN;
     if (!Number.isFinite(newQty) || newQty < 1 || !Number.isInteger(newQty)) throw new AppError(400, "Invalid quantity.");
 
@@ -1171,6 +1228,7 @@ export const patchCartItem = async (req, res, next) => {
       .select("listing_id")
       .eq("user_id", req.user.id)
       .eq("listing_id", listingId)
+      .eq("variant_signature", variantSig)
       .maybeSingle();
     if (rerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
     if (rerr) throw new AppError(500, rerr.message);
@@ -1193,7 +1251,8 @@ export const patchCartItem = async (req, res, next) => {
       .from("cart_items")
       .update({ quantity: capped, updated_at: new Date().toISOString() })
       .eq("user_id", req.user.id)
-      .eq("listing_id", listingId);
+      .eq("listing_id", listingId)
+      .eq("variant_signature", variantSig);
     if (uerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
     if (uerr) throw new AppError(400, uerr.message);
 
@@ -1222,6 +1281,8 @@ export const createOrder = async (req, res, next) => {
     if (quantity > maxStock) throw new AppError(400, `Not enough stock. Requested: ${quantity}, available: ${maxStock}.`);
     const codGoodsCents = listing.price_cents * quantity;
     const initialStatus = "placed";
+    const bodySig = String(req.body.variantSignature ?? "").trim().slice(0, 512);
+    const targetVariantSig = bodySig || variantSignatureFromBuyerComment(buyerComment);
     const { data: existingPlacedOrders, error: existingErr } = await supabaseAdmin
       .from("orders")
       .select("*")
@@ -1229,9 +1290,12 @@ export const createOrder = async (req, res, next) => {
       .eq("buyer_id", req.user.id)
       .eq("status", initialStatus);
     if (existingErr) throw new AppError(500, existingErr.message);
+    const matchingPlaced = (existingPlacedOrders || []).filter(
+      (o) => effectiveVariantSignatureFromOrderRow(o) === targetVariantSig,
+    );
     let preferredRowId = null;
-    if ((existingPlacedOrders || []).length > 0) {
-      const ordered = [...existingPlacedOrders].sort((a, b) => {
+    if (matchingPlaced.length > 0) {
+      const ordered = [...matchingPlaced].sort((a, b) => {
         const at = String(a?.created_at || "");
         const bt = String(b?.created_at || "");
         return at.localeCompare(bt);
@@ -1247,6 +1311,7 @@ export const createOrder = async (req, res, next) => {
         // Keep latest selected fulfillment option for the merged pending order.
         fulfillment_type: fulfillmentType,
         buyer_comment: mergedBuyerComment,
+        variant_signature: targetVariantSig,
       };
       const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(primary.id, patch);
       if (uerr) throw new AppError(400, uerr.message);
@@ -1267,12 +1332,27 @@ export const createOrder = async (req, res, next) => {
         cod_goods_cents: codGoodsCents,
         cod_delivery_cents: 0,
         buyer_comment: buyerComment,
+        variant_signature: targetVariantSig,
       };
-      let { data, error } = await supabaseAdmin.from("orders").insert(row).select("*").single();
-      if (isBuyerCommentMissingError(error)) {
-        const fallbackRow = { ...row };
-        delete fallbackRow.buyer_comment;
-        ({ data, error } = await supabaseAdmin.from("orders").insert(fallbackRow).select("*").single());
+      let insertPayload = { ...row };
+      let data = null;
+      let error = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        ({ data, error } = await supabaseAdmin.from("orders").insert(insertPayload).select("*").single());
+        if (!error) break;
+        if (isBuyerCommentMissingError(error) && Object.prototype.hasOwnProperty.call(insertPayload, "buyer_comment")) {
+          const next = { ...insertPayload };
+          delete next.buyer_comment;
+          insertPayload = next;
+          continue;
+        }
+        if (isVariantSignatureMissingError(error) && Object.prototype.hasOwnProperty.call(insertPayload, "variant_signature")) {
+          const next = { ...insertPayload };
+          delete next.variant_signature;
+          insertPayload = next;
+          continue;
+        }
+        break;
       }
       if (error?.code === "PGRST205") throw new AppError(500, "Orders table missing.");
       if (error) throw new AppError(400, error.message);
@@ -1306,11 +1386,17 @@ const consolidateBuyerListingStatusOrders = async ({ buyerId, listingId, status,
   if (error) throw new AppError(500, error.message);
   const items = Array.isArray(rows) ? rows : [];
   if (items.length === 0) return null;
-  if (items.length === 1) return items[0];
 
   const preferred = preferredId ? items.find((r) => String(r.id) === String(preferredId)) : null;
-  const sorted = [...items].sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
-  const primary = preferred || sorted[0];
+  const anchorSig = preferred
+    ? effectiveVariantSignatureFromOrderRow(preferred)
+    : effectiveVariantSignatureFromOrderRow(items[0]);
+  const scoped = items.filter((r) => effectiveVariantSignatureFromOrderRow(r) === anchorSig);
+  if (scoped.length === 0) return null;
+  if (scoped.length === 1) return scoped[0];
+
+  const sorted = [...scoped].sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
+  const primary = preferred && scoped.some((r) => String(r.id) === String(preferred.id)) ? preferred : sorted[0];
   const others = sorted.filter((r) => String(r.id) !== String(primary.id));
   const totalQty = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.quantity) || 0), 0);
   const totalGoods = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.cod_goods_cents) || 0), 0);
@@ -1333,6 +1419,7 @@ const consolidateBuyerListingStatusOrders = async ({ buyerId, listingId, status,
     cod_goods_cents: totalGoods,
     cod_delivery_cents: totalDelivery,
     buyer_comment: mergedBuyerComment,
+    variant_signature: anchorSig,
   };
   const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(primary.id, patch);
   if (uerr) throw new AppError(500, uerr.message);
