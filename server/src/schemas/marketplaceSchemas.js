@@ -93,6 +93,7 @@ export const listingsValidators = {
 /** Additional marketplace route validators (param/body chains only). */
 export const marketplaceRouteValidators = {
   communityIdParam: [param("id").isUUID()],
+  communityCouriersParam: [param("communityId").isUUID()],
   listingIdParam: [param("listingId").isUUID()],
   cartAdd: [
     body("listingId").isUUID(),
@@ -138,14 +139,15 @@ export const marketplaceRouteValidators = {
     body("reviewText").optional({ checkFalsy: true }).isString().isLength({ max: 2000 }),
   ],
   orderIdParam: [param("id").isUUID()],
-  createBid: [
-    param("id").isUUID(),
-    body("amountCents").isInt({ min: 1 }),
-    body("mode").isIn(["walk", "run", "bike"]),
-    body("etaMinutes").optional().isInt({ min: 1 }),
-  ],
-  acceptBid: [param("id").isUUID(), param("bidId").isUUID()],
   patchCourierModes: [body("modes").isArray()],
+  patchCourierPresence: [
+    body("courierStatus").optional().isIn(["offline", "available", "active", "busy"]),
+    body("courier_status").optional().isIn(["offline", "available", "active", "busy"]),
+    body("optionalTags").optional().isArray(),
+    body("optional_tags").optional().isArray(),
+  ],
+  assignCommunityCourier: [param("id").isUUID(), body("courierId").isUUID()],
+  claimCommunityCourier: [param("id").isUUID()],
   createExpense: [
     body("amountCents").isInt({ min: 0 }),
     body("category").optional().isString(),

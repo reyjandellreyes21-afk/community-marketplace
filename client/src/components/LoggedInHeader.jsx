@@ -860,6 +860,7 @@ export function LoggedInHeader({
   const hideMobilePrimaryRow =
     activeView === VIEWS.MY_PURCHASES ||
     activeView === VIEWS.ORDERS ||
+    activeView === VIEWS.COURIER ||
     activeView === VIEWS.SELLER ||
     activeView === VIEWS.MY_LISTINGS ||
     activeView === VIEWS.MESSAGES ||
@@ -1544,6 +1545,20 @@ export function LoggedInHeader({
                   </span>
                   Profile
                 </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={accountMenuItemBase}
+                  onClick={() => {
+                    setActiveView(VIEWS.COURIER);
+                    closeAllMenus();
+                  }}
+                >
+                  <span className={accountMenuIconWrap} aria-hidden>
+                    <MenuTruckIcon />
+                  </span>
+                  Courier
+                </button>
                 <div role="none" className="mx-1 my-1.5 border-t border-neutral-200/90 dark:border-slate-700/90" />
                 <div className="relative">
                   <button
@@ -1693,7 +1708,7 @@ export function LoggedInHeader({
                   type="button"
                   className={mobileSheetMenuItem}
                   onClick={() => {
-                    setActiveView(VIEWS.ORDERS);
+                    setActiveView(VIEWS.COURIER);
                     finalizeMobileSheetClose();
                   }}
                 >

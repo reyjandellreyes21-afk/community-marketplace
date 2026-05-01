@@ -54,18 +54,18 @@ const ensureConversationParticipant = async (conversationId, userId) => {
 const ensureOrderParticipant = async ({ orderId, userId, roleHint }) => {
   const { data: order, error } = await supabaseAdmin
     .from("orders")
-    .select("id,buyer_id,seller_id,accepted_bid_id")
+    .select("id,buyer_id,seller_id,accepted_courier_assignment_id")
     .eq("id", orderId)
     .maybeSingle();
   if (error) throw new AppError(500, error.message);
   if (!order) throw new AppError(404, "Order not found.");
 
   let courierId = null;
-  if (order.accepted_bid_id) {
+  if (order.accepted_courier_assignment_id) {
     const { data: bid, error: bidErr } = await supabaseAdmin
-      .from("delivery_bids")
+      .from("courier_assignments")
       .select("courier_id")
-      .eq("id", order.accepted_bid_id)
+      .eq("id", order.accepted_courier_assignment_id)
       .maybeSingle();
     if (bidErr) throw new AppError(500, bidErr.message);
     courierId = bid?.courier_id || null;

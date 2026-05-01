@@ -31,7 +31,7 @@ import {
   resolveListingGalleryUrls,
 } from "./lib/listingImageUrl.js";
 import { formatCents } from "./marketplace/money.js";
-import { SELLER_TABS, VIEWS } from "./views.js";
+import { COURIER_TABS, SELLER_TABS, VIEWS } from "./views.js";
 import {
   clearActiveView,
   readActiveView,
@@ -111,7 +111,12 @@ import {
   ORDERS_STATUS_TABS,
   orderMatchesOrdersStatusTab,
 } from "./lib/orderAttentionStorage.js";
-import { orderFulfillmentBannerText } from "./lib/orderFulfillmentUi.js";
+import {
+  isDeliveryCourierAssigned,
+  isDeliveryInTransit,
+  isDeliverySellerPreparing,
+  orderFulfillmentBannerText,
+} from "./lib/orderFulfillmentUi.js";
 import { ORDER_CANCELLATION_REASON_OPTIONS } from "./lib/orderCancellationReasons.js";
 import { computeMarketplaceFeedbackForText } from "./lib/marketplaceFeedbackToast.js";
 import {
@@ -124,6 +129,8 @@ import { LANDING_DISCOVERY_SLIDES, BROWSE_QUICK_FILTERS } from "./lib/landingDis
 import { quickFilterIcon, categoryIcon } from "./components/browse/BrowseFilterIcons.jsx";
 import { SectionHeading } from "./components/marketplace/SectionHeading.jsx";
 import { FilterOptionButton } from "./components/marketplace/FilterOptionButton.jsx";
+import { CommunityCourierPanel } from "./components/marketplace/CommunityCourierPanel.jsx";
+import { CourierPresenceControls } from "./components/marketplace/CourierPresenceControls.jsx";
 import { ListingCategoryPicker } from "./components/marketplace/ListingCategoryPicker.jsx";
 import { CartSellerSelectAllCheckbox } from "./components/marketplace/CartSellerSelectAllCheckbox.jsx";
 import { LandingFeatureRow, LANDING_FEATURE_ROWS } from "./components/landing/LandingFeatureRows.jsx";
@@ -907,6 +914,13 @@ function App() {
   const [orderSelection, setOrderSelection] = useState({});
   /** Which bulk order transition is in flight (`seller_accept` | `cancel`) — only that action shows loading on its button. */
   const [ordersBulkActionLoadingTransition, setOrdersBulkActionLoadingTransition] = useState(/** @type {string | null} */ (null));
+  /** Seller orders loaded for the Courier hub view (separate from `orders` + ORDERS tab). */
+  const [courierHubOrders, setCourierHubOrders] = useState([]);
+  /** Buyer orders for Courier hub “Your purchases” tab. */
+  const [courierHubBuyerOrders, setCourierHubBuyerOrders] = useState([]);
+  const [courierHubLoading, setCourierHubLoading] = useState(false);
+  /** Open delivery jobs in the member’s community (tab badge on Deliver). */
+  const [courierOpenDeliveryCount, setCourierOpenDeliveryCount] = useState(0);
   const [orderCancelReasonModalOpen, setOrderCancelReasonModalOpen] = useState(false);
   const [orderCancelReasonId, setOrderCancelReasonId] = useState("");
   const [orderCancelNote, setOrderCancelNote] = useState("");
@@ -1376,15 +1390,24 @@ function App() {
 
     return pickFromPool(communities);
   }, [communities, profileCityProvincePostal, profileCommunityName]);
+  /** Same membership signals as server counts: `profiles.community_id`, plus text/name fallback + explicit join + creator. */
   const isMemberOfOpenCommunity = useMemo(() => {
     if (!shopCommunityId) return false;
     const sid = String(shopCommunityId);
+    if (String(user?.communityId || "").trim() === sid) return true;
     if (String(listingCommunityFromProfile.id || "") === sid) return true;
     if (String(joinedShopCommunityId || "") === sid) return true;
     const openCommunity = communities.find((c) => String(c.id || "") === sid);
     if (openCommunity?.createdBy && String(openCommunity.createdBy) === String(user?.id || "")) return true;
     return false;
-  }, [communities, joinedShopCommunityId, listingCommunityFromProfile.id, shopCommunityId, user?.id]);
+  }, [
+    communities,
+    joinedShopCommunityId,
+    listingCommunityFromProfile.id,
+    shopCommunityId,
+    user?.communityId,
+    user?.id,
+  ]);
   const getDisplayedMemberCount = useCallback((community) => {
     const raw = community?.memberCount ?? community?.member_count ?? 0;
     const count = Number(raw);
@@ -1611,6 +1634,7 @@ function App() {
     });
   }, [favoriteIds]);
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
+  const [courierTab, setCourierTab] = useState(COURIER_TABS.DELIVER);
   const [sellerProductsView, setSellerProductsView] = useState("list");
   const [communityProductsView, setCommunityProductsView] = useState("grid");
   const [communityListingsQuery, setCommunityListingsQuery] = useState("");
@@ -1690,6 +1714,10 @@ function App() {
     const normalized = String(communityName || "").trim();
     setUser((prev) => {
       if (!prev) return prev;
+      if (!normalized) {
+        if (!prev.community && !prev.communityId) return prev;
+        return { ...prev, community: "", communityId: "" };
+      }
       if (prev.community === normalized) return prev;
       return { ...prev, community: normalized };
     });
@@ -1719,11 +1747,12 @@ function App() {
 
       return (async () => {
         try {
-          await apiRequest("/auth/me", {
+          const patchData = await apiRequest("/auth/me", {
             method: "PATCH",
             token,
             body: { community: joinedName, communityId: joinedId || null },
           });
+          setUser((prev) => mergeIncomingUserWithMembership(patchData.user || {}, prev));
           const listData = await apiRequest("/me/listings", { token });
           const mine = Array.isArray(listData?.listings) ? listData.listings : [];
           const targetCommunityId = String(community.id);
@@ -1751,7 +1780,7 @@ function App() {
         }
       })();
     },
-    [applyJoinedCommunity, token, user?.id],
+    [applyJoinedCommunity, mergeIncomingUserWithMembership, token, user?.id],
   );
 
   const loadCommunityShopListings = useCallback(
@@ -1859,11 +1888,12 @@ function App() {
       }
       return (async () => {
         try {
-          await apiRequest("/auth/me", {
+          const patchData = await apiRequest("/auth/me", {
             method: "PATCH",
             token,
             body: { community: "", communityId: null },
           });
+          setUser((prev) => mergeIncomingUserWithMembership(patchData.user || {}, prev));
           const communitiesRes = await apiRequest("/communities", { token });
           setCommunities(communitiesRes?.communities || []);
           if (notifySuccess) pushMarketplaceToast(`You left ${leftName || "the community"} successfully.`);
@@ -1872,7 +1902,7 @@ function App() {
         }
       })();
     },
-    [applyJoinedCommunity, detachSellerListingsFromCommunity, token],
+    [applyJoinedCommunity, detachSellerListingsFromCommunity, mergeIncomingUserWithMembership, token],
   );
 
   useEffect(() => {
@@ -5021,6 +5051,65 @@ function App() {
     }
   };
 
+  const refreshOrdersList = useCallback(async () => {
+    if (!token) return;
+    try {
+      const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+      setOrders(data.orders || []);
+    } catch {
+      /* ignore */
+    }
+  }, [token, ordersRole]);
+
+  const refreshCourierHub = useCallback(async () => {
+    if (!token) return;
+    setCourierHubLoading(true);
+    try {
+      const [sellerData, buyerData, openData] = await Promise.all([
+        apiRequest(`/orders?role=seller`, { token }),
+        apiRequest(`/orders?role=buyer`, { token }),
+        apiRequest(`/delivery/open`, { token }).catch(() => ({ orders: [] })),
+      ]);
+      setCourierHubOrders(sellerData.orders || []);
+      setCourierHubBuyerOrders(buyerData.orders || []);
+      const open = Array.isArray(openData?.orders) ? openData.orders : [];
+      setCourierOpenDeliveryCount(open.length);
+    } catch {
+      setCourierHubOrders([]);
+      setCourierHubBuyerOrders([]);
+      setCourierOpenDeliveryCount(0);
+    } finally {
+      setCourierHubLoading(false);
+    }
+  }, [token]);
+
+  const refreshCourierAndOrders = useCallback(async () => {
+    await refreshOrdersList();
+    await refreshCourierHub();
+  }, [refreshOrdersList, refreshCourierHub]);
+
+  const courierSellerAssignOrders = useMemo(
+    () =>
+      courierHubOrders.filter(
+        (o) => String(o.fulfillmentType || "") === "delivery" && isDeliverySellerPreparing(o),
+      ),
+    [courierHubOrders],
+  );
+
+  const courierBuyerAssignOrders = useMemo(
+    () =>
+      courierHubBuyerOrders.filter(
+        (o) => String(o.fulfillmentType || "") === "delivery" && isDeliverySellerPreparing(o),
+      ),
+    [courierHubBuyerOrders],
+  );
+
+  useEffect(() => {
+    if (activeView !== VIEWS.COURIER || !token) return undefined;
+    void refreshCourierHub();
+    return undefined;
+  }, [activeView, token, refreshCourierHub]);
+
   const patchOrderTransition = async (orderId, transition, options = {}) => {
     const { orderIds, successMessage } = options;
     const transitionNorm = String(transition ?? "").trim();
@@ -5036,6 +5125,7 @@ function App() {
       }
       const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
       setOrders(data.orders || []);
+      void refreshCourierHub();
       pushMarketplaceToast(successMessage || "Order updated.");
     } catch (e) {
       pushMarketplaceToast(e.message || "Could not update order.");
@@ -6937,8 +7027,8 @@ function App() {
                     A marketplace built for <span className="text-brand-primary dark:text-brand-accent">your local community</span>
                   </h1>
                   <p className="mx-auto max-w-xl text-pretty text-lg leading-relaxed text-neutral-600 dark:text-slate-400 md:text-xl md:leading-relaxed lg:mx-0">
-                    LinkMart connects neighbors for COD pickup or delivery: no in-app wallet, optional courier bids (walk, run, bike), and seller tools for stock and
-                    profit.
+                    LinkMart connects neighbors for COD pickup or delivery: no in-app wallet, optional neighbor couriers (walk, run, bike), and seller tools for stock
+                    and profit.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-3 md:gap-4 lg:justify-start">
@@ -11061,15 +11151,17 @@ function App() {
                               String(o.status || "") === "ready_for_pickup" &&
                               o.fulfillmentType === "pickup") ||
                             (ordersRole === "seller" && String(o.status || "") === "ready_for_pickup") ||
-                            (ordersRole === "seller" && String(o.status || "") === "bid_accepted") ||
-                            (ordersRole === "buyer" && String(o.status || "") === "bid_accepted" && o.fulfillmentType === "delivery") ||
+                            (ordersRole === "seller" && isDeliverySellerPreparing(o)) ||
+                            (ordersRole === "buyer" && isDeliverySellerPreparing(o)) ||
+                            (ordersRole === "seller" && isDeliveryCourierAssigned(o)) ||
+                            (ordersRole === "buyer" && isDeliveryCourierAssigned(o)) ||
                             (ordersRole === "seller" &&
                               String(o.status || "") === "seller_accepted" &&
                               o.fulfillmentType === "pickup") ||
                             (ordersRole === "buyer" &&
                               String(o.status || "") === "seller_accepted" &&
                               o.fulfillmentType === "pickup") ||
-                            String(o.status || "") === "out_for_delivery";
+                            isDeliveryInTransit(o);
                           const orderCardHighlight = shouldHighlightRecent ? "bg-primary-soft dark:bg-primary/15" : "";
                           const orderListingForProductOpen =
                             orderListingsById[String(o.listingId)] ||
@@ -11370,7 +11462,7 @@ function App() {
                                       className={`text-pretty text-[11px] leading-snug md:text-xs ${
                                         ordersRole === "buyer" &&
                                         (String(o.status || "") === "seller_accepted" ||
-                                          String(o.status || "") === "bid_accepted")
+                                          String(o.status || "") === "courier_assigned")
                                           ? "text-neutral-600 dark:text-slate-400"
                                           : "font-medium text-neutral-800 dark:text-slate-200"
                                       }`}
@@ -11435,16 +11527,33 @@ function App() {
                                       Mark as Picked Up
                                     </button>
                                   ) : null}
-                                  {ordersRole === "seller" && o.status === "bid_accepted" ? (
+                                  {ordersRole === "seller" && isDeliverySellerPreparing(o) ? (
                                     <button
                                       type="button"
                                       className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
-                                      onClick={() => patchOrderTransition(o.id, "mark_out_for_delivery")}
+                                      onClick={() =>
+                                        patchOrderTransition(o.id, "seller_self_out_for_delivery", {
+                                          successMessage: "Marked out for delivery.",
+                                        })
+                                      }
+                                    >
+                                      I&apos;ll deliver myself
+                                    </button>
+                                  ) : null}
+                                  {ordersRole === "seller" && isDeliveryCourierAssigned(o) ? (
+                                    <button
+                                      type="button"
+                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
+                                      onClick={() =>
+                                        patchOrderTransition(o.id, "mark_out_for_delivery", {
+                                          successMessage: "Marked out for delivery.",
+                                        })
+                                      }
                                     >
                                       Out for Delivery
                                     </button>
                                   ) : null}
-                                  {ordersRole === "buyer" && o.status === "out_for_delivery" ? (
+                                  {ordersRole === "buyer" && isDeliveryInTransit(o) ? (
                                     <button
                                       type="button"
                                       className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
@@ -11495,12 +11604,188 @@ function App() {
           </section>
         )}
 
+        {activeView === VIEWS.COURIER && (
+          <section className={`${UI_KIT.viewSection} max-w-3xl space-y-6 md:space-y-8`}>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Courier hub</h2>
+              <p className="text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
+                Claim open runs, set your availability, assign couriers from your sales or purchases — separate from the main Orders list. Coordinate meetups in chat; cash on delivery at handoff.
+              </p>
+            </div>
+            {!token ? (
+              <ScreenEmpty
+                title="Sign in to use Courier"
+                description="Open the menu to sign in, then return here for availability, open deliveries, and assigning community couriers."
+                primaryAction={{
+                  label: "Sign in",
+                  onClick: () => {
+                    setAuthMode("login");
+                    setAuthPanelVisible(true);
+                  },
+                }}
+              />
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2" role="tablist" aria-label="Courier hub">
+                  {[
+                    { id: COURIER_TABS.DELIVER, label: "Deliver", count: courierOpenDeliveryCount },
+                    { id: COURIER_TABS.SELL, label: "Your sales", count: courierSellerAssignOrders.length },
+                    { id: COURIER_TABS.BUY, label: "Your purchases", count: courierBuyerAssignOrders.length },
+                  ].map(({ id, label, count }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      role="tab"
+                      aria-selected={courierTab === id}
+                      className={`inline-flex min-h-[44px] items-center rounded-full px-4 py-2 text-sm font-medium transition md:min-h-0 md:px-3 md:py-1.5 ${
+                        courierTab === id
+                          ? UI_KIT.tabActive
+                          : "border-0 bg-neutral-100/55 text-neutral-600 hover:bg-neutral-100 dark:bg-slate-800/55 dark:text-slate-400 dark:hover:bg-slate-800 md:border md:border-neutral-200/85 md:bg-transparent md:hover:bg-neutral-50 dark:md:border-slate-600"
+                      }`}
+                      onClick={() => setCourierTab(id)}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <span>{label}</span>
+                        {count > 0 ? (
+                          <span className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-neutral-900/10 px-1.5 text-[10px] font-semibold tabular-nums text-neutral-800 dark:bg-slate-100/15 dark:text-slate-100">
+                            {count > 99 ? "99+" : count}
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {courierTab === COURIER_TABS.DELIVER ? (
+                  <CourierPresenceControls
+                    token={token}
+                    communityId={String(user?.communityId || joinedShopCommunityId || "").trim()}
+                    onOrdersRefresh={refreshCourierAndOrders}
+                  />
+                ) : null}
+                {courierTab === COURIER_TABS.SELL ? (
+                  <div className="space-y-3 rounded-xl border border-neutral-200/80 bg-white/60 p-4 dark:border-slate-600/70 dark:bg-slate-900/40 md:p-5">
+                    <div className="space-y-1">
+                      <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">Assign from your sales</h3>
+                      <p className="text-sm text-neutral-600 dark:text-slate-400">
+                        Pick a neighbor courier or mark yourself out for delivery. Same orders appear under Seller · Orders.
+                      </p>
+                    </div>
+                    {courierHubLoading ? (
+                      <ScreenLoading message="Loading…" />
+                    ) : courierSellerAssignOrders.length === 0 ? (
+                      <p className="text-sm text-neutral-600 dark:text-slate-400">
+                        Nothing waiting for a courier. When you accept a buyer&apos;s delivery order, it shows here until someone is assigned or you deliver yourself.
+                      </p>
+                    ) : (
+                      <ul className="space-y-4">
+                        {courierSellerAssignOrders.map((o) => (
+                          <li
+                            key={String(o.id)}
+                            className="rounded-lg border border-neutral-200/80 bg-neutral-50/70 p-3 dark:border-slate-600/60 dark:bg-slate-900/50"
+                          >
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">
+                                  {o.listingTitle || "Listing"}
+                                </p>
+                                <p className="text-[11px] text-neutral-600 dark:text-slate-400">
+                                  Total{" "}
+                                  <span className="tabular-nums font-medium">
+                                    {formatCents(Math.max(0, Number(o.codGoodsCents) || 0) + Math.max(0, Number(o.codDeliveryCents) || 0))}
+                                  </span>{" "}
+                                  · COD
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                className="btn-secondary min-h-10 w-full shrink-0 touch-manipulation text-xs sm:w-auto sm:min-h-0"
+                                onClick={() =>
+                                  patchOrderTransition(o.id, "seller_self_out_for_delivery", {
+                                    successMessage: "Marked out for delivery.",
+                                  })
+                                }
+                              >
+                                I&apos;ll deliver myself
+                              </button>
+                            </div>
+                            <div className="mt-3 border-t border-neutral-200/70 pt-3 dark:border-slate-600/50">
+                              <CommunityCourierPanel
+                                token={token}
+                                communityId={String(
+                                  o.listingCommunityId || orderListingsById[String(o.listingId)]?.communityId || "",
+                                ).trim()}
+                                orderId={o.id}
+                                compact={false}
+                                onAssigned={refreshCourierAndOrders}
+                              />
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ) : null}
+                {courierTab === COURIER_TABS.BUY ? (
+                  <div className="space-y-3 rounded-xl border border-neutral-200/80 bg-white/60 p-4 dark:border-slate-600/70 dark:bg-slate-900/40 md:p-5">
+                    <div className="space-y-1">
+                      <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">Suggest a courier on your purchases</h3>
+                      <p className="text-sm text-neutral-600 dark:text-slate-400">
+                        While the seller prepares, you can suggest a trusted neighbor. They may still assign someone else or deliver themselves — keep everyone in chat.
+                      </p>
+                    </div>
+                    {courierHubLoading ? (
+                      <ScreenLoading message="Loading…" />
+                    ) : courierBuyerAssignOrders.length === 0 ? (
+                      <p className="text-sm text-neutral-600 dark:text-slate-400">
+                        No purchases need a courier suggestion right now. After a seller accepts your delivery order, it appears here until a courier is assigned.
+                      </p>
+                    ) : (
+                      <ul className="space-y-4">
+                        {courierBuyerAssignOrders.map((o) => (
+                          <li
+                            key={String(o.id)}
+                            className="rounded-lg border border-neutral-200/80 bg-neutral-50/70 p-3 dark:border-slate-600/60 dark:bg-slate-900/50"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">{o.listingTitle || "Listing"}</p>
+                              <p className="text-[11px] text-neutral-600 dark:text-slate-400">
+                                Total{" "}
+                                <span className="tabular-nums font-medium">
+                                  {formatCents(Math.max(0, Number(o.codGoodsCents) || 0) + Math.max(0, Number(o.codDeliveryCents) || 0))}
+                                </span>{" "}
+                                · COD
+                              </p>
+                            </div>
+                            <div className="mt-3 border-t border-neutral-200/70 pt-3 dark:border-slate-600/50">
+                              <CommunityCourierPanel
+                                token={token}
+                                communityId={String(
+                                  o.listingCommunityId || orderListingsById[String(o.listingId)]?.communityId || "",
+                                ).trim()}
+                                orderId={o.id}
+                                compact={false}
+                                onAssigned={refreshCourierAndOrders}
+                                heading="Neighbor couriers"
+                                assignButtonLabel="Suggest"
+                              />
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </section>
+        )}
+
         {activeView === VIEWS.ABOUT && (
           <section className={`${UI_KIT.viewSection} max-w-3xl space-y-4 md:space-y-6`}>
             <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">About LinkMart</h2>
             <p className="text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
               LinkMart is a community marketplace for discovering what is available near you. Commerce is cash-on-delivery or cash at pickup — we do not operate
-              an in-app wallet. Delivery can be fulfilled by neighbors who walk, run, or bike, with transparent bidding on the delivery fee. Sellers stay organized
+              an in-app wallet. Delivery can be fulfilled by neighbors who walk, run, or bike; delivery fees are agreed directly between parties. Sellers stay organized
               with stock, expenses, and profit views tied to real orders.
             </p>
             <p className="text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
@@ -11523,8 +11808,8 @@ function App() {
             <div>
               <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">2. Pickup and delivery</h3>
               <p className="mt-1 text-neutral-600 dark:text-slate-400">
-                Listings may offer pickup, delivery, or both. Delivery fees proposed by couriers are offers only until a buyer or seller accepts a bid. The platform
-                coordinates information; it does not guarantee delivery times or service quality.
+                Listings may offer pickup, delivery, or both. Any delivery fee is agreed outside the platform (typically at handoff). The platform coordinates
+                information; it does not guarantee delivery times or service quality.
               </p>
             </div>
             <div>

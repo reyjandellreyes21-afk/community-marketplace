@@ -360,6 +360,7 @@ function minimalOrdersWritePatchFallback(full) {
     "fulfillment_type",
     "cod_goods_cents",
     "cod_delivery_cents",
+    "accepted_courier_assignment_id",
     "accepted_bid_id",
   ];
   const out = {};
@@ -569,17 +570,21 @@ const buyerReviewRowToApi = (row) => {
 
 /** Snapshot fields from `listings` row (snake_case) for order responses — keeps thumbnails working without extra client fetches. */
 function orderListingSnapshotFromDbRow(row) {
-  if (!row) return { listingTitle: null, listingImageUrl: "", listingImageUrls: [] };
+  if (!row) return { listingTitle: null, listingImageUrl: "", listingImageUrls: [], listingCommunityId: null };
   const imageUrls = dedupeListingImageUrlsOrdered(normalizeDbImageUrls(row.image_urls)).slice(0, LISTING_IMAGE_URLS_CAP);
   const primary = String(row.image_url || "").trim() || String(imageUrls[0] || "").trim();
+  const cid = row.community_id != null ? String(row.community_id).trim() : "";
   return {
     listingTitle: String(row.title || "").trim() || null,
     listingImageUrl: primary,
     listingImageUrls: imageUrls.length ? imageUrls : primary ? [primary] : [],
+    listingCommunityId: cid || null,
   };
 }
 
-const orderRowToApi = (row, reviewRow = null, listingMeta = null) => ({
+const orderRowToApi = (row, reviewRow = null, listingMeta = null) => {
+  const courierAssignmentId = row.accepted_courier_assignment_id ?? row.accepted_bid_id ?? null;
+  return {
   id: row.id,
   listingId: row.listing_id,
   buyerId: row.buyer_id,
@@ -589,7 +594,9 @@ const orderRowToApi = (row, reviewRow = null, listingMeta = null) => ({
   status: row.status,
   codGoodsCents: row.cod_goods_cents,
   codDeliveryCents: row.cod_delivery_cents,
-  acceptedBidId: row.accepted_bid_id,
+  acceptedCourierAssignmentId: courierAssignmentId,
+  /** @deprecated Use acceptedCourierAssignmentId */
+  acceptedBidId: courierAssignmentId,
   comment: String(row.buyer_comment ?? "").trim(),
   variantSignature: String(row.variant_signature ?? "").trim(),
   buyerReceiptAcknowledgedAt: row.buyer_receipt_acknowledged_at ?? null,
@@ -606,18 +613,222 @@ const orderRowToApi = (row, reviewRow = null, listingMeta = null) => ({
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   ...orderListingSnapshotFromDbRow(listingMeta),
-});
+};
+};
 
-const bidRowToApi = (row) => ({
-  id: row.id,
-  orderId: row.order_id,
-  courierId: row.courier_id,
-  amountCents: row.amount_cents,
-  etaMinutes: row.eta_minutes,
-  mode: row.mode,
-  status: row.status,
-  createdAt: row.created_at,
-});
+/** COD delivery fee is agreed offline; `courier_assignments` row keeps a minimal positive amount for DB constraints. */
+const COMMUNITY_DELIVERY_PLACEHOLDER_CENTS = 1;
+const ALLOWED_COURIER_OPTIONAL_TAGS = new Set(["eco", "bike", "fast", "helping"]);
+
+/** Achievement-style badges derived from completed runs + profile hints (not self-serve tags alone). */
+function deriveCourierAchievementBadges({ completedDeliveries, optionalTags, modes }) {
+  const tags = new Set((optionalTags || []).map((t) => String(t).toLowerCase()));
+  const modesSet = new Set((modes || []).map((m) => String(m).toLowerCase()));
+  const n = Math.max(0, Number(completedDeliveries) || 0);
+  /** @type {{ id: string, label: string }[]} */
+  const badges = [];
+  if (n >= 1) badges.push({ id: "first_run", label: "First run" });
+  if (n >= 5) badges.push({ id: "regular", label: "Regular" });
+  if (n >= 10) badges.push({ id: "trusted_carrier", label: "Trusted carrier" });
+  if (tags.has("eco") && n >= 3) badges.push({ id: "eco_hero", label: "Eco hero" });
+  if (modesSet.has("bike") && n >= 3) badges.push({ id: "bike_master", label: "Bike master" });
+  if (tags.has("helping") && n >= 2) badges.push({ id: "neighbor_helper", label: "Neighbor helper" });
+  return badges;
+}
+
+/** Count completed orders per courier where their assignment was accepted. */
+async function countCompletedDeliveriesForCourierIds(courierIds) {
+  const ids = [...new Set((courierIds || []).map((id) => String(id || "").trim()).filter(Boolean))];
+  /** @type {Map<string, number>} */
+  const counts = new Map(ids.map((id) => [id, 0]));
+  if (ids.length === 0) return counts;
+  const { data: bids, error: berr } = await supabaseAdmin
+    .from("courier_assignments")
+    .select("courier_id, order_id")
+    .in("courier_id", ids)
+    .eq("status", "accepted");
+  if (berr || !bids?.length) return counts;
+  const orderIds = [...new Set(bids.map((b) => String(b.order_id || "").trim()).filter(Boolean))];
+  if (orderIds.length === 0) return counts;
+  const { data: orders, error: oerr } = await supabaseAdmin.from("orders").select("id, status").in("id", orderIds);
+  if (oerr || !orders?.length) return counts;
+  const completed = new Set(
+    (orders || []).filter((o) => String(o.status || "").toLowerCase() === "completed").map((o) => String(o.id)),
+  );
+  for (const b of bids) {
+    const oid = String(b.order_id || "");
+    if (!completed.has(oid)) continue;
+    const cid = String(b.courier_id || "");
+    counts.set(cid, (counts.get(cid) || 0) + 1);
+  }
+  return counts;
+}
+
+async function resolveOrderCommunityId(order) {
+  if (!order?.listing_id) return null;
+  const { data: listing, error } = await supabaseAdmin
+    .from("listings")
+    .select("community_id, seller_id")
+    .eq("id", order.listing_id)
+    .maybeSingle();
+  if (error || !listing) return null;
+  if (listing.community_id) return String(listing.community_id);
+  if (!listing.seller_id) return null;
+  const { data: prof } = await supabaseAdmin.from("profiles").select("community_id").eq("id", listing.seller_id).maybeSingle();
+  return prof?.community_id ? String(prof.community_id) : null;
+}
+
+async function fetchListingMetaForOrder(order) {
+  if (!order?.listing_id) return null;
+  const { data: listing } = await supabaseAdmin
+    .from("listings")
+    .select("id, title, image_url, image_urls, community_id")
+    .eq("id", order.listing_id)
+    .maybeSingle();
+  return listing || null;
+}
+
+async function setProfileCourierStatus(userId, status) {
+  if (!userId || !status) return;
+  const { error } = await supabaseAdmin.from("profiles").update({ courier_status: status }).eq("id", userId);
+  if (error && process.env.NODE_ENV !== "production") {
+    if (error.code === "PGRST204" || /courier_status/i.test(String(error.message || ""))) {
+      console.warn("[courier] courier_status column missing; run migrations.");
+    }
+  }
+}
+
+async function clearCourierBusyForOrderRow(orderRow) {
+  const assignmentId = orderRow?.accepted_courier_assignment_id ?? orderRow?.accepted_bid_id;
+  if (!assignmentId) return;
+  const { data: bid } = await supabaseAdmin
+    .from("courier_assignments")
+    .select("courier_id")
+    .eq("id", assignmentId)
+    .maybeSingle();
+  if (bid?.courier_id) {
+    await setProfileCourierStatus(bid.courier_id, "available");
+  }
+}
+
+async function markCourierBusy(courierId) {
+  await setProfileCourierStatus(courierId, "busy");
+}
+
+/**
+ * Community delivery: record courier on `courier_assignments`, set order to `courier_assigned`.
+ * First successful DB transition wins for concurrent claims.
+ */
+async function assignCourierToOpenDeliveryOrder(orderId, courierId, actorUserId, role) {
+  const { data: order, error: oerr } = await supabaseAdmin.from("orders").select("*").eq("id", orderId).maybeSingle();
+  if (oerr) throw new AppError(500, oerr.message);
+  if (!order) throw new AppError(404, "Order not found.");
+  if (order.fulfillment_type !== "delivery") throw new AppError(400, "Not a delivery order.");
+  if (order.buyer_id === courierId || order.seller_id === courierId) {
+    throw new AppError(400, "Buyer or seller cannot act as courier on this order.");
+  }
+
+  const existingAssignmentId = order.accepted_courier_assignment_id ?? order.accepted_bid_id;
+  if (order.status === "courier_assigned" && existingAssignmentId) {
+    const { data: acceptedBid } = await supabaseAdmin
+      .from("courier_assignments")
+      .select("courier_id")
+      .eq("id", existingAssignmentId)
+      .maybeSingle();
+    if (acceptedBid?.courier_id === courierId) {
+      const listingMeta = await fetchListingMetaForOrder(order);
+      return orderRowToApi(order, null, listingMeta);
+    }
+    throw new AppError(409, "This order already has a courier.");
+  }
+  if (order.status !== "seller_accepted") throw new AppError(400, "This order is not open for courier assignment.");
+
+  const isSeller = order.seller_id === actorUserId;
+  const isBuyer = order.buyer_id === actorUserId;
+  const isCourierSelf = courierId === actorUserId;
+  if (role === "seller" && !isSeller) throw new AppError(403, "Only the seller can assign a courier.");
+  if (role === "buyer" && !isBuyer) throw new AppError(403, "Only the buyer can assign a courier on this order.");
+  if (role === "courier" && !isCourierSelf) throw new AppError(403, "You can only claim deliveries for yourself.");
+
+  const communityId = await resolveOrderCommunityId(order);
+  if (!communityId) {
+    throw new AppError(
+      400,
+      "This listing is not linked to a community. Attach the listing to a neighborhood community to use community couriers.",
+    );
+  }
+
+  const { data: courierProfile, error: perr } = await supabaseAdmin
+    .from("profiles")
+    .select("community_id, courier_status")
+    .eq("id", courierId)
+    .maybeSingle();
+  if (perr) throw new AppError(500, perr.message);
+  if (!courierProfile || String(courierProfile.community_id || "") !== communityId) {
+    throw new AppError(403, "Courier must belong to the same community as this order.");
+  }
+  const cs = String(courierProfile.courier_status || "offline");
+  if (cs === "busy") throw new AppError(400, "That courier is busy with another delivery.");
+  if (cs !== "available" && cs !== "active") throw new AppError(400, "Courier must be Available or Active to deliver.");
+
+  const { data: modeRow } = await supabaseAdmin.from("profiles").select("courier_modes").eq("id", courierId).maybeSingle();
+  const modes = normalizeDbTextArray(modeRow?.courier_modes);
+  const mode = modes.includes("bike") ? "bike" : modes.includes("run") ? "run" : "walk";
+
+  let bidId = null;
+  const { data: inserted, error: ierr } = await supabaseAdmin
+    .from("courier_assignments")
+    .insert({
+      order_id: orderId,
+      courier_id: courierId,
+      amount_cents: COMMUNITY_DELIVERY_PLACEHOLDER_CENTS,
+      eta_minutes: null,
+      mode,
+      status: "pending",
+    })
+    .select("id")
+    .single();
+
+  if (ierr?.code === "23505") {
+    const { data: existing } = await supabaseAdmin
+      .from("courier_assignments")
+      .select("id")
+      .eq("order_id", orderId)
+      .eq("courier_id", courierId)
+      .maybeSingle();
+    if (existing?.id) bidId = existing.id;
+    else throw new AppError(409, "Could not claim this delivery.");
+  } else if (ierr) {
+    throw new AppError(400, ierr.message);
+  } else {
+    bidId = inserted.id;
+  }
+
+  const bidTs = new Date().toISOString();
+  const orderPatch = compactOrderPatchForWrite({
+    status: "courier_assigned",
+    accepted_courier_assignment_id: bidId,
+    cod_delivery_cents: 0,
+    updated_at: bidTs,
+    ...(!order.processing_entered_at ? { processing_entered_at: bidTs } : {}),
+  });
+
+  const { error: uerr } = await supabaseAdmin.from("orders").update(orderPatch).eq("id", orderId).eq("status", "seller_accepted");
+  if (uerr) throw new AppError(500, uerr.message);
+
+  const { data: updatedOrder } = await supabaseAdmin.from("orders").select("*").eq("id", orderId).maybeSingle();
+  if (!updatedOrder || updatedOrder.status !== "courier_assigned") {
+    await supabaseAdmin.from("courier_assignments").update({ status: "rejected" }).eq("id", bidId);
+    throw new AppError(409, "Someone else just accepted this delivery. Try another order.");
+  }
+
+  await supabaseAdmin.from("courier_assignments").update({ status: "rejected" }).eq("order_id", orderId).neq("id", bidId);
+  await supabaseAdmin.from("courier_assignments").update({ status: "accepted" }).eq("id", bidId);
+  await markCourierBusy(courierId);
+
+  const listingMeta = await fetchListingMetaForOrder(updatedOrder);
+  return orderRowToApi(updatedOrder, null, listingMeta);
+}
 
 const communityRowToApi = (row, memberCount) => {
   const address = row.address ?? row.area_description ?? "";
@@ -1533,7 +1744,7 @@ export const listOrders = async (req, res, next) => {
     if (listingIds.length > 0) {
       const { data: listings, error: lerr } = await supabaseAdmin
         .from("listings")
-        .select("id, title, image_url, image_urls")
+        .select("id, title, image_url, image_urls, community_id")
         .in("id", listingIds);
       if (!lerr && Array.isArray(listings)) {
         for (const L of listings) {
@@ -1622,7 +1833,7 @@ export const patchOrder = async (req, res, next) => {
     if (transition === "seller_accept") {
       if (!isSeller) throw new AppError(403, "Only the seller can accept.");
       if (order.status !== "placed") throw new AppError(400, "Invalid state.");
-      patch.status = order.fulfillment_type === "delivery" ? "bidding_open" : "seller_accepted";
+      patch.status = "seller_accepted";
       if (!order.processing_entered_at) patch.processing_entered_at = ts;
     } else if (transition === "mark_ready_for_pickup") {
       if (!isSeller) throw new AppError(403, "Only the seller can mark ready for pickup.");
@@ -1658,9 +1869,14 @@ export const patchOrder = async (req, res, next) => {
       patch.cancelled_by_role = isBuyer ? "buyer" : "seller";
       patch.cancellation_reason = rawReason;
       patch.cancellation_note = rawNote.length ? rawNote : null;
+    } else if (transition === "seller_self_out_for_delivery") {
+      if (!isSeller) throw new AppError(403, "Only the seller can self-deliver.");
+      if (order.fulfillment_type !== "delivery") throw new AppError(400, "Only delivery orders use this action.");
+      if (order.status !== "seller_accepted") throw new AppError(400, "Invalid state.");
+      patch.status = "out_for_delivery";
     } else if (transition === "mark_out_for_delivery") {
       if (!isSeller) throw new AppError(403, "Only seller can mark out for delivery.");
-      if (order.status !== "bid_accepted") throw new AppError(400, "Invalid state.");
+      if (order.status !== "courier_assigned") throw new AppError(400, "Invalid state.");
       patch.status = "out_for_delivery";
     } else if (transition === "mark_delivered") {
       if (!isBuyer) throw new AppError(403, "Only the buyer can mark delivery as received.");
@@ -1677,8 +1893,26 @@ export const patchOrder = async (req, res, next) => {
       );
     }
 
+    if (transition === "seller_self_out_for_delivery") {
+      const { error: bidCloseErr } = await supabaseAdmin
+        .from("courier_assignments")
+        .update({ status: "rejected" })
+        .eq("order_id", id)
+        .eq("status", "pending");
+      if (bidCloseErr && process.env.NODE_ENV !== "production") {
+        console.warn("[patchOrder] seller_self_out_for_delivery courier row cleanup:", bidCloseErr.message);
+      }
+    }
+
+    const orderBeforePatch = order;
     const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(id, patch);
     if (uerr) throw new AppError(500, uerr.message);
+    if (transition === "mark_delivered" && patch.status === "completed") {
+      await clearCourierBusyForOrderRow(updated || orderBeforePatch);
+    }
+    if (transition === "cancel" && (orderBeforePatch.accepted_courier_assignment_id ?? orderBeforePatch.accepted_bid_id)) {
+      await clearCourierBusyForOrderRow(orderBeforePatch);
+    }
     if (patch.status === "completed") {
       const { data: listing } = await supabaseAdmin
         .from("listings")
@@ -1725,118 +1959,59 @@ export const patchOrder = async (req, res, next) => {
   }
 };
 
-export const acceptBid = async (req, res, next) => {
-  try {
-    const { id: orderId, bidId } = req.params;
-    const { data: order, error: oerr } = await supabaseAdmin.from("orders").select("*").eq("id", orderId).maybeSingle();
-    if (oerr) throw new AppError(500, oerr.message);
-    if (!order) throw new AppError(404, "Order not found.");
-    const isBuyer = order.buyer_id === req.user.id;
-    const isSeller = order.seller_id === req.user.id;
-    if (!isBuyer && !isSeller) throw new AppError(403, "Only buyer or seller can accept a bid.");
-    if (order.status !== "bidding_open") throw new AppError(400, "Bidding is not open for this order.");
-    const { data: bid, error: berr } = await supabaseAdmin.from("delivery_bids").select("*").eq("id", bidId).maybeSingle();
-    if (berr) throw new AppError(500, berr.message);
-    if (!bid || bid.order_id !== orderId || bid.status !== "pending") throw new AppError(404, "Bid not found.");
-
-    await supabaseAdmin.from("delivery_bids").update({ status: "rejected" }).eq("order_id", orderId).neq("id", bidId);
-    await supabaseAdmin.from("delivery_bids").update({ status: "accepted" }).eq("id", bidId);
-
-    const bidTs = new Date().toISOString();
-    const bidPatch = {
-      status: "bid_accepted",
-      accepted_bid_id: bidId,
-      cod_delivery_cents: bid.amount_cents,
-      updated_at: bidTs,
-      ...(!order.processing_entered_at ? { processing_entered_at: bidTs } : {}),
-    };
-    const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(orderId, bidPatch);
-    if (uerr) throw new AppError(500, uerr.message);
-    res.json({ order: orderRowToApi(updated) });
-  } catch (e) {
-    next(e);
-  }
-};
-
-export const createBid = async (req, res, next) => {
-  try {
-    const { id: orderId } = req.params;
-    const amountCents = Number(req.body.amountCents);
-    const etaMinutes = req.body.etaMinutes != null ? Number(req.body.etaMinutes) : null;
-    const mode = String(req.body.mode || "");
-    if (!["walk", "run", "bike"].includes(mode)) throw new AppError(400, "Invalid courier mode.");
-    if (!Number.isFinite(amountCents) || amountCents < 1) throw new AppError(400, "Invalid bid amount.");
-    const { data: order, error: oerr } = await supabaseAdmin.from("orders").select("*").eq("id", orderId).maybeSingle();
-    if (oerr) throw new AppError(500, oerr.message);
-    if (!order) throw new AppError(404, "Order not found.");
-    if (order.status !== "bidding_open") throw new AppError(400, "This order is not accepting bids.");
-    if (order.buyer_id === req.user.id || order.seller_id === req.user.id) {
-      throw new AppError(400, "Parties to the order cannot bid on delivery.");
-    }
-    const row = {
-      order_id: orderId,
-      courier_id: req.user.id,
-      amount_cents: amountCents,
-      eta_minutes: etaMinutes,
-      mode,
-      status: "pending",
-    };
-    const { data, error } = await supabaseAdmin.from("delivery_bids").insert(row).select("*").single();
-    if (error?.code === "23505") throw new AppError(409, "You already placed a bid on this order.");
-    if (error) throw new AppError(400, error.message);
-    res.status(201).json({ bid: bidRowToApi(data) });
-  } catch (e) {
-    next(e);
-  }
-};
-
-export const listBidsForOrder = async (req, res, next) => {
-  try {
-    const { id: orderId } = req.params;
-    const { data: order } = await supabaseAdmin.from("orders").select("id,buyer_id,seller_id").eq("id", orderId).maybeSingle();
-    if (!order) throw new AppError(404, "Order not found.");
-    const isParty = order.buyer_id === req.user.id || order.seller_id === req.user.id;
-    const { data: bidsMine } = await supabaseAdmin.from("delivery_bids").select("id").eq("order_id", orderId).eq("courier_id", req.user.id).maybeSingle();
-    if (!isParty && !bidsMine) throw new AppError(403, "Forbidden.");
-    const { data, error } = await supabaseAdmin.from("delivery_bids").select("*").eq("order_id", orderId).order("created_at", { ascending: true });
-    if (error) throw new AppError(500, error.message);
-    res.json({ bids: (data || []).map(bidRowToApi) });
-  } catch (e) {
-    next(e);
-  }
-};
-
 export const listOpenDeliveryOrders = async (req, res, next) => {
   try {
+    const { data: meProf } = await supabaseAdmin.from("profiles").select("community_id").eq("id", req.user.id).maybeSingle();
+    const myCommunityId = meProf?.community_id ? String(meProf.community_id) : null;
+
     const { data, error } = await supabaseAdmin
       .from("orders")
       .select("*")
       .eq("fulfillment_type", "delivery")
-      .eq("status", "bidding_open")
+      .eq("status", "seller_accepted")
       .neq("buyer_id", req.user.id)
       .neq("seller_id", req.user.id)
       .order("created_at", { ascending: false });
     if (error?.code === "PGRST205") return res.json({ orders: [] });
     if (error) throw new AppError(500, error.message);
-    res.json({ orders: (data || []).map(orderRowToApi) });
-  } catch (e) {
-    next(e);
-  }
-};
+    const rows = data || [];
+    if (!myCommunityId) return res.json({ orders: [] });
+    if (rows.length === 0) return res.json({ orders: [] });
 
-export const listMyBids = async (req, res, next) => {
-  try {
-    const { data, error } = await supabaseAdmin
-      .from("delivery_bids")
-      .select("*, orders:order_id (*)")
-      .eq("courier_id", req.user.id)
-      .order("created_at", { ascending: false });
-    if (error) {
-      const { data: bids, error: e2 } = await supabaseAdmin.from("delivery_bids").select("*").eq("courier_id", req.user.id);
-      if (e2) throw new AppError(500, e2.message);
-      return res.json({ bids: (bids || []).map(bidRowToApi) });
+    const listingIds = [...new Set(rows.map((r) => String(r?.listing_id || "")).filter(Boolean))];
+    const { data: listings } = await supabaseAdmin
+      .from("listings")
+      .select("id, community_id, seller_id")
+      .in("id", listingIds);
+    const listingRows = listings || [];
+    const sellersNeedingCommunity = listingRows.filter((L) => !L.community_id && L.seller_id).map((L) => L.seller_id);
+    let sellerCommunityById = new Map();
+    if (sellersNeedingCommunity.length > 0) {
+      const { data: sellerProfs } = await supabaseAdmin
+        .from("profiles")
+        .select("id, community_id")
+        .in("id", [...new Set(sellersNeedingCommunity)]);
+      sellerCommunityById = new Map(
+        (sellerProfs || []).map((p) => [String(p.id), p.community_id ? String(p.community_id) : null]),
+      );
     }
-    res.json({ bids: (data || []).map((r) => ({ ...bidRowToApi(r), order: r.orders ? orderRowToApi(r.orders) : null })) });
+    const effectiveCommunity = (listingId) => {
+      const L = listingRows.find((x) => String(x.id) === String(listingId));
+      if (!L) return null;
+      if (L.community_id) return String(L.community_id);
+      const sid = L.seller_id ? String(L.seller_id) : "";
+      return sid ? sellerCommunityById.get(sid) || null : null;
+    };
+
+    const filtered = rows.filter((r) => {
+      const cid = effectiveCommunity(r.listing_id);
+      return cid && cid === myCommunityId;
+    });
+
+    const metaByListing = new Map(listingRows.map((L) => [String(L.id), L]));
+    res.json({
+      orders: filtered.map((r) => orderRowToApi(r, null, metaByListing.get(String(r.listing_id)) || null)),
+    });
   } catch (e) {
     next(e);
   }
@@ -1861,6 +2036,160 @@ export const getCourierModes = async (req, res, next) => {
     const { data, error } = await supabaseAdmin.from("profiles").select("courier_modes").eq("id", req.user.id).maybeSingle();
     if (error || !data) return res.json({ modes: [] });
     res.json({ modes: data.courier_modes || [] });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const getCourierPresence = async (req, res, next) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("profiles")
+      .select("courier_status, courier_optional_tags, courier_modes")
+      .eq("id", req.user.id)
+      .maybeSingle();
+    if (error || !data) return res.json({ courierStatus: "offline", optionalTags: [], modes: [], completedDeliveries: 0, badges: [] });
+    const modes = normalizeDbTextArray(data.courier_modes);
+    const optionalTags = normalizeDbTextArray(data.courier_optional_tags);
+    const completedMap = await countCompletedDeliveriesForCourierIds([req.user.id]);
+    const completedDeliveries = completedMap.get(req.user.id) || 0;
+    const badges = deriveCourierAchievementBadges({ completedDeliveries, optionalTags, modes });
+    res.json({
+      courierStatus: data.courier_status || "offline",
+      optionalTags,
+      modes,
+      completedDeliveries,
+      badges,
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const patchCourierPresence = async (req, res, next) => {
+  try {
+    const rawStatus = String(req.body.courierStatus ?? req.body.courier_status ?? "").trim().toLowerCase();
+    const allowed = ["offline", "available", "active", "busy"];
+    if (!rawStatus || !allowed.includes(rawStatus)) throw new AppError(400, "Set courierStatus to offline, available, active, or busy.");
+    const tagsIn = Array.isArray(req.body.optionalTags) ? req.body.optionalTags : req.body.optional_tags;
+    const tags = Array.isArray(tagsIn)
+      ? [
+          ...new Set(
+            tagsIn
+              .map((t) => String(t || "").trim().toLowerCase())
+              .filter((t) => ALLOWED_COURIER_OPTIONAL_TAGS.has(t)),
+          ),
+        ]
+      : [];
+    const patch = { courier_status: rawStatus, courier_optional_tags: tags };
+    const { error } = await supabaseAdmin.from("profiles").update(patch).eq("id", req.user.id);
+    if (error?.code === "PGRST204" || /courier_status|courier_optional/i.test(String(error?.message || ""))) {
+      return res.json({
+        courierStatus: rawStatus,
+        optionalTags: tags,
+        modes: [],
+        completedDeliveries: 0,
+        badges: [],
+        note: "Run DB migrations to persist courier presence.",
+      });
+    }
+    if (error) throw new AppError(500, error.message);
+    const { data: profAfter } = await supabaseAdmin
+      .from("profiles")
+      .select("courier_modes")
+      .eq("id", req.user.id)
+      .maybeSingle();
+    const modes = normalizeDbTextArray(profAfter?.courier_modes);
+    const completedMap = await countCompletedDeliveriesForCourierIds([req.user.id]);
+    const completedDeliveries = completedMap.get(req.user.id) || 0;
+    const badges = deriveCourierAchievementBadges({ completedDeliveries, optionalTags: tags, modes });
+    res.json({ courierStatus: rawStatus, optionalTags: tags, modes, completedDeliveries, badges });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const listCommunityCouriers = async (req, res, next) => {
+  try {
+    const communityId = String(req.params.communityId || "").trim();
+    const { data: me } = await supabaseAdmin.from("profiles").select("community_id").eq("id", req.user.id).maybeSingle();
+    if (String(me?.community_id || "") !== communityId) {
+      throw new AppError(403, "You can only view couriers in your own community.");
+    }
+    const { data: rows, error } = await supabaseAdmin
+      .from("profiles")
+      .select("id, username, first_name, last_name, avatar_url, courier_status, courier_optional_tags, courier_modes, created_at")
+      .eq("community_id", communityId)
+      .in("courier_status", ["available", "active"])
+      .order("username", { ascending: true });
+    if (error) {
+      if (error.code === "PGRST204" || /courier_status|courier_optional/i.test(String(error.message || ""))) {
+        return res.json({ couriers: [] });
+      }
+      throw new AppError(500, error.message);
+    }
+    const base = (rows || []).map((p) => ({
+      id: p.id,
+      username: String(p.username || "").trim(),
+      displayName: [p.first_name, p.last_name].filter(Boolean).join(" ").trim() || String(p.username || "").trim(),
+      avatarUrl: String(p.avatar_url || "").trim() || null,
+      courierStatus: p.courier_status || "offline",
+      optionalTags: normalizeDbTextArray(p.courier_optional_tags),
+      modes: normalizeDbTextArray(p.courier_modes),
+    }));
+    const idList = base.map((c) => String(c.id));
+    const completedMap = await countCompletedDeliveriesForCourierIds(idList);
+    const couriers = base
+      .map((c) => {
+        const completedDeliveries = completedMap.get(String(c.id)) || 0;
+        const badges = deriveCourierAchievementBadges({
+          completedDeliveries,
+          optionalTags: c.optionalTags,
+          modes: c.modes,
+        });
+        return { ...c, completedDeliveries, badges };
+      })
+      .sort((a, b) => {
+        const ra = a.courierStatus === "active" ? 0 : 1;
+        const rb = b.courierStatus === "active" ? 0 : 1;
+        if (ra !== rb) return ra - rb;
+        return String(a.username || "").localeCompare(String(b.username || ""), undefined, { sensitivity: "base" });
+      });
+    res.json({ couriers });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const assignCommunityCourier = async (req, res, next) => {
+  try {
+    const orderId = req.params.id;
+    const courierId = String(req.body.courierId || "").trim();
+    if (!courierId) throw new AppError(400, "courierId is required.");
+    const { data: orderRow, error: oerr } = await supabaseAdmin
+      .from("orders")
+      .select("id, buyer_id, seller_id")
+      .eq("id", orderId)
+      .maybeSingle();
+    if (oerr) throw new AppError(500, oerr.message);
+    if (!orderRow) throw new AppError(404, "Order not found.");
+    const uid = req.user.id;
+    let role = "seller";
+    if (orderRow.seller_id === uid) role = "seller";
+    else if (orderRow.buyer_id === uid) role = "buyer";
+    else throw new AppError(403, "Only the buyer or seller on this order can assign a courier.");
+    const order = await assignCourierToOpenDeliveryOrder(orderId, courierId, req.user.id, role);
+    res.json({ order });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const claimCommunityDelivery = async (req, res, next) => {
+  try {
+    const orderId = req.params.id;
+    const order = await assignCourierToOpenDeliveryOrder(orderId, req.user.id, req.user.id, "courier");
+    res.json({ order });
   } catch (e) {
     next(e);
   }
