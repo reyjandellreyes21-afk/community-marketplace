@@ -99,10 +99,12 @@ export const marketplaceRouteValidators = {
     body("quantity").optional().isInt({ min: 1 }),
     body("comment").optional().isString().isLength({ max: 2000 }),
     body("variantSignature").optional().isString().isLength({ max: 512 }),
+    body("fulfillmentType").optional().isIn(["pickup", "delivery"]),
   ],
   cartPatch: [
     param("listingId").isUUID(),
     body("quantity").isInt({ min: 1 }),
+    body("fulfillmentType").optional().isIn(["pickup", "delivery"]),
     query("variantSignature").optional().isString().isLength({ max: 512 }),
   ],
   cartDelete: [param("listingId").isUUID(), query("variantSignature").optional().isString().isLength({ max: 512 })],
@@ -113,7 +115,14 @@ export const marketplaceRouteValidators = {
     body("comment").optional().isString().isLength({ max: 2000 }),
     body("variantSignature").optional().isString().isLength({ max: 512 }),
   ],
-  patchOrder: [param("id").isUUID(), body("transition").trim().isString().notEmpty()],
+  patchOrder: [
+    param("id").isUUID(),
+    body("transition").trim().isString().notEmpty(),
+    body("cancellationReason")
+      .optional()
+      .isIn(["change_of_mind", "change_variant", "better_price_elsewhere", "placed_by_mistake", "other"]),
+    body("cancellationNote").optional({ nullable: true }).isString().isLength({ max: 500 }),
+  ],
   listOrders: [
     query("role").optional().isIn(["buyer", "seller"]),
     query("limit").optional().isInt({ min: 1, max: 100 }),

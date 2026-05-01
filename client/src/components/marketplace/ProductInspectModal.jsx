@@ -13,9 +13,15 @@ import { resolveListingGalleryUrls } from "../../lib/listingImageUrl.js";
 import { ChevronLeftIcon, ChevronRightIcon } from "../landing/LandingMarketing.jsx";
 import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
 import { ListingProductMetaExtras } from "./ListingProductMetaExtras.jsx";
+import { OrderStatusMilestoneList } from "./OrderStatusMilestoneList.jsx";
 
 /** Rubber-band: higher = closer to 1:1 drag at first/last slide (was 0.33 — felt like it wouldn’t pull far). */
 const GALLERY_DRAG_EDGE_RESISTANCE = 0.78;
+
+const PRIMARY_QUICK_SALE_PERCENTS = [5, 10, 15, 25, 50];
+const OTHER_QUICK_SALE_PERCENTS = SALE_PERCENT_OPTIONS.filter(
+  (percent) => !PRIMARY_QUICK_SALE_PERCENTS.includes(Number(percent)),
+);
 
 /** Once horizontal intent wins, lock so vertical scroll / browser gestures don’t steal the drag. */
 const GALLERY_HORIZONTAL_LOCK_PX = 10;
@@ -68,6 +74,13 @@ export function ProductInspectModal({
   categoryLabel = "",
   isFavorite = false,
   onToggleFavorite,
+  /** When set (e.g. opened from an order card), show milestone timeline for this order only. */
+  orderTimelineOrder = null,
+  /** Optional explicit IDs (e.g. merged buyer rows); defaults to `orderTimelineOrder.id`. */
+  orderTimelineOrderIds = null,
+  orderTimelineContextTab = null,
+  /** `"buyer"` | `"seller"` — who is viewing (cancellation wording). */
+  orderTimelineViewerRole = null,
 }) {
   const [salePickerOpen, setSalePickerOpen] = useState(false);
   const [showOtherSaleOptions, setShowOtherSaleOptions] = useState(false);
@@ -110,6 +123,14 @@ export function ProductInspectModal({
   const saleMeta = parseSaleMetaFromDescription(description);
   const currentPesos = Math.floor((Number(priceCents) || 0) / 100);
   const originalPesos = Number.isFinite(Number(saleMeta?.originalPesos)) ? Number(saleMeta.originalPesos) : null;
+
+  const orderInspectDisplayIds = useMemo(() => {
+    if (Array.isArray(orderTimelineOrderIds) && orderTimelineOrderIds.length > 0) {
+      return orderTimelineOrderIds.map((x) => String(x || "").trim()).filter(Boolean);
+    }
+    const one = String(orderTimelineOrder?.id || "").trim();
+    return one ? [one] : [];
+  }, [orderTimelineOrderIds, orderTimelineOrder]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -358,11 +379,6 @@ export function ProductInspectModal({
   const hasBuyerHandlers = showBuyerCommerceActions && (typeof onAddToCart === "function" || typeof onBuyNow === "function");
   const hasSellerHandlers =
     showSellerCommerceActions && (typeof onEditListing === "function" || typeof onSaleSelect === "function");
-  const primaryQuickSalePercents = useMemo(() => [5, 10, 15, 25, 50], []);
-  const otherQuickSalePercents = useMemo(
-    () => SALE_PERCENT_OPTIONS.filter((percent) => !primaryQuickSalePercents.includes(Number(percent))),
-    [primaryQuickSalePercents],
-  );
   const customDiscountValue = Number(customDiscountDraft);
   const customDiscountValid =
     Number.isFinite(customDiscountValue) &&
@@ -839,6 +855,33 @@ export function ProductInspectModal({
                   <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{soldQty}</span>
                 </p>
               ) : null}
+              {orderTimelineOrder && String(orderTimelineContextTab || "").trim() ? (
+                <>
+                  {orderInspectDisplayIds.length > 0 ? (
+                    <div className="mt-2 space-y-1.5 rounded-lg border border-neutral-200/80 bg-neutral-50/90 px-2.5 py-2 dark:border-slate-600 dark:bg-slate-900/50">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                        {orderInspectDisplayIds.length > 1 ? "Order IDs" : "Order ID"}
+                      </p>
+                      <div className="space-y-0.5">
+                        {orderInspectDisplayIds.map((id) => (
+                          <p
+                            key={id}
+                            className="break-all font-mono text-[11px] leading-snug text-neutral-700 dark:text-slate-300"
+                          >
+                            {id}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <OrderStatusMilestoneList
+                    order={orderTimelineOrder}
+                    contextTab={String(orderTimelineContextTab).trim()}
+                    viewerRole={orderTimelineViewerRole}
+                    className="mt-2"
+                  />
+                </>
+              ) : null}
             </div>
           </div>
 
@@ -958,7 +1001,7 @@ export function ProductInspectModal({
                     Apply discount
                   </p>
                   <div className="flex min-w-max flex-wrap gap-1.5">
-                    {primaryQuickSalePercents.map((percent) => (
+                    {PRIMARY_QUICK_SALE_PERCENTS.map((percent) => (
                       <button
                         key={percent}
                         type="button"
@@ -972,7 +1015,7 @@ export function ProductInspectModal({
                         {percent}%
                       </button>
                     ))}
-                    {otherQuickSalePercents.length > 0 ? (
+                    {OTHER_QUICK_SALE_PERCENTS.length > 0 ? (
                       <button
                         type="button"
                         className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
@@ -983,9 +1026,9 @@ export function ProductInspectModal({
                       </button>
                     ) : null}
                   </div>
-                  {showOtherSaleOptions && otherQuickSalePercents.length > 0 ? (
+                  {showOtherSaleOptions && OTHER_QUICK_SALE_PERCENTS.length > 0 ? (
                     <div className="mt-1.5 flex min-w-max flex-wrap gap-1.5">
-                      {otherQuickSalePercents.map((percent) => (
+                      {OTHER_QUICK_SALE_PERCENTS.map((percent) => (
                         <button
                           key={`other-${percent}`}
                           type="button"
