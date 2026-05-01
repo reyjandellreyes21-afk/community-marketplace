@@ -28,7 +28,7 @@ function CheckCircleIcon(props) {
 const recoveryRowClass = "mt-6 flex w-full max-w-none flex-col gap-3 md:mx-auto md:flex-row md:flex-wrap md:justify-center";
 
 /** Full-width primary recovery on mobile (`Button` default height = 44px tap area). */
-function RecoveryButtons({ primaryAction, secondaryAction }) {
+function RecoveryButtons({ primaryAction, secondaryAction, primaryClassName, secondaryClassName }) {
   if (!primaryAction && !secondaryAction) return null;
   return (
     <div className={recoveryRowClass}>
@@ -37,7 +37,7 @@ function RecoveryButtons({ primaryAction, secondaryAction }) {
           type="button"
           variant="primary"
           fullWidth
-          className="md:w-auto md:min-w-[10rem]"
+          className={cn("md:w-auto md:min-w-[10rem]", primaryClassName)}
           onClick={primaryAction.onClick}
         >
           {primaryAction.label}
@@ -48,7 +48,7 @@ function RecoveryButtons({ primaryAction, secondaryAction }) {
           type="button"
           variant="secondary"
           fullWidth
-          className="md:w-auto md:min-w-[10rem]"
+          className={cn("md:w-auto md:min-w-[10rem]", secondaryClassName)}
           onClick={secondaryAction.onClick}
         >
           {secondaryAction.label}
@@ -97,6 +97,10 @@ export function ScreenEmpty({
   onDismiss,
   spacious = true,
   className = "",
+  /** Merged onto primary `Button` after variant styles (e.g. Activity tab chrome). */
+  recoveryPrimaryClassName,
+  /** Merged onto secondary `Button` after variant styles. */
+  recoverySecondaryClassName,
 }) {
   return (
     <div
@@ -124,7 +128,12 @@ export function ScreenEmpty({
       {description ? (
         <p className={cn("mt-2 break-words text-pretty", MOBILE_DESIGN_SYSTEM.screen.empty.description)}>{description}</p>
       ) : null}
-      <RecoveryButtons primaryAction={primaryAction} secondaryAction={secondaryAction} />
+      <RecoveryButtons
+        primaryAction={primaryAction}
+        secondaryAction={secondaryAction}
+        primaryClassName={recoveryPrimaryClassName}
+        secondaryClassName={recoverySecondaryClassName}
+      />
     </div>
   );
 }

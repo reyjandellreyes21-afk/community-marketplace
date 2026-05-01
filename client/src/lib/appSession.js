@@ -4,6 +4,7 @@ export const THEME_STORAGE_KEY = "linkmart_theme_v1";
 export const LEGACY_THEME_KEY_V2 = "quiz_theme_v2";
 export const LEGACY_THEME_KEY_V1 = "quiz_theme";
 export const ACTIVE_VIEW_STORAGE_KEY = "linkmart_active_view_v1";
+export const ACTIVITY_TAB_STORAGE_KEY = "linkmart_activity_tab_v1";
 
 export function readAuthToken() {
   if (typeof window === "undefined") return "";
@@ -60,4 +61,19 @@ export function writeActiveView(view) {
 export function clearActiveView() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
+}
+
+export function readActivityTab() {
+  if (typeof window === "undefined") return "";
+  return String(localStorage.getItem(ACTIVITY_TAB_STORAGE_KEY) || "").trim();
+}
+
+export function writeActivityTab(tab) {
+  if (typeof window === "undefined") return;
+  const next = String(tab || "").trim();
+  if (!next) {
+    localStorage.removeItem(ACTIVITY_TAB_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(ACTIVITY_TAB_STORAGE_KEY, next);
 }

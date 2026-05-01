@@ -11,6 +11,7 @@ export const VIEWS = {
   FAVORITES: "favorites",
   PROFILE: "profile",
   MY_LISTINGS: "my_listings",
+  /** Seller orders from buyers (legacy persistence — prefer ACTIVITY + selling tab). */
   ORDERS: "orders",
   ABOUT: "about",
   TERMS: "terms",
@@ -19,10 +20,12 @@ export const VIEWS = {
   SELLER: "seller",
   /** Add-to-cart screen (nav placeholder). */
   CART: "cart",
-  /** Buyer purchases (orders with `role=buyer`). */
+  /** Buyer purchases (legacy persistence — prefer ACTIVITY + buying tab). */
   MY_PURCHASES: "my_purchases",
-  /** Community courier hub (presence, open deliveries, seller assigns neighbor) — separate from Orders. */
+  /** Courier hub (legacy persistence — prefer ACTIVITY + courier tab). */
   COURIER: "courier",
+  /** Purchases, sales, and courier coordination (single hub). */
+  ACTIVITY: "activity",
 };
 
 /** Sub-navigation for `VIEWS.SELLER` (stored in App state `sellerTab`). */
@@ -32,12 +35,19 @@ export const SELLER_TABS = {
   FEEDBACK: "feedback",
 };
 
-/** Sub-navigation for `VIEWS.COURIER` (stored in App state `courierTab`). */
+/** Sub-navigation for the courier area (Activity → Courier tab; stored in App state `courierTab`). Strip order: Deliver, Buying, Selling (mirrors Activity Buying → Selling). */
 export const COURIER_TABS = {
   /** Courier role: availability + claim open deliveries. */
   DELIVER: "deliver",
-  /** Seller: assign a neighbor or self-deliver. */
-  SELL: "sell",
-  /** Buyer: suggest a neighbor courier for your purchase. */
+  /** Buyer: suggest a neighbor courier (tab label: Buying). */
   BUY: "buy",
+  /** Seller: assign or self-deliver (tab label: Selling). */
+  SELL: "sell",
+};
+
+/** Primary tabs inside `VIEWS.ACTIVITY`. */
+export const ACTIVITY_TABS = {
+  BUYING: "buying",
+  SELLING: "selling",
+  COURIER: "courier",
 };

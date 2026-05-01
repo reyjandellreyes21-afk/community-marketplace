@@ -110,10 +110,26 @@ export const normalizeRecentPendingIdsFromApi = (raw) =>
 
 /** Maps API `order.status` to Orders view tabs (Pending / Processing / Completed / Cancelled). */
 export const ORDERS_STATUS_TABS = [
-  { id: "pending", label: "Pending" },
-  { id: "processing", label: "Processing" },
-  { id: "completed", label: "Completed" },
-  { id: "cancelled", label: "Cancelled" },
+  {
+    id: "pending",
+    label: "Pending",
+    hint: "Waiting for the seller to accept, or for your next step.",
+  },
+  {
+    id: "processing",
+    label: "Processing",
+    hint: "In progress — preparing, courier assignment, pickup, or delivery.",
+  },
+  {
+    id: "completed",
+    label: "Completed",
+    hint: "Finished orders — picked up or delivered.",
+  },
+  {
+    id: "cancelled",
+    label: "Cancelled",
+    hint: "Declined or cancelled orders.",
+  },
 ];
 
 export const orderMatchesOrdersStatusTab = (status, tabId) => {

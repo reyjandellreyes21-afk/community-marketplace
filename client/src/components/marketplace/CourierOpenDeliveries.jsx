@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../../lib/appApi.js";
+import { getActivityTabChrome } from "../../lib/activityTabTheme.js";
+import { cn } from "../../lib/cn.js";
+import { ACTIVITY_TABS } from "../../views.js";
 import { Button } from "../ui/Button.jsx";
 import { formatCents } from "../../marketplace/money.js";
+
+const courierChrome = getActivityTabChrome(ACTIVITY_TABS.COURIER);
 
 /**
  * Lists delivery orders open in the member's community (GET /delivery/open).
@@ -60,8 +65,8 @@ export function CourierOpenDeliveries({ token, communityId, courierStatus, onCla
   }
 
   return (
-    <div className="mt-4 border-t border-neutral-200/80 pt-4 dark:border-slate-600/80">
-      <h4 className="text-xs font-semibold text-neutral-900 dark:text-slate-100">Open deliveries</h4>
+    <div className="mt-4 border-t border-violet-200/80 pt-4 dark:border-violet-800/50">
+      <h4 className="text-xs font-semibold text-violet-950 dark:text-violet-100">Open deliveries</h4>
       <p className="mt-1 text-[11px] text-neutral-600 dark:text-slate-400">
         First to accept gets the run — agree pickup details in chat with the seller.
       </p>
@@ -79,7 +84,7 @@ export function CourierOpenDeliveries({ token, communityId, courierStatus, onCla
           {orders.map((o) => (
             <li
               key={String(o.id)}
-              className="flex flex-col gap-2 rounded-lg border border-neutral-200/80 bg-white/70 px-3 py-2 dark:border-slate-600/70 dark:bg-slate-900/40 sm:flex-row sm:items-center sm:justify-between"
+              className="flex flex-col gap-2 rounded-lg border border-violet-200/70 bg-white/80 px-3 py-2 dark:border-violet-800/40 dark:bg-violet-950/20 sm:flex-row sm:items-center sm:justify-between"
             >
               <div className="min-w-0">
                 <p className="truncate text-xs font-medium text-neutral-900 dark:text-slate-100">
@@ -93,7 +98,7 @@ export function CourierOpenDeliveries({ token, communityId, courierStatus, onCla
               <Button
                 type="button"
                 variant="primary"
-                className="min-h-10 w-full shrink-0 px-3 text-xs sm:w-auto"
+                className={cn("min-h-10 w-full shrink-0 px-3 text-xs sm:w-auto", courierChrome.recoveryPrimary)}
                 loading={claimingId === o.id}
                 loadingLabel="…"
                 disabled={Boolean(claimingId)}
