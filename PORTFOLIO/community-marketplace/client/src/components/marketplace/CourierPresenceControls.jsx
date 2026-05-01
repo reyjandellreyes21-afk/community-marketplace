@@ -1,7 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../../lib/appApi.js";
+import { getActivityTabChrome } from "../../lib/activityTabTheme.js";
+import { cn } from "../../lib/cn.js";
+import { ACTIVITY_TABS } from "../../views.js";
 import { Button } from "../ui/Button.jsx";
 import { CourierOpenDeliveries } from "./CourierOpenDeliveries.jsx";
+
+const courierChrome = getActivityTabChrome(ACTIVITY_TABS.COURIER);
+
+/** Status grid: selected uses theme primary; idle = calm cells on a shared “rail” (clearer than four matching outlines). */
+const courierStatusIdle =
+  "rounded-lg border-0 bg-white/85 py-2.5 text-[11px] font-semibold leading-tight text-violet-900 shadow-none ring-0 transition hover:bg-white dark:bg-violet-950/45 dark:text-violet-100 dark:hover:bg-violet-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-violet-100 dark:focus-visible:ring-offset-violet-950";
+
+/** Optional tags: compact chips — off = paper outline; on = solid accent (distinct from status rail). */
+const courierChipOff =
+  "min-h-9 rounded-full border border-violet-200/90 bg-white/95 px-3 py-1.5 text-left text-[11px] font-semibold text-violet-900 shadow-sm transition hover:border-violet-400/70 hover:bg-white dark:border-violet-700/65 dark:bg-violet-950/55 dark:text-violet-100 dark:hover:border-violet-500 dark:hover:bg-violet-900/60";
+const courierChipOn =
+  "min-h-9 rounded-full border border-transparent bg-violet-600 px-3 py-1.5 text-left text-[11px] font-semibold text-white shadow-sm ring-1 ring-violet-700/25 transition hover:bg-violet-700 dark:bg-violet-500 dark:ring-violet-400/25";
 
 const STATUSES = [
   { id: "offline", label: "Offline", hint: "Hidden from matching" },
@@ -100,40 +115,69 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh })
   if (!token) return null;
 
   return (
-    <div className="rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-4 dark:border-slate-600/80 dark:bg-slate-900/50">
-      <h3 className="text-sm font-semibold text-neutral-900 dark:text-slate-100">Community courier</h3>
-      <p className="mt-1 text-[11px] leading-relaxed text-neutral-600 dark:text-slate-400">
-        Earn by walking, running, or biking for neighbors in your community. No in-app wallet — coordinate meetups in chat.
-      </p>
-      {!communityId ? (
-        <p className="mt-3 text-[11px] text-amber-800 dark:text-amber-200">
-          Join a community on your profile so you can receive delivery requests from neighbors.
+    <div className="space-y-5">
+      <div>
+        <h3 className="text-sm font-semibold text-neutral-900 dark:text-slate-100">Community courier</h3>
+        <p className="mt-1 text-[11px] leading-relaxed text-neutral-600 dark:text-slate-400">
+          Earn by walking, running, or biking for neighbors in your community. No in-app wallet — coordinate meetups in chat.
         </p>
-      ) : null}
-      {loading ? (
-        <p className="mt-3 text-xs text-neutral-500">Loading…</p>
-      ) : (
-        <>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {STATUSES.map((s) => (
-              <Button
-                key={s.id}
-                type="button"
-                variant={courierStatus === s.id ? "primary" : "secondary"}
-                className="min-h-10 flex-col gap-0.5 py-2 text-[11px] leading-tight"
-                disabled={saving}
-                onClick={() => saveStatus(s.id)}
-                title={s.hint}
-              >
-                <span>{s.label}</span>
-              </Button>
-            ))}
-          </div>
-          <p className="mt-2 text-[10px] text-neutral-500 dark:text-slate-500">
-            {STATUSES.find((x) => x.id === courierStatus)?.hint || ""}
+        {!communityId ? (
+          <p className="mt-3 text-[11px] text-amber-800 dark:text-amber-200">
+            Join a community on your profile so you can receive delivery requests from neighbors.
           </p>
-          <p className="mt-3 text-[11px] font-medium text-neutral-700 dark:text-slate-300">Optional modes</p>
-          <div className="mt-1.5 flex flex-wrap gap-2">
+        ) : null}
+        {loading ? (
+          <p className="mt-3 text-xs text-neutral-500">Loading…</p>
+        ) : (
+          <>
+            <div
+              className="mt-3 rounded-2xl border border-violet-200/70 bg-gradient-to-b from-violet-50/95 to-violet-100/50 p-1 shadow-[inset_0_1px_2px_rgba(76,29,149,0.06)] dark:border-violet-800/55 dark:from-violet-950/55 dark:to-violet-950/75 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.35)]"
+              role="group"
+              aria-label="Courier availability"
+            >
+              <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
+                {STATUSES.map((s) => {
+                  const selected = courierStatus === s.id;
+                  return (
+                    <Button
+                      key={s.id}
+                      type="button"
+                      variant={selected ? "primary" : "ghost"}
+                      className={cn(
+                        "min-h-10 flex-col justify-center gap-0",
+                        selected ? cn("rounded-lg shadow-sm", courierChrome.recoveryPrimary) : courierStatusIdle,
+                      )}
+                      disabled={saving}
+                      onClick={() => saveStatus(s.id)}
+                      title={s.hint}
+                    >
+                      <span>{s.label}</span>
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+            <p className="mt-2.5 text-center text-[10px] text-neutral-600 dark:text-slate-400">
+              {STATUSES.find((x) => x.id === courierStatus)?.hint || ""}
+            </p>
+          </>
+        )}
+      </div>
+
+      {!loading ? (
+        <div
+          className={cn(
+            courierChrome.courierPanelSurface,
+            "shadow-sm shadow-violet-900/[0.04] dark:shadow-black/30",
+          )}
+        >
+          <div className="space-y-0.5">
+            <p className="text-[11px] font-semibold text-violet-950 dark:text-violet-100">Optional modes</p>
+            <p className="text-[10px] leading-snug text-neutral-600 dark:text-slate-400">
+              Optional tags on your runs — tap to turn on or off.
+            </p>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
             {OPTIONAL_TAGS.map((t) => {
               const on = optionalTags.includes(t.id);
               return (
@@ -141,14 +185,19 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh })
                   key={t.id}
                   type="button"
                   disabled={saving}
+                  title={`${on ? "Remove" : "Add"} ${t.label}`}
+                  aria-pressed={on}
                   onClick={() => toggleTag(t.id)}
-                  className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
-                    on
-                      ? "border-emerald-500/80 bg-emerald-100/90 text-emerald-950 dark:border-emerald-500/50 dark:bg-emerald-900/35 dark:text-emerald-100"
-                      : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                  }`}
+                  className={cn(
+                    "inline-flex max-w-full items-center gap-1.5 transition motion-reduce:transition-none",
+                    on ? courierChipOn : courierChipOff,
+                    saving && "pointer-events-none opacity-60",
+                  )}
                 >
-                  <span aria-hidden>{t.emoji}</span> {t.label}
+                  <span className="shrink-0 leading-none" aria-hidden>
+                    {t.emoji}
+                  </span>
+                  <span className="truncate">{t.label}</span>
                 </button>
               );
             })}
@@ -183,8 +232,8 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh })
               if (typeof onOrdersRefresh === "function") await onOrdersRefresh();
             }}
           />
-        </>
-      )}
+        </div>
+      ) : null}
     </div>
   );
 }

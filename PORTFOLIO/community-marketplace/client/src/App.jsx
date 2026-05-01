@@ -12,6 +12,8 @@ import {
 import { formatBrowseLabel, getListingCategoryShortLabel, getVerticalById, VERTICALS } from "./categoryNav.js";
 import { gradientForId, initialsFromName } from "./communityUi.js";
 import { LoggedInHeader } from "./components/LoggedInHeader.jsx";
+import { OrderStatusTabGlyph } from "./components/OrderStatusTabGlyph.jsx";
+import { CourierHubTabGlyph } from "./components/CourierHubTabGlyph.jsx";
 import {
   LazyPublicListingPage,
   LazyLandingIllustration,
@@ -31,13 +33,15 @@ import {
   resolveListingGalleryUrls,
 } from "./lib/listingImageUrl.js";
 import { formatCents } from "./marketplace/money.js";
-import { COURIER_TABS, SELLER_TABS, VIEWS } from "./views.js";
+import { ACTIVITY_TABS, COURIER_TABS, SELLER_TABS, VIEWS } from "./views.js";
 import {
   clearActiveView,
   readActiveView,
+  readActivityTab,
   readAuthToken,
   readThemeMode,
   writeActiveView,
+  writeActivityTab,
   writeAuthToken,
   writeThemeMode,
 } from "./lib/appSession.js";
@@ -112,6 +116,11 @@ import {
   orderMatchesOrdersStatusTab,
 } from "./lib/orderAttentionStorage.js";
 import {
+  commerceOrderStatusStripClass,
+  courierHubFooterStripClass,
+  getActivityTabChrome,
+} from "./lib/activityTabTheme.js";
+import {
   isDeliveryCourierAssigned,
   isDeliveryInTransit,
   isDeliverySellerPreparing,
@@ -159,11 +168,11 @@ import {
   lmBrowseViewShellClass,
 } from "./lib/lmViewLayouts.js";
 
-/** Corner pills on status segmented control — same inset system as `mobileNavBadgeBase`. Rose when tab has unseen attention; muted when badge is queue depth only (all rows dismissed). */
-const ORDER_STATUS_TAB_BADGE_BASE =
-  "pointer-events-none absolute right-1 top-1 z-[1] inline-flex min-h-[1rem] min-w-[1rem] max-w-[min(2.75rem,calc(100%-0.35rem))] items-center justify-center rounded-full px-[3px] py-px text-[10px] font-bold leading-none shadow-sm";
-const ORDER_STATUS_TAB_BADGE_MUTED = `${ORDER_STATUS_TAB_BADGE_BASE} bg-slate-500 text-white dark:bg-slate-600`;
-const ORDER_STATUS_TAB_BADGE_ROSE = `${ORDER_STATUS_TAB_BADGE_BASE} bg-rose-600 text-white dark:bg-rose-500`;
+/** Corner pill anchored to the tab glyph (icon-above-label layout). Rose when tab has unseen attention; muted when badge is queue depth only. */
+const ORDER_STATUS_TAB_BADGE_ON_GLYPH_BASE =
+  "pointer-events-none absolute -right-0.5 -top-0.5 z-[1] inline-flex min-h-[1rem] min-w-[1rem] max-w-[min(2.75rem,calc(100%-0.35rem))] items-center justify-center rounded-full px-[3px] py-px text-[9px] font-bold leading-none shadow-sm";
+const ORDER_STATUS_TAB_BADGE_ON_GLYPH_MUTED = `${ORDER_STATUS_TAB_BADGE_ON_GLYPH_BASE} bg-slate-500 text-white dark:bg-slate-600`;
+const ORDER_STATUS_TAB_BADGE_ON_GLYPH_ROSE = `${ORDER_STATUS_TAB_BADGE_ON_GLYPH_BASE} bg-rose-600 text-white dark:bg-rose-500`;
 
 /** Best-effort recency for ordering “unseen” pending rows (API field names vary). */
 function orderRowSortMs(o) {
@@ -447,6 +456,9 @@ function ProductViewDensityToggle({
   groupAriaLabel = "Product layout",
   gridTitle = "Grid — columns fit your screen (comfortable cards)",
   compactTitle = "Compact — more tiles per row, shorter cards",
+  /** Override selected segment styles (full class strings; replaces default teal segment-active). */
+  segmentActiveClassName,
+  segmentActiveMutedClassName,
 }) {
   const displayValue = !allowCompact && value === "compact" ? "grid" : value;
   const isMinimal = variant === "minimal";
@@ -454,8 +466,10 @@ function ProductViewDensityToggle({
   const btn = (isActive) => {
     const base = "lm-view-toggle-button lm-btn-segment";
     if (isActive) {
-      if (isMinimal) return `${base} lm-view-toggle-button-active lm-btn-segment-active-muted`;
-      return `${base} lm-view-toggle-button-active lm-btn-segment-active`;
+      if (isMinimal) {
+        return `${base} lm-view-toggle-button-active ${segmentActiveMutedClassName ?? "lm-btn-segment-active-muted"}`;
+      }
+      return `${base} lm-view-toggle-button-active ${segmentActiveClassName ?? "lm-btn-segment-active"}`;
     }
     return isMinimal ? `${base} lm-btn-segment-idle-minimal` : `${base} lm-btn-segment-idle`;
   };
@@ -702,6 +716,22 @@ function buildQuickAddMergedComment(listing, userComment, selA, selB, maxLen) {
   return full;
 }
 
+function readInitialActivityTab() {
+  const savedView = readActiveView();
+  const storedTab = readActivityTab();
+  const commerce =
+    savedView === VIEWS.ACTIVITY ||
+    savedView === VIEWS.MY_PURCHASES ||
+    savedView === VIEWS.ORDERS ||
+    savedView === VIEWS.COURIER;
+  if (!commerce) return ACTIVITY_TABS.BUYING;
+  if (storedTab && Object.values(ACTIVITY_TABS).includes(storedTab)) return storedTab;
+  if (savedView === VIEWS.MY_PURCHASES) return ACTIVITY_TABS.BUYING;
+  if (savedView === VIEWS.ORDERS) return ACTIVITY_TABS.SELLING;
+  if (savedView === VIEWS.COURIER) return ACTIVITY_TABS.COURIER;
+  return ACTIVITY_TABS.BUYING;
+}
+
 function App() {
   const [authMode, setAuthMode] = useState("login");
   const [authPanelVisible, setAuthPanelVisible] = useState(false);
@@ -789,16 +819,24 @@ function App() {
     const savedView = readActiveView();
     if (savedView && Object.values(VIEWS).includes(savedView)) {
       if (savedView === VIEWS.SELLER) return VIEWS.PROFILE;
+      if (savedView === VIEWS.MY_PURCHASES || savedView === VIEWS.ORDERS || savedView === VIEWS.COURIER) {
+        return VIEWS.ACTIVITY;
+      }
       return savedView;
     }
     return VIEWS.BROWSE;
   });
+  const [activityTab, setActivityTab] = useState(readInitialActivityTab);
+  const activityBuying = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.BUYING;
+  const activitySelling = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.SELLING;
+  const activityCourier = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.COURIER;
+  const activityTabChrome = useMemo(() => getActivityTabChrome(activityTab), [activityTab]);
   const isBrowseLikeView = useMemo(
     () => activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP || activeView === VIEWS.FAVORITES,
     [activeView],
   );
   const secondaryMobileNavOrder = useMemo(
-    () => [VIEWS.BROWSE, VIEWS.CART, VIEWS.MY_PURCHASES, VIEWS.ORDERS, VIEWS.NOTIFICATIONS, VIEWS.PROFILE],
+    () => [VIEWS.BROWSE, VIEWS.CART, VIEWS.ACTIVITY, VIEWS.NOTIFICATIONS, VIEWS.PROFILE],
     [],
   );
   const secondarySwipeNavView = useMemo(() => {
@@ -896,10 +934,20 @@ function App() {
   const [orders, setOrders] = useState([]);
   const ordersRef = useRef([]);
   ordersRef.current = orders;
-  const [ordersRole, setOrdersRole] = useState("buyer");
+  const [ordersRole, setOrdersRole] = useState(() =>
+    readInitialActivityTab() === ACTIVITY_TABS.SELLING ? "seller" : "buyer",
+  );
   const [ordersStatusTab, setOrdersStatusTab] = useState("pending");
+  const ordersStatusTabRef = useRef(ordersStatusTab);
+  useEffect(() => {
+    ordersStatusTabRef.current = ordersStatusTab;
+  }, [ordersStatusTab]);
   const activeViewRef = useRef(activeView);
   const ordersRoleRef = useRef(ordersRole);
+  const activityTabRef = useRef(activityTab);
+  useEffect(() => {
+    activityTabRef.current = activityTab;
+  }, [activityTab]);
   useEffect(() => {
     activeViewRef.current = activeView;
     ordersRoleRef.current = ordersRole;
@@ -908,6 +956,14 @@ function App() {
     if (activeView === VIEWS.PRODUCT_DETAIL) return;
     writeActiveView(activeView);
   }, [activeView]);
+  useEffect(() => {
+    writeActivityTab(activityTab);
+  }, [activityTab]);
+  useEffect(() => {
+    if (activeView !== VIEWS.ACTIVITY) return;
+    if (activityTab === ACTIVITY_TABS.BUYING) setOrdersRole("buyer");
+    else if (activityTab === ACTIVITY_TABS.SELLING) setOrdersRole("seller");
+  }, [activeView, activityTab]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersFetchError, setOrdersFetchError] = useState("");
   /** `orderId` -> selected (orders screen only). */
@@ -916,7 +972,7 @@ function App() {
   const [ordersBulkActionLoadingTransition, setOrdersBulkActionLoadingTransition] = useState(/** @type {string | null} */ (null));
   /** Seller orders loaded for the Courier hub view (separate from `orders` + ORDERS tab). */
   const [courierHubOrders, setCourierHubOrders] = useState([]);
-  /** Buyer orders for Courier hub “Your purchases” tab. */
+  /** Buyer orders for Courier hub Buying tab. */
   const [courierHubBuyerOrders, setCourierHubBuyerOrders] = useState([]);
   const [courierHubLoading, setCourierHubLoading] = useState(false);
   /** Open delivery jobs in the member’s community (tab badge on Deliver). */
@@ -967,10 +1023,10 @@ function App() {
   polledBuyerOrdersRef.current = polledBuyerOrders;
 
   const sellerOrdersForBadges = useMemo(() => {
-    if (ordersRole === "seller" && activeView === VIEWS.ORDERS) return orders;
+    if (ordersRole === "seller" && activitySelling) return orders;
     if (polledSellerOrders === null) return null;
     return polledSellerOrders;
-  }, [ordersRole, activeView, orders, polledSellerOrders]);
+  }, [ordersRole, activitySelling, orders, polledSellerOrders]);
 
   const buyerOrdersForBadges = useMemo(() => {
     if (ordersRole === "buyer") return orders;
@@ -1579,12 +1635,12 @@ function App() {
     }
   }, [user?.id, favoriteSeenListingIds]);
 
-  /** Dismiss a status tab only after user leaves that exact status context. */
+  /** Tracks Activity commerce context for dismissal when leaving Buying/Selling (not on every status-tab switch — those use `commitOrdersStatusTab`). */
   const ordersNavPrevRef = useRef({
     key:
-      ordersRole === "buyer" && activeView === VIEWS.MY_PURCHASES
+      ordersRole === "buyer" && activityBuying
         ? "buyer-mp"
-        : ordersRole === "seller" && activeView === VIEWS.ORDERS
+        : ordersRole === "seller" && activitySelling
           ? "seller-ord"
           : "other",
     tab: ordersStatusTab,
@@ -1592,23 +1648,52 @@ function App() {
   useEffect(() => {
     const prev = ordersNavPrevRef.current;
     const currentKey =
-      ordersRole === "buyer" && activeView === VIEWS.MY_PURCHASES
+      ordersRole === "buyer" && activityBuying
         ? "buyer-mp"
-        : ordersRole === "seller" && activeView === VIEWS.ORDERS
+        : ordersRole === "seller" && activitySelling
           ? "seller-ord"
           : "other";
     const currentTab = ordersStatusTab;
-    const changedContext = prev.key !== currentKey || prev.tab !== currentTab;
-    if (!changedContext) return;
-
-    if (prev.key === "buyer-mp" && RECENT_ORDER_TAB_KEYS.includes(prev.tab)) {
-      dismissBuyerOrdersForTab(prev.tab, buyerOrdersForBadgesRef.current ?? []);
-    }
-    if (prev.key === "seller-ord" && RECENT_ORDER_TAB_KEYS.includes(prev.tab)) {
-      dismissSellerOrdersForTab(prev.tab, sellerOrdersForBadgesRef.current ?? []);
+    const keyChanged = prev.key !== currentKey;
+    if (keyChanged) {
+      if (prev.key === "buyer-mp" && RECENT_ORDER_TAB_KEYS.includes(prev.tab)) {
+        dismissBuyerOrdersForTab(prev.tab, buyerOrdersForBadgesRef.current ?? []);
+      }
+      if (prev.key === "seller-ord" && RECENT_ORDER_TAB_KEYS.includes(prev.tab)) {
+        dismissSellerOrdersForTab(prev.tab, sellerOrdersForBadgesRef.current ?? []);
+      }
     }
     ordersNavPrevRef.current = { key: currentKey, tab: currentTab };
-  }, [activeView, ordersRole, ordersStatusTab, dismissBuyerOrdersForTab, dismissSellerOrdersForTab]);
+  }, [
+    activityBuying,
+    activitySelling,
+    ordersRole,
+    ordersStatusTab,
+    dismissBuyerOrdersForTab,
+    dismissSellerOrdersForTab,
+  ]);
+
+  /** Changing Pending–Cancelled dismisses the previous tab synchronously so badges don’t flash rose one frame behind. */
+  const commitOrdersStatusTab = useCallback(
+    (nextTab) => {
+      const next = String(nextTab || "");
+      if (!next || next === String(ordersStatusTab)) return;
+      if (activityBuying && RECENT_ORDER_TAB_KEYS.includes(ordersStatusTab)) {
+        dismissBuyerOrdersForTab(ordersStatusTab, buyerOrdersForBadgesRef.current ?? []);
+      }
+      if (activitySelling && RECENT_ORDER_TAB_KEYS.includes(ordersStatusTab)) {
+        dismissSellerOrdersForTab(ordersStatusTab, sellerOrdersForBadgesRef.current ?? []);
+      }
+      setOrdersStatusTab(next);
+    },
+    [
+      activityBuying,
+      activitySelling,
+      ordersStatusTab,
+      dismissBuyerOrdersForTab,
+      dismissSellerOrdersForTab,
+    ],
+  );
 
   useEffect(() => {
     if (!token) {
@@ -2572,8 +2657,7 @@ function App() {
   useEffect(() => {
     const shouldLoadUsers =
       activeView === VIEWS.MESSAGES ||
-      activeView === VIEWS.ORDERS ||
-      activeView === VIEWS.MY_PURCHASES;
+      activeView === VIEWS.ACTIVITY;
     if (!token || !shouldLoadUsers) return undefined;
     const hadUsers = usersListRef.current.length > 0;
     let cancelled = false;
@@ -2890,28 +2974,45 @@ function App() {
     [navigate, shopCommunityId],
   );
 
+  const goActivity = useCallback(
+    (tab = ACTIVITY_TABS.BUYING) => {
+      const prevActivity = activityTabRef.current;
+      const prevStatus = ordersStatusTabRef.current;
+      const onActivity = activeViewRef.current === VIEWS.ACTIVITY;
+
+      if (onActivity && prevActivity === ACTIVITY_TABS.BUYING && tab !== ACTIVITY_TABS.BUYING) {
+        if (RECENT_ORDER_TAB_KEYS.includes(prevStatus)) {
+          dismissBuyerOrdersForTab(prevStatus, buyerOrdersForBadgesRef.current ?? []);
+        }
+      }
+      if (onActivity && prevActivity === ACTIVITY_TABS.SELLING && tab !== ACTIVITY_TABS.SELLING) {
+        if (RECENT_ORDER_TAB_KEYS.includes(prevStatus)) {
+          dismissSellerOrdersForTab(prevStatus, sellerOrdersForBadgesRef.current ?? []);
+        }
+      }
+
+      setOrdersStatusTab("pending");
+      setSelectedListingId(null);
+      setActiveView(VIEWS.ACTIVITY);
+      setActivityTab(tab);
+      if (tab === ACTIVITY_TABS.BUYING) setOrdersRole("buyer");
+      else if (tab === ACTIVITY_TABS.SELLING) setOrdersRole("seller");
+      if (typeof window !== "undefined") {
+        window.requestAnimationFrame(() => {
+          window.scrollTo(0, 0);
+        });
+      }
+    },
+    [dismissBuyerOrdersForTab, dismissSellerOrdersForTab],
+  );
+
   const goOrders = useCallback(() => {
-    setOrdersRole("seller");
-    setOrdersStatusTab("pending");
-    setSelectedListingId(null);
-    setActiveView(VIEWS.ORDERS);
-    if (typeof window !== "undefined") {
-      window.requestAnimationFrame(() => {
-        window.scrollTo(0, 0);
-      });
-    }
-  }, []);
+    goActivity(ACTIVITY_TABS.SELLING);
+  }, [goActivity]);
 
   const goMyPurchases = useCallback(() => {
-    setOrdersRole("buyer");
-    setOrdersStatusTab("pending");
-    setActiveView(VIEWS.MY_PURCHASES);
-    if (typeof window !== "undefined") {
-      window.requestAnimationFrame(() => {
-        window.scrollTo(0, 0);
-      });
-    }
-  }, []);
+    goActivity(ACTIVITY_TABS.BUYING);
+  }, [goActivity]);
 
 
   const goCart = useCallback(() => {
@@ -3019,11 +3120,14 @@ function App() {
         case VIEWS.CART:
           goCart();
           break;
+        case VIEWS.ACTIVITY:
+          goActivity();
+          break;
         case VIEWS.MY_PURCHASES:
-          goMyPurchases();
+          goActivity(ACTIVITY_TABS.BUYING);
           break;
         case VIEWS.ORDERS:
-          goOrders();
+          goActivity(ACTIVITY_TABS.SELLING);
           break;
         case VIEWS.MESSAGES:
           goInbox();
@@ -3039,7 +3143,7 @@ function App() {
           break;
       }
     },
-    [goBrowse, goCart, goInbox, goMyPurchases, goNotifications, goOrders, goOwnProfile],
+    [goBrowse, goCart, goActivity, goInbox, goNotifications, goOwnProfile],
   );
 
   const scrollToListingSection = useCallback((sectionId, { openAdvanced = false } = {}) => {
@@ -3605,10 +3709,16 @@ function App() {
   }, [user?.id, activeChatUserId, chatComposer, token, ensureDirectConversation]);
 
   /** My purchases vs Sales inbox use separate saved list/grid/dense preferences. */
-  const commerceFlowOrdersView =
-    activeView === VIEWS.MY_PURCHASES ? effectiveCommerceFlowViewBuyer : effectiveCommerceFlowViewSeller;
-  const setCommerceFlowOrdersView =
-    activeView === VIEWS.MY_PURCHASES ? setCommerceFlowViewBuyer : setCommerceFlowViewSeller;
+  const commerceFlowOrdersView = activityBuying
+    ? effectiveCommerceFlowViewBuyer
+    : activitySelling
+      ? effectiveCommerceFlowViewSeller
+      : effectiveCommerceFlowViewBuyer;
+  const setCommerceFlowOrdersView = activityBuying
+    ? setCommerceFlowViewBuyer
+    : activitySelling
+      ? setCommerceFlowViewSeller
+      : setCommerceFlowViewBuyer;
 
   const visibleBrowseListings = useMemo(() => {
     let rows = listings;
@@ -3752,16 +3862,16 @@ function App() {
     return out;
   }, [sellerOrdersForBadges, sellerOrderDismissedIdsByTab]);
 
-  /** Buying nav: count orders not yet dismissed (works while Selling — uses `polledBuyerOrders`). */
-  const purchaseNavBadgeCount = useMemo(
-    () => RECENT_ORDER_TAB_KEYS.reduce((sum, tab) => sum + (buyerUnseenIdsByTab[tab]?.length || 0), 0),
-    [buyerUnseenIdsByTab],
-  );
+  /** Buying/Selling: total unseen across Pending–Cancelled (drives Activity hub rose + inbox order slice). */
+  const purchaseNavBadgeCount = useMemo(() => {
+    const n = RECENT_ORDER_TAB_KEYS.reduce((s, tab) => s + (buyerUnseenIdsByTab[tab]?.length || 0), 0);
+    return Math.min(99, Math.max(0, n));
+  }, [buyerUnseenIdsByTab]);
 
-  const sellerNavBadgeCount = useMemo(
-    () => RECENT_ORDER_TAB_KEYS.reduce((sum, tab) => sum + (sellerUnseenIdsByTab[tab]?.length || 0), 0),
-    [sellerUnseenIdsByTab],
-  );
+  const sellerNavBadgeCount = useMemo(() => {
+    const n = RECENT_ORDER_TAB_KEYS.reduce((s, tab) => s + (sellerUnseenIdsByTab[tab]?.length || 0), 0);
+    return Math.min(99, Math.max(0, n));
+  }, [sellerUnseenIdsByTab]);
 
   /** When true, mobile/desktop Purchases & Orders nav badges use slate for the *unseen* count. False = rose for any unseen tab (matches status tab pills, including Pending/Processing). */
   const purchasesNavAttentionMuted = false;
@@ -3797,6 +3907,23 @@ function App() {
         orderMatchesOrdersStatusTab(o.status, "processing"),
     ).length;
   }, [sellerOrdersForBadges]);
+
+  /** Activity primary strip: rose = any unseen order across Pending–Cancelled; else slate = pending+processing depth only. */
+  const activityPrimaryBuyingBadge = useMemo(() => {
+    const unseenTotal = RECENT_ORDER_TAB_KEYS.reduce((s, tab) => s + (buyerUnseenIdsByTab[tab]?.length || 0), 0);
+    return {
+      count: Math.min(99, unseenTotal > 0 ? unseenTotal : headerTotalPurchasesCount),
+      rose: unseenTotal > 0,
+    };
+  }, [buyerUnseenIdsByTab, headerTotalPurchasesCount]);
+
+  const activityPrimarySellingBadge = useMemo(() => {
+    const unseenTotal = RECENT_ORDER_TAB_KEYS.reduce((s, tab) => s + (sellerUnseenIdsByTab[tab]?.length || 0), 0);
+    return {
+      count: Math.min(99, unseenTotal > 0 ? unseenTotal : headerTotalOrdersCount),
+      rose: unseenTotal > 0,
+    };
+  }, [sellerUnseenIdsByTab, headerTotalOrdersCount]);
 
   /** Mobile bottom “Inbox” tab badge: chats + buyer/seller attention + unread notifications. */
   const inboxNavBadgeCount = useMemo(() => {
@@ -3844,7 +3971,7 @@ function App() {
     return n;
   }, [orders, ordersTabBadgeIdsByTab.pending]);
 
-  /** Pending/Processing tab pills: prefer unseen count; if dismissed but rows remain, show tab total (muted badge always visible when queue non-empty). */
+  /** Pending/Processing tab pills: rose = unseen count; slate = queue depth when all dismissed but rows remain (`badgeIsRose` uses unseen only). */
   const pendingTabBadgeDisplayCount = useMemo(() => {
     const totalInTab = orders.filter((o) => orderMatchesOrdersStatusTab(o.status, "pending")).length;
     if (pendingTabPillCount > 0) return pendingTabPillCount;
@@ -4462,7 +4589,7 @@ function App() {
   useEffect(() => {
     if (!token) return undefined;
     if (ordersRole === "seller") {
-      if (activeView !== VIEWS.ORDERS) return undefined;
+      if (activeView !== VIEWS.ACTIVITY || activityTab !== ACTIVITY_TABS.SELLING) return undefined;
     } else if (ordersRole !== "buyer") {
       return undefined;
     }
@@ -4492,7 +4619,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, activeView, ordersRole]);
+  }, [token, activeView, ordersRole, activityTab]);
 
   /** Keep buyer `orders` fresh on any screen so Processing/Cancelled tab badges update when the seller accepts or declines. */
   useEffect(() => {
@@ -4529,12 +4656,18 @@ function App() {
       const data = await apiRequest("/orders?role=seller", { token: t });
       if (cancelledFn()) return;
       const list = data.orders || [];
-      const onSellerOrdersScreen = ordersRoleRef.current === "seller" && activeViewRef.current === VIEWS.ORDERS;
+      const onSellerOrdersScreen =
+        ordersRoleRef.current === "seller" &&
+        activeViewRef.current === VIEWS.ACTIVITY &&
+        activityTabRef.current === ACTIVITY_TABS.SELLING;
       if (onSellerOrdersScreen) setOrders(list);
       else setPolledSellerOrders(list);
     } catch {
       if (cancelledFn()) return;
-      const onSellerOrdersScreen = ordersRoleRef.current === "seller" && activeViewRef.current === VIEWS.ORDERS;
+      const onSellerOrdersScreen =
+        ordersRoleRef.current === "seller" &&
+        activeViewRef.current === VIEWS.ACTIVITY &&
+        activityTabRef.current === ACTIVITY_TABS.SELLING;
       if (!onSellerOrdersScreen) setPolledSellerOrders([]);
     }
   }, []);
@@ -4560,7 +4693,7 @@ function App() {
   useEffect(() => {
     if (!token) return undefined;
     if (ordersRole !== "seller") return undefined;
-    if (activeView !== VIEWS.ORDERS) return undefined;
+    if (activeView !== VIEWS.ACTIVITY || activityTab !== ACTIVITY_TABS.SELLING) return undefined;
     let cancelled = false;
     const isCancelled = () => cancelled;
     void refreshSellerOrdersSnapshot(isCancelled);
@@ -4577,11 +4710,11 @@ function App() {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onFocus);
     };
-  }, [token, activeView, ordersRole, refreshSellerOrdersSnapshot]);
+  }, [token, activeView, ordersRole, activityTab, refreshSellerOrdersSnapshot]);
 
   useEffect(() => {
     if (!token) return undefined;
-    const onSellerOrdersScreen = ordersRole === "seller" && activeView === VIEWS.ORDERS;
+    const onSellerOrdersScreen = ordersRole === "seller" && activitySelling;
     if (onSellerOrdersScreen) return undefined;
     let cancelled = false;
     const isCancelled = () => cancelled;
@@ -4599,7 +4732,7 @@ function App() {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onFocus);
     };
-  }, [token, activeView, ordersRole, refreshSellerOrdersSnapshot]);
+  }, [token, activitySelling, ordersRole, refreshSellerOrdersSnapshot]);
 
   /** While Selling, keep a buyer order snapshot for Buying nav badges (mirrors off-screen seller poll). */
   useEffect(() => {
@@ -4651,7 +4784,8 @@ function App() {
   }, [token, user?.id, refreshSellerOrdersSnapshot, refreshBuyerOrdersSnapshot]);
 
   useEffect(() => {
-    if (!token || (activeView !== VIEWS.ORDERS && activeView !== VIEWS.MY_PURCHASES) || !orders.length) return undefined;
+    if (!token || activeView !== VIEWS.ACTIVITY || !(activityBuying || activitySelling) || !orders.length)
+      return undefined;
     const missingIds = Array.from(
       new Set(
         orders
@@ -4682,10 +4816,16 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, activeView, orders, orderListingsById]);
+  }, [token, activeView, activityBuying, activitySelling, orders, orderListingsById]);
 
   useEffect(() => {
-    if (!token || (activeView !== VIEWS.ORDERS && activeView !== VIEWS.MY_PURCHASES) || usersList.length > 0) return undefined;
+    if (
+      !token ||
+      activeView !== VIEWS.ACTIVITY ||
+      !(activityBuying || activitySelling) ||
+      usersList.length > 0
+    )
+      return undefined;
     let cancelled = false;
     (async () => {
       try {
@@ -4698,7 +4838,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, activeView, usersList.length]);
+  }, [token, activeView, activityBuying, activitySelling, usersList.length]);
 
   useEffect(() => {
     if (!token || !isBrowseLikeView || usersList.length > 0) return undefined;
@@ -5104,11 +5244,53 @@ function App() {
     [courierHubBuyerOrders],
   );
 
+  /** Deliver + Buying tab — Activity hub rose courier slice (open jobs + buyer-side assigns). */
+  const courierRoseAttentionCount = useMemo(
+    () =>
+      Math.min(99, Math.max(0, courierOpenDeliveryCount + courierBuyerAssignOrders.length)),
+    [courierOpenDeliveryCount, courierBuyerAssignOrders.length],
+  );
+
+  /** Full courier pipeline including Selling tab (muted Activity fallback + Courier tab slate). */
+  const courierFullPipelineCount = useMemo(
+    () =>
+      Math.min(
+        99,
+        Math.max(
+          0,
+          courierOpenDeliveryCount +
+            courierSellerAssignOrders.length +
+            courierBuyerAssignOrders.length,
+        ),
+      ),
+    [
+      courierOpenDeliveryCount,
+      courierSellerAssignOrders.length,
+      courierBuyerAssignOrders.length,
+    ],
+  );
+
+  const activityPrimaryCourierBadge = useMemo(() => {
+    const roseRaw = courierOpenDeliveryCount + courierBuyerAssignOrders.length;
+    const fullRaw =
+      courierOpenDeliveryCount +
+      courierSellerAssignOrders.length +
+      courierBuyerAssignOrders.length;
+    return {
+      count: Math.min(99, roseRaw > 0 ? roseRaw : fullRaw),
+      rose: roseRaw > 0,
+    };
+  }, [
+    courierOpenDeliveryCount,
+    courierSellerAssignOrders.length,
+    courierBuyerAssignOrders.length,
+  ]);
+
   useEffect(() => {
-    if (activeView !== VIEWS.COURIER || !token) return undefined;
+    if (!activityCourier || !token) return undefined;
     void refreshCourierHub();
     return undefined;
-  }, [activeView, token, refreshCourierHub]);
+  }, [activityCourier, token, refreshCourierHub]);
 
   const patchOrderTransition = async (orderId, transition, options = {}) => {
     const { orderIds, successMessage } = options;
@@ -7525,7 +7707,9 @@ function App() {
           </div>
         </div>
       ) : null}
-      <MobileAppShell>
+      <MobileAppShell
+        className={activeView === VIEWS.ACTIVITY ? activityTabChrome.activityShellWrap : undefined}
+      >
       {marketplaceToasts.length > 0 ? (
         <div
           className="pointer-events-none fixed safe-fixed-x bottom-[max(1rem,calc(env(safe-area-inset-bottom,0px)+0.75rem))] z-[70] flex max-h-[min(70vh,calc(100dvh-10rem))] flex-col gap-2 overflow-y-auto md:left-auto md:right-6 md:bottom-6 md:w-[24rem]"
@@ -7568,8 +7752,13 @@ function App() {
         setActiveView={setActiveView}
         goOwnProfile={goOwnProfile}
         goBrowse={goBrowse}
-        goOrders={goOrders}
-        goMyPurchases={goMyPurchases}
+        goActivity={goActivity}
+        activityTab={activityTab}
+        courierAttentionCount={courierRoseAttentionCount}
+        courierPipelineCount={courierFullPipelineCount}
+        activityPrimaryBuyingBadge={activityPrimaryBuyingBadge}
+        activityPrimarySellingBadge={activityPrimarySellingBadge}
+        activityPrimaryCourierBadge={activityPrimaryCourierBadge}
         goCart={goCart}
         inboxBadgeCount={inboxNavBadgeCount}
         messagesUnreadCount={totalChatUnreadCount}
@@ -7605,7 +7794,17 @@ function App() {
       ) : null}
       <main
         id="main-content"
-        className={`${UI_KIT.mobileMainScroll} app-container scroll-pt-2 scroll-pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] space-y-5 bg-white pt-4 pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] dark:bg-slate-950 md:scroll-pb-0 md:scroll-pt-0 md:space-y-6 md:bg-transparent md:py-8 md:pb-12 md:dark:bg-transparent ${
+        className={`${UI_KIT.mobileMainScroll} app-container scroll-pt-2 scroll-pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] space-y-5 pt-4 pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] md:scroll-pb-0 md:scroll-pt-0 md:space-y-6 md:py-8 md:pb-12 ${
+          activeView === VIEWS.ACTIVITY
+            ? activityTabChrome.activityMainSurface
+            : "bg-white dark:bg-slate-950 md:bg-transparent md:dark:bg-transparent"
+        } ${
+          activeView === VIEWS.ACTIVITY &&
+          isMobileViewport &&
+          (((activityBuying || activitySelling) && !ordersFetchError) || (activityCourier && token))
+            ? "max-md:scroll-pb-[calc(env(safe-area-inset-bottom,0px)+var(--commerce-order-status-footer)+1rem)] max-md:pb-[calc(env(safe-area-inset-bottom,0px)+var(--commerce-order-status-footer)+1rem)]"
+            : ""
+        } ${
           lockMainScrollForOverlay
             ? "!overflow-y-hidden !space-y-0 !pt-0 !pb-0 !scroll-pt-0 !scroll-pb-0 flex flex-col min-h-0"
             : ""
@@ -10669,23 +10868,37 @@ function App() {
           </section>
         )}
 
-        {(activeView === VIEWS.ORDERS || activeView === VIEWS.MY_PURCHASES) && (
-          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
+        {activeView === VIEWS.ACTIVITY && (
+          <section id="activity-hub-panel" className={activityTabChrome.activityViewSection}>
+            {(activityBuying || activitySelling) && (
+              <>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="min-w-0 text-xl font-semibold tracking-tight text-neutral-900 md:text-2xl dark:text-slate-100">
-                {activeView === VIEWS.MY_PURCHASES ? "Purchases" : "Orders"}
-              </h2>
+              <div className="min-w-0 flex-1 space-y-1">
+                <h3 className="min-w-0 text-lg font-semibold tracking-tight text-neutral-900 md:text-xl dark:text-slate-100">
+                  {activityBuying ? "Purchases" : "Orders"}
+                </h3>
+                {!ordersFetchError ? (
+                  <p className="max-w-xl text-xs leading-snug text-neutral-500 dark:text-slate-400 md:text-sm">
+                    Filter by stage with{" "}
+                    <span className="font-medium text-neutral-600 dark:text-slate-300">Pending–Cancelled</span>{" "}
+                    <span className="max-md:hidden">below</span>
+                    <span className="md:hidden">at the bottom of the screen</span>.
+                  </p>
+                ) : null}
+              </div>
               {orders.length > 0 ? (
                 <div className="flex shrink-0 items-center justify-end">
                   <ProductViewDensityToggle
-                    value={activeView === VIEWS.MY_PURCHASES ? commerceFlowViewBuyer : commerceFlowViewSeller}
+                    value={activityBuying ? commerceFlowViewBuyer : commerceFlowViewSeller}
                     onChange={setCommerceFlowOrdersView}
                     allowCompact={!isMobileViewport}
                     groupAriaLabel={
-                      activeView === VIEWS.MY_PURCHASES ? "Purchases line layout" : "Orders line layout"
+                      activityBuying ? "Purchases line layout" : "Orders line layout"
                     }
                     gridTitle="Grid — two columns for readable order cards"
                     compactTitle="Dense — three columns for a compact overview"
+                    segmentActiveClassName={activityTabChrome.segmentActive}
+                    segmentActiveMutedClassName={activityTabChrome.segmentActiveMuted}
                   />
                 </div>
               ) : null}
@@ -10699,13 +10912,13 @@ function App() {
                 spacious
               />
             ) : null}
-            {orders.length > 0 ? (
+            {!ordersFetchError ? (
               <>
-                <div className="border-b border-neutral-200/70 pb-2 dark:border-slate-700/70 md:border-0 md:pb-0">
+                <div className={commerceOrderStatusStripClass(activityTab)}>
                   <div
-                    className="grid w-full min-w-0 grid-cols-4 gap-0 overflow-hidden rounded-2xl border border-neutral-200/90 bg-neutral-100/95 p-0 shadow-[inset_0_1px_2px_rgba(15,23,42,0.05)] dark:border-slate-600 dark:bg-slate-900/85 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.35)]"
+                    className="grid w-full min-w-0 grid-cols-4 gap-0"
                       role="tablist"
-                      aria-label={activeView === VIEWS.MY_PURCHASES ? "Purchase status" : "Order status"}
+                      aria-label={activityBuying ? "Purchase status" : "Order status"}
                       onKeyDown={(e) => {
                         const tabs = ORDERS_STATUS_TABS;
                         const { key } = e;
@@ -10719,14 +10932,14 @@ function App() {
                         else if (key === "End") next = tabs.length - 1;
                         if (next !== idx) {
                           const nextId = tabs[next].id;
-                          setOrdersStatusTab(nextId);
+                          commitOrdersStatusTab(nextId);
                           queueMicrotask(() => {
                             document.getElementById(`commerce-flow-status-tab-${nextId}`)?.focus();
                           });
                         }
                       }}
                     >
-                      {ORDERS_STATUS_TABS.map(({ id, label }) => {
+                      {ORDERS_STATUS_TABS.map(({ id, label, hint }) => {
                         const selected = ordersStatusTab === id;
                         const tabBadgeCount =
                           id === "pending"
@@ -10747,7 +10960,11 @@ function App() {
                                 : id === "cancelled"
                                   ? ordersTabBadgeIdsByTab.cancelled?.length ?? 0
                                   : 0;
-                        const badgeIsRose = unseenForStatusTab > 0;
+                        /** Completed/Cancelled: rose only while unseen — no slate fallback when cleared. Pending/Processing: rose when unseen, else slate queue depth. */
+                        const badgeIsRose =
+                          id === "completed" || id === "cancelled"
+                            ? tabBadgeCount > 0
+                            : unseenForStatusTab > 0;
                         const badgeCountDisplay = tabBadgeCount > 99 ? "99+" : tabBadgeCount;
                         return (
                         <button
@@ -10758,32 +10975,54 @@ function App() {
                           tabIndex={selected ? 0 : -1}
                           aria-selected={selected}
                           aria-controls="commerce-flow-status-panel"
+                          title={hint}
                           aria-label={
                             showTabBadge
                               ? `${label}, ${String(badgeCountDisplay).replace("+", " plus ")}`
                               : label
                           }
-                          className={`relative flex min-h-[44px] min-w-0 flex-col items-center justify-center rounded-none px-0.5 pb-1.5 text-center text-[10px] font-semibold leading-snug transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-100 dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-900 min-[380px]:px-1.5 min-[380px]:text-xs md:text-[13px] ${
-                            showTabBadge ? "pt-3.5" : "pt-1.5"
-                          } ${
+                          className={`relative flex min-h-[3.25rem] min-w-0 flex-col items-center justify-center px-0.5 py-1.5 text-center transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 min-[380px]:px-1 ${
                             selected
-                              ? "bg-white text-primary shadow-sm ring-1 ring-inset ring-neutral-200/90 dark:bg-slate-950 dark:text-brand-accent dark:ring-slate-600/90"
-                              : "text-neutral-600 hover:bg-white/70 hover:text-neutral-900 dark:text-slate-400 dark:hover:bg-slate-800/90 dark:hover:text-slate-100"
+                              ? ""
+                              : "hover:bg-neutral-50/90 dark:hover:bg-slate-900/70"
                           }`}
-                          onClick={() => setOrdersStatusTab(id)}
+                          onClick={() => commitOrdersStatusTab(id)}
                         >
-                          {showTabBadge ? (
-                            <span
-                              className={badgeIsRose ? ORDER_STATUS_TAB_BADGE_ROSE : ORDER_STATUS_TAB_BADGE_MUTED}
-                              aria-hidden
-                            >
-                              {badgeCountDisplay}
+                          <span className="flex w-full min-w-0 flex-col items-center gap-1">
+                            <span className="relative inline-flex shrink-0">
+                              <OrderStatusTabGlyph
+                                tabId={id}
+                                selected={selected}
+                                selectedAccentClass={activityTabChrome.glyphSelected}
+                              />
+                              {showTabBadge ? (
+                                <span
+                                  className={
+                                    badgeIsRose ? ORDER_STATUS_TAB_BADGE_ON_GLYPH_ROSE : ORDER_STATUS_TAB_BADGE_ON_GLYPH_MUTED
+                                  }
+                                  aria-hidden
+                                >
+                                  {badgeCountDisplay}
+                                </span>
+                              ) : null}
                             </span>
-                          ) : null}
-                          <span
-                            className={`line-clamp-2 min-w-0 max-w-full px-0.5 ${showTabBadge ? "pr-4 md:pr-0.5" : ""}`}
-                          >
-                            {label}
+                            <span
+                              className={`line-clamp-2 min-w-0 max-w-full px-0.5 text-[10px] font-medium leading-tight tracking-tight md:text-[11px] ${
+                                selected
+                                  ? activityTabChrome.labelSelected
+                                  : "text-neutral-500 dark:text-slate-500"
+                              }`}
+                            >
+                              {label}
+                            </span>
+                            <span
+                              className={`mt-0.5 h-[3px] w-9 shrink-0 rounded-full transition-opacity duration-150 ease-out motion-reduce:transition-none ${
+                                selected
+                                  ? `${activityTabChrome.barSelected} opacity-100`
+                                  : "opacity-0"
+                              }`}
+                              aria-hidden
+                            />
                           </span>
                         </button>
                         );
@@ -10794,8 +11033,30 @@ function App() {
                   id="commerce-flow-status-panel"
                   role="tabpanel"
                   aria-labelledby={`commerce-flow-status-tab-${ordersStatusTab}`}
-                  className="flex flex-col gap-3"
+                  className="flex flex-col gap-3 max-md:pt-2"
                 >
+                  {ordersLoading && orders.length === 0 ? (
+                    <ScreenLoading message="Loading orders…" />
+                  ) : orders.length === 0 ? (
+                    <ScreenEmpty
+                      className={activityTabChrome.emptySurface}
+                      recoveryPrimaryClassName={activityTabChrome.recoveryPrimary}
+                      recoverySecondaryClassName={activityTabChrome.recoverySecondary}
+                      title={activityBuying ? "No purchases yet" : "No orders yet"}
+                      description={
+                        activityBuying
+                          ? "Orders you place with sellers show up here with status updates for pickup or delivery."
+                          : "When buyers order your listings, you'll accept or decline here and track each stage."
+                      }
+                      primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
+                      secondaryAction={
+                        activityBuying
+                          ? { label: "View cart", onClick: goCart }
+                          : { label: "Upload", onClick: openUploadAtTop }
+                      }
+                    />
+                  ) : (
+                  <>
                   {ordersStatusTab === "pending" && ordersForStatusTab.length > 0 && selectedOrders.length > 0 ? (
                     <div className="flex w-full min-w-0 items-stretch overflow-hidden rounded-xl border border-neutral-200/90 bg-white shadow-sm dark:border-slate-600 dark:bg-slate-900/85 dark:shadow-none">
                       <div className="flex min-w-0 flex-1 items-center px-3 py-2.5 sm:px-4">
@@ -10875,20 +11136,22 @@ function App() {
                   {!ordersFetchError && !(ordersLoading && orders.length === 0) && orders.length > 0 && ordersForStatusTab.length === 0 ? (
               <ScreenEmpty
                 spacious={false}
-                className="!py-8"
+                className={`${activityTabChrome.emptySurface} !py-8`}
+                recoveryPrimaryClassName={activityTabChrome.recoveryPrimary}
+                recoverySecondaryClassName={activityTabChrome.recoverySecondary}
                 title={
-                  activeView === VIEWS.MY_PURCHASES
+                  activityBuying
                     ? `No ${ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label || ""} purchases`
                     : `No ${ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label || ""} orders`
                 }
                 description={
-                  activeView === VIEWS.MY_PURCHASES
+                  activityBuying
                     ? "Pick another status tab above - your orders move as sellers accept and you complete pickup or delivery."
                     : "Pick another tab - new orders start in Pending, then move when you accept or complete them."
                 }
                 primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
                 secondaryAction={
-                  activeView === VIEWS.MY_PURCHASES
+                  activityBuying
                     ? { label: "View cart", onClick: goCart }
                     : { label: "Upload", onClick: openUploadAtTop }
                 }
@@ -10906,7 +11169,7 @@ function App() {
                 <button
                   type="button"
                   className="font-semibold text-brand-primary underline decoration-brand-primary/40 underline-offset-2 dark:text-brand-accent"
-                  onClick={() => setOrdersStatusTab("processing")}
+                  onClick={() => commitOrdersStatusTab("processing")}
                 >
                   Processing
                 </button>{" "}
@@ -11187,7 +11450,7 @@ function App() {
                               comment: buyerCommentRaw,
                               commentSectionRequired: false,
                               commentHeading: isBuyer ? "Your note to the seller" : "Buyer note",
-                              subtitle: activeView === VIEWS.MY_PURCHASES ? "Purchase" : "Order",
+                              subtitle: activityBuying ? "Purchase" : "Order",
                               listingStockQty: stockAvail,
                               showBuyerCommerceActions: isBuyer,
                               orderTimelineOrder: o,
@@ -11577,43 +11840,22 @@ function App() {
                     </div>
                   );
                 })}
-                    </div>
-                  ) : null}
-                </div>
+              </div>
+            ) : null}
+                  </>
+                  )}
+          </div>
+        </>
+      ) : null}
               </>
-            ) : null}
-            {!ordersFetchError && ordersLoading && orders.length === 0 ? (
-              <ScreenLoading message="Loading orders…" />
-            ) : null}
-            {!ordersFetchError && !(ordersLoading && orders.length === 0) && orders.length === 0 ? (
-              <ScreenEmpty
-                title={activeView === VIEWS.MY_PURCHASES ? "No purchases yet" : "No orders yet"}
-                description={
-                  activeView === VIEWS.MY_PURCHASES
-                    ? "Orders you place with sellers show up here with status updates for pickup or delivery."
-                    : "When buyers order your listings, you’ll accept or decline here and track each stage."
-                }
-                primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
-                secondaryAction={
-                  activeView === VIEWS.MY_PURCHASES
-                    ? { label: "View cart", onClick: goCart }
-                    : { label: "Upload", onClick: openUploadAtTop }
-                }
-              />
-            ) : null}
-          </section>
-        )}
-
-        {activeView === VIEWS.COURIER && (
-          <section className={`${UI_KIT.viewSection} max-w-3xl space-y-6 md:space-y-8`}>
-            <div className="space-y-2">
-              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Courier hub</h2>
-              <p className="text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
-                Claim open runs, set your availability, assign couriers from your sales or purchases — separate from the main Orders list. Coordinate meetups in chat; cash on delivery at handoff.
-              </p>
-            </div>
+            )}
+            {activityCourier && (
+              <div className="max-w-3xl">
             {!token ? (
+              <div className="pt-2">
               <ScreenEmpty
+                className={activityTabChrome.emptySurface}
+                recoveryPrimaryClassName={activityTabChrome.recoveryPrimary}
                 title="Sign in to use Courier"
                 description="Open the menu to sign in, then return here for availability, open deliveries, and assigning community couriers."
                 primaryAction={{
@@ -11624,37 +11866,117 @@ function App() {
                   },
                 }}
               />
+              </div>
             ) : (
               <>
-                <div className="flex flex-wrap gap-2" role="tablist" aria-label="Courier hub">
-                  {[
-                    { id: COURIER_TABS.DELIVER, label: "Deliver", count: courierOpenDeliveryCount },
-                    { id: COURIER_TABS.SELL, label: "Your sales", count: courierSellerAssignOrders.length },
-                    { id: COURIER_TABS.BUY, label: "Your purchases", count: courierBuyerAssignOrders.length },
-                  ].map(({ id, label, count }) => (
-                    <button
-                      key={id}
-                      type="button"
-                      role="tab"
-                      aria-selected={courierTab === id}
-                      className={`inline-flex min-h-[44px] items-center rounded-full px-4 py-2 text-sm font-medium transition md:min-h-0 md:px-3 md:py-1.5 ${
-                        courierTab === id
-                          ? UI_KIT.tabActive
-                          : "border-0 bg-neutral-100/55 text-neutral-600 hover:bg-neutral-100 dark:bg-slate-800/55 dark:text-slate-400 dark:hover:bg-slate-800 md:border md:border-neutral-200/85 md:bg-transparent md:hover:bg-neutral-50 dark:md:border-slate-600"
-                      }`}
-                      onClick={() => setCourierTab(id)}
-                    >
-                      <span className="inline-flex items-center gap-1.5">
-                        <span>{label}</span>
-                        {count > 0 ? (
-                          <span className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-neutral-900/10 px-1.5 text-[10px] font-semibold tabular-nums text-neutral-800 dark:bg-slate-100/15 dark:text-slate-100">
-                            {count > 99 ? "99+" : count}
+                <div className={courierHubFooterStripClass()}>
+                  <div
+                    className="grid w-full min-w-0 grid-cols-3 gap-0"
+                    role="tablist"
+                    aria-label="Courier hub"
+                    onKeyDown={(e) => {
+                      const tabs = [COURIER_TABS.DELIVER, COURIER_TABS.BUY, COURIER_TABS.SELL];
+                      const { key } = e;
+                      if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
+                      e.preventDefault();
+                      const idx = tabs.indexOf(courierTab);
+                      let next = idx;
+                      if (key === "ArrowRight") next = Math.min(tabs.length - 1, idx + 1);
+                      else if (key === "ArrowLeft") next = Math.max(0, idx - 1);
+                      else if (key === "Home") next = 0;
+                      else if (key === "End") next = tabs.length - 1;
+                      if (next !== idx) {
+                        const nextId = tabs[next];
+                        setCourierTab(nextId);
+                        queueMicrotask(() => {
+                          document.getElementById(`courier-hub-tab-${nextId}`)?.focus();
+                        });
+                      }
+                    }}
+                  >
+                    {[
+                      {
+                        id: COURIER_TABS.DELIVER,
+                        label: "Deliver",
+                        count: courierOpenDeliveryCount,
+                        hint: "Community deliveries you can claim and your courier availability.",
+                      },
+                      {
+                        id: COURIER_TABS.BUY,
+                        label: "Buying",
+                        count: courierBuyerAssignOrders.length,
+                        hint: "Suggest a neighbor courier while the seller prepares delivery.",
+                      },
+                      {
+                        id: COURIER_TABS.SELL,
+                        label: "Selling",
+                        count: courierSellerAssignOrders.length,
+                        hint: "Assign a neighbor courier or self-deliver accepted delivery orders.",
+                      },
+                    ].map(({ id, label, count, hint }) => {
+                      const selected = courierTab === id;
+                      const showBadge = count > 0;
+                      const countDisplay = count > 99 ? "99+" : count;
+                      return (
+                        <button
+                          key={id}
+                          id={`courier-hub-tab-${id}`}
+                          type="button"
+                          role="tab"
+                          tabIndex={selected ? 0 : -1}
+                          aria-selected={selected}
+                          aria-controls="courier-hub-panel"
+                          aria-label={
+                            showBadge ? `${label}, ${String(countDisplay).replace("+", " plus ")}` : label
+                          }
+                          title={hint}
+                          className={`relative flex min-h-[3.25rem] min-w-0 flex-col items-center justify-center px-0.5 py-1.5 text-center transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 min-[380px]:px-1 ${
+                            selected ? "" : "hover:bg-neutral-50/90 dark:hover:bg-slate-900/70"
+                          }`}
+                          onClick={() => setCourierTab(id)}
+                        >
+                          <span className="flex w-full min-w-0 flex-col items-center gap-1">
+                            <span className="relative inline-flex shrink-0">
+                              <CourierHubTabGlyph
+                                tabId={id}
+                                selected={selected}
+                                selectedAccentClass={activityTabChrome.glyphSelected}
+                              />
+                              {showBadge ? (
+                                <span className={ORDER_STATUS_TAB_BADGE_ON_GLYPH_MUTED} aria-hidden>
+                                  {countDisplay}
+                                </span>
+                              ) : null}
+                            </span>
+                            <span
+                              className={`line-clamp-2 min-w-0 max-w-full px-0.5 text-center text-[10px] font-medium leading-tight tracking-tight md:text-[11px] ${
+                                selected
+                                  ? activityTabChrome.labelSelected
+                                  : "text-neutral-500 dark:text-slate-500"
+                              }`}
+                            >
+                              {label}
+                            </span>
+                            <span
+                              className={`mt-0.5 h-[3px] w-9 shrink-0 rounded-full transition-opacity duration-150 ease-out motion-reduce:transition-none ${
+                                selected
+                                  ? `${activityTabChrome.barSelected} opacity-100`
+                                  : "opacity-0"
+                              }`}
+                              aria-hidden
+                            />
                           </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  ))}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
+                <div
+                  id="courier-hub-panel"
+                  role="tabpanel"
+                  aria-labelledby={`courier-hub-tab-${courierTab}`}
+                  className="space-y-6 pt-2 md:space-y-8"
+                >
                 {courierTab === COURIER_TABS.DELIVER ? (
                   <CourierPresenceControls
                     token={token}
@@ -11667,7 +11989,7 @@ function App() {
                     <div className="space-y-1">
                       <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">Assign from your sales</h3>
                       <p className="text-sm text-neutral-600 dark:text-slate-400">
-                        Pick a neighbor courier or mark yourself out for delivery. Same orders appear under Seller · Orders.
+                        Pick a neighbor courier or mark yourself out for delivery. Same orders appear under Activity · Selling.
                       </p>
                     </div>
                     {courierHubLoading ? (
@@ -11775,7 +12097,10 @@ function App() {
                     )}
                   </div>
                 ) : null}
+                </div>
               </>
+            )}
+              </div>
             )}
           </section>
         )}

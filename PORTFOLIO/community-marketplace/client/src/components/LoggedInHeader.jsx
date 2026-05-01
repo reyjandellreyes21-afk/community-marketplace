@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LinkMartLogo } from "./media/LinkMartLogo.jsx";
 import { StableAvatar } from "./media/StableMediaImage.jsx";
-import { VIEWS } from "../views.js";
+import { getActivityTabChrome } from "../lib/activityTabTheme.js";
+import { ACTIVITY_TABS, VIEWS } from "../views.js";
+import { ActivityPrimaryTabs } from "./ActivityPrimaryTabs.jsx";
 
 /** `matchMedia("(min-width: 768px)")` — desktop header path; mobile browse chrome uses scroll-collapse. */
 const MD_MIN_WIDTH_PX = 768;
@@ -377,6 +379,39 @@ function MobileNavNotificationsIcon({ filled = false, className = "", ...props }
   );
 }
 
+/** Purchases + orders unified tab */
+function MobileNavActivityIcon({ filled = false, className = "", ...props }) {
+  if (filled) {
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
+        <path
+          fill="currentColor"
+          d="M6.75 3.75h10.5a2.25 2.25 0 012.25 2.25v12a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 18v-12a2.25 2.25 0 012.25-2.25zm1.5 3v1.5h9V6.75h-9zm0 3v1.5h6V9.75h-6zm0 3v1.5h9v-1.5h-9z"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={MOBILE_NAV_ICON_STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+      {...props}
+    >
+      <path d="M7.5 5.25h9a1.5 1.5 0 011.5 1.5v11a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 016 17.75v-11a1.5 1.5 0 011.5-1.5z" />
+      <path d="M8.25 9h7.5M8.25 12h7.5M8.25 15h4.5" />
+    </svg>
+  );
+}
+
 function MobileNavProfileIcon({ filled = false, className = "", ...props }) {
   if (filled) {
     return (
@@ -515,8 +550,15 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {(v: string) => void} props.setActiveView
  * @param {() => void} [props.goOwnProfile]
  * @param {() => void} props.goBrowse
- * @param {() => void} props.goOrders
- * @param {() => void} props.goMyPurchases
+ * @param {(tab?: string) => void} props.goActivity Merge hub for purchases, seller orders, courier
+ * @param {string} [props.activityTab] Current Activity primary tab (`ACTIVITY_TABS`) when `activeView` is Activity
+ * @param {number} [props.courierAttentionCount] Courier slice for Activity rose total (Deliver + Buying tab).
+ * @param {number} [props.courierPipelineCount] Full courier pipeline for muted Activity fallback (Deliver + sales + purchases).
+ * @param {{ count: number, rose: boolean }} [props.activityPrimaryBuyingBadge] Activity strip Buying glyph count + rose/slate.
+ * @param {{ count: number, rose: boolean }} [props.activityPrimarySellingBadge]
+ * @param {{ count: number, rose: boolean }} [props.activityPrimaryCourierBadge]
+ * @param {() => void} [props.goOrders]
+ * @param {() => void} [props.goMyPurchases]
  * @param {() => void} props.goCart
  * @param {number} [props.inboxBadgeCount] Badge total for messages icon (messages + orders attention + notifications)
  * @param {number} [props.messagesUnreadCount] Unread messages (aria-label only; no header badge)
@@ -549,6 +591,13 @@ export function LoggedInHeader({
   setActiveView,
   goOwnProfile = () => {},
   goBrowse = () => {},
+  goActivity,
+  activityTab = ACTIVITY_TABS.BUYING,
+  courierAttentionCount = 0,
+  courierPipelineCount = 0,
+  activityPrimaryBuyingBadge = { count: 0, rose: false },
+  activityPrimarySellingBadge = { count: 0, rose: false },
+  activityPrimaryCourierBadge = { count: 0, rose: false },
   goOrders = () => {},
   goMyPurchases = () => {},
   goCart = () => {},
@@ -577,6 +626,30 @@ export function LoggedInHeader({
   liftChromeAboveOverlay = false,
   children,
 }) {
+  const openActivity =
+    typeof goActivity === "function"
+      ? goActivity
+      : () => {
+          goMyPurchases();
+        };
+
+  const courierRoseForHub = Math.min(99, Math.max(0, courierAttentionCount));
+  const courierPipelineForHub = Math.min(99, Math.max(0, courierPipelineCount));
+  /** Rose total = unseen orders (all status tabs) + courier Deliver/purchases attention; slate fallback = P+P volumes + full courier pipeline. */
+  const activityAttentionCount = Math.min(
+    99,
+    purchasesItemCount + ordersItemCount + courierRoseForHub,
+  );
+  const activityTotalPipelineCount = Math.min(
+    99,
+    totalPurchasesCount + totalOrdersCount + courierPipelineForHub,
+  );
+  const activityAttentionRose =
+    activityAttentionCount > 0 &&
+    (Boolean(purchasesItemCount && !purchasesAttentionMuted) ||
+      Boolean(ordersItemCount && !ordersAttentionMuted) ||
+      courierRoseForHub > 0);
+
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
@@ -852,15 +925,13 @@ export function LoggedInHeader({
     };
   }, [mobileShopBrowseScrollCollapseActive, mobileMenuOpen, activeView, scheduleApplyBrowseChrome]);
 
-  const mobileSellingTabActive =
-    activeView === VIEWS.ORDERS ||
+  const mobileActivityZoneTabActive =
+    activeView === VIEWS.ACTIVITY ||
     activeView === VIEWS.SELLER ||
     activeView === VIEWS.MY_LISTINGS;
   /** Mobile: hide top utility row on secondary tabs (keep visible on Shop-like views and Cart so favorites/menu stay reachable). */
   const hideMobilePrimaryRow =
-    activeView === VIEWS.MY_PURCHASES ||
-    activeView === VIEWS.ORDERS ||
-    activeView === VIEWS.COURIER ||
+    activeView === VIEWS.ACTIVITY ||
     activeView === VIEWS.SELLER ||
     activeView === VIEWS.MY_LISTINGS ||
     activeView === VIEWS.MESSAGES ||
@@ -1128,7 +1199,7 @@ export function LoggedInHeader({
           <div
             className="app-shell-content-inset flex min-h-[var(--ui-touch-target,44px)] w-full max-w-full items-stretch gap-0.5 py-1 min-[360px]:gap-1 min-[390px]:gap-1.5 min-[430px]:gap-2"
             role="tablist"
-            aria-label="Home, cart, purchases, orders, notifications, and profile"
+            aria-label="Home, cart, activity, notifications, and profile"
           >
             <button
               type="button"
@@ -1182,62 +1253,31 @@ export function LoggedInHeader({
             <button
               type="button"
               role="tab"
-              aria-selected={activeView === VIEWS.MY_PURCHASES}
-              aria-current={activeView === VIEWS.MY_PURCHASES ? "page" : undefined}
-              className={mobileIconTabClass(activeView === VIEWS.MY_PURCHASES)}
+              aria-selected={mobileActivityZoneTabActive}
+              aria-current={mobileActivityZoneTabActive ? "page" : undefined}
+              className={mobileIconTabClass(mobileActivityZoneTabActive)}
               aria-label={
-                purchasesItemCount > 0
-                  ? `Purchases, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
-                  : totalPurchasesCount > 0
-                    ? `Purchases, ${totalPurchasesCount > 99 ? "99 plus" : totalPurchasesCount} orders, no new updates`
-                    : "Purchases"
+                activityAttentionCount > 0
+                  ? `Activity, ${activityAttentionCount > 99 ? "99 plus" : activityAttentionCount} updates`
+                  : activityTotalPipelineCount > 0
+                    ? `Activity, ${activityTotalPipelineCount > 99 ? "99 plus" : activityTotalPipelineCount} open items`
+                    : "Activity"
               }
               onClick={() => {
-                goMyPurchases();
+                openActivity();
                 closeAllMenus();
               }}
             >
               <span className="mobile-nav-tab-icon inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
-                <MobileNavBuyingIcon filled={activeView === VIEWS.MY_PURCHASES} className="h-6 w-6 shrink-0" aria-hidden />
+                <MobileNavActivityIcon filled={mobileActivityZoneTabActive} className="h-6 w-6 shrink-0" aria-hidden />
               </span>
-              {purchasesItemCount > 0 ? (
-                <span className={`${mobileNavBadgeBase} ${purchasesAttentionMuted ? navBadgeMuted : navBadgeRose}`}>
-                  {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
+              {activityAttentionCount > 0 ? (
+                <span className={`${mobileNavBadgeBase} ${activityAttentionRose ? navBadgeRose : navBadgeMuted}`}>
+                  {activityAttentionCount > 99 ? "99+" : activityAttentionCount}
                 </span>
-              ) : totalPurchasesCount > 0 ? (
+              ) : activityTotalPipelineCount > 0 ? (
                 <span className={`${mobileNavBadgeBase} ${navBadgeMuted}`} aria-hidden>
-                  {totalPurchasesCount > 99 ? "99+" : totalPurchasesCount}
-                </span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mobileSellingTabActive}
-              aria-current={mobileSellingTabActive ? "page" : undefined}
-              className={mobileIconTabClass(mobileSellingTabActive)}
-              aria-label={
-                ordersItemCount > 0
-                  ? `Orders, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} alerts`
-                  : totalOrdersCount > 0
-                    ? `Orders, ${totalOrdersCount > 99 ? "99 plus" : totalOrdersCount} orders, no new alerts`
-                    : "Orders"
-              }
-              onClick={() => {
-                goOrders();
-                closeAllMenus();
-              }}
-            >
-              <span className="mobile-nav-tab-icon inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
-                <MobileNavSellingIcon filled={mobileSellingTabActive} className="h-6 w-6 shrink-0" aria-hidden />
-              </span>
-              {ordersItemCount > 0 ? (
-                <span className={`${mobileNavBadgeBase} ${ordersAttentionMuted ? navBadgeMuted : navBadgeRose}`}>
-                  {ordersItemCount > 99 ? "99+" : ordersItemCount}
-                </span>
-              ) : totalOrdersCount > 0 ? (
-                <span className={`${mobileNavBadgeBase} ${navBadgeMuted}`} aria-hidden>
-                  {totalOrdersCount > 99 ? "99+" : totalOrdersCount}
+                  {activityTotalPipelineCount > 99 ? "99+" : activityTotalPipelineCount}
                 </span>
               ) : null}
             </button>
@@ -1281,6 +1321,20 @@ export function LoggedInHeader({
           </div>
         </nav>
 
+            {activeView === VIEWS.ACTIVITY ? (
+              <div
+                className={`md:hidden ${getActivityTabChrome(activityTab).shellMobile}`}
+              >
+                <ActivityPrimaryTabs
+                  activityTab={activityTab}
+                  goActivity={openActivity}
+                  buyingBadge={activityPrimaryBuyingBadge}
+                  sellingBadge={activityPrimarySellingBadge}
+                  courierBadge={activityPrimaryCourierBadge}
+                />
+              </div>
+            ) : null}
+
             {mobileSecondaryNav ? (
               <div className="border-t border-neutral-200/35 bg-white/90 py-2.5 dark:border-slate-700/45 dark:bg-slate-900/90">
                 <div className="app-shell-content-inset">{mobileSecondaryNav}</div>
@@ -1305,7 +1359,7 @@ export function LoggedInHeader({
             <div
               className="flex max-w-full shrink-0 items-center gap-0.5 rounded-full p-0.5"
               role="group"
-              aria-label="Home, cart, purchases, and orders"
+              aria-label="Home, cart, and activity"
             >
               <button
                 type="button"
@@ -1356,72 +1410,33 @@ export function LoggedInHeader({
               </button>
               <button
                 type="button"
-                className={navPillTrade(activeView === VIEWS.MY_PURCHASES, "buy")}
+                className={navPillTrade(activeView === VIEWS.ACTIVITY, "buy")}
                 aria-label={
-                  purchasesItemCount > 0
-                    ? `Purchases, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
-                    : totalPurchasesCount > 0
-                      ? `Purchases, ${totalPurchasesCount > 99 ? "99 plus" : totalPurchasesCount} order${totalPurchasesCount === 1 ? "" : "s"}`
-                      : "Purchases — things you bought"
+                  activityAttentionCount > 0
+                    ? `Activity, ${activityAttentionCount > 99 ? "99 plus" : activityAttentionCount} updates`
+                    : activityTotalPipelineCount > 0
+                      ? `Activity, ${activityTotalPipelineCount > 99 ? "99 plus" : activityTotalPipelineCount} open items`
+                      : "Activity — purchases, sales, and courier"
                 }
-                title="Purchases — track status, pickup, and COD"
+                title="Purchases, seller orders, and courier coordination"
                 onClick={() => {
-                  goMyPurchases();
+                  openActivity();
                   closeAllMenus();
                 }}
               >
                 <MenuFileIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.MY_PURCHASES ? "text-primary dark:text-primary-soft" : ""}`}
+                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.ACTIVITY ? "text-primary dark:text-primary-soft" : ""}`}
                 />
-                <span className="max-w-[5.5rem] truncate md:max-w-none">Purchases</span>
-                {purchasesItemCount > 0 ? (
+                <span className="max-w-[6rem] truncate md:max-w-none">Activity</span>
+                {activityAttentionCount > 0 ? (
                   <span
-                    className={`${desktopNavPillBadgeBase} ${purchasesAttentionMuted ? navBadgeMuted : navBadgeRose}`}
+                    className={`${desktopNavPillBadgeBase} ${activityAttentionRose ? navBadgeRose : navBadgeMuted}`}
                   >
-                    {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
+                    {activityAttentionCount > 99 ? "99+" : activityAttentionCount}
                   </span>
-                ) : totalPurchasesCount > 0 ? (
+                ) : activityTotalPipelineCount > 0 ? (
                   <span className={`${desktopNavPillBadgeBase} ${navBadgeMuted}`}>
-                    {totalPurchasesCount > 99 ? "99+" : totalPurchasesCount}
-                  </span>
-                ) : null}
-              </button>
-              <button
-                type="button"
-                className={navPillTrade(activeView === VIEWS.ORDERS, "sell")}
-                aria-label={
-                  ordersItemCount > 0
-                    ? `Orders, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} buyer order alerts`
-                    : totalOrdersCount > 0
-                      ? `Orders, ${totalOrdersCount > 99 ? "99 plus" : totalOrdersCount} order${totalOrdersCount === 1 ? "" : "s"}`
-                      : "Orders — orders from your buyers"
-                }
-                title={
-                  ordersItemCount > 0
-                    ? `${ordersItemCount > 99 ? "99+" : ordersItemCount} pending or updated buyer order${ordersItemCount === 1 ? "" : "s"}`
-                    : totalOrdersCount > 0
-                      ? `${totalOrdersCount > 99 ? "99+" : totalOrdersCount} total buyer order${totalOrdersCount === 1 ? "" : "s"}`
-                      : "Orders people placed with you"
-                }
-                onClick={() => {
-                  goOrders();
-                  closeAllMenus();
-                }}
-              >
-                <MenuOrdersIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.ORDERS ? "text-primary dark:text-primary-soft" : ""}`}
-                />
-                <span className="max-w-[5.5rem] truncate md:max-w-none">Orders</span>
-                {ordersItemCount > 0 ? (
-                  <span
-                    className={`${desktopNavPillBadgeBase} ${ordersAttentionMuted ? navBadgeMuted : navBadgeRose}`}
-                    aria-hidden
-                  >
-                    {ordersItemCount > 99 ? "99+" : ordersItemCount}
-                  </span>
-                ) : totalOrdersCount > 0 ? (
-                  <span className={`${desktopNavPillBadgeBase} ${navBadgeMuted}`}>
-                    {totalOrdersCount > 99 ? "99+" : totalOrdersCount}
+                    {activityTotalPipelineCount > 99 ? "99+" : activityTotalPipelineCount}
                   </span>
                 ) : null}
               </button>
@@ -1550,7 +1565,7 @@ export function LoggedInHeader({
                   role="menuitem"
                   className={accountMenuItemBase}
                   onClick={() => {
-                    setActiveView(VIEWS.COURIER);
+                    openActivity(ACTIVITY_TABS.COURIER);
                     closeAllMenus();
                   }}
                 >
@@ -1640,6 +1655,18 @@ export function LoggedInHeader({
           </div>
         </div>
       </div>
+
+      {activeView === VIEWS.ACTIVITY ? (
+        <div className={`hidden w-full md:block ${getActivityTabChrome(activityTab).shellDesktop}`}>
+          <ActivityPrimaryTabs
+            activityTab={activityTab}
+            goActivity={openActivity}
+            buyingBadge={activityPrimaryBuyingBadge}
+            sellingBadge={activityPrimarySellingBadge}
+            courierBadge={activityPrimaryCourierBadge}
+          />
+        </div>
+      ) : null}
     </header>
 
       {mobileMenuOpen ? (
@@ -1708,7 +1735,7 @@ export function LoggedInHeader({
                   type="button"
                   className={mobileSheetMenuItem}
                   onClick={() => {
-                    setActiveView(VIEWS.COURIER);
+                    openActivity(ACTIVITY_TABS.COURIER);
                     finalizeMobileSheetClose();
                   }}
                 >

@@ -32,6 +32,8 @@
     --safe-left: env(safe-area-inset-left, 0px);
     /* Approx. header row height — used by overlays/toasts; secondary tabs sit in-flow below (see LoggedInHeader) */
     --mobile-bottom-nav: 4.25rem;
+    /* Fixed Activity order-status tab strip (mobile footer) — padding for main scroll */
+    --commerce-order-status-footer: 3.5rem;
     /* Safe-area + legacy bottom chrome estimate — sheets / fixed UI may reference this token */
     --mobile-nav-stack-bottom: calc(var(--mobile-bottom-nav) + env(safe-area-inset-bottom, 0px));
   }
