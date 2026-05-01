@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, memo, Suspense } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import tabLogo from "./assets/new-icon-only.png";
 import landingFeaturesPicture from "./assets/new-auth-landing.png?w=360;480;640;768&format=avif;webp;png&quality=80&as=picture";
@@ -111,6 +111,7 @@ import {
   ORDERS_STATUS_TABS,
   orderMatchesOrdersStatusTab,
 } from "./lib/orderAttentionStorage.js";
+import { ORDER_CANCELLATION_REASON_OPTIONS } from "./lib/orderCancellationReasons.js";
 import { computeMarketplaceFeedbackForText } from "./lib/marketplaceFeedbackToast.js";
 import {
   ensureImageFileUnderMaxBytes,
@@ -164,55 +165,6 @@ function orderRowSortMs(o) {
   const t = new Date(raw).getTime();
   return Number.isFinite(t) ? t : 0;
 }
-
-function formatOrderCompletedAtLabel(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return "";
-  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
-/** Full milestone context on the Completed tab (placed → processing → done). */
-const OrderCompletedMilestoneList = memo(function OrderCompletedMilestoneList({ order }) {
-  const createdRaw = order?.createdAt ?? order?.created_at;
-  const processingRaw = order?.processingEnteredAt ?? order?.processing_entered_at;
-  const completedRaw = order?.completedAt ?? order?.completed_at;
-  const updatedRaw = order?.updatedAt ?? order?.updated_at;
-  const items = [];
-  if (createdRaw) {
-    const t = formatOrderCompletedAtLabel(createdRaw);
-    if (t) items.push({ key: "placed", label: "Placed (pending)", time: t });
-  }
-  if (processingRaw) {
-    const t = formatOrderCompletedAtLabel(processingRaw);
-    if (t) items.push({ key: "processing", label: "Processing started", time: t });
-  }
-  const doneIso = completedRaw || updatedRaw;
-  if (doneIso) {
-    const t = formatOrderCompletedAtLabel(doneIso);
-    if (t) items.push({ key: "completed", label: "Completed", time: t });
-  }
-  if (items.length === 0) return null;
-  return (
-    <div className="max-w-full overflow-hidden rounded-lg border border-neutral-200/80 bg-neutral-50/90 px-2.5 py-1.5 md:px-3 md:py-2 dark:border-slate-600/80 dark:bg-slate-900/50">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500">Order timeline</p>
-      <ul className="mt-1.5 space-y-1.5 text-[11px] text-neutral-600 dark:text-slate-400">
-        {items.map((it) => (
-          <li key={it.key} className="flex flex-col gap-0.5 md:flex-row md:flex-wrap md:items-baseline md:gap-x-1.5">
-            <span className="shrink-0 font-medium text-neutral-800 dark:text-slate-200">{it.label}</span>
-            <span className="hidden md:inline text-neutral-400 dark:text-slate-500">·</span>
-            <span className="min-w-0 break-words text-neutral-600 dark:text-slate-400">{it.time}</span>
-          </li>
-        ))}
-      </ul>
-      {!processingRaw && createdRaw && doneIso ? (
-        <p className="mt-1.5 text-pretty text-[10px] leading-snug text-neutral-500 dark:text-slate-500">
-          Processing start time was not recorded for this order (older data or edge case).
-        </p>
-      ) : null}
-    </div>
-  );
-});
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 const COMMUNITY_MEMBERSHIP_KEY_PREFIX = "community_membership_v1:";
@@ -682,6 +634,13 @@ function pickMergedOrderCommentForVariantChips(entry, ordersList) {
  * Parsed `Selected:` → canonical sig; otherwise stable `__order__:id` so different DB rows never fold
  * when comments are missing or unparsed (cart never merges unknown variant lines).
  */
+/** Persists line total on the order row — use for display instead of live `listing.priceCents`. */
+function orderLineUnitPriceCents(order) {
+  const q = Math.max(1, Math.floor(Number(order?.quantity) || 1));
+  const goods = Math.max(0, Number(order?.codGoodsCents ?? order?.cod_goods_cents) || 0);
+  return Math.round(goods / q);
+}
+
 function buyerPendingOrderMergeKey(order) {
   const listingId = String(order?.listingId || "");
   const fromApi = String(order?.variantSignature ?? order?.variant_signature ?? "").trim();
@@ -934,17 +893,12 @@ function App() {
   ordersRef.current = orders;
   const [ordersRole, setOrdersRole] = useState("buyer");
   const [ordersStatusTab, setOrdersStatusTab] = useState("pending");
-  /** Completed tab: `orderId` -> expanded "Order details" (ID, pickup line, timeline). */
-  const [completedTabOrderDetailsOpen, setCompletedTabOrderDetailsOpen] = useState({});
   const activeViewRef = useRef(activeView);
   const ordersRoleRef = useRef(ordersRole);
   useEffect(() => {
     activeViewRef.current = activeView;
     ordersRoleRef.current = ordersRole;
   }, [activeView, ordersRole]);
-  useEffect(() => {
-    if (ordersStatusTab !== "completed") setCompletedTabOrderDetailsOpen({});
-  }, [ordersStatusTab]);
   useEffect(() => {
     if (activeView === VIEWS.PRODUCT_DETAIL) return;
     writeActiveView(activeView);
@@ -955,7 +909,9 @@ function App() {
   const [orderSelection, setOrderSelection] = useState({});
   /** Which bulk order transition is in flight (`seller_accept` | `cancel`) — only that action shows loading on its button. */
   const [ordersBulkActionLoadingTransition, setOrdersBulkActionLoadingTransition] = useState(/** @type {string | null} */ (null));
-  const [buyerCancelConfirmOpen, setBuyerCancelConfirmOpen] = useState(false);
+  const [orderCancelReasonModalOpen, setOrderCancelReasonModalOpen] = useState(false);
+  const [orderCancelReasonId, setOrderCancelReasonId] = useState("");
+  const [orderCancelNote, setOrderCancelNote] = useState("");
   const [leaveCommunityConfirmOpen, setLeaveCommunityConfirmOpen] = useState(false);
   /** Order ids the user has marked “seen” per status tab (localStorage per user). Unseen rows drive badges + highlights. */
   const [buyerOrderDismissedIdsByTab, setBuyerOrderDismissedIdsByTab] = useState(() => emptyOrderAttentionByTab());
@@ -4161,8 +4117,22 @@ function App() {
       const variantSig = String(item?.variantSignature ?? "");
       const lineKey = cartLineKeyFromItem(item);
       const qty = Math.max(1, Math.floor(Number(item?.quantity) || 1));
-      const modes = Array.isArray(item?.fulfillmentModes) ? item.fulfillmentModes : [];
-      const fulfillmentType = modes.includes("pickup") ? "pickup" : modes.includes("delivery") ? "delivery" : "pickup";
+      const modes = Array.isArray(item?.fulfillmentModes) ? item.fulfillmentModes.map(String) : [];
+      const storedFt = String(item?.fulfillmentType || "").trim();
+      const fulfillmentType =
+        storedFt === "pickup" || storedFt === "delivery"
+          ? modes.includes(storedFt)
+            ? storedFt
+            : modes.includes("pickup")
+              ? "pickup"
+              : modes.includes("delivery")
+                ? "delivery"
+                : "pickup"
+          : modes.includes("pickup")
+            ? "pickup"
+            : modes.includes("delivery")
+              ? "delivery"
+              : "pickup";
       try {
         await apiRequest("/orders", {
           method: "POST",
@@ -4205,7 +4175,7 @@ function App() {
   }, [buyNowFromProfile.ready, cancelCartItemFadeOut, goMyPurchases, mergeCartItemsPreservingOrder, selectedCartItems, startCartItemFadeOut, token]);
 
   const applyTransitionToSelectedOrders = useCallback(
-    async (transition, label) => {
+    async (transition, label, cancelPayload = null) => {
       const transitionNorm = String(transition ?? "").trim();
       if (!selectedOrders.length) {
         pushMarketplaceToast("Select at least one order first.");
@@ -4229,7 +4199,14 @@ function App() {
             continue;
           }
           try {
-            await apiRequest(`/orders/${oid}`, { method: "PATCH", token, body: { transition: transitionNorm } });
+            const body = { transition: transitionNorm };
+            if (transitionNorm === "cancel" && cancelPayload && typeof cancelPayload === "object") {
+              const cr = String(cancelPayload.cancellationReason || "").trim();
+              if (cr) body.cancellationReason = cr;
+              const cn = String(cancelPayload.cancellationNote || "").trim();
+              if (cn) body.cancellationNote = cn;
+            }
+            await apiRequest(`/orders/${oid}`, { method: "PATCH", token, body });
             successCount += 1;
           } catch (e) {
             failedCount += 1;
@@ -5066,12 +5043,6 @@ function App() {
     }
   };
 
-  const toggleCompletedTabOrderDetails = useCallback((orderId) => {
-    const k = String(orderId || "");
-    if (!k) return;
-    setCompletedTabOrderDetailsOpen((prev) => ({ ...prev, [k]: !prev[k] }));
-  }, []);
-
   const submitOrderReview = async (orderId, rating, reviewText) => {
     clearMarketplaceToasts();
     try {
@@ -5317,7 +5288,8 @@ function App() {
     const listingModes = Array.isArray(listing.fulfillmentModes) && listing.fulfillmentModes.length ? listing.fulfillmentModes : ["pickup"];
     const defaultFulfillment = listingModes.includes("pickup") ? "pickup" : listingModes[0];
     const savedPref = readQuickOrderFulfillmentPref();
-    const initialFulfillment = savedPref && listingModes.includes(savedPref) ? savedPref : defaultFulfillment;
+    const initialFulfillment =
+      savedPref && listingModes.includes(savedPref) ? savedPref : defaultFulfillment;
     const sourceView =
       activeView === VIEWS.PRODUCT_DETAIL
         ? String(productInspectReturnRef.current?.view || VIEWS.BROWSE)
@@ -5546,6 +5518,12 @@ function App() {
       onSaleSelect: typeof extra.onSaleSelect === "function" ? extra.onSaleSelect : undefined,
       buyNowDisabled: Boolean(extra.buyNowDisabled),
       buyNowDisabledReason: String(extra.buyNowDisabledReason || ""),
+      orderTimelineOrder: extra.orderTimelineOrder ?? undefined,
+      orderTimelineContextTab: extra.orderTimelineContextTab ?? undefined,
+      orderTimelineViewerRole: extra.orderTimelineViewerRole ?? undefined,
+      orderTimelineOrderIds: Array.isArray(extra.orderTimelineOrderIds)
+        ? extra.orderTimelineOrderIds.map((x) => String(x || "").trim()).filter(Boolean)
+        : undefined,
       isFavorite: favoriteIds.has(String(listingLike.id || "")),
       onToggleFavorite:
         listingLike?.id
@@ -5777,6 +5755,7 @@ function App() {
               quantity: parsedQty,
               comment: mergedComment,
               variantSignature: variantSig,
+              fulfillmentType: quickOrderFulfillmentType,
             },
           });
           const incoming = Array.isArray(cartData?.items) ? cartData.items : [];
@@ -5827,6 +5806,7 @@ function App() {
                 quantity: parsedQty,
                 listingQuantity: maxQty,
                 fulfillmentModes: Array.isArray(quickAddListing.fulfillmentModes) ? quickAddListing.fulfillmentModes : ["pickup"],
+                fulfillmentType: quickOrderFulfillmentType,
                 comment: mergedComment,
                 optionNameA: optLabelA,
                 optionNameB: optLabelB,
@@ -5845,6 +5825,7 @@ function App() {
             quantity: mergedQty,
             listingQuantity: maxQty,
             fulfillmentModes: Array.isArray(quickAddListing.fulfillmentModes) ? quickAddListing.fulfillmentModes : ["pickup"],
+            fulfillmentType: quickOrderFulfillmentType,
             comment: mergedComment || existing.comment || "",
             optionNameA: optLabelA || existing.optionNameA,
             optionNameB: optLabelB || existing.optionNameB,
@@ -10483,6 +10464,14 @@ function App() {
                             ? "aspect-[4/3] w-[6.5rem] min-[400px]:aspect-square min-[400px]:h-[7.5rem] min-[400px]:w-[7.5rem] min-[400px]:max-h-[7.5rem] min-[400px]:max-w-[7.5rem] min-[400px]:shrink-0"
                             : "lm-product-card-media aspect-square w-full min-h-0";
                           const cartLineVariantPick = narrowListingOptionValuesForBuyerSelection(item);
+                          const cartModesList = Array.isArray(item.fulfillmentModes) ? item.fulfillmentModes.map(String) : [];
+                          const cartFtResolved =
+                            item.fulfillmentType === "pickup" || item.fulfillmentType === "delivery"
+                              ? item.fulfillmentType
+                              : cartModesList.includes("pickup")
+                                ? "pickup"
+                                : cartModesList[0] || "pickup";
+                          const cartFulfillmentModesForLabel = [cartFtResolved];
                           return (
                             <div
                               key={lineKey}
@@ -10596,7 +10585,7 @@ function App() {
                                     priceCents={item.unitPriceCents}
                                     description={item.description}
                                     hideDescription
-                                    fulfillmentModes={item.fulfillmentModes}
+                                    fulfillmentModes={cartFulfillmentModesForLabel}
                                     orderType={item.orderType}
                                     processingTime={item.processingTime}
                                     optionNameA={item.optionNameA}
@@ -10677,10 +10666,24 @@ function App() {
 
         {(activeView === VIEWS.ORDERS || activeView === VIEWS.MY_PURCHASES) && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <div>
-              <h2 className="text-xl font-semibold tracking-tight text-neutral-900 md:text-2xl dark:text-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="min-w-0 text-xl font-semibold tracking-tight text-neutral-900 md:text-2xl dark:text-slate-100">
                 {activeView === VIEWS.MY_PURCHASES ? "Purchases" : "Orders"}
               </h2>
+              {orders.length > 0 ? (
+                <div className="flex shrink-0 items-center justify-end">
+                  <ProductViewDensityToggle
+                    value={activeView === VIEWS.MY_PURCHASES ? commerceFlowViewBuyer : commerceFlowViewSeller}
+                    onChange={setCommerceFlowOrdersView}
+                    allowCompact={!isMobileViewport}
+                    groupAriaLabel={
+                      activeView === VIEWS.MY_PURCHASES ? "Purchases line layout" : "Orders line layout"
+                    }
+                    gridTitle="Grid — two columns for readable order cards"
+                    compactTitle="Dense — three columns for a compact overview"
+                  />
+                </div>
+              ) : null}
             </div>
             {ordersFetchError ? (
               <ScreenError
@@ -10693,10 +10696,9 @@ function App() {
             ) : null}
             {orders.length > 0 ? (
               <>
-                <div className="flex flex-col gap-2">
-                  <div className="flex w-full min-w-0 flex-row items-center gap-2 border-b border-neutral-200/70 pb-2 dark:border-slate-700/70 md:gap-2 md:border-0 md:pb-0">
-                    <div
-                      className="grid w-full min-w-0 flex-1 grid-cols-4 gap-0 overflow-hidden rounded-2xl border border-neutral-200/90 bg-neutral-100/95 p-0 shadow-[inset_0_1px_2px_rgba(15,23,42,0.05)] dark:border-slate-600 dark:bg-slate-900/85 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.35)]"
+                <div className="border-b border-neutral-200/70 pb-2 dark:border-slate-700/70 md:border-0 md:pb-0">
+                  <div
+                    className="grid w-full min-w-0 grid-cols-4 gap-0 overflow-hidden rounded-2xl border border-neutral-200/90 bg-neutral-100/95 p-0 shadow-[inset_0_1px_2px_rgba(15,23,42,0.05)] dark:border-slate-600 dark:bg-slate-900/85 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.35)]"
                       role="tablist"
                       aria-label={activeView === VIEWS.MY_PURCHASES ? "Purchase status" : "Order status"}
                       onKeyDown={(e) => {
@@ -10756,7 +10758,7 @@ function App() {
                               ? `${label}, ${String(badgeCountDisplay).replace("+", " plus ")}`
                               : label
                           }
-                          className={`relative flex min-h-[44px] min-w-0 flex-col items-center justify-center rounded-none px-0.5 pb-1.5 text-center text-[10px] font-semibold leading-snug transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-100 dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-900 sm:px-1.5 sm:text-xs md:text-[13px] ${
+                          className={`relative flex min-h-[44px] min-w-0 flex-col items-center justify-center rounded-none px-0.5 pb-1.5 text-center text-[10px] font-semibold leading-snug transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-100 dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-900 min-[380px]:px-1.5 min-[380px]:text-xs md:text-[13px] ${
                             showTabBadge ? "pt-3.5" : "pt-1.5"
                           } ${
                             selected
@@ -10773,24 +10775,15 @@ function App() {
                               {badgeCountDisplay}
                             </span>
                           ) : null}
-                          <span className="line-clamp-2 min-w-0 max-w-full px-0.5">{label}</span>
+                          <span
+                            className={`line-clamp-2 min-w-0 max-w-full px-0.5 ${showTabBadge ? "pr-4 md:pr-0.5" : ""}`}
+                          >
+                            {label}
+                          </span>
                         </button>
                         );
                       })}
                     </div>
-                    <div className="flex shrink-0 justify-end self-center md:self-start">
-                      <ProductViewDensityToggle
-                        value={activeView === VIEWS.MY_PURCHASES ? commerceFlowViewBuyer : commerceFlowViewSeller}
-                        onChange={setCommerceFlowOrdersView}
-                        allowCompact={!isMobileViewport}
-                        groupAriaLabel={
-                          activeView === VIEWS.MY_PURCHASES ? "Purchases line layout" : "Orders line layout"
-                        }
-                        gridTitle="Grid — two columns for readable order cards"
-                        compactTitle="Dense — three columns for a compact overview"
-                      />
-                    </div>
-                  </div>
                 </div>
                 <div
                   id="commerce-flow-status-panel"
@@ -10841,7 +10834,7 @@ function App() {
                             >
                               <path d="M20 6L9 17l-5-5" />
                             </svg>
-                            Accept selected
+                            Accept
                           </Button>
                         ) : null}
                         <Button
@@ -10851,14 +10844,9 @@ function App() {
                           loading={ordersBulkActionLoadingTransition === "cancel"}
                           loadingLabel="Working…"
                           onClick={() => {
-                            if (ordersRole === "buyer") {
-                              setBuyerCancelConfirmOpen(true);
-                              return;
-                            }
-                            void applyTransitionToSelectedOrders(
-                              "cancel",
-                              ordersRole === "buyer" ? "Cancelled" : "Declined"
-                            );
+                            setOrderCancelReasonId("");
+                            setOrderCancelNote("");
+                            setOrderCancelReasonModalOpen(true);
                           }}
                         >
                           <svg
@@ -10874,7 +10862,7 @@ function App() {
                           >
                             <path d="M18 6L6 18M6 6l12 12" />
                           </svg>
-                          {ordersRole === "buyer" ? "Cancel orders" : "Decline selected"}
+                          Cancel
                         </Button>
                       </div>
                     </div>
@@ -10994,12 +10982,13 @@ function App() {
                           const listing = orderListingsById[String(o.listingId)] || null;
                           const orderedQty = Math.max(1, Number(o.quantity) || 1);
                           const enriched = enrichListingSnapshotForOrderCard(o, listing);
+                          const unitAtOrder = orderLineUnitPriceCents(o);
                           const cardListing = listing
-                            ? { ...listing, ...enriched, quantity: orderedQty }
+                            ? { ...listing, ...enriched, priceCents: unitAtOrder, quantity: orderedQty }
                             : {
                                 id: o.listingId,
                                 title: enriched.title,
-                                priceCents: o.codGoodsCents,
+                                priceCents: unitAtOrder,
                                 quantity: orderedQty,
                                 fulfillmentModes: [o.fulfillmentType],
                                 imageUrl: enriched.imageUrl,
@@ -11047,12 +11036,13 @@ function App() {
                           const listing = orderListingsById[String(o.listingId)] || null;
                           const orderedQty = Math.max(1, Number(o.quantity) || 1);
                           const enriched = enrichListingSnapshotForOrderCard(o, listing);
+                          const unitAtOrder = orderLineUnitPriceCents(o);
                           const cardListing = listing
-                            ? { ...listing, ...enriched, quantity: orderedQty }
+                            ? { ...listing, ...enriched, priceCents: unitAtOrder, quantity: orderedQty }
                             : {
                                 id: o.listingId,
                                 title: enriched.title,
-                                priceCents: o.codGoodsCents,
+                                priceCents: unitAtOrder,
                                 quantity: orderedQty,
                                 fulfillmentModes: [o.fulfillmentType],
                                 imageUrl: enriched.imageUrl,
@@ -11149,15 +11139,34 @@ function App() {
                           const rowAllSelected = entry.orderIds.length > 0 && entry.orderIds.every((id) => Boolean(orderSelection[id]));
                           const completedHistoryRow =
                             ordersStatusTab === "completed" && String(o.status || "") === "completed";
-                          const completedDetailsKey = String(o.id || "");
-                          const completedDetailsOpen = Boolean(completedTabOrderDetailsOpen[completedDetailsKey]);
+                          /** Avoid an empty footer shell in list view (stacked `gap` + `mt`/`pt` looked like a large dead zone). */
+                          const orderCardFooterHasChrome =
+                            Boolean(completedHistoryRow) ||
+                            (ordersRole === "buyer" &&
+                              ordersStatusTab === "completed" &&
+                              String(o.status || "") === "completed") ||
+                            (ordersRole === "seller" &&
+                              ordersStatusTab === "completed" &&
+                              Boolean(o.buyerReview?.rating)) ||
+                            (ordersRole === "buyer" &&
+                              String(o.status || "") === "ready_for_pickup" &&
+                              o.fulfillmentType === "pickup" &&
+                              !pickupBuyerAcknowledgedAll &&
+                              pickupBuyerAckOrderIds.length > 0) ||
+                            (ordersRole === "seller" && String(o.status || "") === "ready_for_pickup") ||
+                            (ordersRole === "seller" && String(o.status || "") === "bid_accepted") ||
+                            String(o.status || "") === "out_for_delivery" ||
+                            (ordersRole === "seller" &&
+                              String(o.status || "") === "ready_for_pickup" &&
+                              pickupBuyerAcknowledgedAny) ||
+                            (ordersRole === "buyer" &&
+                              String(o.status || "") === "ready_for_pickup" &&
+                              o.fulfillmentType === "pickup" &&
+                              pickupBuyerAcknowledgedAll);
                           const orderCardHighlight = shouldHighlightRecent ? "bg-primary-soft dark:bg-primary/15" : "";
                           const orderListingForProductOpen =
                             orderListingsById[String(o.listingId)] ||
                             (cardListing?.id ? cardListing : null);
-                          const openOrderCardProduct = () => {
-                            openListingFromPurchasedOrder(orderListingForProductOpen);
-                          };
                           const openOrderProductInspect = () => {
                             const L = orderListingForProductOpen;
                             if (!L?.id) {
@@ -11167,7 +11176,7 @@ function App() {
                             const listingForInspect = {
                               ...L,
                               id: String(L.id),
-                              priceCents: Number(L.priceCents) || 0,
+                              priceCents: orderLineUnitPriceCents(o),
                             };
                             const stockAvail =
                               L.quantity != null && Number(L.quantity) >= 0
@@ -11182,6 +11191,10 @@ function App() {
                               subtitle: activeView === VIEWS.MY_PURCHASES ? "Purchase" : "Order",
                               listingStockQty: stockAvail,
                               showBuyerCommerceActions: isBuyer,
+                              orderTimelineOrder: o,
+                              orderTimelineOrderIds: entry.orderIds,
+                              orderTimelineContextTab: ordersStatusTab,
+                              orderTimelineViewerRole: ordersRole,
                               ...(isBuyer
                                 ? {
                                     onAddToCart: () => openQuickAddModal(listingForInspect, "cart"),
@@ -11191,9 +11204,9 @@ function App() {
                             });
                           };
                           const orderCardBody = (
-                            <>
+                            <div className="flex min-w-0 flex-col gap-1.5">
                               {shouldHighlightRecent ? (
-                                <span className="mb-1 inline-flex w-fit max-w-full shrink-0 self-start items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
+                                <span className="inline-flex w-fit max-w-full shrink-0 self-start items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
                                   Recently updated
                                 </span>
                               ) : null}
@@ -11215,24 +11228,46 @@ function App() {
                                 optionValuesB={orderVariantPick.optionValuesB}
                                 listingMetaDensity="compact"
                               />
-                              <p className="mt-1 text-pretty text-[11px] leading-snug text-neutral-600 md:text-xs dark:text-slate-400">
-                                <span className="font-medium text-neutral-700 dark:text-slate-300">Qty</span>{" "}
-                                <span className="font-semibold tabular-nums">{Number(cardListing.quantity) || 1}</span>
-                                <span className="text-neutral-400 dark:text-slate-600"> · </span>
-                                {listingCodAvailabilityLabel(cardListing.fulfillmentModes)}
-                              </p>
                               <div
-                                className={`mt-1 space-y-0.5 leading-snug text-neutral-600 dark:text-slate-400 ${
-                                  cfCompact ? "text-[10px] md:text-[11px]" : "text-[11px] md:text-xs md:leading-normal"
+                                className={`space-y-1 leading-tight text-neutral-600 dark:text-slate-400 ${
+                                  cfCompact ? "text-[10px] md:text-[11px]" : "text-[11px] md:text-xs md:leading-snug"
                                 }`}
                               >
+                                <p className="text-pretty">
+                                  <span className="font-medium text-neutral-700 dark:text-slate-300">Quantity</span>{" "}
+                                  <span className="font-semibold tabular-nums text-neutral-600 dark:text-slate-400">
+                                    {Number(cardListing.quantity) || 1}
+                                  </span>
+                                </p>
+                                <div className="space-y-0.5 text-pretty text-neutral-600 dark:text-slate-400">
+                                  <p>
+                                    <span className="font-medium text-neutral-600 dark:text-slate-300">Fulfillment</span>
+                                    <span className="text-neutral-500 dark:text-slate-500">: </span>
+                                    <span className="text-neutral-800 dark:text-slate-200">
+                                      {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"}
+                                    </span>
+                                  </p>
+                                  <p>
+                                    <span className="font-medium text-neutral-600 dark:text-slate-300">Total</span>
+                                    <span className="text-neutral-500 dark:text-slate-500">: </span>
+                                    <span className="tabular-nums font-semibold text-neutral-700 dark:text-slate-300">
+                                      {formatCents(
+                                        Math.max(0, Number(entry.mergedGoodsCents ?? o.codGoodsCents) || 0) +
+                                          Math.max(0, Number(entry.mergedDeliveryCents ?? o.codDeliveryCents) || 0),
+                                      )}
+                                    </span>
+                                  </p>
+                                </div>
                                 {orderCommentRow.show ? (
                                   <p className="line-clamp-2 text-pretty">
-                                    {orderCommentRow.label}: {orderCommentRow.text}
+                                    <span className="font-medium text-neutral-700 dark:text-slate-300">
+                                      {orderCommentRow.label === "Comment" ? "Buyer comment" : orderCommentRow.label}
+                                    </span>
+                                    : {orderCommentRow.text}
                                   </p>
                                 ) : null}
                               </div>
-                            </>
+                            </div>
                           );
                           return (
                             <div
@@ -11240,7 +11275,7 @@ function App() {
                               className={`transition duration-200 ease-in-out ${
                                 cfList
                                   ? `relative lm-card lm-list-card lm-product-card-list flex flex-col gap-3 p-3 md:gap-3.5 ${orderCardHighlight}`
-                                  : `relative lm-card lm-grid-card lm-product-card lm-product-card--feed h-full min-h-0 flex-1 flex flex-col overflow-hidden p-0 ${orderCardHighlight}`
+                                  : `relative lm-card lm-grid-card lm-product-card lm-product-card--feed lm-commerce-order-card h-full min-h-0 flex-1 flex flex-col overflow-hidden p-0 ${orderCardHighlight}`
                               }`}
                             >
                               {ordersStatusTab === "pending" ? (
@@ -11287,8 +11322,8 @@ function App() {
                                   <button
                                     type="button"
                                     className="flex w-full min-w-0 cursor-pointer flex-col gap-1 rounded-lg text-left outline-none transition hover:bg-neutral-50/90 focus-visible:ring-2 focus-visible:ring-brand-primary/45 min-[400px]:min-w-0 min-[400px]:flex-1 dark:hover:bg-slate-800/50 dark:focus-visible:ring-brand-accent/45"
-                                    onClick={openOrderCardProduct}
-                                    aria-label={`Buy flow: ${String(cardListing.title || "Product").trim()}`}
+                                    onClick={openOrderProductInspect}
+                                    aria-label={`View full product details: ${String(cardListing.title || "Product").trim()}`}
                                   >
                                     {orderCardBody}
                                   </button>
@@ -11311,124 +11346,29 @@ function App() {
                                   </button>
                                   <button
                                     type="button"
-                                    className="lm-product-card-body flex w-full cursor-pointer flex-col border-0 bg-transparent p-0 text-left outline-none transition hover:bg-neutral-50/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/45 dark:hover:bg-slate-800/40 dark:focus-visible:ring-brand-accent/45"
-                                    onClick={openOrderCardProduct}
-                                    aria-label={`Buy flow: ${String(cardListing.title || "Product").trim()}`}
+                                    className="lm-product-card-body flex w-full cursor-pointer flex-col border-0 bg-transparent text-left outline-none transition hover:bg-neutral-50/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/45 dark:hover:bg-slate-800/40 dark:focus-visible:ring-brand-accent/45"
+                                    onClick={openOrderProductInspect}
+                                    aria-label={`View full product details: ${String(cardListing.title || "Product").trim()}`}
                                   >
                                     {orderCardBody}
                                   </button>
                                 </>
                               )}
+                              {orderCardFooterHasChrome ? (
                               <div
-                                className={`border-t border-neutral-200/80 text-sm dark:border-slate-700/80 ${
+                                className={`text-sm ${
                                   multicolOrderCard
                                     ? "mt-1.5 space-y-1 pt-1.5 md:mt-2 md:space-y-1.5 md:pt-2"
-                                    : "mt-2 space-y-1.5 pt-1.5 md:mt-3 md:space-y-2 md:pt-2"
+                                    : cfList
+                                      ? "space-y-1.5 md:space-y-2"
+                                      : "mt-2 space-y-1.5 pt-1.5 md:mt-3 md:space-y-2 md:pt-2"
                                 } ${cfList ? "" : "px-2 pb-2 min-[400px]:px-2.5 min-[400px]:pb-2.5"}`}
                               >
-                                {!completedHistoryRow ? (
-                                  <>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <span className="min-w-0 text-[11px] text-neutral-500 dark:text-slate-400">
-                                        <span className="mr-1.5 font-medium text-neutral-600 dark:text-slate-300">
-                                          {entry.orderIds.length > 1 ? "Order IDs" : "Order ID"}
-                                        </span>
-                                        {entry.orderIds.length > 1 ? (
-                                          <span className="mt-1 block space-y-0.5">
-                                            {entry.orderIds.map((id) => (
-                                              <span key={id} className="block break-all font-mono">
-                                                {id}
-                                              </span>
-                                            ))}
-                                          </span>
-                                        ) : (
-                                          <span className="break-all font-mono">{entry.orderIds[0]}</span>
-                                        )}
-                                      </span>
-                                    </div>
-                                    <p className="text-pretty text-xs leading-snug text-neutral-600 dark:text-slate-400">
-                                      {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods{" "}
-                                      {formatCents(entry.mergedGoodsCents ?? o.codGoodsCents)}
-                                      {(entry.mergedDeliveryCents ?? o.codDeliveryCents) > 0 ? (
-                                        <span> · delivery {formatCents(entry.mergedDeliveryCents ?? o.codDeliveryCents)}</span>
-                                      ) : null}
-                                    </p>
-                                  </>
-                                ) : (
-                                  <>
-                                    <div className="flex items-start gap-2 md:gap-3">
-                                      <p className="min-w-0 flex-1 text-pretty text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
-                                        Completed{" "}
-                                        <span className="font-medium text-neutral-800 dark:text-slate-200">
-                                          {formatOrderCompletedAtLabel(
-                                            o.completedAt || o.completed_at || o.updatedAt || o.updated_at,
-                                          )}
-                                        </span>
-                                      </p>
-                                      <button
-                                        type="button"
-                                        className="shrink-0 rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700/80 md:px-3 md:py-2 md:text-xs"
-                                        aria-expanded={completedDetailsOpen}
-                                        onClick={() => toggleCompletedTabOrderDetails(o.id)}
-                                      >
-                                        <span className="md:hidden">{completedDetailsOpen ? "Hide" : "Details"}</span>
-                                        <span className="hidden md:inline">
-                                          {completedDetailsOpen ? "Hide order details" : "Order details"}
-                                        </span>
-                                      </button>
-                                    </div>
-                                    {completedDetailsOpen ? (
-                                      <>
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <span className="min-w-0 text-[11px] text-neutral-500 dark:text-slate-400">
-                                            <span className="mr-1.5 font-medium text-neutral-600 dark:text-slate-300">
-                                              {entry.orderIds.length > 1 ? "Order IDs" : "Order ID"}
-                                            </span>
-                                            {entry.orderIds.length > 1 ? (
-                                              <span className="mt-1 block space-y-0.5">
-                                                {entry.orderIds.map((id) => (
-                                                  <span key={id} className="block break-all font-mono">
-                                                    {id}
-                                                  </span>
-                                                ))}
-                                              </span>
-                                            ) : (
-                                              <span className="break-all font-mono">{entry.orderIds[0]}</span>
-                                            )}
-                                          </span>
-                                        </div>
-                                        <p className="text-pretty text-xs leading-snug text-neutral-600 dark:text-slate-400">
-                                          {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"} · goods{" "}
-                                          {formatCents(entry.mergedGoodsCents ?? o.codGoodsCents)}
-                                          {(entry.mergedDeliveryCents ?? o.codDeliveryCents) > 0 ? (
-                                            <span> · delivery {formatCents(entry.mergedDeliveryCents ?? o.codDeliveryCents)}</span>
-                                          ) : null}
-                                        </p>
-                                        <OrderCompletedMilestoneList order={o} />
-                                      </>
-                                    ) : null}
-                                  </>
-                                )}
-                                {(() => {
-                                  const tab = String(ordersStatusTab || "");
-                                  if (tab === "completed" && String(o.status || "") === "completed") return null;
-                                  const line =
-                                    tab === "pending" && (o.createdAt || o.created_at)
-                                      ? `Placed ${formatOrderCompletedAtLabel(o.createdAt || o.created_at)}`
-                                      : tab === "processing"
-                                        ? o.processingEnteredAt || o.processing_entered_at
-                                          ? `In progress since ${formatOrderCompletedAtLabel(o.processingEnteredAt || o.processing_entered_at)}`
-                                          : o.updatedAt || o.updated_at
-                                            ? `Last updated ${formatOrderCompletedAtLabel(o.updatedAt || o.updated_at)}`
-                                            : null
-                                        : tab === "cancelled"
-                                          ? `Cancelled ${formatOrderCompletedAtLabel(o.cancelledAt || o.cancelled_at || o.updatedAt || o.updated_at)}`
-                                          : null;
-                                  if (!line) return null;
-                                  return (
-                                    <p className="text-pretty text-[11px] leading-snug text-neutral-500 dark:text-slate-500">{line}</p>
-                                  );
-                                })()}
+                                {completedHistoryRow ? (
+                                  <p className="text-pretty text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
+                                    <span className="font-medium text-neutral-800 dark:text-slate-200">Completed</span>
+                                  </p>
+                                ) : null}
                                 {ordersRole === "buyer" && ordersStatusTab === "completed" && String(o.status || "") === "completed" ? (
                                   <div
                                     className={`flex flex-col rounded-lg border border-neutral-200/70 bg-white/50 dark:border-slate-600/80 dark:bg-slate-900/30 ${
@@ -11559,15 +11499,6 @@ function App() {
                                       Mark as received
                                     </button>
                                   ) : null}
-                                  {ordersRole === "seller" && o.status === "placed" ? (
-                                    <button
-                                      type="button"
-                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
-                                      onClick={() => patchOrderTransition(o.id, "seller_accept")}
-                                    >
-                                      Accept order
-                                    </button>
-                                  ) : null}
                                   {ordersRole === "seller" && o.status === "ready_for_pickup" ? (
                                     <button
                                       type="button"
@@ -11613,6 +11544,7 @@ function App() {
                                   ) : null}
                                 </div>
                               </div>
+                              ) : null}
                             </div>
                           );
                         })}
@@ -12970,7 +12902,7 @@ function App() {
                 {sellerTab === SELLER_TABS.PRODUCTS && (
                   <div className={`space-y-3 p-4 ${UI_KIT.surfaceCard}`}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">Listings & quantity</p>
+                      <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">Products</p>
                       <div className="flex items-center gap-2">
                         <ProductViewDensityToggle
                           value={sellerProductsView}
@@ -13108,41 +13040,91 @@ function App() {
       </LoggedInHeader>
       </MobileAppShell>
 
-      {buyerCancelConfirmOpen ? (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 md:p-6" role="dialog" aria-modal="true" aria-labelledby="buyer-cancel-confirm-title">
+      {orderCancelReasonModalOpen ? (
+        <div
+          className="fixed inset-0 z-[95] flex items-center justify-center p-4 md:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="order-cancel-reason-title"
+        >
           <button
             type="button"
             className="absolute inset-0 bg-neutral-900/45 backdrop-blur-[2px] dark:bg-black/55"
-            aria-label="Close cancel confirmation"
-            onClick={() => setBuyerCancelConfirmOpen(false)}
+            aria-label="Close cancel dialog"
+            onClick={() => setOrderCancelReasonModalOpen(false)}
           />
           <div
-            className="relative z-10 w-full max-w-mobile-baseline rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900 md:max-w-md"
+            className="relative z-10 max-h-[min(90vh,540px)] w-full max-w-mobile-baseline overflow-y-auto rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900 md:max-w-md"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 id="buyer-cancel-confirm-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
+            <h2 id="order-cancel-reason-title" className="text-lg font-semibold text-neutral-900 dark:text-slate-100">
               Cancel selected order{selectedOrders.length > 1 ? "s" : ""}?
             </h2>
             <p className="mt-2 text-sm text-neutral-600 dark:text-slate-400">
-              Are you sure you want to cancel {selectedOrders.length > 1 ? "these selected orders" : "this selected order"}?
+              Choose a reason
+              {selectedOrders.length > 1 ? " — it will apply to each selected order." : "."}
             </p>
+            <fieldset className="mt-4 space-y-2">
+              <legend className="sr-only">Cancellation reason</legend>
+              {ORDER_CANCELLATION_REASON_OPTIONS.map((opt) => (
+                <label
+                  key={opt.id}
+                  className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5 text-sm transition ${
+                    orderCancelReasonId === opt.id
+                      ? "border-brand-primary bg-brand-primary/10 dark:border-brand-accent dark:bg-brand-accent/15"
+                      : "border-neutral-200/90 bg-white hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800/80"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="order-cancel-reason"
+                    value={opt.id}
+                    checked={orderCancelReasonId === opt.id}
+                    onChange={() => setOrderCancelReasonId(opt.id)}
+                    className="mt-0.5 h-4 w-4 shrink-0 border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500 dark:text-brand-accent"
+                  />
+                  <span className="text-neutral-800 dark:text-slate-100">{opt.label}</span>
+                </label>
+              ))}
+            </fieldset>
+            {orderCancelReasonId === "other" ? (
+              <label className="mt-3 block">
+                <span className="text-xs font-medium text-neutral-600 dark:text-slate-400">Note (optional)</span>
+                <textarea
+                  value={orderCancelNote}
+                  onChange={(e) => setOrderCancelNote(e.target.value)}
+                  rows={3}
+                  maxLength={500}
+                  placeholder="Add detail…"
+                  className="mt-1 w-full resize-y rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none ring-brand-primary/35 focus:border-brand-primary focus:ring-2 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-brand-accent dark:focus:ring-brand-accent/35"
+                />
+              </label>
+            ) : null}
             <div className="mt-5 flex flex-col-reverse gap-2 md:flex-row md:justify-end">
               <button
                 type="button"
                 className="btn-secondary min-h-10 w-full md:w-auto"
-                onClick={() => setBuyerCancelConfirmOpen(false)}
+                onClick={() => setOrderCancelReasonModalOpen(false)}
               >
                 Keep order
               </button>
               <button
                 type="button"
-                className="min-h-10 w-full rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 md:w-auto dark:bg-rose-500 dark:hover:bg-rose-400"
+                className="min-h-10 w-full rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 md:w-auto dark:bg-rose-500 dark:hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={!orderCancelReasonId}
                 onClick={() => {
-                  setBuyerCancelConfirmOpen(false);
-                  void applyTransitionToSelectedOrders("cancel", "Cancelled");
+                  if (!orderCancelReasonId) {
+                    pushMarketplaceToast("Choose a cancellation reason.");
+                    return;
+                  }
+                  setOrderCancelReasonModalOpen(false);
+                  void applyTransitionToSelectedOrders("cancel", "Cancelled", {
+                    cancellationReason: orderCancelReasonId,
+                    cancellationNote: orderCancelNote.trim(),
+                  });
                 }}
               >
-                Yes, cancel
+                Confirm cancel
               </button>
             </div>
           </div>
@@ -13352,6 +13334,11 @@ function App() {
                       const qaLabelB = String(quickAddListing.optionNameB || "").trim();
                       const showVariantPickers =
                         Boolean(qaLabelA && qaValsA.length > 0) || Boolean(qaLabelB && qaValsB.length > 0);
+                      const qaFulfillmentModes = Array.isArray(quickAddListing.fulfillmentModes)
+                        ? quickAddListing.fulfillmentModes.map(String)
+                        : [];
+                      const qaOffersPickup = qaFulfillmentModes.includes("pickup");
+                      const qaOffersDelivery = qaFulfillmentModes.includes("delivery");
                       return (
                         <>
                           <div className="min-w-0 space-y-2">
@@ -13432,6 +13419,58 @@ function App() {
                                   </div>
                                 </fieldset>
                               ) : null}
+                            </div>
+                          ) : null}
+                          {qaOffersPickup && qaOffersDelivery ? (
+                            <fieldset className="min-w-0 space-y-1.5 border-0 p-0">
+                              <legend className="float-none text-xs font-semibold text-neutral-900 dark:text-slate-100">
+                                Fulfillment
+                              </legend>
+                              <div className="mt-1 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={quickOrderFulfillmentType === "pickup"}
+                                  disabled={quickAddSubmitting}
+                                  className={`min-h-[44px] min-w-[44px] rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
+                                    quickOrderFulfillmentType === "pickup"
+                                      ? "border-brand-primary bg-brand-primary/12 text-brand-primary shadow-sm dark:border-brand-accent dark:bg-brand-accent/15 dark:text-slate-50"
+                                      : "border-neutral-300 bg-white text-neutral-800 hover:border-neutral-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500"
+                                  }`}
+                                  onClick={() => {
+                                    setQuickOrderFulfillmentType("pickup");
+                                    writeQuickOrderFulfillmentPref("pickup");
+                                  }}
+                                >
+                                  COD pickup
+                                </button>
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={quickOrderFulfillmentType === "delivery"}
+                                  disabled={quickAddSubmitting}
+                                  className={`min-h-[44px] min-w-[44px] rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
+                                    quickOrderFulfillmentType === "delivery"
+                                      ? "border-brand-primary bg-brand-primary/12 text-brand-primary shadow-sm dark:border-brand-accent dark:bg-brand-accent/15 dark:text-slate-50"
+                                      : "border-neutral-300 bg-white text-neutral-800 hover:border-neutral-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500"
+                                  }`}
+                                  onClick={() => {
+                                    setQuickOrderFulfillmentType("delivery");
+                                    writeQuickOrderFulfillmentPref("delivery");
+                                  }}
+                                >
+                                  Deliver
+                                </button>
+                              </div>
+                            </fieldset>
+                          ) : qaOffersPickup || qaOffersDelivery ? (
+                            <div className="space-y-1">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                                Fulfillment
+                              </p>
+                              <p className="text-sm text-neutral-800 dark:text-slate-200">
+                                {listingCodAvailabilityLabel(qaOffersPickup ? ["pickup"] : ["delivery"])}
+                              </p>
                             </div>
                           ) : null}
                           <div className="space-y-1.5">

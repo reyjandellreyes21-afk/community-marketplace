@@ -89,9 +89,9 @@ export function MarketplaceProductDetailStack({
   ) : null;
 
   const metaStripCompact =
-    browseStackMode === "gridMobile" && isCard && (quantityRow || availabilityLabel) ? (
+    browseStackMode === "gridMobile" && isCard && (quantityRow || (!hideAvailability && availabilityLabel)) ? (
       <div className="lm-product-card-meta space-y-1.5">
-        {availabilityLabel ? (
+        {!hideAvailability && availabilityLabel ? (
           <p className="line-clamp-1 text-[11px] font-medium leading-tight text-text-secondary dark:text-slate-400">
             {availabilityLabel}
           </p>
@@ -112,9 +112,9 @@ export function MarketplaceProductDetailStack({
     ) : null;
 
   const metaStripDefault =
-    isCard && (quantityRow || availabilityLabel) ? (
+    isCard && (quantityRow || (!hideAvailability && availabilityLabel)) ? (
       <div className={`min-w-0 ${compactListMeta ? "space-y-1" : browseStackMode === "listMobile" ? "space-y-2" : "space-y-1.5"}`}>
-        {availabilityLabel ? availabilityBlock : null}
+        {!hideAvailability && availabilityLabel ? availabilityBlock : null}
         {qtyBlock}
       </div>
     ) : null;
@@ -217,7 +217,7 @@ export function MarketplaceProductDetailStack({
       )}
       {quantityAfterDescription ? (
         <>
-          {availabilityBlock}
+          {!hideAvailability && availabilityLabel ? availabilityBlock : null}
           {descriptionBlock}
           {qtyBlock}
         </>

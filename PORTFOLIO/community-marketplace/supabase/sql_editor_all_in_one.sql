@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS public.cart_items (
   user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   listing_id uuid NOT NULL REFERENCES public.listings (id) ON DELETE CASCADE,
   variant_signature text NOT NULL DEFAULT '' CHECK (char_length(variant_signature) <= 512),
+  fulfillment_type text NOT NULL DEFAULT 'pickup' CHECK (fulfillment_type IN ('pickup', 'delivery')),
   quantity integer NOT NULL DEFAULT 1 CHECK (quantity >= 1),
   comment text NOT NULL DEFAULT '' CHECK (char_length(comment) <= 2000),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -115,6 +116,9 @@ ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS accepted_bid_id uuid REFERENC
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS processing_entered_at timestamptz;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS completed_at timestamptz;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS cancelled_at timestamptz;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS cancelled_by_role text;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS cancellation_reason text;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS cancellation_note text;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS buyer_receipt_acknowledged_at timestamptz;
 
 -- Buyer note + canonical variant line (migrations 20260430121000_orders_buyer_comment +

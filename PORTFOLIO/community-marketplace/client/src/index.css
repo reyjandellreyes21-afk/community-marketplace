@@ -381,6 +381,11 @@
     @apply rounded-none border-b border-neutral-200/80 dark:border-slate-600/55;
   }
 
+  /** Commerce order grid cards — no rule between hero image and product body */
+  .lm-commerce-order-card.lm-product-card--feed .lm-product-card-media {
+    @apply border-b-0;
+  }
+
   .lm-product-card-media--ring {
     @apply border-0 ring-1 ring-inset ring-neutral-200/45 dark:ring-slate-600/40;
   }

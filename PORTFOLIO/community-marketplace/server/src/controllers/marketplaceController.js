@@ -23,6 +23,38 @@ const isVariantSignatureMissingError = (error) => {
   return /variant_signature/i.test(msg) && (error.code === "PGRST204" || /schema cache/i.test(msg));
 };
 
+/** Validates requested fulfillment against `listing.fulfillment_modes`; picks default when omitted/invalid. */
+function resolveBuyerFulfillmentForListing(listing, requested) {
+  const modes =
+    Array.isArray(listing?.fulfillment_modes) && listing.fulfillment_modes.length
+      ? listing.fulfillment_modes.map(String)
+      : ["pickup"];
+  const raw = requested != null ? String(requested).trim() : "";
+  if (raw === "pickup" || raw === "delivery") {
+    if (!modes.includes(raw)) {
+      throw new AppError(400, "This listing does not support that fulfillment option.");
+    }
+    return raw;
+  }
+  return modes.includes("pickup") ? "pickup" : modes[0];
+}
+
+/** Normalize stored DB value + listing modes for API consumers. */
+function fulfillmentTypeForCartApiRow(row, listing) {
+  const modes =
+    Array.isArray(listing?.fulfillment_modes) && listing.fulfillment_modes.length
+      ? listing.fulfillment_modes.map(String)
+      : ["pickup"];
+  let ft = row?.fulfillment_type != null ? String(row.fulfillment_type).trim() : "";
+  if (ft !== "pickup" && ft !== "delivery") {
+    ft = modes.includes("pickup") ? "pickup" : modes[0];
+  }
+  if (!modes.includes(ft)) {
+    ft = modes.includes("pickup") ? "pickup" : modes[0];
+  }
+  return ft;
+}
+
 /** Prefer stored column; fall back to parsing buyer_comment (matches cart_items.variant_signature semantics). */
 function effectiveVariantSignatureFromOrderRow(row) {
   const db = String(row?.variant_signature ?? "").trim();
@@ -39,10 +71,21 @@ const ORDER_UPDATE_OPTIONAL_COLUMNS = [
   "processing_entered_at",
   "completed_at",
   "cancelled_at",
+  "cancelled_by_role",
+  "cancellation_reason",
+  "cancellation_note",
   "buyer_receipt_acknowledged_at",
   "buyer_comment",
   "variant_signature",
 ];
+
+const ALLOWED_ORDER_CANCELLATION_REASONS = new Set([
+  "change_of_mind",
+  "change_variant",
+  "better_price_elsewhere",
+  "placed_by_mistake",
+  "other",
+]);
 
 function postgrestErrorText(error) {
   if (!error) return "";
@@ -554,6 +597,12 @@ const orderRowToApi = (row, reviewRow = null, listingMeta = null) => ({
   processingEnteredAt: row.processing_entered_at ?? null,
   completedAt: row.completed_at ?? null,
   cancelledAt: row.cancelled_at ?? null,
+  cancelledByRole: row.cancelled_by_role ?? null,
+  cancellationReason: row.cancellation_reason ?? null,
+  cancellationNote:
+    row.cancellation_note != null && String(row.cancellation_note).trim()
+      ? String(row.cancellation_note).trim()
+      : null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   ...orderListingSnapshotFromDbRow(listingMeta),
@@ -1091,6 +1140,7 @@ async function enrichCartRowsForApi(rows) {
       quantity: row.quantity,
       listingQuantity: Math.max(0, Number(listing.quantity) || 0),
       fulfillmentModes: Array.isArray(listing.fulfillment_modes) ? listing.fulfillment_modes.map(String) : [],
+      fulfillmentType: fulfillmentTypeForCartApiRow(row, listing),
       comment: String(row.comment || "").trim(),
       orderType: meta.orderType,
       processingTime: meta.processingTime,
@@ -1147,11 +1197,13 @@ export const addCartItem = async (req, res, next) => {
     const newQty = Math.min(mergedQty, maxStock);
     if (newQty < 1) throw new AppError(400, "Not enough stock.");
     const mergedComment = comment || String(existing?.comment || "").trim();
+    const fulfillmentType = resolveBuyerFulfillmentForListing(listing, req.body.fulfillmentType);
     const now = new Date().toISOString();
     const rowPayload = {
       user_id: req.user.id,
       listing_id: listingId,
       variant_signature: variantSig,
+      fulfillment_type: fulfillmentType,
       quantity: newQty,
       comment: mergedComment,
       updated_at: now,
@@ -1162,7 +1214,12 @@ export const addCartItem = async (req, res, next) => {
     if (existing) {
       ({ error: uerr } = await supabaseAdmin
         .from("cart_items")
-        .update({ quantity: newQty, comment: mergedComment, updated_at: now })
+        .update({
+          quantity: newQty,
+          comment: mergedComment,
+          fulfillment_type: fulfillmentType,
+          updated_at: now,
+        })
         .eq("user_id", req.user.id)
         .eq("listing_id", listingId)
         .eq("variant_signature", variantSig));
@@ -1174,7 +1231,12 @@ export const addCartItem = async (req, res, next) => {
       ) {
         const { data: updatedRows, error: upErr } = await supabaseAdmin
           .from("cart_items")
-          .update({ quantity: newQty, comment: mergedComment, updated_at: now })
+          .update({
+            quantity: newQty,
+            comment: mergedComment,
+            fulfillment_type: fulfillmentType,
+            updated_at: now,
+          })
           .eq("user_id", req.user.id)
           .eq("listing_id", listingId)
           .eq("variant_signature", variantSig)
@@ -1236,7 +1298,7 @@ export const patchCartItem = async (req, res, next) => {
 
     const { data: listing, error: lerr } = await supabaseAdmin
       .from("listings")
-      .select("quantity,status,seller_id")
+      .select("quantity,status,seller_id,fulfillment_modes")
       .eq("id", listingId)
       .maybeSingle();
     if (lerr) throw new AppError(500, lerr.message);
@@ -1247,9 +1309,17 @@ export const patchCartItem = async (req, res, next) => {
     const capped = Math.min(newQty, maxStock);
     if (capped < 1) throw new AppError(400, "Invalid quantity.");
 
+    const patch = {
+      quantity: capped,
+      updated_at: new Date().toISOString(),
+    };
+    if (req.body.fulfillmentType != null && req.body.fulfillmentType !== "") {
+      patch.fulfillment_type = resolveBuyerFulfillmentForListing(listing, req.body.fulfillmentType);
+    }
+
     const { error: uerr } = await supabaseAdmin
       .from("cart_items")
-      .update({ quantity: capped, updated_at: new Date().toISOString() })
+      .update(patch)
       .eq("user_id", req.user.id)
       .eq("listing_id", listingId)
       .eq("variant_signature", variantSig);
@@ -1570,8 +1640,16 @@ export const patchOrder = async (req, res, next) => {
     } else if (transition === "cancel") {
       if (!isBuyer && !isSeller) throw new AppError(403, "Forbidden.");
       if (["completed", "cancelled"].includes(order.status)) throw new AppError(400, "Cannot cancel.");
+      const rawReason = String(req.body.cancellationReason ?? req.body.cancellation_reason ?? "").trim();
+      if (!ALLOWED_ORDER_CANCELLATION_REASONS.has(rawReason)) {
+        throw new AppError(400, "Choose a valid cancellation reason.");
+      }
+      const rawNote = String(req.body.cancellationNote ?? req.body.cancellation_note ?? "").trim().slice(0, 500);
       patch.status = "cancelled";
       patch.cancelled_at = ts;
+      patch.cancelled_by_role = isBuyer ? "buyer" : "seller";
+      patch.cancellation_reason = rawReason;
+      patch.cancellation_note = rawNote.length ? rawNote : null;
     } else if (transition === "mark_out_for_delivery") {
       if (!isSeller) throw new AppError(403, "Only seller can mark out for delivery.");
       if (order.status !== "bid_accepted") throw new AppError(400, "Invalid state.");
