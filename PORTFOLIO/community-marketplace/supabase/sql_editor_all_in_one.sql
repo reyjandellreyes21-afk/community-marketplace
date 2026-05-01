@@ -76,8 +76,7 @@ CREATE TABLE IF NOT EXISTS public.orders (
     status IN (
       'placed',
       'seller_accepted',
-      'bidding_open',
-      'bid_accepted',
+      'courier_assigned',
       'ready_for_pickup',
       'out_for_delivery',
       'completed',
@@ -96,7 +95,7 @@ CREATE INDEX IF NOT EXISTS orders_seller_idx ON public.orders (seller_id);
 CREATE INDEX IF NOT EXISTS orders_listing_idx ON public.orders (listing_id);
 CREATE INDEX IF NOT EXISTS orders_status_idx ON public.orders (status);
 
-CREATE TABLE IF NOT EXISTS public.delivery_bids (
+CREATE TABLE IF NOT EXISTS public.courier_assignments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id uuid NOT NULL REFERENCES public.orders (id) ON DELETE CASCADE,
   courier_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
@@ -108,9 +107,9 @@ CREATE TABLE IF NOT EXISTS public.delivery_bids (
   UNIQUE (order_id, courier_id)
 );
 
-CREATE INDEX IF NOT EXISTS delivery_bids_order_idx ON public.delivery_bids (order_id);
+CREATE INDEX IF NOT EXISTS courier_assignments_order_idx ON public.courier_assignments (order_id);
 
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS accepted_bid_id uuid REFERENCES public.delivery_bids (id) ON DELETE SET NULL;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS accepted_courier_assignment_id uuid REFERENCES public.courier_assignments (id) ON DELETE SET NULL;
 
 -- Milestone timestamps (same as migrations; safe for installs that only run this script).
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS processing_entered_at timestamptz;
@@ -154,7 +153,7 @@ CREATE INDEX IF NOT EXISTS seller_expenses_seller_idx ON public.seller_expenses 
 ALTER TABLE public.listings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_listing_favorites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.delivery_bids ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.courier_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.seller_expenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cart_items ENABLE ROW LEVEL SECURITY;
 
@@ -185,8 +184,8 @@ CREATE POLICY orders_insert_buyer ON public.orders FOR INSERT TO authenticated W
 DROP POLICY IF EXISTS orders_update_parties ON public.orders;
 CREATE POLICY orders_update_parties ON public.orders FOR UPDATE TO authenticated USING (buyer_id = auth.uid() OR seller_id = auth.uid());
 
-DROP POLICY IF EXISTS bids_select_related ON public.delivery_bids;
-CREATE POLICY bids_select_related ON public.delivery_bids FOR SELECT TO authenticated USING (
+DROP POLICY IF EXISTS courier_assignments_select_related ON public.courier_assignments;
+CREATE POLICY courier_assignments_select_related ON public.courier_assignments FOR SELECT TO authenticated USING (
   courier_id = auth.uid()
   OR EXISTS (
     SELECT 1 FROM public.orders o
@@ -194,11 +193,11 @@ CREATE POLICY bids_select_related ON public.delivery_bids FOR SELECT TO authenti
   )
 );
 
-DROP POLICY IF EXISTS bids_insert_courier ON public.delivery_bids;
-CREATE POLICY bids_insert_courier ON public.delivery_bids FOR INSERT TO authenticated WITH CHECK (courier_id = auth.uid());
+DROP POLICY IF EXISTS courier_assignments_insert_own ON public.courier_assignments;
+CREATE POLICY courier_assignments_insert_own ON public.courier_assignments FOR INSERT TO authenticated WITH CHECK (courier_id = auth.uid());
 
-DROP POLICY IF EXISTS bids_update_courier ON public.delivery_bids;
-CREATE POLICY bids_update_courier ON public.delivery_bids FOR UPDATE TO authenticated USING (courier_id = auth.uid());
+DROP POLICY IF EXISTS courier_assignments_update_own ON public.courier_assignments;
+CREATE POLICY courier_assignments_update_own ON public.courier_assignments FOR UPDATE TO authenticated USING (courier_id = auth.uid());
 
 DROP POLICY IF EXISTS expenses_own ON public.seller_expenses;
 CREATE POLICY expenses_own ON public.seller_expenses FOR ALL TO authenticated USING (seller_id = auth.uid()) WITH CHECK (seller_id = auth.uid());

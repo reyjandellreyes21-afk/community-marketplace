@@ -1,9 +1,9 @@
 import { Router } from "express";
 import {
-  acceptBid,
   addFavorite,
   addCartItem,
-  createBid,
+  assignCommunityCourier,
+  claimCommunityDelivery,
   createCommunity,
   createExpense,
   createListing,
@@ -12,9 +12,10 @@ import {
   deleteListing,
   uploadListingImages,
   getCourierModes,
+  getCourierPresence,
   getListing,
   getMeOrderAttention,
-  listBidsForOrder,
+  listCommunityCouriers,
   listCartItems,
   patchCartItem,
   listExpenses,
@@ -23,12 +24,12 @@ import {
   listCommunities,
   updateCommunity,
   listListings,
-  listMyBids,
   listMyListings,
   listOpenDeliveryOrders,
   listOrders,
   listUsersDirectory,
   patchCourierModes,
+  patchCourierPresence,
   patchOrder,
   upsertOrderReview,
   putMeOrderAttention,
@@ -48,6 +49,13 @@ import { listingsValidators, marketplaceRouteValidators } from "../schemas/marke
 const marketplaceRouter = Router();
 
 marketplaceRouter.get("/communities", listCommunities);
+marketplaceRouter.get(
+  "/communities/:communityId/couriers",
+  requireAuth,
+  marketplaceRouteValidators.communityCouriersParam,
+  validate,
+  listCommunityCouriers,
+);
 marketplaceRouter.get("/communities/:id", marketplaceRouteValidators.communityIdParam, validate, getCommunityById);
 marketplaceRouter.post("/communities", requireAuth, writeLimiter, communityImageUpload.single("image"), createCommunity);
 marketplaceRouter.patch(
@@ -132,6 +140,22 @@ marketplaceRouter.patch(
   validate,
   patchOrder,
 );
+marketplaceRouter.post(
+  "/orders/:id/courier/assign",
+  requireAuth,
+  writeLimiter,
+  marketplaceRouteValidators.assignCommunityCourier,
+  validate,
+  assignCommunityCourier,
+);
+marketplaceRouter.post(
+  "/orders/:id/courier/claim",
+  requireAuth,
+  writeLimiter,
+  marketplaceRouteValidators.claimCommunityCourier,
+  validate,
+  claimCommunityDelivery,
+);
 marketplaceRouter.put(
   "/orders/:id/review",
   requireAuth,
@@ -140,21 +164,18 @@ marketplaceRouter.put(
   validate,
   upsertOrderReview,
 );
-marketplaceRouter.get("/orders/:id/bids", requireAuth, marketplaceRouteValidators.orderIdParam, validate, listBidsForOrder);
-marketplaceRouter.post(
-  "/orders/:id/bids",
-  requireAuth,
-  writeLimiter,
-  marketplaceRouteValidators.createBid,
-  validate,
-  createBid,
-);
-marketplaceRouter.post("/orders/:id/bids/:bidId/accept", requireAuth, writeLimiter, marketplaceRouteValidators.acceptBid, validate, acceptBid);
-
 marketplaceRouter.get("/delivery/open", requireAuth, listOpenDeliveryOrders);
-marketplaceRouter.get("/delivery/my-bids", requireAuth, listMyBids);
 marketplaceRouter.get("/me/courier-modes", requireAuth, getCourierModes);
 marketplaceRouter.patch("/me/courier-modes", requireAuth, writeLimiter, marketplaceRouteValidators.patchCourierModes, validate, patchCourierModes);
+marketplaceRouter.get("/me/courier-presence", requireAuth, getCourierPresence);
+marketplaceRouter.patch(
+  "/me/courier-presence",
+  requireAuth,
+  writeLimiter,
+  marketplaceRouteValidators.patchCourierPresence,
+  validate,
+  patchCourierPresence,
+);
 
 marketplaceRouter.get("/me/order-attention", requireAuth, getMeOrderAttention);
 marketplaceRouter.put("/me/order-attention", requireAuth, writeLimiter, putMeOrderAttention);

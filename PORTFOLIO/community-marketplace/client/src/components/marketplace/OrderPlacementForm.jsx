@@ -63,7 +63,7 @@ export function OrderPlacementForm({ listing, token, onDone, onError }) {
         {modes.includes("delivery") ? (
           <label className="inline-flex cursor-pointer items-center gap-2">
             <input type="radio" name="fulfillment" checked={fulfillmentType === "delivery"} onChange={() => setFulfillmentType("delivery")} />
-            Delivery (couriers bid; pay COD at handoff)
+            Delivery (community courier or seller; pay COD at handoff)
           </label>
         ) : null}
       </div>

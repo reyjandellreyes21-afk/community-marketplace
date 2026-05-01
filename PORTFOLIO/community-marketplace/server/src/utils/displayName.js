@@ -20,6 +20,9 @@ export function userToClient(doc) {
   const o = doc?.toObject ? doc.toObject() : doc;
   if (!o) return null;
   const id = o.id?.toString?.() ?? o.id ?? o._id?.toString?.() ?? o._id;
+  const rawCommunityId = o.communityId ?? o.community_id;
+  const communityId =
+    rawCommunityId != null && String(rawCommunityId).trim() !== "" ? String(rawCommunityId).trim() : "";
   return {
     id,
     firstName: o.firstName ?? "",
@@ -35,6 +38,8 @@ export function userToClient(doc) {
     avatarUrl: o.avatarUrl || "",
     phone: o.phone ?? "",
     birthday: birthdayToIsoDate(o.birthday),
+    community: String(o.community ?? "").trim(),
+    communityId,
     address: o.address ?? "",
     addressUrl: o.addressUrl ?? "",
     education: o.education ?? "",

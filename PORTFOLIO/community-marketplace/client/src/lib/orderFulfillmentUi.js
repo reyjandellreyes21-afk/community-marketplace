@@ -1,12 +1,41 @@
 /**
- * Banner line under each order card (above primary actions).
- * Maps DB statuses to product copy. Conceptual spec ↔ stored status:
- * - WAITING_FOR_SELLER + pickup → `seller_accepted`
- * - WAITING_FOR_BUYER + pickup → `ready_for_pickup`
- * - WAITING_FOR_SELLER + delivery → `bid_accepted` (after bid accepted)
- * - IN_TRANSIT + delivery → `out_for_delivery`
+ * Order-card banner line (above primary actions) + delivery-flow predicates.
+ *
+ * ## Delivery (fulfillment_type === "delivery")
+ *
+ * | Concept              | Stored status       | Seller / buyer banner | Buttons |
+ * |----------------------|---------------------|----------------------|---------|
+ * | Seller preparing     | `seller_accepted`   | Preparing / Seller is preparing… | Seller: **I’ll deliver myself** |
+ * | Courier assigned     | `courier_assigned`  | (same preparing copy) | Seller: **Out for Delivery** |
+ * | In transit           | `out_for_delivery`  | Out for Delivery      | Buyer: **Mark as Received** |
+ *
+ * Pickup uses `seller_accepted` / `ready_for_pickup` instead.
  *
  * @param {{ status?: string, fulfillmentType?: string }} order
+ */
+
+/** Delivery + courier assigned (internal `courier_assignments` row); seller marks shipment next. */
+export function isDeliveryCourierAssigned(order) {
+  const ft = order?.fulfillmentType === "delivery" ? "delivery" : "pickup";
+  if (ft !== "delivery") return false;
+  return String(order?.status || "").toLowerCase() === "courier_assigned";
+}
+
+/** Delivery + seller accepted — waiting for seller self-delivery or community courier assign/claim. */
+export function isDeliverySellerPreparing(order) {
+  const ft = order?.fulfillmentType === "delivery" ? "delivery" : "pickup";
+  if (ft !== "delivery") return false;
+  return String(order?.status || "").toLowerCase() === "seller_accepted";
+}
+
+/** Delivery order is with the courier / on the way (buyer can confirm receipt). */
+export function isDeliveryInTransit(order) {
+  const ft = order?.fulfillmentType === "delivery" ? "delivery" : "pickup";
+  if (ft !== "delivery") return false;
+  return String(order?.status || "").toLowerCase() === "out_for_delivery";
+}
+
+/**
  * @param {"buyer" | "seller"} viewerRole
  */
 export function orderFulfillmentBannerText(order, viewerRole) {
@@ -16,13 +45,13 @@ export function orderFulfillmentBannerText(order, viewerRole) {
   if (status === "seller_accepted" && ft === "pickup") {
     return viewerRole === "seller" ? "Preparing" : "Seller is preparing your order";
   }
-  if (status === "bid_accepted" && ft === "delivery") {
+  if (isDeliverySellerPreparing(order) || isDeliveryCourierAssigned(order)) {
     return viewerRole === "seller" ? "Preparing" : "Seller is preparing your order";
   }
   if (status === "ready_for_pickup" && ft === "pickup") {
     return "Ready for Pickup";
   }
-  if (status === "out_for_delivery" && ft === "delivery") {
+  if (isDeliveryInTransit(order)) {
     return "Out for Delivery";
   }
   return null;
