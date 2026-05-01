@@ -111,6 +111,7 @@ import {
   ORDERS_STATUS_TABS,
   orderMatchesOrdersStatusTab,
 } from "./lib/orderAttentionStorage.js";
+import { orderFulfillmentBannerText } from "./lib/orderFulfillmentUi.js";
 import { ORDER_CANCELLATION_REASON_OPTIONS } from "./lib/orderCancellationReasons.js";
 import { computeMarketplaceFeedbackForText } from "./lib/marketplaceFeedbackToast.js";
 import {
@@ -125,7 +126,6 @@ import { SectionHeading } from "./components/marketplace/SectionHeading.jsx";
 import { FilterOptionButton } from "./components/marketplace/FilterOptionButton.jsx";
 import { ListingCategoryPicker } from "./components/marketplace/ListingCategoryPicker.jsx";
 import { CartSellerSelectAllCheckbox } from "./components/marketplace/CartSellerSelectAllCheckbox.jsx";
-import { SellerProductCard } from "./components/marketplace/SellerProductCard.jsx";
 import { LandingFeatureRow, LANDING_FEATURE_ROWS } from "./components/landing/LandingFeatureRows.jsx";
 import {
   ChevronDownIcon,
@@ -137,7 +137,7 @@ import {
   LinkMartLogo,
 } from "./components/landing/LandingMarketing.jsx";
 import { ScreenLoading, ScreenEmpty, ScreenError } from "./components/ui/ScreenState.jsx";
-import { BrowseGridSkeleton, SellerListingsSkeletonGrid } from "./components/marketplace/MobileBrowseSkeleton.jsx";
+import { BrowseGridSkeleton } from "./components/marketplace/MobileBrowseSkeleton.jsx";
 import { Button } from "./components/ui/Button.jsx";
 import { MobileFormActions } from "./components/ui/MobileFormActions.jsx";
 import { validateConfirmPassword, validateEmail, validatePasswordClient } from "./lib/formValidation.js";
@@ -148,7 +148,6 @@ import { useMobilePullToRefresh } from "./hooks/useMobilePullToRefresh.js";
 import {
   communityBrowseGridClass,
   favoritesGridClass,
-  sellerListingsGridClass,
   commerceFlowLineItemsClass,
   lmBrowseViewShellClass,
 } from "./lib/lmViewLayouts.js";
@@ -869,7 +868,6 @@ function App() {
   sellerListingsRef.current = sellerListings;
   const [sellerListingsLoading, setSellerListingsLoading] = useState(false);
   const [sellerListingsFetchError, setSellerListingsFetchError] = useState("");
-  const [sellerListingQtySavingId, setSellerListingQtySavingId] = useState(null);
   const [listingsLoading, setListingsLoading] = useState(false);
   /** True while refetching listings when we already show rows (manual refresh / pull-to-refresh). */
   const [listingsRefreshing, setListingsRefreshing] = useState(false);
@@ -5028,8 +5026,9 @@ function App() {
     const transitionNorm = String(transition ?? "").trim();
     clearMarketplaceToasts();
     try {
+      const batchTransitions = new Set(["buyer_ack_receipt", "mark_ready_for_pickup"]);
       const ids =
-        transitionNorm === "buyer_ack_receipt" && Array.isArray(orderIds) && orderIds.length > 0
+        batchTransitions.has(transitionNorm) && Array.isArray(orderIds) && orderIds.length > 0
           ? [...new Set(orderIds.map((x) => String(x || "")).filter(Boolean))]
           : [String(orderId || "")].filter(Boolean);
       for (const id of ids) {
@@ -5137,90 +5136,6 @@ function App() {
       pushMarketplaceToast(e.message || "Could not delete listing.");
     }
   };
-
-  const adjustSellerListingQuantityById = useCallback(
-    async (listingId, delta) => {
-      const id = String(listingId || "");
-      if (!id || !Number.isFinite(Number(delta)) || Number(delta) === 0) return;
-      if (!token) {
-        pushMarketplaceToast("Please sign in to update listing quantity.");
-        return;
-      }
-      const target = sellerListings.find((l) => String(l?.id || "") === id);
-      if (!target) return;
-      const currentQty = Math.max(0, Number(target.quantity) || 0);
-      const nextQty = Math.max(0, currentQty + Number(delta));
-      if (nextQty === currentQty) return;
-      setSellerListingQtySavingId(id);
-      try {
-        const res = await apiRequest(`/me/listings/${id}`, {
-          method: "PATCH",
-          token,
-          body: { quantity: nextQty },
-        });
-        const updated = res?.listing;
-        setSellerListings((prev) =>
-          prev.map((l) =>
-            String(l?.id || "") === id
-              ? {
-                  ...l,
-                  ...(updated || {}),
-                  quantity: Number.isFinite(Number(updated?.quantity)) ? Number(updated.quantity) : nextQty,
-                }
-              : l,
-          ),
-        );
-        pushMarketplaceToast("Product quantity updated.");
-      } catch (e) {
-        pushMarketplaceToast(e.message || "Could not update product quantity.");
-      } finally {
-        setSellerListingQtySavingId(null);
-      }
-    },
-    [sellerListings, token],
-  );
-
-  const setSellerListingQuantityById = useCallback(
-    async (listingId, targetQty) => {
-      const id = String(listingId || "");
-      const nextQty = Math.max(0, Math.floor(Number(targetQty) || 0));
-      if (!id) return;
-      if (!token) {
-        pushMarketplaceToast("Please sign in to update listing quantity.");
-        return;
-      }
-      const target = sellerListings.find((l) => String(l?.id || "") === id);
-      if (!target) return;
-      const currentQty = Math.max(0, Number(target.quantity) || 0);
-      if (nextQty === currentQty) return;
-      setSellerListingQtySavingId(id);
-      try {
-        const res = await apiRequest(`/me/listings/${id}`, {
-          method: "PATCH",
-          token,
-          body: { quantity: nextQty },
-        });
-        const updated = res?.listing;
-        setSellerListings((prev) =>
-          prev.map((l) =>
-            String(l?.id || "") === id
-              ? {
-                  ...l,
-                  ...(updated || {}),
-                  quantity: Number.isFinite(Number(updated?.quantity)) ? Number(updated.quantity) : nextQty,
-                }
-              : l,
-          ),
-        );
-        pushMarketplaceToast("Product quantity updated.");
-      } catch (e) {
-        pushMarketplaceToast(e.message || "Could not update product quantity.");
-      } finally {
-        setSellerListingQtySavingId(null);
-      }
-    },
-    [sellerListings, token],
-  );
 
   const applySellerListingDiscount = async (listing, percent) => {
     const id = String(listing?.id || "");
@@ -11113,21 +11028,15 @@ function App() {
                               !ord.buyerReceiptAcknowledgedAt
                             );
                           });
-                          const pickupBuyerAcknowledgedAll =
-                            ordersRole === "buyer" &&
-                            String(o.status || "") === "ready_for_pickup" &&
-                            entry.orderIds.length > 0 &&
-                            entry.orderIds.every((id) => {
-                              const ord = orders.find((x) => String(x.id) === id);
-                              return (
-                                ord &&
-                                String(ord.status || "") === "ready_for_pickup" &&
-                                Boolean(ord.buyerReceiptAcknowledgedAt)
-                              );
-                            });
-                          const pickupBuyerAcknowledgedAny =
-                            String(o.status || "") === "ready_for_pickup" &&
-                            entry.orderIds.some((id) => Boolean(orders.find((x) => String(x.id) === id)?.buyerReceiptAcknowledgedAt));
+                          const sellerReadyPickupOrderIds = entry.orderIds.filter((id) => {
+                            const ord = orders.find((x) => String(x.id) === id);
+                            return (
+                              ord &&
+                              String(ord.status || "") === "seller_accepted" &&
+                              ord.fulfillmentType === "pickup"
+                            );
+                          });
+                          const fulfillmentBanner = orderFulfillmentBannerText(o, ordersRole);
                           const unseenIdsForTab = ordersTabBadgeIdsByTab[ordersStatusTab] || [];
                           const orderIdNeedsAttention = (oid) => {
                             const sid = String(oid || "");
@@ -11150,19 +11059,17 @@ function App() {
                               Boolean(o.buyerReview?.rating)) ||
                             (ordersRole === "buyer" &&
                               String(o.status || "") === "ready_for_pickup" &&
-                              o.fulfillmentType === "pickup" &&
-                              !pickupBuyerAcknowledgedAll &&
-                              pickupBuyerAckOrderIds.length > 0) ||
+                              o.fulfillmentType === "pickup") ||
                             (ordersRole === "seller" && String(o.status || "") === "ready_for_pickup") ||
                             (ordersRole === "seller" && String(o.status || "") === "bid_accepted") ||
-                            String(o.status || "") === "out_for_delivery" ||
+                            (ordersRole === "buyer" && String(o.status || "") === "bid_accepted" && o.fulfillmentType === "delivery") ||
                             (ordersRole === "seller" &&
-                              String(o.status || "") === "ready_for_pickup" &&
-                              pickupBuyerAcknowledgedAny) ||
+                              String(o.status || "") === "seller_accepted" &&
+                              o.fulfillmentType === "pickup") ||
                             (ordersRole === "buyer" &&
-                              String(o.status || "") === "ready_for_pickup" &&
-                              o.fulfillmentType === "pickup" &&
-                              pickupBuyerAcknowledgedAll);
+                              String(o.status || "") === "seller_accepted" &&
+                              o.fulfillmentType === "pickup") ||
+                            String(o.status || "") === "out_for_delivery";
                           const orderCardHighlight = shouldHighlightRecent ? "bg-primary-soft dark:bg-primary/15" : "";
                           const orderListingForProductOpen =
                             orderListingsById[String(o.listingId)] ||
@@ -11274,9 +11181,10 @@ function App() {
                               key={`${groupPartyId}:${entry.mergeKey}`}
                               className={`transition duration-200 ease-in-out ${
                                 cfList
-                                  ? `relative lm-card lm-list-card lm-product-card-list flex flex-col gap-3 p-3 md:gap-3.5 ${orderCardHighlight}`
-                                  : `relative lm-card lm-grid-card lm-product-card lm-product-card--feed lm-commerce-order-card h-full min-h-0 flex-1 flex flex-col overflow-hidden p-0 ${orderCardHighlight}`
+                                  ? `relative lm-card lm-list-card lm-product-card-list flex cursor-pointer flex-col gap-3 p-3 hover:bg-neutral-50/70 md:gap-3.5 dark:hover:bg-slate-800/35 ${orderCardHighlight}`
+                                  : `relative lm-card lm-grid-card lm-product-card lm-product-card--feed lm-commerce-order-card flex h-full min-h-0 flex-1 cursor-pointer flex-col overflow-hidden p-0 hover:bg-neutral-50/50 dark:hover:bg-slate-800/30 ${orderCardHighlight}`
                               }`}
+                              onClick={openOrderProductInspect}
                             >
                               {ordersStatusTab === "pending" ? (
                                 <input
@@ -11305,11 +11213,8 @@ function App() {
                               ) : null}
                               {cfList ? (
                                 <div className="flex w-full min-w-0 items-start gap-3">
-                                  <button
-                                    type="button"
-                                    className={`lm-product-media lm-product-media--soft relative ${orderThumbList} shrink-0 cursor-pointer overflow-hidden rounded-md outline-none transition hover:opacity-95 focus-visible:ring-2 focus-visible:ring-brand-primary/45 dark:focus-visible:ring-brand-accent/45`}
-                                    onClick={openOrderProductInspect}
-                                    aria-label={`View full product details: ${String(cardListing.title || "Product").trim()}`}
+                                  <div
+                                    className={`lm-product-media lm-product-media--soft relative ${orderThumbList} shrink-0 overflow-hidden rounded-md transition hover:opacity-95`}
                                   >
                                     <ProductListingMedia
                                       listing={cardListing}
@@ -11318,23 +11223,15 @@ function App() {
                                       loading="lazy"
                                       sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
                                     />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="flex w-full min-w-0 cursor-pointer flex-col gap-1 rounded-lg text-left outline-none transition hover:bg-neutral-50/90 focus-visible:ring-2 focus-visible:ring-brand-primary/45 min-[400px]:min-w-0 min-[400px]:flex-1 dark:hover:bg-slate-800/50 dark:focus-visible:ring-brand-accent/45"
-                                    onClick={openOrderProductInspect}
-                                    aria-label={`View full product details: ${String(cardListing.title || "Product").trim()}`}
-                                  >
+                                  </div>
+                                  <div className="flex w-full min-w-0 flex-1 flex-col gap-1 rounded-lg text-left min-[400px]:min-w-0">
                                     {orderCardBody}
-                                  </button>
+                                  </div>
                                 </div>
                               ) : (
                                 <>
-                                  <button
-                                    type="button"
-                                    className={`${orderThumbGrid} lm-product-card--tap relative block w-full cursor-pointer overflow-hidden rounded-none border-0 bg-transparent p-0 outline-none`}
-                                    onClick={openOrderProductInspect}
-                                    aria-label={`View full product details: ${String(cardListing.title || "Product").trim()}`}
+                                  <div
+                                    className={`${orderThumbGrid} lm-product-card--tap relative block w-full overflow-hidden rounded-none border-0 bg-transparent p-0`}
                                   >
                                     <ProductListingMedia
                                       listing={cardListing}
@@ -11343,15 +11240,10 @@ function App() {
                                       loading="lazy"
                                       sizes="(max-width: 768px) 45vw, min(240px, 22vw)"
                                     />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="lm-product-card-body flex w-full cursor-pointer flex-col border-0 bg-transparent text-left outline-none transition hover:bg-neutral-50/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/45 dark:hover:bg-slate-800/40 dark:focus-visible:ring-brand-accent/45"
-                                    onClick={openOrderProductInspect}
-                                    aria-label={`View full product details: ${String(cardListing.title || "Product").trim()}`}
-                                  >
+                                  </div>
+                                  <div className="lm-product-card-body flex w-full flex-col border-0 bg-transparent text-left">
                                     {orderCardBody}
-                                  </button>
+                                  </div>
                                 </>
                               )}
                               {orderCardFooterHasChrome ? (
@@ -11363,6 +11255,7 @@ function App() {
                                       ? "space-y-1.5 md:space-y-2"
                                       : "mt-2 space-y-1.5 pt-1.5 md:mt-3 md:space-y-2 md:pt-2"
                                 } ${cfList ? "" : "px-2 pb-2 min-[400px]:px-2.5 min-[400px]:pb-2.5"}`}
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 {completedHistoryRow ? (
                                   <p className="text-pretty text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
@@ -11380,7 +11273,7 @@ function App() {
                                     <div className="min-w-0 space-y-1">
                                       {o.buyerReceiptAcknowledgedAt ? (
                                         <p className="text-pretty text-[11px] leading-snug text-neutral-500 dark:text-slate-500">
-                                          You had marked this order as received before it was completed.
+                                          You marked this pickup order as picked up.
                                         </p>
                                       ) : null}
                                     </div>
@@ -11472,15 +11365,58 @@ function App() {
                                   </div>
                                 ) : null}
                                 <div className={`flex flex-col ${multicolOrderCard ? "gap-1.5" : "gap-2"}`}>
+                                  {fulfillmentBanner ? (
+                                    <p
+                                      className={`text-pretty text-[11px] leading-snug md:text-xs ${
+                                        ordersRole === "buyer" &&
+                                        (String(o.status || "") === "seller_accepted" ||
+                                          String(o.status || "") === "bid_accepted")
+                                          ? "text-neutral-600 dark:text-slate-400"
+                                          : "font-medium text-neutral-800 dark:text-slate-200"
+                                      }`}
+                                    >
+                                      {fulfillmentBanner}
+                                    </p>
+                                  ) : null}
                                   <div
                                     className={`flex w-full flex-col md:flex-row md:flex-wrap md:items-center ${
                                       multicolOrderCard ? "gap-1.5" : "gap-2"
                                     }`}
                                   >
+                                  {ordersRole === "seller" &&
+                                  String(o.status || "") === "seller_accepted" &&
+                                  o.fulfillmentType === "pickup" &&
+                                  sellerReadyPickupOrderIds.length > 0 ? (
+                                    <button
+                                      type="button"
+                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
+                                      onClick={() =>
+                                        patchOrderTransition(sellerReadyPickupOrderIds[0], "mark_ready_for_pickup", {
+                                          orderIds: sellerReadyPickupOrderIds,
+                                          successMessage: "Marked ready for pickup.",
+                                        })
+                                      }
+                                    >
+                                      Ready for Pickup
+                                    </button>
+                                  ) : null}
+                                  {ordersRole === "seller" && String(o.status || "") === "ready_for_pickup" ? (
+                                    <button
+                                      type="button"
+                                      className={`btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0 ${
+                                        multicolOrderCard ? "min-h-9 px-2.5 py-1.5 text-[11px]" : ""
+                                      }`}
+                                      onClick={() => {
+                                        setActiveView(VIEWS.MESSAGES);
+                                        pushMarketplaceToast("Messaging is coming soon — you will reach the buyer from here.");
+                                      }}
+                                    >
+                                      Message buyer
+                                    </button>
+                                  ) : null}
                                   {ordersRole === "buyer" &&
                                   String(o.status || "") === "ready_for_pickup" &&
                                   o.fulfillmentType === "pickup" &&
-                                  !pickupBuyerAcknowledgedAll &&
                                   pickupBuyerAckOrderIds.length > 0 ? (
                                     <button
                                       type="button"
@@ -11492,20 +11428,11 @@ function App() {
                                       onClick={() =>
                                         patchOrderTransition(pickupBuyerAckOrderIds[0], "buyer_ack_receipt", {
                                           orderIds: pickupBuyerAckOrderIds,
-                                          successMessage: "Thanks — seller will mark pickup complete when handoff is done.",
+                                          successMessage: "Marked as picked up. Order completed.",
                                         })
                                       }
                                     >
-                                      Mark as received
-                                    </button>
-                                  ) : null}
-                                  {ordersRole === "seller" && o.status === "ready_for_pickup" ? (
-                                    <button
-                                      type="button"
-                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
-                                      onClick={() => patchOrderTransition(o.id, "mark_pickup_done")}
-                                    >
-                                      Mark pickup complete
+                                      Mark as Picked Up
                                     </button>
                                   ) : null}
                                   {ordersRole === "seller" && o.status === "bid_accepted" ? (
@@ -11514,34 +11441,23 @@ function App() {
                                       className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
                                       onClick={() => patchOrderTransition(o.id, "mark_out_for_delivery")}
                                     >
-                                      Mark out for delivery
+                                      Out for Delivery
                                     </button>
                                   ) : null}
-                                  {o.status === "out_for_delivery" ? (
+                                  {ordersRole === "buyer" && o.status === "out_for_delivery" ? (
                                     <button
                                       type="button"
                                       className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
-                                      onClick={() => patchOrderTransition(o.id, "mark_delivered")}
+                                      onClick={() =>
+                                        patchOrderTransition(o.id, "mark_delivered", {
+                                          successMessage: "Marked as received. Enjoy your order!",
+                                        })
+                                      }
                                     >
-                                      Mark delivered
+                                      Mark as Received
                                     </button>
                                   ) : null}
                                   </div>
-                                  {ordersRole === "seller" && o.status === "ready_for_pickup" && pickupBuyerAcknowledgedAny ? (
-                                    <div className="max-w-xl space-y-1 text-[11px] leading-snug text-neutral-500 dark:text-slate-400">
-                                      <p className="text-emerald-800 dark:text-emerald-200/90">
-                                        The buyer marked this pickup as received (optional). You still need to mark pickup complete to close the order.
-                                      </p>
-                                    </div>
-                                  ) : null}
-                                  {ordersRole === "buyer" &&
-                                  o.status === "ready_for_pickup" &&
-                                  o.fulfillmentType === "pickup" &&
-                                  pickupBuyerAcknowledgedAll ? (
-                                    <div className="max-w-xl space-y-1">
-                                      <p className="text-[11px] text-neutral-600 dark:text-slate-400">You marked this pickup as received.</p>
-                                    </div>
-                                  ) : null}
                                 </div>
                               </div>
                               ) : null}
@@ -12945,7 +12861,20 @@ function App() {
                     {sellerListingsLoading && sellerListings.length === 0 ? (
                       <div className="mt-3">
                         {isMobileViewport ? (
-                          <SellerListingsSkeletonGrid view={effectiveSellerProductsView} />
+                          <BrowseGridSkeleton
+                            gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                            variant={
+                              effectiveSellerProductsView === "list"
+                                ? "list"
+                                : effectiveSellerProductsView === "compact"
+                                  ? "compact"
+                                  : "grid"
+                            }
+                            softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
+                            count={effectiveSellerProductsView === "list" ? 3 : effectiveSellerProductsView === "compact" ? 8 : 4}
+                            className="min-h-[6rem] w-full min-w-0"
+                            ariaLabel="Loading your listings"
+                          />
                         ) : (
                           <ScreenLoading message="Loading your listings…" minHeight={false} className="min-h-[6rem] py-6" />
                         )}
@@ -12963,33 +12892,47 @@ function App() {
                       </div>
                     ) : null}
                     {sellerListings.length ? (
-                      <ul
-                        className={`${sellerListingsGridClass(effectiveSellerProductsView)} ${lmBrowseViewShellClass(
-                          effectiveSellerProductsView === "list" ? "list" : "grid",
-                        )}`}
+                      <Suspense
+                        fallback={
+                          <BrowseGridSkeleton
+                            gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                            variant={
+                              effectiveSellerProductsView === "list"
+                                ? "list"
+                                : effectiveSellerProductsView === "compact"
+                                  ? "compact"
+                                  : "grid"
+                            }
+                            softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
+                            count={4}
+                            className="min-h-[8rem] w-full min-w-0"
+                            ariaLabel="Loading your listings"
+                          />
+                        }
                       >
-                        {sellerListings.map((l) => {
-                          return (
-                            <SellerProductCard
+                        <div
+                          className={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                        >
+                          {sellerListings.map((l) => (
+                            <LazyCommunityShopListingCard
                               key={l.id}
                               listing={l}
                               gridMode={effectiveSellerProductsView !== "list"}
                               compactGrid={effectiveSellerProductsView === "compact"}
+                              mobileOwnerActionsInMenu={isMobileViewport && effectiveSellerProductsView !== "list"}
+                              disableGallerySwipe
+                              softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
+                              browseSummaryGrid={isMobileViewport && effectiveSellerProductsView === "grid"}
                               mobileCardUx={isMobileViewport}
+                              isFavorite={false}
+                              showActions
+                              currentUserId={user?.id || ""}
+                              buyNowDisabled={false}
+                              buyNowDisabledReason=""
                               onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
                               onEdit={() => beginEditSellerListing(l)}
                               onDelete={() => deleteSellerListingById(l.id)}
-                              onAdjustQuantity={(delta) => {
-                                void adjustSellerListingQuantityById(l.id, delta);
-                              }}
-                              onSetQuantity={(qty) => {
-                                void setSellerListingQuantityById(l.id, qty);
-                              }}
-                              onNotifyQuantityRequired={() =>
-                                pushMarketplaceToast("Enter a quantity before tapping Set.")
-                              }
-                              quantityUpdating={sellerListingQtySavingId === String(l.id)}
-                              onView={() => {
+                              onInspect={() => {
                                 const stockListed = Math.max(0, Number(l.quantity) || 0);
                                 openProductInspect(l, {
                                   quantity: stockListed,
@@ -13007,9 +12950,9 @@ function App() {
                                 });
                               }}
                             />
-                          );
-                        })}
-                      </ul>
+                          ))}
+                        </div>
+                      </Suspense>
                     ) : !(sellerListingsLoading && sellerListings.length === 0) && !sellerListingsFetchError ? (
                       <ScreenEmpty
                         className="mt-3"

@@ -39,6 +39,8 @@ export function CommunityShopListingCard({
   disableGallerySwipe = false,
   /** Orders-style attention: saved listing not yet “seen” after leaving Favorites (badge + soft highlight). */
   unseenAttention = false,
+  /** Profile → Products: delete listing (owner only). */
+  onDelete,
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
@@ -207,6 +209,23 @@ export function CommunityShopListingCard({
       </button>
     ) : null;
 
+  const readOnlyStockRow = (
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300">
+          <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">Stock</span>
+          <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
+          <span className="tabular-nums font-semibold text-text-primary dark:text-slate-100">{stockQty}</span>
+        </p>
+        {isOutOfStock ? (
+          <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-600 min-[380px]:text-xs dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
+            Out of stock
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+
   const imageInspectBtnClass =
     "lm-product-card--tap absolute inset-0 z-0 min-h-0 w-full border-0 bg-transparent p-0 text-left";
 
@@ -361,22 +380,7 @@ export function CommunityShopListingCard({
             optionValuesA={[]}
             optionNameB=""
             optionValuesB={[]}
-            quantityRow={
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300">
-                    <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">Stock</span>
-                    <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
-                    <span className="tabular-nums font-semibold text-text-primary dark:text-slate-100">{stockQty}</span>
-                  </p>
-                  {isOutOfStock ? (
-                    <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-600 min-[380px]:text-xs dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
-                      Out of stock
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-            }
+            quantityRow={readOnlyStockRow}
             hideDescription={Boolean(isListMode || (gridMode && (compactGrid || browseSummaryGrid)))}
           />
           {useFeedLayout && listing.cityLabel ? (
@@ -471,6 +475,21 @@ export function CommunityShopListingCard({
                     >
                       Edit
                     </button>
+                    {onDelete ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center px-3 py-2.5 text-left text-sm font-semibold text-rose-700 transition hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                        aria-label={`Delete listing: ${listing.title || "product"}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOwnerMenuOpen(false);
+                          onDelete();
+                        }}
+                      >
+                        Delete
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -496,8 +515,14 @@ export function CommunityShopListingCard({
             <div
               className={
                 isListMode
-                  ? "grid w-full grid-cols-3 gap-2"
-                  : compactActionRowClass
+                  ? onDelete
+                    ? "grid w-full grid-cols-2 gap-2 md:grid-cols-4"
+                    : "grid w-full grid-cols-3 gap-2"
+                  : onDelete
+                    ? compactGrid
+                      ? "grid w-full grid-cols-3 gap-2"
+                      : "flex w-full flex-col gap-2 md:flex-row md:flex-wrap md:items-stretch"
+                    : compactActionRowClass
               }
             >
               {isListMode && onInspect ? (
@@ -513,6 +538,26 @@ export function CommunityShopListingCard({
                   View details
                 </button>
               ) : null}
+              <button
+                type="button"
+                className={`min-w-0 shadow-none transition duration-200 ease-in-out active:scale-[0.99] motion-reduce:active:scale-100 ${
+                  mobileUx && !isListMode
+                    ? `rounded-lg border border-neutral-200/90 bg-white font-medium text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${
+                        isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                      }`
+                    : `rounded-xl bg-primary font-semibold text-white hover:bg-primary-hover dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90 ${
+                        isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                      }`
+                }`}
+                title="Edit title, price, photos, and stock"
+                aria-label={`Edit listing: ${listing.title || "product"}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit?.();
+                }}
+              >
+                Edit
+              </button>
               <button
                 type="button"
                 className={`min-w-0 shadow-none transition duration-200 ease-in-out active:scale-[0.99] motion-reduce:active:scale-100 dark:active:scale-100 ${
@@ -542,26 +587,21 @@ export function CommunityShopListingCard({
               >
                 Discount
               </button>
-              <button
-                type="button"
-                className={`min-w-0 shadow-none transition duration-200 ease-in-out active:scale-[0.99] motion-reduce:active:scale-100 ${
-                  mobileUx && !isListMode
-                    ? `rounded-lg border border-neutral-200/90 bg-white font-medium text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${
-                        isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
-                      }`
-                    : `rounded-xl bg-primary font-semibold text-white hover:bg-primary-hover dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90 ${
-                        isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
-                      }`
-                }`}
-                title="Edit title, price, photos, and stock"
-                aria-label={`Edit listing: ${listing.title || "product"}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit?.();
-                }}
-              >
-                Edit
-              </button>
+              {onDelete ? (
+                <button
+                  type="button"
+                  className={`rounded-xl border border-danger bg-danger font-semibold text-white shadow-none transition duration-200 ease-in-out hover:bg-danger-hover dark:border-rose-500/55 dark:bg-rose-950/45 dark:text-rose-100 dark:hover:bg-rose-950/60 ${
+                    isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                  }`}
+                  aria-label={`Delete listing: ${listing.title || "product"}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete();
+                  }}
+                >
+                  Delete
+                </button>
+              ) : null}
             </div>
           ) : (
             <div

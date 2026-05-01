@@ -1623,20 +1623,28 @@ export const patchOrder = async (req, res, next) => {
       if (!isSeller) throw new AppError(403, "Only the seller can accept.");
       if (order.status !== "placed") throw new AppError(400, "Invalid state.");
       patch.status = order.fulfillment_type === "delivery" ? "bidding_open" : "seller_accepted";
-      if (order.fulfillment_type === "pickup") patch.status = "ready_for_pickup";
       if (!order.processing_entered_at) patch.processing_entered_at = ts;
+    } else if (transition === "mark_ready_for_pickup") {
+      if (!isSeller) throw new AppError(403, "Only the seller can mark ready for pickup.");
+      if (order.status !== "seller_accepted") throw new AppError(400, "Invalid state.");
+      if (order.fulfillment_type !== "pickup") throw new AppError(400, "Only pickup orders use this step.");
+      patch.status = "ready_for_pickup";
     } else if (transition === "mark_pickup_done") {
       if (!isSeller) throw new AppError(403, "Only the seller can mark pickup complete.");
       if (order.status !== "ready_for_pickup") throw new AppError(400, "Invalid state.");
       patch.status = "completed";
       patch.completed_at = ts;
     } else if (transition === "buyer_ack_receipt") {
-      if (!isBuyer) throw new AppError(403, "Only the buyer can acknowledge receipt.");
-      if (order.status !== "ready_for_pickup") throw new AppError(400, "Invalid state.");
-      if (order.buyer_receipt_acknowledged_at) {
+      if (!isBuyer) throw new AppError(403, "Only the buyer can confirm pickup.");
+      if (order.fulfillment_type !== "pickup") throw new AppError(400, "Only pickup orders use this action.");
+      if (order.status === "completed") {
         return res.json({ order: orderRowToApi(order) });
       }
-      patch.buyer_receipt_acknowledged_at = new Date().toISOString();
+      if (order.status !== "ready_for_pickup") throw new AppError(400, "Invalid state.");
+      /** Buyer “Mark as Picked Up” completes COD pickup (inventory follows `completed` patch below). */
+      patch.status = "completed";
+      patch.completed_at = ts;
+      patch.buyer_receipt_acknowledged_at = order.buyer_receipt_acknowledged_at || ts;
     } else if (transition === "cancel") {
       if (!isBuyer && !isSeller) throw new AppError(403, "Forbidden.");
       if (["completed", "cancelled"].includes(order.status)) throw new AppError(400, "Cannot cancel.");
@@ -1655,7 +1663,7 @@ export const patchOrder = async (req, res, next) => {
       if (order.status !== "bid_accepted") throw new AppError(400, "Invalid state.");
       patch.status = "out_for_delivery";
     } else if (transition === "mark_delivered") {
-      if (!isBuyer && !isSeller) throw new AppError(403, "Forbidden.");
+      if (!isBuyer) throw new AppError(403, "Only the buyer can mark delivery as received.");
       if (order.status !== "out_for_delivery") throw new AppError(400, "Invalid state.");
       patch.status = "completed";
       patch.completed_at = ts;
@@ -1698,7 +1706,10 @@ export const patchOrder = async (req, res, next) => {
       }
     }
     const shouldConsolidate =
-      transition !== "buyer_ack_receipt" && updated?.buyer_id && updated?.listing_id && updated?.status;
+      updated?.buyer_id &&
+      updated?.listing_id &&
+      updated?.status &&
+      (transition !== "buyer_ack_receipt" || updated.status === "completed");
     const consolidated = shouldConsolidate
       ? await consolidateBuyerListingStatusOrders({
           buyerId: updated.buyer_id,
