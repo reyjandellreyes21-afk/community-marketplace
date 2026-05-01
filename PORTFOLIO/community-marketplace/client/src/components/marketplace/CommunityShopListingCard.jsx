@@ -37,6 +37,8 @@ export function CommunityShopListingCard({
   mobileCardUx = false,
   /** Disable in-card gallery swipe/dots for specific contexts (e.g. Home > Community). */
   disableGallerySwipe = false,
+  /** Orders-style attention: saved listing not yet “seen” after leaving Favorites (badge + soft highlight). */
+  unseenAttention = false,
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
@@ -213,7 +215,9 @@ export function CommunityShopListingCard({
       id={listing?.id ? `listing-card-${String(listing.id)}` : undefined}
       className={`lm-card group relative transition duration-200 ease-in-out ${
         gridMode ? "lm-grid-card lm-product-card-grid" : "lm-list-card lm-product-card-list"
-      } ${useFeedLayout ? "lm-product-card lm-product-card--feed" : ""} ${pad} ${gridMode ? "flex h-full min-h-0 flex-col" : ""}`}
+      } ${useFeedLayout ? "lm-product-card lm-product-card--feed" : ""} ${pad} ${gridMode ? "flex h-full min-h-0 flex-col" : ""} ${
+        unseenAttention ? "bg-primary-soft dark:bg-primary/15" : ""
+      }`}
     >
       <div
         className={`flex min-h-0 ${
@@ -336,6 +340,11 @@ export function CommunityShopListingCard({
                   : "flex h-32 min-w-0 flex-col justify-between overflow-hidden"
           }`}
         >
+          {unseenAttention ? (
+            <span className="mb-1 inline-flex w-fit items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
+              Recently updated
+            </span>
+          ) : null}
           <MarketplaceProductDetailStack
             variant="card"
             browseStackMode={mobileUx ? "listMobile" : null}

@@ -113,7 +113,7 @@ marketplaceRouter.patch(
   validate,
   patchCartItem,
 );
-marketplaceRouter.delete("/me/cart/items/:listingId", requireAuth, writeLimiter, marketplaceRouteValidators.listingIdParam, validate, removeCartItem);
+marketplaceRouter.delete("/me/cart/items/:listingId", requireAuth, writeLimiter, marketplaceRouteValidators.cartDelete, validate, removeCartItem);
 
 marketplaceRouter.post(
   "/orders",

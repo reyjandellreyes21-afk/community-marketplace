@@ -33,8 +33,9 @@ export const UI_KIT = {
     "inline-flex max-w-full min-w-0 items-center truncate rounded-full border border-primary/28 bg-primary-soft px-2.5 py-1 text-xs font-semibold text-primary dark:border-brand-accent/32 dark:bg-slate-800 dark:text-slate-100",
   chipMuted:
     "inline-flex max-w-full min-w-0 items-center truncate rounded-full border border-neutral-200/90 bg-neutral-50 px-2.5 py-1 text-xs font-semibold text-neutral-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
+  /** Matches chip / segment “selected” tokens — pairs with `lm-btn-segment-active` + density toggle */
   tabActive:
-    "bg-primary-soft text-primary ring-1 ring-primary/22 active:scale-[0.98] motion-reduce:active:scale-100 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-accent/22",
+    "border border-primary/28 bg-primary-soft text-primary ring-1 ring-primary/20 outline-none transition-colors duration-150 ease-out active:scale-[0.98] motion-reduce:active:scale-100 focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:border-brand-accent/32 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-accent/22 dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-950",
   tabIdle:
-    "border border-neutral-200/90 text-text-secondary touch-manipulation transition hover:bg-neutral-50 active:scale-[0.98] motion-reduce:active:scale-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800",
+    "border border-neutral-300/95 bg-white/90 text-text-secondary outline-none touch-manipulation transition-colors duration-150 ease-out hover:bg-neutral-50 active:scale-[0.98] motion-reduce:active:scale-100 focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:border-slate-500 dark:bg-slate-900/80 dark:text-slate-300 dark:hover:bg-slate-800 dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-950",
 };

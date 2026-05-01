@@ -42,6 +42,23 @@ import {
   writeThemeMode,
 } from "./lib/appSession.js";
 import { apiRequest, isUnauthorizedApiError } from "./lib/appApi.js";
+import {
+  migrateLegacyNotificationInboxStorage,
+  mergeNotificationInboxLists,
+  readLocalSessionNotificationsFromStorage,
+  writeLocalSessionNotificationsToStorage,
+  NOTIFICATION_INBOX_MAX_ITEMS,
+  NOTIFICATION_REALTIME_DEBOUNCE_MS,
+  NOTIFICATION_POLL_FALLBACK_MS,
+  NOTIFICATION_LOCAL_SESSION_STORAGE_KEY,
+  createLocalNotificationId,
+  classifyNotificationType,
+  fetchNotificationsFromApi,
+  markNotificationReadApi,
+  markAllNotificationsReadApi,
+  deleteNotificationRemote,
+  deleteAllNotificationsRemote,
+} from "./lib/marketplaceNotifications.js";
 import { UI_KIT } from "./lib/appUiKit.js";
 import {
   formatDisplayName,
@@ -66,12 +83,23 @@ import {
   toTitleCase,
 } from "./lib/philippinesAddress.js";
 import {
+  formatPesoWhole,
   parseSaleMetaFromDescription,
   removeSaleMetaLines,
   listingCodAvailabilityLabel,
+  normalizeListingOptionValues,
+  narrowListingOptionValuesForBuyerSelection,
+  parseBuyerSelectedVariantsFromComment,
+  buildVariantSignatureFromSelections,
+  cartLineKey,
+  cartLineKeyFromItem,
+  cartItemApiQuerySuffix,
+  variantSignatureFromBuyerComment,
+  buyerCommentDisplayForOrderCard,
 } from "./lib/listingSaleMeta.js";
 import {
-  CART_RECENT_BADGE_STORAGE_KEY,
+  cartSeenListingIdsStorageKey,
+  favoritesSeenListingIdsStorageKey,
   buyerOrderDismissedStorageKey,
   sellerOrderDismissedStorageKey,
   readStoredStringArray,
@@ -123,6 +151,12 @@ import {
   commerceFlowLineItemsClass,
   lmBrowseViewShellClass,
 } from "./lib/lmViewLayouts.js";
+
+/** Corner pills on status segmented control — same inset system as `mobileNavBadgeBase`. Rose when tab has unseen attention; muted when badge is queue depth only (all rows dismissed). */
+const ORDER_STATUS_TAB_BADGE_BASE =
+  "pointer-events-none absolute right-1 top-1 z-[1] inline-flex min-h-[1rem] min-w-[1rem] max-w-[min(2.75rem,calc(100%-0.35rem))] items-center justify-center rounded-full px-[3px] py-px text-[10px] font-bold leading-none shadow-sm";
+const ORDER_STATUS_TAB_BADGE_MUTED = `${ORDER_STATUS_TAB_BADGE_BASE} bg-slate-500 text-white dark:bg-slate-600`;
+const ORDER_STATUS_TAB_BADGE_ROSE = `${ORDER_STATUS_TAB_BADGE_BASE} bg-rose-600 text-white dark:bg-rose-500`;
 
 /** Best-effort recency for ordering “unseen” pending rows (API field names vary). */
 function orderRowSortMs(o) {
@@ -528,52 +562,14 @@ const COMMERCE_FLOW_BUYER_STORAGE_KEY = "linkmart_commerce_flow_buyer_v1";
 const COMMERCE_FLOW_SELLER_STORAGE_KEY = "linkmart_commerce_flow_seller_v1";
 /** Legacy single key — migrated once into buyer/seller keys. */
 const COMMERCE_FLOW_VIEW_STORAGE_KEY_LEGACY = "linkmart_commerce_flow_view_v1";
-const NOTIFICATION_INBOX_STORAGE_KEY = "linkmart_notification_inbox_v1";
-const NOTIFICATION_INBOX_MAX_ITEMS = 80;
 const CHAT_THREADS_STORAGE_KEY = "linkmart_chat_threads_v1";
 const CHAT_MESSAGES_MAX_PER_THREAD = 250;
 const chatStorageKeyForUser = (userId) => `${CHAT_THREADS_STORAGE_KEY}:${String(userId || "").trim()}`;
-
-function createNotificationId() {
-  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : `notif-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-}
 
 function createChatMessageId() {
   return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
     : `chat-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-}
-
-function classifyNotificationType(text) {
-  const lower = String(text || "").toLowerCase();
-  if (lower.includes("delivery")) return "delivery";
-  if (lower.includes("order")) return "orders";
-  if (lower.includes("joined") || lower.includes("left") || lower.includes("community")) return "community";
-  if (lower.includes("error") || lower.includes("could not") || lower.includes("unavailable")) return "system";
-  return "marketplace";
-}
-
-function readNotificationInboxFromStorage() {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(NOTIFICATION_INBOX_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item) => ({
-        id: String(item?.id || "").trim(),
-        text: String(item?.text || "").trim(),
-        createdAt: Number(item?.createdAt || 0),
-        read: !!item?.read,
-        type: String(item?.type || "").trim() || "marketplace",
-      }))
-      .filter((item) => item.id && item.text && Number.isFinite(item.createdAt));
-  } catch {
-    return [];
-  }
 }
 
 function readChatThreadsFromStorage(userId) {
@@ -649,6 +645,96 @@ function readCommerceFlowFromStorage(primaryKey) {
     /* ignore */
   }
   return "list";
+}
+
+migrateLegacyNotificationInboxStorage();
+
+/** Buyer note on orders — API usually maps DB `buyer_comment` → `comment`; accept both + camelCase. */
+function orderBuyerCommentRaw(o) {
+  return String(o?.comment ?? o?.buyer_comment ?? o?.buyerComment ?? "").trim();
+}
+
+/**
+ * Merged order cards may bundle several DB rows under one `representativeOrder`.
+ * Prefer any sibling row whose comment parses `Selected:` so variant chips narrow like cart lines.
+ */
+function pickMergedOrderCommentForVariantChips(entry, ordersList) {
+  const ids = Array.isArray(entry?.orderIds) ? entry.orderIds : [];
+  let best = "";
+  let bestRank = -1;
+  for (const id of ids) {
+    const ord = ordersList.find((x) => String(x?.id ?? "") === String(id || ""));
+    if (!ord) continue;
+    const c = orderBuyerCommentRaw(ord);
+    const parsed = parseBuyerSelectedVariantsFromComment(c);
+    const rank = parsed ? 2 : c.length > 0 ? 1 : 0;
+    if (rank > bestRank || (rank === bestRank && c.length > best.length)) {
+      bestRank = rank;
+      best = c;
+    }
+  }
+  if (bestRank >= 0) return best;
+  return orderBuyerCommentRaw(entry?.representativeOrder);
+}
+
+/**
+ * Pending (buyer) row identity: same as cart `cartLineKey(listingId, variantSignature)`.
+ * Parsed `Selected:` → canonical sig; otherwise stable `__order__:id` so different DB rows never fold
+ * when comments are missing or unparsed (cart never merges unknown variant lines).
+ */
+function buyerPendingOrderMergeKey(order) {
+  const listingId = String(order?.listingId || "");
+  const fromApi = String(order?.variantSignature ?? order?.variant_signature ?? "").trim();
+  const fromComment = variantSignatureFromBuyerComment(orderBuyerCommentRaw(order));
+  const canonical = fromApi || fromComment;
+  const variantSig = canonical || `__order__:${String(order?.id || "").trim() || "unknown"}`;
+  return cartLineKey(listingId, variantSig);
+}
+
+/** When folding duplicate buyer orders, keep the row with persisted variantSignature or best `Selected:` comment. */
+function betterRepresentativeOrderForVariants(prevOrder, nextOrder) {
+  const sigP = String(prevOrder?.variantSignature ?? prevOrder?.variant_signature ?? "").trim();
+  const sigN = String(nextOrder?.variantSignature ?? nextOrder?.variant_signature ?? "").trim();
+  if (sigN && !sigP) return nextOrder;
+  if (sigP && !sigN) return prevOrder;
+  const a = orderBuyerCommentRaw(prevOrder);
+  const b = orderBuyerCommentRaw(nextOrder);
+  const mapA = parseBuyerSelectedVariantsFromComment(a);
+  const mapB = parseBuyerSelectedVariantsFromComment(b);
+  if (mapB && !mapA) return nextOrder;
+  if (mapA && !mapB) return prevOrder;
+  if (b.length > a.length) return nextOrder;
+  return prevOrder;
+}
+
+function pickMergedOrderVariantSignature(entry, ordersList) {
+  const ids = Array.isArray(entry?.orderIds) ? entry.orderIds : [];
+  for (const id of ids) {
+    const ord = ordersList.find((x) => String(x?.id ?? "") === String(id || ""));
+    if (!ord) continue;
+    const s = String(ord?.variantSignature ?? ord?.variant_signature ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+function buildQuickAddMergedComment(listing, userComment, selA, selB, maxLen) {
+  const parts = [];
+  const nA = String(listing?.optionNameA || "").trim();
+  const nB = String(listing?.optionNameB || "").trim();
+  const va = normalizeListingOptionValues(listing?.optionValuesA);
+  const vb = normalizeListingOptionValues(listing?.optionValuesB);
+  const trimmedA = String(selA || "").trim();
+  const trimmedB = String(selB || "").trim();
+  if (nA && va.length && trimmedA) parts.push(`${nA}: ${trimmedA}`);
+  if (nB && vb.length && trimmedB) parts.push(`${nB}: ${trimmedB}`);
+  const variantLine = parts.length ? `Selected: ${parts.join(" · ")}\n\n` : "";
+  const user = String(userComment || "").trim();
+  let full = `${variantLine}${user}`.trim();
+  if (typeof maxLen === "number" && maxLen > 0 && full.length > maxLen) {
+    full = full.slice(0, maxLen);
+  }
+  return full;
 }
 
 function App() {
@@ -775,46 +861,6 @@ function App() {
   /** True while `<main>` animates transform back to 0 after a cancelled swipe. */
   const [mobileSecondarySwipeSettling, setMobileSecondarySwipeSettling] = useState(false);
   const previousViewForMarketplaceScrollResetRef = useRef(activeView);
-  const swipePreviewNeighbors = useMemo(() => {
-    const index = secondaryMobileNavOrder.indexOf(secondarySwipeNavView);
-    if (index === -1) return { prev: "", next: "" };
-    return {
-      prev: secondaryMobileNavOrder[index - 1] || "",
-      next: secondaryMobileNavOrder[index + 1] || "",
-    };
-  }, [secondaryMobileNavOrder, secondarySwipeNavView]);
-  const swipePreviewLabelForView = useCallback(
-    (view) => {
-      switch (view) {
-        case VIEWS.BROWSE:
-        case VIEWS.COMMUNITY_SHOP:
-        case VIEWS.FAVORITES:
-          return "Shop";
-        case VIEWS.CART:
-          return "Add to cart";
-        case VIEWS.MY_PURCHASES:
-          return "Purchases";
-        case VIEWS.ORDERS:
-          return "Orders";
-        case VIEWS.NOTIFICATIONS:
-          return "Notifications";
-        case VIEWS.PROFILE:
-          return "Profile";
-        default:
-          return "";
-      }
-    },
-    [],
-  );
-  const swipePreviewDirection = mobileSecondaryDragX < 0 ? "next" : mobileSecondaryDragX > 0 ? "prev" : "";
-  const swipePreviewView =
-    swipePreviewDirection === "next"
-      ? swipePreviewNeighbors.next
-      : swipePreviewDirection === "prev"
-        ? swipePreviewNeighbors.prev
-        : "";
-  const swipePreviewLabel = swipePreviewLabelForView(swipePreviewView);
-  const swipePreviewProgress = Math.min(1, Math.abs(mobileSecondaryDragX) / 120);
   useEffect(() => {
     const prev = previousActiveViewRef.current;
     const next = secondarySwipeNavView;
@@ -907,7 +953,8 @@ function App() {
   const [ordersFetchError, setOrdersFetchError] = useState("");
   /** `orderId` -> selected (orders screen only). */
   const [orderSelection, setOrderSelection] = useState({});
-  const [ordersBulkActionSubmitting, setOrdersBulkActionSubmitting] = useState(false);
+  /** Which bulk order transition is in flight (`seller_accept` | `cancel`) — only that action shows loading on its button. */
+  const [ordersBulkActionLoadingTransition, setOrdersBulkActionLoadingTransition] = useState(/** @type {string | null} */ (null));
   const [buyerCancelConfirmOpen, setBuyerCancelConfirmOpen] = useState(false);
   const [leaveCommunityConfirmOpen, setLeaveCommunityConfirmOpen] = useState(false);
   /** Order ids the user has marked “seen” per status tab (localStorage per user). Unseen rows drive badges + highlights. */
@@ -1069,36 +1116,104 @@ function App() {
   const [listingFieldErrors, setListingFieldErrors] = useState({});
   /** Stacked marketplace toasts (e.g. multiple “Order placed” while prior toasts are still visible). */
   const [marketplaceToasts, setMarketplaceToasts] = useState([]);
-  const [notificationInbox, setNotificationInbox] = useState(() => readNotificationInboxFromStorage());
+  const [notificationInbox, setNotificationInbox] = useState(() =>
+    mergeNotificationInboxLists([], readLocalSessionNotificationsFromStorage()),
+  );
+  const [notificationsSyncError, setNotificationsSyncError] = useState("");
   const marketplaceToastTimeoutsRef = useRef({});
+  const notificationsRealtimeTimerRef = useRef(null);
+
   const unreadNotificationCount = useMemo(
     () => notificationInbox.reduce((sum, item) => sum + (item.read ? 0 : 1), 0),
     [notificationInbox],
   );
+
+  const refreshNotificationsFromApi = useCallback(async () => {
+    if (!token) return;
+    try {
+      setNotificationsSyncError("");
+      const result = await fetchNotificationsFromApi(token);
+      if (result.schemaMissing) return;
+      setNotificationInbox((prev) => {
+        const locals = prev.filter((i) => i.source === "local");
+        return mergeNotificationInboxLists(result.notifications || [], locals);
+      });
+    } catch (e) {
+      if (!isUnauthorizedApiError(e)) {
+        setNotificationsSyncError("Could not refresh notifications.");
+      }
+    }
+  }, [token]);
+
   const addNotification = useCallback((raw, { markRead = false } = {}) => {
     const text = String(raw ?? "").trim();
     if (!text) return;
     const item = {
-      id: createNotificationId(),
+      id: createLocalNotificationId(),
+      source: /** @type {const} */ ("local"),
       text,
+      title: null,
       createdAt: Date.now(),
       read: !!markRead,
       type: classifyNotificationType(text),
     };
-    setNotificationInbox((prev) => [item, ...prev].slice(0, NOTIFICATION_INBOX_MAX_ITEMS));
+    setNotificationInbox((prev) => {
+      const without = prev.filter((p) => p.id !== item.id);
+      return [item, ...without].slice(0, NOTIFICATION_INBOX_MAX_ITEMS);
+    });
   }, []);
-  const markNotificationRead = useCallback((id) => {
-    setNotificationInbox((prev) => prev.map((item) => (item.id === id ? { ...item, read: true } : item)));
-  }, []);
-  const markAllNotificationsRead = useCallback(() => {
+
+  const markNotificationRead = useCallback(
+    async (id) => {
+      const sid = String(id || "");
+      setNotificationInbox((prev) => prev.map((item) => (item.id === sid ? { ...item, read: true } : item)));
+      if (!sid.startsWith("lm-local-") && token) {
+        try {
+          await markNotificationReadApi(token, sid);
+        } catch {
+          /* optimistic UI kept */
+        }
+      }
+    },
+    [token],
+  );
+
+  const markAllNotificationsRead = useCallback(async () => {
     setNotificationInbox((prev) => prev.map((item) => (item.read ? item : { ...item, read: true })));
-  }, []);
-  const dismissNotification = useCallback((id) => {
-    setNotificationInbox((prev) => prev.filter((item) => item.id !== id));
-  }, []);
-  const clearNotificationInbox = useCallback(() => {
+    if (token) {
+      try {
+        await markAllNotificationsReadApi(token);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [token]);
+
+  const dismissNotification = useCallback(
+    async (id) => {
+      const sid = String(id || "");
+      setNotificationInbox((prev) => prev.filter((item) => item.id !== sid));
+      if (!sid.startsWith("lm-local-")) {
+        const supabase = createSupabaseClient();
+        if (supabase) await deleteNotificationRemote(supabase, sid);
+      }
+    },
+    [],
+  );
+
+  const clearNotificationInbox = useCallback(async () => {
+    const supabase = createSupabaseClient();
+    if (user?.id && supabase) {
+      await deleteAllNotificationsRemote(supabase, user.id);
+    }
     setNotificationInbox([]);
-  }, []);
+    try {
+      window.localStorage.removeItem(NOTIFICATION_LOCAL_SESSION_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, [user?.id]);
+
   const dismissMarketplaceToast = useCallback((id) => {
     const tid = marketplaceToastTimeoutsRef.current[id];
     if (tid) window.clearTimeout(tid);
@@ -1113,7 +1228,10 @@ function App() {
   const pushMarketplaceToast = useCallback((raw) => {
     const text = String(raw ?? "").trim();
     if (!text) return;
-    const id = createNotificationId();
+    const id =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `toast-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     setMarketplaceToasts((prev) => [...prev, { id, text }]);
     addNotification(text);
     const tid = window.setTimeout(() => {
@@ -1124,16 +1242,53 @@ function App() {
   }, [addNotification]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(NOTIFICATION_INBOX_STORAGE_KEY, JSON.stringify(notificationInbox));
-    } catch {
-      /* ignore */
-    }
+    writeLocalSessionNotificationsToStorage(notificationInbox);
   }, [notificationInbox]);
 
   useEffect(() => {
+    if (!token || !user?.id) return undefined;
+
+    const debouncedPull = () => {
+      if (notificationsRealtimeTimerRef.current) window.clearTimeout(notificationsRealtimeTimerRef.current);
+      notificationsRealtimeTimerRef.current = window.setTimeout(() => {
+        notificationsRealtimeTimerRef.current = null;
+        void refreshNotificationsFromApi();
+      }, NOTIFICATION_REALTIME_DEBOUNCE_MS);
+    };
+
+    void refreshNotificationsFromApi();
+
+    const supabase = createSupabaseClient();
+    let channel = null;
+    if (supabase) {
+      const uid = String(user.id);
+      channel = supabase
+        .channel(`lm-notifications-rt:${uid}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${uid}` },
+          () => debouncedPull(),
+        )
+        .subscribe();
+    }
+
+    const pollId = window.setInterval(() => void refreshNotificationsFromApi(), NOTIFICATION_POLL_FALLBACK_MS);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refreshNotificationsFromApi();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(pollId);
+      if (notificationsRealtimeTimerRef.current) window.clearTimeout(notificationsRealtimeTimerRef.current);
+      if (supabase && channel) void supabase.removeChannel(channel);
+    };
+  }, [token, user?.id, refreshNotificationsFromApi]);
+
+  useEffect(() => {
     if (activeView === VIEWS.NOTIFICATIONS && unreadNotificationCount > 0) {
-      markAllNotificationsRead();
+      void markAllNotificationsRead();
     }
   }, [activeView, unreadNotificationCount, markAllNotificationsRead]);
 
@@ -1310,14 +1465,14 @@ function App() {
   const ordersDataQueryKeyRef = useRef(null);
   const communityListingsSyncedRef = useRef(null);
   const skipAutoCommunityBrowseRef = useRef(false);
-  const [expandedBidOrderId, setExpandedBidOrderId] = useState(null);
-  const [bidsForOrder, setBidsForOrder] = useState([]);
   const [quickAddModalOpen, setQuickAddModalOpen] = useState(false);
   const [quickAddListing, setQuickAddListing] = useState(null);
   const [quickAddImagePreviewOpen, setQuickAddImagePreviewOpen] = useState(false);
   const [quickAddLightboxImageFailed, setQuickAddLightboxImageFailed] = useState(false);
   const [quickActionType, setQuickActionType] = useState("cart");
   const [quickAddQuantity, setQuickAddQuantity] = useState("1");
+  const [quickAddSelectedVariantA, setQuickAddSelectedVariantA] = useState("");
+  const [quickAddSelectedVariantB, setQuickAddSelectedVariantB] = useState("");
   const [quickAddComment, setQuickAddComment] = useState("");
   const [quickOrderFulfillmentType, setQuickOrderFulfillmentType] = useState("pickup");
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
@@ -1326,7 +1481,10 @@ function App() {
   const productInspectReturnRef = useRef({ view: VIEWS.BROWSE, shopCommunityId: null, scrollTop: 0, listingId: "" });
   /** Read-only modal: full listing text + cart/order buyer note. */
   const [productInspect, setProductInspect] = useState(null);
-  const [recentlyAddedCartListingIds, setRecentlyAddedCartListingIds] = useState(() => readStoredStringArray(CART_RECENT_BADGE_STORAGE_KEY));
+  /** Listing IDs considered “seen” after leaving Cart — mirrors order-tab dismissal (`buyerOrderDismissedIdsByTab`). */
+  const [cartSeenListingIds, setCartSeenListingIds] = useState([]);
+  /** Favorite listing IDs considered “seen” after leaving Favorites. */
+  const [favoriteSeenListingIds, setFavoriteSeenListingIds] = useState([]);
   const [cartItems, setCartItems] = useState([]);
   /** `listingId` → selected (cart screen only). */
   const [cartItemSelection, setCartItemSelection] = useState({});
@@ -1340,18 +1498,28 @@ function App() {
   /** Listing ids currently fading out before removal from cart UI. */
   const cartRemovingListingIdsRef = useRef({});
   const [cartRemovingListingIds, setCartRemovingListingIds] = useState([]);
-  const hasViewedRecentCartAddsRef = useRef(false);
+  const cartItemsRef = useRef([]);
+  cartItemsRef.current = cartItems;
+  useEffect(() => {
+    if (!user?.id) {
+      setCartSeenListingIds([]);
+      setFavoriteSeenListingIds([]);
+      return;
+    }
+    setCartSeenListingIds(readStoredStringArray(cartSeenListingIdsStorageKey(user.id)));
+    setFavoriteSeenListingIds(readStoredStringArray(favoritesSeenListingIdsStorageKey(user.id)));
+  }, [user?.id]);
   const mergeCartItemsPreservingOrder = useCallback((prevItems, nextItems) => {
     if (!Array.isArray(nextItems)) return [];
-    const nextById = new Map(nextItems.map((item) => [String(item?.listingId), item]));
+    const nextByKey = new Map(nextItems.map((item) => [cartLineKeyFromItem(item), item]));
     const merged = [];
     for (const prevItem of Array.isArray(prevItems) ? prevItems : []) {
-      const key = String(prevItem?.listingId);
-      if (!nextById.has(key)) continue;
-      merged.push(nextById.get(key));
-      nextById.delete(key);
+      const key = cartLineKeyFromItem(prevItem);
+      if (!nextByKey.has(key)) continue;
+      merged.push(nextByKey.get(key));
+      nextByKey.delete(key);
     }
-    for (const remaining of nextById.values()) merged.push(remaining);
+    for (const remaining of nextByKey.values()) merged.push(remaining);
     return merged;
   }, []);
   const moveSellerGroupToTop = useCallback((items, sellerId) => {
@@ -1366,51 +1534,73 @@ function App() {
     if (sameSeller.length === 0) return Array.isArray(items) ? items : [];
     return [...sameSeller, ...others];
   }, []);
-  const startCartItemFadeOut = useCallback((listingId) => {
-    const id = String(listingId || "");
-    if (!id) return;
-    setCartRemovingListingIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-    if (cartRemovingListingIdsRef.current[id]) {
-      clearTimeout(cartRemovingListingIdsRef.current[id]);
+  const startCartItemFadeOut = useCallback((lineKey) => {
+    const key = String(lineKey || "");
+    if (!key) return;
+    setCartRemovingListingIds((prev) => (prev.includes(key) ? prev : [...prev, key]));
+    if (cartRemovingListingIdsRef.current[key]) {
+      clearTimeout(cartRemovingListingIdsRef.current[key]);
     }
-    cartRemovingListingIdsRef.current[id] = window.setTimeout(() => {
-      setCartItems((prev) => prev.filter((it) => String(it.listingId) !== id));
-      setCartRemovingListingIds((prev) => prev.filter((x) => x !== id));
-      setRecentlyAddedCartListingIds((prev) => prev.filter((x) => x !== id));
-      delete cartRemovingListingIdsRef.current[id];
+    cartRemovingListingIdsRef.current[key] = window.setTimeout(() => {
+      setCartItems((prev) => prev.filter((it) => cartLineKeyFromItem(it) !== key));
+      setCartRemovingListingIds((prev) => prev.filter((x) => x !== key));
+      delete cartRemovingListingIdsRef.current[key];
     }, 2000);
   }, []);
-  const cancelCartItemFadeOut = useCallback((listingId) => {
-    const id = String(listingId || "");
-    if (!id) return;
-    if (cartRemovingListingIdsRef.current[id]) {
-      clearTimeout(cartRemovingListingIdsRef.current[id]);
-      delete cartRemovingListingIdsRef.current[id];
+  const cancelCartItemFadeOut = useCallback((lineKey) => {
+    const key = String(lineKey || "");
+    if (!key) return;
+    if (cartRemovingListingIdsRef.current[key]) {
+      clearTimeout(cartRemovingListingIdsRef.current[key]);
+      delete cartRemovingListingIdsRef.current[key];
     }
-    setCartRemovingListingIds((prev) => prev.filter((x) => x !== id));
+    setCartRemovingListingIds((prev) => prev.filter((x) => x !== key));
   }, []);
+  /** Leave Cart → mark current line listing IDs as seen (clears nav badge + row highlights on return). */
+  const cartScreenPrevRef = useRef(false);
   useEffect(() => {
-    if (activeView === VIEWS.CART && recentlyAddedCartListingIds.length > 0) {
-      hasViewedRecentCartAddsRef.current = true;
-      return;
+    const inCart = activeView === VIEWS.CART;
+    if (cartScreenPrevRef.current && !inCart) {
+      const ids = (cartItemsRef.current || []).map((it) => String(it?.listingId || "")).filter(Boolean);
+      if (ids.length) {
+        setCartSeenListingIds((prev) => Array.from(new Set([...prev.map(String), ...ids])));
+      }
     }
-    if (activeView !== VIEWS.CART && hasViewedRecentCartAddsRef.current && recentlyAddedCartListingIds.length > 0) {
-      setRecentlyAddedCartListingIds([]);
-      hasViewedRecentCartAddsRef.current = false;
-      return;
+    cartScreenPrevRef.current = inCart;
+  }, [activeView]);
+
+  const favoriteIdsRef = useRef(favoriteIds);
+  favoriteIdsRef.current = favoriteIds;
+  /** Leave Favorites → mark current favorite IDs as seen (same dismissal model as Cart / order tabs). */
+  const favoritesScreenPrevRef = useRef(false);
+  useEffect(() => {
+    const inFav = activeView === VIEWS.FAVORITES;
+    if (favoritesScreenPrevRef.current && !inFav) {
+      const ids = Array.from(favoriteIdsRef.current || []).map(String).filter(Boolean);
+      if (ids.length) {
+        setFavoriteSeenListingIds((prev) => Array.from(new Set([...prev.map(String), ...ids])));
+      }
     }
-    if (activeView !== VIEWS.CART && recentlyAddedCartListingIds.length === 0) {
-      hasViewedRecentCartAddsRef.current = false;
-    }
-  }, [activeView, recentlyAddedCartListingIds]);
+    favoritesScreenPrevRef.current = inFav;
+  }, [activeView]);
+
   useEffect(() => {
     try {
-      if (typeof window === "undefined") return;
-      window.localStorage.setItem(CART_RECENT_BADGE_STORAGE_KEY, JSON.stringify(recentlyAddedCartListingIds));
+      if (typeof window === "undefined" || !user?.id) return;
+      window.localStorage.setItem(cartSeenListingIdsStorageKey(user.id), JSON.stringify(cartSeenListingIds));
     } catch {
-      // ignore storage failures
+      // ignore
     }
-  }, [recentlyAddedCartListingIds]);
+  }, [user?.id, cartSeenListingIds]);
+
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined" || !user?.id) return;
+      window.localStorage.setItem(favoritesSeenListingIdsStorageKey(user.id), JSON.stringify(favoriteSeenListingIds));
+    } catch {
+      // ignore
+    }
+  }, [user?.id, favoriteSeenListingIds]);
 
   /** Dismiss a status tab only after user leaves that exact status context. */
   const ordersNavPrevRef = useRef({
@@ -1449,14 +1639,23 @@ function App() {
       setPolledBuyerOrders(null);
     }
   }, [token]);
+  /** Drop “seen” IDs that are no longer in the cart (keeps storage small). */
   useEffect(() => {
-    setRecentlyAddedCartListingIds((prev) => {
-      if (!prev.length) return prev;
-      const existingIds = new Set(cartItems.map((it) => String(it?.listingId || "")));
-      const next = prev.filter((id) => existingIds.has(id));
+    const inCart = new Set(cartItems.map((it) => String(it?.listingId || "")));
+    setCartSeenListingIds((prev) => {
+      const next = prev.filter((id) => inCart.has(String(id)));
       return next.length === prev.length ? prev : next;
     });
   }, [cartItems]);
+
+  /** Drop seen favorites that were unfavorited. */
+  useEffect(() => {
+    const fav = new Set(Array.from(favoriteIds).map((id) => String(id)));
+    setFavoriteSeenListingIds((prev) => {
+      const next = prev.filter((id) => fav.has(String(id)));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [favoriteIds]);
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
   const [sellerProductsView, setSellerProductsView] = useState("list");
   const [communityProductsView, setCommunityProductsView] = useState("grid");
@@ -3189,8 +3388,17 @@ function App() {
   /** Use a single active scroll surface while overlays are open (product detail on mobile, or edit overlay on any viewport). */
   const lockMainScrollForOverlay =
     (isMobileViewport && activeView === VIEWS.PRODUCT_DETAIL && Boolean(productInspect)) ||
-    listingEditOverlayOpen ||
-    quickAddModalOpen;
+    listingEditOverlayOpen;
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    if (!quickAddModalOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [quickAddModalOpen]);
 
   const activeChatThread = useMemo(
     () => sortedChatThreads.find((thread) => String(thread.participantId) === String(activeChatUserId)) || null,
@@ -3287,48 +3495,18 @@ function App() {
     () => chatThreads.reduce((sum, thread) => sum + Math.max(0, Number(thread?.unread || 0)), 0),
     [chatThreads],
   );
-  const [favoritesNavBadgeCount, setFavoritesNavBadgeCount] = useState(0);
-  const favoritesNavPrevIdsRef = useRef(new Set());
-  const favoritesNavHydratedRef = useRef(false);
-
-  useEffect(() => {
-    if (!user?.id) {
-      setFavoritesNavBadgeCount(0);
-      favoritesNavPrevIdsRef.current = new Set();
-      favoritesNavHydratedRef.current = false;
+  const favoriteSeenSet = useMemo(
+    () => new Set(favoriteSeenListingIds.map(String)),
+    [favoriteSeenListingIds],
+  );
+  /** Count favorited listings not yet “seen” after leaving Favorites — mirrors Buying/Selling nav badges. */
+  const favoritesNavBadgeCount = useMemo(() => {
+    let n = 0;
+    for (const id of favoriteIds) {
+      if (!favoriteSeenSet.has(String(id))) n += 1;
     }
-  }, [user?.id]);
-
-  useEffect(() => {
-    const currentIds = new Set(Array.from(favoriteIds).map((id) => String(id)));
-    if (!favoritesNavHydratedRef.current) {
-      favoritesNavPrevIdsRef.current = currentIds;
-      favoritesNavHydratedRef.current = true;
-      return;
-    }
-    const prev = favoritesNavPrevIdsRef.current;
-    let changedCount = 0;
-    for (const id of currentIds) {
-      if (!prev.has(id)) changedCount += 1;
-    }
-    for (const id of prev) {
-      if (!currentIds.has(id)) changedCount += 1;
-    }
-    if (changedCount > 0) {
-      if (activeView === VIEWS.FAVORITES) {
-        setFavoritesNavBadgeCount(0);
-      } else {
-        setFavoritesNavBadgeCount((prevCount) => Math.min(99, Math.max(0, prevCount + changedCount)));
-      }
-    }
-    favoritesNavPrevIdsRef.current = currentIds;
-  }, [favoriteIds, activeView]);
-
-  useEffect(() => {
-    if (activeView === VIEWS.FAVORITES && favoritesNavBadgeCount > 0) {
-      setFavoritesNavBadgeCount(0);
-    }
-  }, [activeView, favoritesNavBadgeCount]);
+    return Math.min(99, Math.max(0, n));
+  }, [favoriteIds, favoriteSeenSet]);
 
   useEffect(() => {
     if (activeView !== VIEWS.MESSAGES || !activeChatUserId) return;
@@ -3601,6 +3779,41 @@ function App() {
     [sellerUnseenIdsByTab],
   );
 
+  /** When true, mobile/desktop Purchases & Orders nav badges use slate for the *unseen* count. False = rose for any unseen tab (matches status tab pills, including Pending/Processing). */
+  const purchasesNavAttentionMuted = false;
+  const ordersNavAttentionMuted = false;
+
+  const cartSeenSet = useMemo(() => new Set(cartSeenListingIds.map(String)), [cartSeenListingIds]);
+  /** Cart lines not yet “seen” after leaving Cart — mirrors order-tab dismissal counts. */
+  const cartNavBadgeCount = useMemo(() => {
+    let n = 0;
+    for (const it of cartItems) {
+      const lid = String(it?.listingId || "");
+      if (lid && !cartSeenSet.has(lid)) n += 1;
+    }
+    return Math.min(99, Math.max(0, n));
+  }, [cartItems, cartSeenSet]);
+
+  /** Cart + pipeline order counts for LoggedInHeader muted badges (rose = unseen attention; slate = total only). */
+  const headerTotalCartCount = useMemo(() => cartItems.length, [cartItems]);
+  /** Purchases/Orders: muted count excludes Completed/Cancelled — only Pending + Processing. */
+  const headerTotalPurchasesCount = useMemo(() => {
+    const list = buyerOrdersForBadges ?? [];
+    return list.filter(
+      (o) =>
+        orderMatchesOrdersStatusTab(o.status, "pending") ||
+        orderMatchesOrdersStatusTab(o.status, "processing"),
+    ).length;
+  }, [buyerOrdersForBadges]);
+  const headerTotalOrdersCount = useMemo(() => {
+    const list = sellerOrdersForBadges ?? [];
+    return list.filter(
+      (o) =>
+        orderMatchesOrdersStatusTab(o.status, "pending") ||
+        orderMatchesOrdersStatusTab(o.status, "processing"),
+    ).length;
+  }, [sellerOrdersForBadges]);
+
   /** Mobile bottom “Inbox” tab badge: chats + buyer/seller attention + unread notifications. */
   const inboxNavBadgeCount = useMemo(() => {
     const raw =
@@ -3621,13 +3834,13 @@ function App() {
       {
         key: "cart",
         label: "Cart",
-        value: cartItems.length,
+        value: cartNavBadgeCount,
       },
       { key: "buying", label: "Buying", value: purchaseNavBadgeCount },
       { key: "selling", label: "Selling", value: sellerNavBadgeCount },
-      { key: "favorites", label: "Favorites", value: favoriteIds.size },
+      { key: "favorites", label: "Favorites", value: favoritesNavBadgeCount },
     ],
-    [cartItems, purchaseNavBadgeCount, sellerNavBadgeCount, favoriteIds],
+    [cartNavBadgeCount, purchaseNavBadgeCount, sellerNavBadgeCount, favoritesNavBadgeCount],
   );
 
   const ordersTabBadgeIdsByTab = ordersRole === "seller" ? sellerUnseenIdsByTab : buyerUnseenIdsByTab;
@@ -3646,6 +3859,22 @@ function App() {
     }
     return n;
   }, [orders, ordersTabBadgeIdsByTab.pending]);
+
+  /** Pending/Processing tab pills: prefer unseen count; if dismissed but rows remain, show tab total (muted badge always visible when queue non-empty). */
+  const pendingTabBadgeDisplayCount = useMemo(() => {
+    const totalInTab = orders.filter((o) => orderMatchesOrdersStatusTab(o.status, "pending")).length;
+    if (pendingTabPillCount > 0) return pendingTabPillCount;
+    if (totalInTab > 0) return totalInTab;
+    return 0;
+  }, [orders, pendingTabPillCount]);
+
+  const processingTabBadgeDisplayCount = useMemo(() => {
+    const unseenLen = ordersTabBadgeIdsByTab.processing?.length || 0;
+    const totalInTab = orders.filter((o) => orderMatchesOrdersStatusTab(o.status, "processing")).length;
+    if (unseenLen > 0) return unseenLen;
+    if (totalInTab > 0) return totalInTab;
+    return 0;
+  }, [orders, ordersTabBadgeIdsByTab.processing]);
 
   const listingDescriptionCount = useMemo(() => String(listingForm.description || "").length, [listingForm.description]);
   const listingRequiredCompletedCount = useMemo(() => {
@@ -3721,9 +3950,13 @@ function App() {
   }, [token, mergeIncomingUserWithMembership]);
 
   const setCartLineQuantity = useCallback(
-    async (listingId, rawTarget) => {
+    async (listingId, rawTarget, variantSignature = "") => {
       const id = String(listingId);
-      const item = cartItems.find((i) => String(i.listingId) === id);
+      const sig = String(variantSignature ?? "");
+      const lineKey = cartLineKeyFromItem({ listingId: id, variantSignature: sig });
+      const item = cartItems.find(
+        (i) => String(i.listingId) === id && String(i.variantSignature ?? "") === sig,
+      );
       if (!item) return;
       const maxStock = Number(item.listingQuantity);
       const maxQ =
@@ -3732,31 +3965,31 @@ function App() {
       if (!Number.isFinite(n) || n < 0) return;
       if (n === 0) {
         if (token) {
-          setCartQtySavingId(id);
-          startCartItemFadeOut(id);
+          setCartQtySavingId(lineKey);
+          startCartItemFadeOut(lineKey);
           try {
-            await apiRequest(`/me/cart/items/${id}`, {
+            await apiRequest(`/me/cart/items/${id}${cartItemApiQuerySuffix(sig)}`, {
               method: "DELETE",
               token,
             });
             clearMarketplaceToasts();
           } catch (e) {
-            cancelCartItemFadeOut(id);
+            cancelCartItemFadeOut(lineKey);
             pushMarketplaceToast(e.message || "Could not remove item from cart.");
           } finally {
             setCartQtySavingId(null);
           }
         } else {
-          startCartItemFadeOut(id);
+          startCartItemFadeOut(lineKey);
         }
         return;
       }
       const clamped = Math.min(maxQ, Math.max(1, n));
 
       if (token) {
-        setCartQtySavingId(id);
+        setCartQtySavingId(lineKey);
         try {
-          const d = await apiRequest(`/me/cart/items/${id}`, {
+          const d = await apiRequest(`/me/cart/items/${id}${cartItemApiQuerySuffix(sig)}`, {
             method: "PATCH",
             token,
             body: { quantity: clamped },
@@ -3770,7 +4003,9 @@ function App() {
           setCartQtySavingId(null);
         }
       } else {
-        setCartItems((prev) => prev.map((it) => (String(it.listingId) === id ? { ...it, quantity: clamped } : it)));
+        setCartItems((prev) =>
+          prev.map((it) => (cartLineKeyFromItem(it) === lineKey ? { ...it, quantity: clamped } : it)),
+        );
       }
     },
     [cancelCartItemFadeOut, cartItems, mergeCartItemsPreservingOrder, startCartItemFadeOut, token],
@@ -3789,24 +4024,25 @@ function App() {
     };
   }, []);
 
-  const toggleCartListingSelected = useCallback((listingId) => {
-    const id = String(listingId);
+  const toggleCartListingSelected = useCallback((lineKey) => {
+    const key = String(lineKey || "");
+    if (!key) return;
     setCartItemSelection((prev) => {
       const next = { ...prev };
-      if (next[id]) delete next[id];
-      else next[id] = true;
+      if (next[key]) delete next[key];
+      else next[key] = true;
       return next;
     });
   }, []);
 
   const toggleCartSellerSelectAll = useCallback((items) => {
-    const ids = items.map((i) => String(i.listingId));
+    const keys = items.map((i) => cartLineKeyFromItem(i));
     setCartItemSelection((prev) => {
-      const allOn = ids.length > 0 && ids.every((id) => prev[id]);
+      const allOn = keys.length > 0 && keys.every((k) => prev[k]);
       const next = { ...prev };
-      for (const id of ids) {
-        if (allOn) delete next[id];
-        else next[id] = true;
+      for (const k of keys) {
+        if (allOn) delete next[k];
+        else next[k] = true;
       }
       return next;
     });
@@ -3837,7 +4073,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const valid = new Set(cartItems.map((i) => String(i.listingId)));
+    const valid = new Set(cartItems.map((i) => cartLineKeyFromItem(i)));
     setCartItemSelection((prev) => {
       const next = {};
       for (const id of valid) {
@@ -3867,7 +4103,7 @@ function App() {
   }, [ordersForStatusTab]);
 
   const selectedCartItems = useMemo(
-    () => cartItems.filter((item) => cartItemSelection[String(item.listingId)]),
+    () => cartItems.filter((item) => cartItemSelection[cartLineKeyFromItem(item)]),
     [cartItems, cartItemSelection],
   );
   const selectedOrders = useMemo(
@@ -3922,25 +4158,33 @@ function App() {
     for (const item of selectedCartItems) {
       const listingId = String(item?.listingId || "");
       if (!listingId) continue;
+      const variantSig = String(item?.variantSignature ?? "");
+      const lineKey = cartLineKeyFromItem(item);
       const qty = Math.max(1, Math.floor(Number(item?.quantity) || 1));
       const modes = Array.isArray(item?.fulfillmentModes) ? item.fulfillmentModes : [];
       const fulfillmentType = modes.includes("pickup") ? "pickup" : modes.includes("delivery") ? "delivery" : "pickup";
       try {
-        const created = await apiRequest("/orders", {
+        await apiRequest("/orders", {
           method: "POST",
           token,
-          body: { listingId, fulfillmentType, quantity: qty },
+          body: {
+            listingId,
+            fulfillmentType,
+            quantity: qty,
+            comment: String(item?.comment || "").trim().slice(0, 2000),
+            variantSignature: String(item?.variantSignature ?? "").trim().slice(0, 512),
+          },
         });
         successCount += 1;
-        startCartItemFadeOut(listingId);
+        startCartItemFadeOut(lineKey);
         try {
-          await apiRequest(`/me/cart/items/${listingId}`, {
+          await apiRequest(`/me/cart/items/${listingId}${cartItemApiQuerySuffix(variantSig)}`, {
             method: "DELETE",
             token,
           });
         } catch {
           // Keep checkout success even if cart row deletion returns an error.
-          cancelCartItemFadeOut(listingId);
+          cancelCartItemFadeOut(lineKey);
         }
       } catch {
         failedCount += 1;
@@ -3972,50 +4216,53 @@ function App() {
         return;
       }
       clearMarketplaceToasts();
-      setOrdersBulkActionSubmitting(true);
-      let successCount = 0;
-      let failedCount = 0;
-      let firstFailureMessage = "";
-      for (const order of selectedOrders) {
-        const oid = String(order?.id ?? "").trim();
-        if (!oid) {
-          failedCount += 1;
-          if (!firstFailureMessage) firstFailureMessage = "Missing order id.";
-          continue;
+      setOrdersBulkActionLoadingTransition(transitionNorm);
+      try {
+        let successCount = 0;
+        let failedCount = 0;
+        let firstFailureMessage = "";
+        for (const order of selectedOrders) {
+          const oid = String(order?.id ?? "").trim();
+          if (!oid) {
+            failedCount += 1;
+            if (!firstFailureMessage) firstFailureMessage = "Missing order id.";
+            continue;
+          }
+          try {
+            await apiRequest(`/orders/${oid}`, { method: "PATCH", token, body: { transition: transitionNorm } });
+            successCount += 1;
+          } catch (e) {
+            failedCount += 1;
+            const msg = typeof e?.message === "string" ? e.message.trim() : "";
+            if (!firstFailureMessage && msg) firstFailureMessage = msg;
+          }
         }
         try {
-          await apiRequest(`/orders/${oid}`, { method: "PATCH", token, body: { transition: transitionNorm } });
-          successCount += 1;
-        } catch (e) {
-          failedCount += 1;
-          const msg = typeof e?.message === "string" ? e.message.trim() : "";
-          if (!firstFailureMessage && msg) firstFailureMessage = msg;
+          const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+          setOrders(data.orders || []);
+        } catch {
+          // Keep prior rows if refresh fails; result banner still informs user.
         }
-      }
-      try {
-        const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-        setOrders(data.orders || []);
-      } catch {
-        // Keep prior rows if refresh fails; result banner still informs user.
-      }
-      setOrdersBulkActionSubmitting(false);
-      setOrderSelection({});
-      if (successCount > 0) {
-        pushMarketplaceToast(
-          failedCount === 0
-            ? `${label} ${successCount} order${successCount > 1 ? "s" : ""}.`
-            : `${label} ${successCount} order${successCount > 1 ? "s" : ""}. ${failedCount} failed.`,
-        );
-      } else {
-        const verb =
-          transitionNorm === "cancel"
-            ? "decline"
-            : transitionNorm === "seller_accept"
-              ? "accept"
-              : "update";
-        pushMarketplaceToast(
-          firstFailureMessage || `Could not ${verb} selected orders.`,
-        );
+        setOrderSelection({});
+        if (successCount > 0) {
+          pushMarketplaceToast(
+            failedCount === 0
+              ? `${label} ${successCount} order${successCount > 1 ? "s" : ""}.`
+              : `${label} ${successCount} order${successCount > 1 ? "s" : ""}. ${failedCount} failed.`,
+          );
+        } else {
+          const verb =
+            transitionNorm === "cancel"
+              ? "decline"
+              : transitionNorm === "seller_accept"
+                ? "accept"
+                : "update";
+          pushMarketplaceToast(
+            firstFailureMessage || `Could not ${verb} selected orders.`,
+          );
+        }
+      } finally {
+        setOrdersBulkActionLoadingTransition(null);
       }
     },
     [selectedOrders, token, ordersRole],
@@ -4770,6 +5017,7 @@ function App() {
       if (makeFavorite) await apiRequest(`/me/favorites/${listingId}`, { method: "POST", token });
       else await apiRequest(`/me/favorites/${listingId}`, { method: "DELETE", token });
       await refreshFavorites();
+      setFavoriteSeenListingIds((prev) => prev.filter((x) => String(x) !== id));
     } catch (e) {
       // Revert optimistic state if server update fails.
       setFavoriteIds((prev) => {
@@ -4833,30 +5081,6 @@ function App() {
       pushMarketplaceToast("Thanks for your feedback.");
     } catch (e) {
       pushMarketplaceToast(e.message || "Could not save review.");
-    }
-  };
-
-  const acceptOrderBid = async (orderId, bidId) => {
-    clearMarketplaceToasts();
-    try {
-      await apiRequest(`/orders/${orderId}/bids/${bidId}/accept`, { method: "POST", token });
-      const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-      setOrders(data.orders || []);
-      setExpandedBidOrderId(null);
-      setBidsForOrder([]);
-      pushMarketplaceToast("Bid accepted. Agreed delivery fee is stored for COD at handoff.");
-    } catch (e) {
-      pushMarketplaceToast(e.message || "Could not accept bid.");
-    }
-  };
-
-  const loadBidsForOrder = async (orderId) => {
-    setExpandedBidOrderId(orderId);
-    try {
-      const d = await apiRequest(`/orders/${orderId}/bids`, { token });
-      setBidsForOrder(d.bids || []);
-    } catch {
-      setBidsForOrder([]);
     }
   };
 
@@ -5110,10 +5334,16 @@ function App() {
     if (activeView === VIEWS.PRODUCT_DETAIL && productInspect) {
       closeProductInspect();
     }
+    const valsA = normalizeListingOptionValues(listing.optionValuesA);
+    const valsB = normalizeListingOptionValues(listing.optionValuesB);
+    const optNameA = String(listing.optionNameA || "").trim();
+    const optNameB = String(listing.optionNameB || "").trim();
     setQuickAddListing(listing);
     setQuickActionType(mode);
     setQuickOrderFulfillmentType(initialFulfillment);
     setQuickAddQuantity("1");
+    setQuickAddSelectedVariantA(optNameA && valsA.length ? valsA[0] : "");
+    setQuickAddSelectedVariantB(optNameB && valsB.length ? valsB[0] : "");
     setQuickAddComment("");
     setQuickAddInlineError("");
     setQuickAddModalOpen(true);
@@ -5169,6 +5399,8 @@ function App() {
     setQuickActionType("cart");
     setQuickOrderFulfillmentType("pickup");
     setQuickAddQuantity("1");
+    setQuickAddSelectedVariantA("");
+    setQuickAddSelectedVariantB("");
     setQuickAddComment("");
     setQuickAddInlineError("");
     const originListingId = String(productFlowOriginRef.current?.listingId || "");
@@ -5451,6 +5683,39 @@ function App() {
       showQuickAddError(`Quantity must be between 1 and ${maxQty}.`);
       return;
     }
+    const valsA = normalizeListingOptionValues(quickAddListing.optionValuesA);
+    const valsB = normalizeListingOptionValues(quickAddListing.optionValuesB);
+    const optLabelA = String(quickAddListing.optionNameA || "").trim();
+    const optLabelB = String(quickAddListing.optionNameB || "").trim();
+    const needsSelectA = Boolean(optLabelA && valsA.length > 0);
+    const needsSelectB = Boolean(optLabelB && valsB.length > 0);
+    const selA = String(quickAddSelectedVariantA || "").trim();
+    const selB = String(quickAddSelectedVariantB || "").trim();
+    if (needsSelectA && !selA) {
+      showQuickAddError(`Choose ${optLabelA}.`);
+      return;
+    }
+    if (needsSelectB && !selB) {
+      showQuickAddError(`Choose ${optLabelB}.`);
+      return;
+    }
+    if (needsSelectA && !valsA.includes(selA)) {
+      showQuickAddError(`${optLabelA} is not valid for this listing.`);
+      return;
+    }
+    if (needsSelectB && !valsB.includes(selB)) {
+      showQuickAddError(`${optLabelB} is not valid for this listing.`);
+      return;
+    }
+    const maxCommentLen = quickActionType === "buy" ? 2000 : 250;
+    const mergedComment = buildQuickAddMergedComment(
+      quickAddListing,
+      quickAddComment,
+      selA,
+      selB,
+      maxCommentLen,
+    );
+    const variantSig = buildVariantSignatureFromSelections(quickAddListing, selA, selB);
     setQuickAddSubmitting(true);
     try {
       if (quickActionType === "buy") {
@@ -5470,7 +5735,8 @@ function App() {
               listingId: String(quickAddListing.id),
               quantity: parsedQty,
               fulfillmentType: quickOrderFulfillmentType,
-              comment: String(quickAddComment || "").trim(),
+              comment: mergedComment,
+              variantSignature: variantSig,
             },
           });
           markBuyerOrderAsUnseenInTab("pending", created?.order?.id);
@@ -5483,6 +5749,8 @@ function App() {
         setQuickActionType("cart");
         setQuickOrderFulfillmentType("pickup");
         setQuickAddQuantity("1");
+        setQuickAddSelectedVariantA("");
+        setQuickAddSelectedVariantB("");
         setQuickAddComment("");
         setQuickAddInlineError("");
         // Keep user in current marketplace/community view after successful buy.
@@ -5507,7 +5775,8 @@ function App() {
             body: {
               listingId: addedListingId,
               quantity: parsedQty,
-              comment: String(quickAddComment || "").trim(),
+              comment: mergedComment,
+              variantSignature: variantSig,
             },
           });
           const incoming = Array.isArray(cartData?.items) ? cartData.items : [];
@@ -5515,7 +5784,7 @@ function App() {
             const merged = mergeCartItemsPreservingOrder(prev, incoming);
             return moveSellerGroupToTop(merged, quickAddListing?.sellerId);
           });
-          setRecentlyAddedCartListingIds((prev) => (prev.includes(addedListingId) ? prev : [...prev, addedListingId]));
+          setCartSeenListingIds((prev) => prev.filter((x) => String(x) !== addedListingId));
           {
             const titleForToast = String(quickAddListing.title || "Item").trim();
             const shortTitle = titleForToast.length > 52 ? `${titleForToast.slice(0, 52)}…` : titleForToast;
@@ -5534,7 +5803,10 @@ function App() {
         }
         setCartItems((prev) => {
           const listingId = String(quickAddListing.id);
-          const idx = prev.findIndex((item) => String(item.listingId) === listingId);
+          const idx = prev.findIndex(
+            (item) =>
+              String(item.listingId) === listingId && String(item.variantSignature ?? "") === variantSig,
+          );
           if (idx === -1) {
             const sellerLabel = sellerUsername
               ? `@${sellerUsername}`
@@ -5545,6 +5817,7 @@ function App() {
               ...prev,
               {
                 listingId,
+                variantSignature: variantSig,
                 sellerId,
                 sellerLabel,
                 title: String(quickAddListing.title || "Product"),
@@ -5554,7 +5827,11 @@ function App() {
                 quantity: parsedQty,
                 listingQuantity: maxQty,
                 fulfillmentModes: Array.isArray(quickAddListing.fulfillmentModes) ? quickAddListing.fulfillmentModes : ["pickup"],
-                comment: String(quickAddComment || "").trim(),
+                comment: mergedComment,
+                optionNameA: optLabelA,
+                optionNameB: optLabelB,
+                optionValuesA: needsSelectA ? [selA] : [],
+                optionValuesB: needsSelectB ? [selB] : [],
               },
             ];
           }
@@ -5564,15 +5841,20 @@ function App() {
           const mergedQty = Math.min(maxQty, Number(existing.quantity || 0) + parsedQty);
           next[idx] = {
             ...existing,
+            variantSignature: variantSig,
             quantity: mergedQty,
             listingQuantity: maxQty,
             fulfillmentModes: Array.isArray(quickAddListing.fulfillmentModes) ? quickAddListing.fulfillmentModes : ["pickup"],
-            comment: String(quickAddComment || "").trim() || existing.comment || "",
+            comment: mergedComment || existing.comment || "",
+            optionNameA: optLabelA || existing.optionNameA,
+            optionNameB: optLabelB || existing.optionNameB,
+            optionValuesA: needsSelectA ? [selA] : normalizeListingOptionValues(existing.optionValuesA),
+            optionValuesB: needsSelectB ? [selB] : normalizeListingOptionValues(existing.optionValuesB),
             ...(desc ? { description: desc } : {}),
           };
           return next;
         });
-        setRecentlyAddedCartListingIds((prev) => (prev.includes(addedListingId) ? prev : [...prev, addedListingId]));
+        setCartSeenListingIds((prev) => prev.filter((x) => String(x) !== addedListingId));
         {
           const titleForToast = String(quickAddListing.title || "Item").trim();
           const shortTitle = titleForToast.length > 52 ? `${titleForToast.slice(0, 52)}…` : titleForToast;
@@ -5588,6 +5870,8 @@ function App() {
       setQuickAddModalOpen(false);
       setQuickAddListing(null);
       setQuickAddQuantity("1");
+      setQuickAddSelectedVariantA("");
+      setQuickAddSelectedVariantB("");
       setQuickAddComment("");
       setQuickAddInlineError("");
       const originListingId = String(productFlowOriginRef.current?.listingId || "");
@@ -7303,9 +7587,14 @@ function App() {
         goCart={goCart}
         inboxBadgeCount={inboxNavBadgeCount}
         messagesUnreadCount={totalChatUnreadCount}
-        cartItemCount={recentlyAddedCartListingIds.length}
+        cartItemCount={cartNavBadgeCount}
+        totalCartCount={headerTotalCartCount}
         purchasesItemCount={purchaseNavBadgeCount}
+        purchasesAttentionMuted={purchasesNavAttentionMuted}
+        totalPurchasesCount={headerTotalPurchasesCount}
         ordersItemCount={sellerNavBadgeCount}
+        ordersAttentionMuted={ordersNavAttentionMuted}
+        totalOrdersCount={headerTotalOrdersCount}
         notificationUnreadCount={unreadNotificationCount}
         favoritesBadgeCount={favoritesNavBadgeCount}
         favoriteCount={favoriteIds.size}
@@ -7316,7 +7605,8 @@ function App() {
         onNavigateHome={() => navigate("/")}
         onMobileBrowseNavCollapsedChange={setMobileTopChromeCollapsed}
         mobileSecondaryDragX={mobileSecondaryDragX}
-        hideNavigationChrome={activeView === VIEWS.PRODUCT_DETAIL || listingEditOverlayOpen || quickAddModalOpen}
+        hideNavigationChrome={activeView === VIEWS.PRODUCT_DETAIL || listingEditOverlayOpen}
+        liftChromeAboveOverlay={quickAddModalOpen}
       >
       {isMobileViewport && mobilePullRefreshing ? (
         <div
@@ -7352,24 +7642,7 @@ function App() {
             : undefined
         }
       >
-        {isMobileViewport &&
-        mobileSecondaryDragging &&
-        swipePreviewLabel &&
-        secondaryMobileNavOrder.includes(secondarySwipeNavView) ? (
-          <div
-            className={`pointer-events-none fixed top-1/2 z-[64] -translate-y-1/2 rounded-full border border-neutral-200/80 bg-white/96 px-3 py-1.5 text-xs font-semibold text-neutral-700 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/96 dark:text-slate-200 ${
-              swipePreviewDirection === "next" ? "right-2" : "left-2"
-            }`}
-            style={{
-              opacity: 0.2 + swipePreviewProgress * 0.8,
-              transform: `translate3d(${swipePreviewDirection === "next" ? 12 - swipePreviewProgress * 12 : -12 + swipePreviewProgress * 12}px, -50%, 0)`,
-            }}
-            aria-hidden
-          >
-            {swipePreviewLabel}
-          </div>
-        ) : null}
-        {activeView === VIEWS.PRODUCT_DETAIL && productInspect && !listingEditOverlayOpen && !quickAddModalOpen ? (
+        {activeView === VIEWS.PRODUCT_DETAIL && productInspect && !listingEditOverlayOpen ? (
           <section
             className={`w-full min-w-0 ${lockMainScrollForOverlay ? "flex min-h-0 flex-1 flex-col" : ""}`}
           >
@@ -7888,7 +8161,7 @@ function App() {
                 </aside>
               <div className="order-2 min-w-0 space-y-3 md:space-y-4 lg:order-none">
                 {activeView === VIEWS.FAVORITES ? (
-                  <h2 className="break-words text-2xl font-semibold text-neutral-900 dark:text-slate-100">My Favorites</h2>
+                  <h2 className="break-words text-2xl font-semibold text-neutral-900 dark:text-slate-100">Favorites</h2>
                 ) : null}
                 <div
                   className={
@@ -8585,15 +8858,17 @@ function App() {
             <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <h2 className="break-words text-2xl font-semibold text-neutral-900 dark:text-slate-100">Notifications</h2>
-                <p className="text-sm text-neutral-600 dark:text-slate-400">
-                  Order updates, delivery status, and marketplace alerts from your session appear here.
-                </p>
+                {notificationsSyncError ? (
+                  <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-400/90" role="status">
+                    {notificationsSyncError}
+                  </p>
+                ) : null}
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <button
                   type="button"
                   className="rounded-lg border border-neutral-300/80 px-3 py-1.5 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                  onClick={markAllNotificationsRead}
+                  onClick={() => void markAllNotificationsRead()}
                   disabled={unreadNotificationCount === 0}
                 >
                   Mark all read
@@ -8601,7 +8876,7 @@ function App() {
                 <button
                   type="button"
                   className="rounded-lg border border-neutral-300/80 px-3 py-1.5 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                  onClick={clearNotificationInbox}
+                  onClick={() => void clearNotificationInbox()}
                   disabled={notificationInbox.length === 0}
                 >
                   Clear all
@@ -8665,42 +8940,64 @@ function App() {
 
         {activeView === VIEWS.FAVORITES && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">My Favorites</h2>
-            {favoritesLoading && strictFavoritesList.length === 0 ? (
-              isMobileViewport ? (
-                <BrowseGridSkeleton
-                  gridClassName={favoritesGridClass(effectiveFavoriteBrowseView)}
-                  variant={
-                    effectiveFavoriteBrowseView === "compact"
-                      ? "compact"
-                      : effectiveFavoriteBrowseView === "list"
-                        ? "list"
-                        : "grid"
-                  }
-                  count={effectiveFavoriteBrowseView === "compact" ? 8 : 6}
-                  className="min-h-[8rem]"
-                  ariaLabel="Loading favorites"
-                />
-              ) : (
-                <ScreenLoading message="Loading favorites…" minHeight={false} className="min-h-[8rem]" />
-              )
-            ) : null}
-            {favoritesFetchError ? (
-              <ScreenError
-                title="Couldn’t load favorites"
-                message={favoritesFetchError}
-                onRetry={() => void refreshFavorites()}
-                secondaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
-                spacious
-              />
-            ) : null}
-            {!(favoritesLoading && strictFavoritesList.length === 0) && !favoritesFetchError && strictFavoritesList.length === 0 ? (
-              <ScreenEmpty
-                title="No favorites yet"
-                description="Use the heart on Browse cards to save items."
-                primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
-              />
-            ) : null}
+            {!(favoritesLoading && strictFavoritesList.length === 0) &&
+            !favoritesFetchError &&
+            strictFavoritesList.length === 0 ? (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Favorites</h2>
+                </div>
+                <div className="w-full min-w-0">
+                  <div
+                    className={`${UI_KIT.surfaceRaised} flex w-full min-w-0 flex-col items-center border border-dashed px-4 py-10 text-center md:px-6 md:py-12`}
+                  >
+                    <p className="w-full min-w-0 text-balance text-lg font-semibold text-neutral-900 dark:text-slate-100 min-[400px]:text-xl md:text-xl">
+                      No favorites yet
+                    </p>
+                    <p className="mt-2 w-full min-w-0 text-pretty text-sm leading-relaxed text-neutral-600 dark:text-slate-400 min-[400px]:text-[15px]">
+                      Use the heart on Browse cards to save items.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn-primary mt-6 w-full touch-manipulation min-h-[44px] text-sm md:mt-8 md:min-h-12 md:w-auto md:min-w-[10rem]"
+                      onClick={() => goBrowse()}
+                    >
+                      Browse marketplace
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Favorites</h2>
+                {favoritesLoading && strictFavoritesList.length === 0 ? (
+                  isMobileViewport ? (
+                    <BrowseGridSkeleton
+                      gridClassName={favoritesGridClass(effectiveFavoriteBrowseView)}
+                      variant={
+                        effectiveFavoriteBrowseView === "compact"
+                          ? "compact"
+                          : effectiveFavoriteBrowseView === "list"
+                            ? "list"
+                            : "grid"
+                      }
+                      count={effectiveFavoriteBrowseView === "compact" ? 8 : 6}
+                      className="min-h-[8rem]"
+                      ariaLabel="Loading favorites"
+                    />
+                  ) : (
+                    <ScreenLoading message="Loading favorites…" minHeight={false} className="min-h-[8rem]" />
+                  )
+                ) : null}
+                {favoritesFetchError ? (
+                  <ScreenError
+                    title="Couldn’t load favorites"
+                    message={favoritesFetchError}
+                    onRetry={() => void refreshFavorites()}
+                    secondaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
+                    spacious
+                  />
+                ) : null}
             {strictFavoritesList.length > 0 ? (
               <>
                 <div className="flex justify-end">
@@ -8739,6 +9036,7 @@ function App() {
                     <LazyCommunityShopListingCard
                       key={l.id}
                       listing={l}
+                      unseenAttention={!favoriteSeenSet.has(String(l.id))}
                       gridMode={effectiveFavoriteBrowseView !== "list"}
                       compactGrid={effectiveFavoriteBrowseView === "compact"}
                       browseSummaryGrid={isMobileViewport && effectiveFavoriteBrowseView === "grid"}
@@ -8794,6 +9092,8 @@ function App() {
                 </Suspense>
               </>
             ) : null}
+              </>
+            )}
           </section>
         )}
 
@@ -10028,66 +10328,78 @@ function App() {
 
         {activeView === VIEWS.CART && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Add to cart</h2>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <ProductViewDensityToggle
-                  value={commerceFlowViewBuyer}
-                  onChange={setCommerceFlowViewBuyer}
-                  allowCompact={!isMobileViewport}
-                  groupAriaLabel="Cart line layout"
-                  gridTitle="Grid — two columns for readable cart cards"
-                  compactTitle="Dense — three columns for a compact overview"
-                />
-                {selectedCartItems.length > 0 ? (
-                  <div className="inline-flex items-center gap-2 rounded-xl border border-neutral-200/80 bg-white px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900">
-                    <span className="font-semibold text-neutral-800 dark:text-slate-200">
-                      {formatCents(selectedCartTotals.currentTotalCents)}
-                    </span>
-                    {selectedCartTotals.originalTotalCents > selectedCartTotals.currentTotalCents ? (
-                      <>
-                        <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">
-                          {formatCents(selectedCartTotals.originalTotalCents)}
-                        </span>
-                        {selectedCartTotals.discountPercent > 0 ? (
-                          <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-                            -{selectedCartTotals.discountPercent}%
-                          </span>
-                        ) : null}
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="primary"
-                  className="text-sm"
-                  disabled={selectedCartItems.length === 0}
-                  loading={cartCheckoutSubmitting}
-                  loadingLabel="Checking out…"
-                  onClick={() => {
-                    void checkoutSelectedCartItems();
-                  }}
-                >
-                  {`Check out${selectedCartItems.length > 0 ? ` (${selectedCartItems.length})` : ""}`}
-                </Button>
-              </div>
-            </div>
             {cartItems.length === 0 ? (
-              <ScreenEmpty
-                title="Your cart is empty"
-                description="Add items from Shop or your community, pick quantities, then select lines and check out for COD pickup or delivery."
-                primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
-                secondaryAction={
-                  shopCommunityId
-                    ? {
-                        label: "Open community shop",
-                        onClick: () => setActiveView(VIEWS.COMMUNITY_SHOP),
-                      }
-                    : undefined
-                }
-              />
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Cart</h2>
+                </div>
+                <div className="w-full min-w-0">
+                  <div
+                    className={`${UI_KIT.surfaceRaised} flex w-full min-w-0 flex-col items-center border border-dashed px-4 py-10 text-center md:px-6 md:py-12`}
+                  >
+                    <p className="w-full min-w-0 text-balance text-lg font-semibold text-neutral-900 dark:text-slate-100 min-[400px]:text-xl md:text-xl">
+                      Your cart is empty
+                    </p>
+                    <p className="mt-2 w-full min-w-0 text-pretty text-sm leading-relaxed text-neutral-600 dark:text-slate-400 min-[400px]:text-[15px]">
+                      Add items from Shop or your community, pick quantities, then select lines and check out for COD pickup or delivery.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn-primary mt-6 w-full touch-manipulation min-h-[44px] text-sm md:mt-8 md:min-h-12 md:w-auto md:min-w-[10rem]"
+                      onClick={() => goBrowse()}
+                    >
+                      Browse marketplace
+                    </button>
+                  </div>
+                </div>
+              </>
             ) : (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Cart</h2>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <ProductViewDensityToggle
+                      value={commerceFlowViewBuyer}
+                      onChange={setCommerceFlowViewBuyer}
+                      allowCompact={!isMobileViewport}
+                      groupAriaLabel="Cart line layout"
+                      gridTitle="Grid — two columns for readable cart cards"
+                      compactTitle="Dense — three columns for a compact overview"
+                    />
+                    {selectedCartItems.length > 0 ? (
+                      <div className="inline-flex items-center gap-2 rounded-xl border border-neutral-200/80 bg-white px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900">
+                        <span className="font-semibold text-neutral-800 dark:text-slate-200">
+                          {formatCents(selectedCartTotals.currentTotalCents)}
+                        </span>
+                        {selectedCartTotals.originalTotalCents > selectedCartTotals.currentTotalCents ? (
+                          <>
+                            <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">
+                              {formatCents(selectedCartTotals.originalTotalCents)}
+                            </span>
+                            {selectedCartTotals.discountPercent > 0 ? (
+                              <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                                -{selectedCartTotals.discountPercent}%
+                              </span>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="primary"
+                      className="text-sm"
+                      disabled={selectedCartItems.length === 0}
+                      loading={cartCheckoutSubmitting}
+                      loadingLabel="Checking out…"
+                      onClick={() => {
+                        void checkoutSelectedCartItems();
+                      }}
+                    >
+                      {`Check out${selectedCartItems.length > 0 ? ` (${selectedCartItems.length})` : ""}`}
+                    </Button>
+                  </div>
+                </div>
               <div className="space-y-3">
                 {Object.entries(
                   cartItems.reduce((acc, item) => {
@@ -10100,16 +10412,13 @@ function App() {
                   const orderedItems = [...items].sort((a, b) => {
                     const aId = String(a?.listingId || "");
                     const bId = String(b?.listingId || "");
-                    const aIdx = recentlyAddedCartListingIds.indexOf(aId);
-                    const bIdx = recentlyAddedCartListingIds.indexOf(bId);
-                    const aRecent = aIdx >= 0;
-                    const bRecent = bIdx >= 0;
-                    if (aRecent && bRecent) return bIdx - aIdx; // latest added first
-                    if (aRecent) return -1;
-                    if (bRecent) return 1;
+                    const aUnseen = aId && !cartSeenSet.has(aId);
+                    const bUnseen = bId && !cartSeenSet.has(bId);
+                    if (aUnseen && !bUnseen) return -1;
+                    if (!aUnseen && bUnseen) return 1;
                     return 0;
                   });
-                  const rowIds = orderedItems.map((i) => String(i.listingId));
+                  const rowIds = orderedItems.map((i) => cartLineKeyFromItem(i));
                   const selectedCount = rowIds.filter((id) => cartItemSelection[id]).length;
                   const allSelected = rowIds.length > 0 && selectedCount === rowIds.length;
                   const someSelected = selectedCount > 0 && !allSelected;
@@ -10134,8 +10443,10 @@ function App() {
                       >
                         {orderedItems.map((item) => {
                           const lid = String(item.listingId);
-                          const isRecentlyAdded = recentlyAddedCartListingIds.includes(lid);
-                          const isRemoving = cartRemovingListingIds.includes(lid);
+                          const lineKey = cartLineKeyFromItem(item);
+                          const vSig = String(item.variantSignature ?? "");
+                          const isCartLineUnseen = Boolean(lid && !cartSeenSet.has(lid));
+                          const isRemoving = cartRemovingListingIds.includes(lineKey);
                           const cfList = effectiveCommerceFlowViewBuyer === "list";
                           const cfCompact = effectiveCommerceFlowViewBuyer === "compact";
                           const maxAvailableQty = Math.max(
@@ -10171,15 +10482,16 @@ function App() {
                           const thumbClass = cfList
                             ? "aspect-[4/3] w-[6.5rem] min-[400px]:aspect-square min-[400px]:h-[7.5rem] min-[400px]:w-[7.5rem] min-[400px]:max-h-[7.5rem] min-[400px]:max-w-[7.5rem] min-[400px]:shrink-0"
                             : "lm-product-card-media aspect-square w-full min-h-0";
+                          const cartLineVariantPick = narrowListingOptionValuesForBuyerSelection(item);
                           return (
                             <div
-                              key={item.listingId}
+                              key={lineKey}
                               className={`transition-opacity duration-[2000ms] ${
                                 cfList
                                   ? "relative lm-card lm-list-card lm-product-card-list flex items-start gap-3 p-3 md:gap-3.5"
                                   : "relative lm-card lm-grid-card lm-product-card lm-product-card--feed h-full min-h-0 flex-1 p-0"
                               } ${
-                                isRecentlyAdded ? "bg-primary-soft dark:bg-primary/15" : ""
+                                isCartLineUnseen ? "bg-primary-soft dark:bg-primary/15" : ""
                               } ${
                                 isRemoving ? "pointer-events-none opacity-0" : "opacity-100"
                               }`}
@@ -10191,8 +10503,8 @@ function App() {
                                     ? "absolute left-4 top-4 z-10 bg-white/90 dark:bg-slate-900/90"
                                     : "absolute left-2 top-2 z-10 bg-white/90 dark:bg-slate-900/90"
                                 }`}
-                                checked={Boolean(cartItemSelection[lid])}
-                                onChange={() => toggleCartListingSelected(item.listingId)}
+                                checked={Boolean(cartItemSelection[lineKey])}
+                                onChange={() => toggleCartListingSelected(lineKey)}
                                 aria-label={`Select ${item.title || "product"}`}
                               />
                               <button
@@ -10233,9 +10545,9 @@ function App() {
                                     }
                                   }}
                                 >
-                                  {isRecentlyAdded ? (
-                                    <span className="mb-1 inline-flex items-center rounded-full border border-primary/40 bg-primary-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary dark:border-primary/55 dark:bg-primary/20 dark:text-primary-soft">
-                                      Newly added
+                                  {isCartLineUnseen ? (
+                                    <span className="mb-1 inline-flex w-fit max-w-full shrink-0 self-start items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
+                                      Recently updated
                                     </span>
                                   ) : null}
                                   <DeferredProductDetailStack
@@ -10248,12 +10560,12 @@ function App() {
                                             type="button"
                                             className="inline-flex h-7 w-7 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
                                             aria-label="Decrease quantity"
-                                            disabled={cartQtySavingId === lid || (Number(item.quantity) || 0) <= 0}
+                                            disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
                                             onClick={(e) => {
                                               e.preventDefault();
                                               e.stopPropagation();
                                               setCartQtyEdit({ id: null, str: "" });
-                                              void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1);
+                                              void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1, vSig);
                                             }}
                                           >
                                             −
@@ -10262,18 +10574,18 @@ function App() {
                                             className="inline-flex h-7 min-w-[2.25rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-xs font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
                                             aria-label={`Quantity for ${item.title || "product"}`}
                                           >
-                                            {cartQtyEdit.id === lid ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
+                                            {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
                                           </span>
                                           <button
                                             type="button"
                                             className="inline-flex h-7 w-7 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
                                             aria-label="Increase quantity"
-                                            disabled={cartQtySavingId === lid || (Number(item.quantity) || 0) >= maxAvailableQty}
+                                            disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) >= maxAvailableQty}
                                             onClick={(e) => {
                                               e.preventDefault();
                                               e.stopPropagation();
                                               setCartQtyEdit({ id: null, str: "" });
-                                              void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1);
+                                              void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1, vSig);
                                             }}
                                           >
                                             +
@@ -10288,9 +10600,9 @@ function App() {
                                     orderType={item.orderType}
                                     processingTime={item.processingTime}
                                     optionNameA={item.optionNameA}
-                                    optionValuesA={item.optionValuesA}
+                                    optionValuesA={cartLineVariantPick.optionValuesA}
                                     optionNameB={item.optionNameB}
-                                    optionValuesB={item.optionValuesB}
+                                    optionValuesB={cartLineVariantPick.optionValuesB}
                                     browseStackMode={cfList ? "listMobile" : null}
                                     compactListMeta={cfList}
                                     quantityRow={
@@ -10318,10 +10630,10 @@ function App() {
                                       type="button"
                                       className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
                                       aria-label="Decrease quantity"
-                                      disabled={cartQtySavingId === lid || (Number(item.quantity) || 0) <= 0}
+                                      disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
                                       onClick={() => {
                                         setCartQtyEdit({ id: null, str: "" });
-                                        void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1);
+                                        void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1, vSig);
                                       }}
                                     >
                                       −
@@ -10330,19 +10642,19 @@ function App() {
                                       className="inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
                                       aria-label={`Quantity for ${item.title || "product"}`}
                                     >
-                                      {cartQtyEdit.id === lid ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
+                                      {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
                                     </span>
                                     <button
                                       type="button"
                                       className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
                                       aria-label="Increase quantity"
                                       disabled={
-                                        cartQtySavingId === lid ||
+                                        cartQtySavingId === lineKey ||
                                         (Number(item.quantity) || 0) >= maxAvailableQty
                                       }
                                       onClick={() => {
                                         setCartQtyEdit({ id: null, str: "" });
-                                        void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1);
+                                        void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1, vSig);
                                       }}
                                     >
                                       +
@@ -10358,6 +10670,7 @@ function App() {
                   );
                 })}
               </div>
+              </>
             )}
           </section>
         )}
@@ -10368,11 +10681,6 @@ function App() {
               <h2 className="text-xl font-semibold tracking-tight text-neutral-900 md:text-2xl dark:text-slate-100">
                 {activeView === VIEWS.MY_PURCHASES ? "Purchases" : "Orders"}
               </h2>
-              <p className="mt-1 text-xs leading-relaxed text-neutral-600 line-clamp-4 md:text-sm md:leading-normal md:line-clamp-none dark:text-slate-400">
-                {activeView === VIEWS.MY_PURCHASES
-                  ? "Things you bought from other sellers. COD only — LinkMart never holds your money. No refunds; cancel in Pending before the seller accepts, otherwise contact the seller."
-                  : "Things buyers ordered from you. COD at pickup or delivery — you collect payment; LinkMart never holds balances."}
-              </p>
             </div>
             {ordersFetchError ? (
               <ScreenError
@@ -10383,117 +10691,195 @@ function App() {
                 spacious
               />
             ) : null}
-            <div className="flex flex-col gap-3">
-              <div className="flex w-full min-w-0 items-center gap-2 border-b border-neutral-200/70 pb-2 dark:border-slate-700/70 md:border-0 md:pb-0">
-                <div
-                  className="-mx-0.5 flex min-w-0 flex-1 snap-x snap-mandatory gap-1.5 overflow-x-auto px-0.5 pb-0.5 [scrollbar-width:none] md:mx-0 md:flex-wrap md:gap-2 md:overflow-visible md:pb-0 md:[scrollbar-width:auto] [&::-webkit-scrollbar]:hidden md:[&::-webkit-scrollbar]:auto"
-                  role="tablist"
-                  aria-label={activeView === VIEWS.MY_PURCHASES ? "Purchase status" : "Order status"}
-                >
-                  {ORDERS_STATUS_TABS.map(({ id, label }) => (
-                    <button
-                      key={id}
-                      type="button"
-                      role="tab"
-                      aria-selected={ordersStatusTab === id}
-                      className={`snap-start shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition md:px-3 md:py-1.5 md:text-sm ${ordersStatusTab === id ? UI_KIT.tabActive : UI_KIT.tabIdle}`}
-                      onClick={() => setOrdersStatusTab(id)}
-                    >
-                      <span className="inline-flex items-center gap-1.5">
-                        <span>{label}</span>
-                        {id === "pending" && pendingTabPillCount > 0 ? (
-                          <span className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[10px] font-bold leading-none text-white shadow-sm ring-1 ring-black/10 dark:bg-rose-500 dark:ring-white/15">
-                            {pendingTabPillCount > 99 ? "99+" : pendingTabPillCount}
-                          </span>
-                        ) : null}
-                        {(id === "processing" || id === "completed" || id === "cancelled") &&
-                        ordersTabBadgeIdsByTab[id]?.length > 0 ? (
-                          <span className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[10px] font-bold leading-none text-white shadow-sm ring-1 ring-black/10 dark:bg-rose-500 dark:ring-white/15">
-                            {ordersTabBadgeIdsByTab[id].length > 99 ? "99+" : ordersTabBadgeIdsByTab[id].length}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <div className="shrink-0 self-center md:self-start">
-                  <ProductViewDensityToggle
-                    value={activeView === VIEWS.MY_PURCHASES ? commerceFlowViewBuyer : commerceFlowViewSeller}
-                    onChange={setCommerceFlowOrdersView}
-                    allowCompact={!isMobileViewport}
-                    groupAriaLabel={
-                      activeView === VIEWS.MY_PURCHASES ? "Purchases line layout" : "Orders line layout"
-                    }
-                    gridTitle="Grid — two columns for readable order cards"
-                    compactTitle="Dense — three columns for a compact overview"
-                  />
-                </div>
-              </div>
-              {ordersStatusTab === "pending" ? (
-                <div className="flex w-full flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:justify-end md:gap-2">
-                  <span className="inline-flex w-full items-center justify-center rounded-lg border border-neutral-200/90 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-600 md:w-auto md:justify-start dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                    Selected: {selectedOrders.length}
-                  </span>
-                  <div className="flex flex-col gap-2 md:flex-row md:justify-end md:gap-2">
-                    {ordersRole === "seller" ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="min-h-11 w-full text-sm md:w-auto md:min-h-0 md:shrink-0"
-                        disabled={!ordersAcceptEnabled}
-                        loading={ordersBulkActionSubmitting}
-                        loadingLabel="Working…"
-                        onClick={() => {
-                          void applyTransitionToSelectedOrders("seller_accept", "Accepted");
-                        }}
-                      >
-                        Accept
-                      </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="danger"
-                      className="min-h-11 w-full text-sm md:w-auto md:min-h-0 md:shrink-0"
-                      disabled={!ordersDeclineEnabled}
-                      loading={ordersBulkActionSubmitting}
-                      loadingLabel="Working…"
-                      onClick={() => {
-                        if (ordersRole === "buyer") {
-                          setBuyerCancelConfirmOpen(true);
-                          return;
+            {orders.length > 0 ? (
+              <>
+                <div className="flex flex-col gap-2">
+                  <div className="flex w-full min-w-0 flex-row items-center gap-2 border-b border-neutral-200/70 pb-2 dark:border-slate-700/70 md:gap-2 md:border-0 md:pb-0">
+                    <div
+                      className="grid w-full min-w-0 flex-1 grid-cols-4 gap-0 overflow-hidden rounded-2xl border border-neutral-200/90 bg-neutral-100/95 p-0 shadow-[inset_0_1px_2px_rgba(15,23,42,0.05)] dark:border-slate-600 dark:bg-slate-900/85 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.35)]"
+                      role="tablist"
+                      aria-label={activeView === VIEWS.MY_PURCHASES ? "Purchase status" : "Order status"}
+                      onKeyDown={(e) => {
+                        const tabs = ORDERS_STATUS_TABS;
+                        const { key } = e;
+                        if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
+                        e.preventDefault();
+                        const idx = tabs.findIndex((t) => t.id === ordersStatusTab);
+                        let next = idx;
+                        if (key === "ArrowRight") next = Math.min(tabs.length - 1, idx + 1);
+                        else if (key === "ArrowLeft") next = Math.max(0, idx - 1);
+                        else if (key === "Home") next = 0;
+                        else if (key === "End") next = tabs.length - 1;
+                        if (next !== idx) {
+                          const nextId = tabs[next].id;
+                          setOrdersStatusTab(nextId);
+                          queueMicrotask(() => {
+                            document.getElementById(`commerce-flow-status-tab-${nextId}`)?.focus();
+                          });
                         }
-                        void applyTransitionToSelectedOrders(
-                          "cancel",
-                          ordersRole === "buyer" ? "Cancelled" : "Declined"
-                        );
                       }}
                     >
-                      {ordersRole === "buyer" ? "Cancel" : "Decline"}
-                    </Button>
+                      {ORDERS_STATUS_TABS.map(({ id, label }) => {
+                        const selected = ordersStatusTab === id;
+                        const tabBadgeCount =
+                          id === "pending"
+                            ? pendingTabBadgeDisplayCount
+                            : id === "processing"
+                              ? processingTabBadgeDisplayCount
+                              : id === "completed" || id === "cancelled"
+                                ? ordersTabBadgeIdsByTab[id]?.length ?? 0
+                                : 0;
+                        const showTabBadge = tabBadgeCount > 0;
+                        const unseenForStatusTab =
+                          id === "pending"
+                            ? ordersTabBadgeIdsByTab.pending?.length ?? 0
+                            : id === "processing"
+                              ? ordersTabBadgeIdsByTab.processing?.length ?? 0
+                              : id === "completed"
+                                ? ordersTabBadgeIdsByTab.completed?.length ?? 0
+                                : id === "cancelled"
+                                  ? ordersTabBadgeIdsByTab.cancelled?.length ?? 0
+                                  : 0;
+                        const badgeIsRose = unseenForStatusTab > 0;
+                        const badgeCountDisplay = tabBadgeCount > 99 ? "99+" : tabBadgeCount;
+                        return (
+                        <button
+                          key={id}
+                          id={`commerce-flow-status-tab-${id}`}
+                          type="button"
+                          role="tab"
+                          tabIndex={selected ? 0 : -1}
+                          aria-selected={selected}
+                          aria-controls="commerce-flow-status-panel"
+                          aria-label={
+                            showTabBadge
+                              ? `${label}, ${String(badgeCountDisplay).replace("+", " plus ")}`
+                              : label
+                          }
+                          className={`relative flex min-h-[44px] min-w-0 flex-col items-center justify-center rounded-none px-0.5 pb-1.5 text-center text-[10px] font-semibold leading-snug transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-100 dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-900 sm:px-1.5 sm:text-xs md:text-[13px] ${
+                            showTabBadge ? "pt-3.5" : "pt-1.5"
+                          } ${
+                            selected
+                              ? "bg-white text-primary shadow-sm ring-1 ring-inset ring-neutral-200/90 dark:bg-slate-950 dark:text-brand-accent dark:ring-slate-600/90"
+                              : "text-neutral-600 hover:bg-white/70 hover:text-neutral-900 dark:text-slate-400 dark:hover:bg-slate-800/90 dark:hover:text-slate-100"
+                          }`}
+                          onClick={() => setOrdersStatusTab(id)}
+                        >
+                          {showTabBadge ? (
+                            <span
+                              className={badgeIsRose ? ORDER_STATUS_TAB_BADGE_ROSE : ORDER_STATUS_TAB_BADGE_MUTED}
+                              aria-hidden
+                            >
+                              {badgeCountDisplay}
+                            </span>
+                          ) : null}
+                          <span className="line-clamp-2 min-w-0 max-w-full px-0.5">{label}</span>
+                        </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex shrink-0 justify-end self-center md:self-start">
+                      <ProductViewDensityToggle
+                        value={activeView === VIEWS.MY_PURCHASES ? commerceFlowViewBuyer : commerceFlowViewSeller}
+                        onChange={setCommerceFlowOrdersView}
+                        allowCompact={!isMobileViewport}
+                        groupAriaLabel={
+                          activeView === VIEWS.MY_PURCHASES ? "Purchases line layout" : "Orders line layout"
+                        }
+                        gridTitle="Grid — two columns for readable order cards"
+                        compactTitle="Dense — three columns for a compact overview"
+                      />
+                    </div>
                   </div>
                 </div>
-              ) : null}
-            </div>
-            {!ordersFetchError && ordersLoading && orders.length === 0 ? (
-              <ScreenLoading message="Loading orders…" />
-            ) : null}
-            {!ordersFetchError && !(ordersLoading && orders.length === 0) && orders.length === 0 ? (
-              <ScreenEmpty
-                title={activeView === VIEWS.MY_PURCHASES ? "No purchases yet" : "No orders yet"}
-                description={
-                  activeView === VIEWS.MY_PURCHASES
-                    ? "Orders you place with sellers show up here with status updates for pickup or delivery."
-                    : "When buyers order your listings, you’ll accept or decline here and track each stage."
-                }
-                primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
-                secondaryAction={
-                  activeView === VIEWS.MY_PURCHASES
-                    ? { label: "View cart", onClick: goCart }
-                    : { label: "Upload", onClick: openUploadAtTop }
-                }
-              />
-            ) : null}
-            {!ordersFetchError && !(ordersLoading && orders.length === 0) && orders.length > 0 && ordersForStatusTab.length === 0 ? (
+                <div
+                  id="commerce-flow-status-panel"
+                  role="tabpanel"
+                  aria-labelledby={`commerce-flow-status-tab-${ordersStatusTab}`}
+                  className="flex flex-col gap-3"
+                >
+                  {ordersStatusTab === "pending" && ordersForStatusTab.length > 0 && selectedOrders.length > 0 ? (
+                    <div className="flex w-full min-w-0 items-stretch overflow-hidden rounded-xl border border-neutral-200/90 bg-white shadow-sm dark:border-slate-600 dark:bg-slate-900/85 dark:shadow-none">
+                      <div className="flex min-w-0 flex-1 items-center px-3 py-2.5 sm:px-4">
+                        <span
+                          className="min-w-0 truncate text-xs font-medium leading-snug text-neutral-700 dark:text-slate-200"
+                          title={
+                            selectedOrders.length === 1
+                              ? "1 order selected"
+                              : `${selectedOrders.length} orders selected`
+                          }
+                          aria-live="polite"
+                          aria-atomic="true"
+                        >
+                          {selectedOrders.length === 1
+                            ? "1 order selected"
+                            : `${selectedOrders.length} orders selected`}
+                        </span>
+                      </div>
+                      <div className="flex min-w-0 shrink-0 divide-x divide-neutral-200/90 border-l border-neutral-200/90 dark:divide-slate-600 dark:border-slate-600 [&_button]:!rounded-none [&_button]:!shadow-none [&_button]:min-h-11 [&_button]:shrink-0 [&_button]:border-0 [&_button]:gap-1.5 [&_button]:px-3 [&_button]:text-sm sm:[&_button]:min-h-10 sm:[&_button]:gap-2 sm:[&_button]:px-4">
+                        {ordersRole === "seller" ? (
+                          <Button
+                            type="button"
+                            variant="primary"
+                            disabled={!ordersAcceptEnabled}
+                            loading={ordersBulkActionLoadingTransition === "seller_accept"}
+                            loadingLabel="Working…"
+                            onClick={() => {
+                              void applyTransitionToSelectedOrders("seller_accept", "Accepted");
+                            }}
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className="h-4 w-4 shrink-0 opacity-95"
+                              aria-hidden
+                            >
+                              <path d="M20 6L9 17l-5-5" />
+                            </svg>
+                            Accept selected
+                          </Button>
+                        ) : null}
+                        <Button
+                          type="button"
+                          variant="danger"
+                          disabled={!ordersDeclineEnabled}
+                          loading={ordersBulkActionLoadingTransition === "cancel"}
+                          loadingLabel="Working…"
+                          onClick={() => {
+                            if (ordersRole === "buyer") {
+                              setBuyerCancelConfirmOpen(true);
+                              return;
+                            }
+                            void applyTransitionToSelectedOrders(
+                              "cancel",
+                              ordersRole === "buyer" ? "Cancelled" : "Declined"
+                            );
+                          }}
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="h-4 w-4 shrink-0 opacity-95"
+                            aria-hidden
+                          >
+                            <path d="M18 6L6 18M6 6l12 12" />
+                          </svg>
+                          {ordersRole === "buyer" ? "Cancel orders" : "Decline selected"}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {!ordersFetchError && !(ordersLoading && orders.length === 0) && orders.length > 0 && ordersForStatusTab.length === 0 ? (
               <ScreenEmpty
                 spacious={false}
                 className="!py-8"
@@ -10504,8 +10890,8 @@ function App() {
                 }
                 description={
                   activeView === VIEWS.MY_PURCHASES
-                    ? "Pick another status tab above — your orders move as sellers accept and you complete pickup or delivery."
-                    : "Pick another tab — new orders start in Pending, then move when you accept or complete them."
+                    ? "Pick another status tab above - your orders move as sellers accept and you complete pickup or delivery."
+                    : "Pick another tab - new orders start in Pending, then move when you accept or complete them."
                 }
                 primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
                 secondaryAction={
@@ -10531,7 +10917,7 @@ function App() {
                 >
                   Processing
                 </button>{" "}
-                (for example after you accept an order).
+              
               </p>
             ) : null}
             {!ordersFetchError && ordersForStatusTab.length > 0 ? (
@@ -10621,8 +11007,7 @@ function App() {
                                 description: "",
                                 sellerId: o.sellerId,
                               };
-                          // Always merge same product rows by listing id in buyer purchases.
-                          const mergeKey = String(o.listingId || "");
+                          const mergeKey = buyerPendingOrderMergeKey(o);
                           const existing = acc.find((entry) => entry.mergeKey === mergeKey);
                           if (!existing) {
                             const maxAvailableQty = Number.isFinite(Number(listing?.quantity))
@@ -10643,6 +11028,10 @@ function App() {
                             return acc;
                           }
                           existing.orderIds.push(String(o.id || ""));
+                          existing.representativeOrder = betterRepresentativeOrderForVariants(
+                            existing.representativeOrder,
+                            o,
+                          );
                           existing.rawTotalQty += orderedQty;
                           existing.maxAvailableQty = Number.isFinite(Number(listing?.quantity))
                             ? Math.max(1, Number(listing.quantity))
@@ -10683,8 +11072,8 @@ function App() {
                   const sellerAllSelected = sellerOrderIds.length > 0 && sellerSelectedCount === sellerOrderIds.length;
                   const sellerSomeSelected = sellerSelectedCount > 0 && !sellerAllSelected;
                   return (
-                    <div key={groupPartyId} className={`${UI_KIT.surfaceCard} p-3 md:p-3.5`}>
-                      <div className="mb-1.5 flex items-center gap-2 border-b border-neutral-200/80 pb-1.5 md:mb-2 md:pb-2 dark:border-slate-700/80">
+                    <div key={groupPartyId} className="flex flex-col gap-3">
+                      <div className="flex items-center gap-2">
                         {ordersStatusTab === "pending" ? (
                           <CartSellerSelectAllCheckbox
                             allChecked={sellerAllSelected}
@@ -10700,7 +11089,9 @@ function App() {
                       <div
                         className={`${commerceFlowLineItemsClass(commerceFlowOrdersView, {
                           variant: "orders",
-                        })} ${lmBrowseViewShellClass(commerceFlowOrdersView === "list" ? "list" : "grid")}`}
+                        })} ${lmBrowseViewShellClass(commerceFlowOrdersView === "list" ? "list" : "grid")} ${
+                          commerceFlowOrdersView === "list" ? "" : "grid-cols-2"
+                        }`}
                       >
                         {mergedSellerOrders.map((entry) => {
                           const o = entry.representativeOrder;
@@ -10708,15 +11099,21 @@ function App() {
                           const cfList = commerceFlowOrdersView === "list";
                           const cfCompact = commerceFlowOrdersView === "compact";
                           const multicolOrderCard = !cfList;
-                          const orderThumbClass = cfList
-                            ? "h-20 w-20"
-                            : cfCompact
-                              ? "h-12 w-12 md:h-14 md:w-14"
-                              : "h-16 w-16 md:h-[4.5rem] md:w-[4.5rem]";
-                          const orderCommentPlain = String(o.comment || "").trim();
-                          const orderHasComment = orderCommentPlain.length > 0 && !/^n\/a$/i.test(orderCommentPlain);
-                          const orderDescPlain = String(removeSaleMetaLines(cardListing.description) || "").trim();
-                          const orderHasDesc = orderDescPlain.length > 0;
+                          /** Match cart line items + community feed card (`LazyCommunityShopListingCard` mobile grid). */
+                          const orderThumbList =
+                            "aspect-[4/3] w-[6.5rem] min-[400px]:aspect-square min-[400px]:h-[7.5rem] min-[400px]:w-[7.5rem] min-[400px]:max-h-[7.5rem] min-[400px]:max-w-[7.5rem] min-[400px]:shrink-0";
+                          const orderThumbGrid = "lm-product-card-media aspect-square w-full min-h-0";
+                          const mergedVariantSig = pickMergedOrderVariantSignature(entry, orders);
+                          const buyerCommentRaw = pickMergedOrderCommentForVariantChips(entry, orders);
+                          const orderCommentRow = buyerCommentDisplayForOrderCard(buyerCommentRaw, mergedVariantSig);
+                          const orderVariantPick = narrowListingOptionValuesForBuyerSelection({
+                            comment: buyerCommentRaw,
+                            variantSignature: mergedVariantSig,
+                            optionNameA: cardListing.optionNameA,
+                            optionValuesA: cardListing.optionValuesA,
+                            optionNameB: cardListing.optionNameB,
+                            optionValuesB: cardListing.optionValuesB,
+                          });
                           const orderId = String(o.id || "");
                           const pickupBuyerAckOrderIds = entry.orderIds.filter((id) => {
                             const ord = orders.find((x) => String(x.id) === id);
@@ -10754,45 +11151,131 @@ function App() {
                             ordersStatusTab === "completed" && String(o.status || "") === "completed";
                           const completedDetailsKey = String(o.id || "");
                           const completedDetailsOpen = Boolean(completedTabOrderDetailsOpen[completedDetailsKey]);
-                          const orderRowSurfaceBase = shouldHighlightRecent
-                            ? "rounded-xl border border-primary/45 bg-primary-soft p-2 shadow-sm ring-1 ring-primary/25 md:p-2.5 dark:border-primary/55 dark:bg-primary/20 dark:ring-primary/25"
-                            : "rounded-xl border border-border bg-surface p-2 shadow-sm md:p-2.5 dark:border-slate-700/70 dark:bg-slate-900/50";
-                          const orderRowListShell = orderRowSurfaceBase;
-                          const orderRowGridShell = `h-full min-h-0 min-w-0 flex-1 ${orderRowSurfaceBase}`;
+                          const orderCardHighlight = shouldHighlightRecent ? "bg-primary-soft dark:bg-primary/15" : "";
+                          const orderListingForProductOpen =
+                            orderListingsById[String(o.listingId)] ||
+                            (cardListing?.id ? cardListing : null);
+                          const openOrderCardProduct = () => {
+                            openListingFromPurchasedOrder(orderListingForProductOpen);
+                          };
+                          const openOrderProductInspect = () => {
+                            const L = orderListingForProductOpen;
+                            if (!L?.id) {
+                              pushMarketplaceToast("Listing details are not available.");
+                              return;
+                            }
+                            const listingForInspect = {
+                              ...L,
+                              id: String(L.id),
+                              priceCents: Number(L.priceCents) || 0,
+                            };
+                            const stockAvail =
+                              L.quantity != null && Number(L.quantity) >= 0
+                                ? Math.max(0, Number(L.quantity))
+                                : 0;
+                            const isBuyer = ordersRole === "buyer";
+                            openProductInspect(listingForInspect, {
+                              quantity: Math.max(1, Number(cardListing.quantity) || Number(o.quantity) || 1),
+                              comment: buyerCommentRaw,
+                              commentSectionRequired: false,
+                              commentHeading: isBuyer ? "Your note to the seller" : "Buyer note",
+                              subtitle: activeView === VIEWS.MY_PURCHASES ? "Purchase" : "Order",
+                              listingStockQty: stockAvail,
+                              showBuyerCommerceActions: isBuyer,
+                              ...(isBuyer
+                                ? {
+                                    onAddToCart: () => openQuickAddModal(listingForInspect, "cart"),
+                                    onBuyNow: () => openQuickAddModal(listingForInspect, "buy"),
+                                  }
+                                : {}),
+                            });
+                          };
+                          const orderCardBody = (
+                            <>
+                              {shouldHighlightRecent ? (
+                                <span className="mb-1 inline-flex w-fit max-w-full shrink-0 self-start items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
+                                  Recently updated
+                                </span>
+                              ) : null}
+                              <DeferredProductDetailStack
+                                variant="card"
+                                browseStackMode={cfList ? "listMobile" : null}
+                                compactListMeta={cfList}
+                                title={cardListing.title || "Product"}
+                                priceCents={cardListing.priceCents}
+                                description={cardListing.description}
+                                hideDescription
+                                hideAvailability
+                                fulfillmentModes={cardListing.fulfillmentModes}
+                                orderType={cardListing.orderType}
+                                processingTime={cardListing.processingTime}
+                                optionNameA={cardListing.optionNameA}
+                                optionValuesA={orderVariantPick.optionValuesA}
+                                optionNameB={cardListing.optionNameB}
+                                optionValuesB={orderVariantPick.optionValuesB}
+                                listingMetaDensity="compact"
+                              />
+                              <p className="mt-1 text-pretty text-[11px] leading-snug text-neutral-600 md:text-xs dark:text-slate-400">
+                                <span className="font-medium text-neutral-700 dark:text-slate-300">Qty</span>{" "}
+                                <span className="font-semibold tabular-nums">{Number(cardListing.quantity) || 1}</span>
+                                <span className="text-neutral-400 dark:text-slate-600"> · </span>
+                                {listingCodAvailabilityLabel(cardListing.fulfillmentModes)}
+                              </p>
+                              <div
+                                className={`mt-1 space-y-0.5 leading-snug text-neutral-600 dark:text-slate-400 ${
+                                  cfCompact ? "text-[10px] md:text-[11px]" : "text-[11px] md:text-xs md:leading-normal"
+                                }`}
+                              >
+                                {orderCommentRow.show ? (
+                                  <p className="line-clamp-2 text-pretty">
+                                    {orderCommentRow.label}: {orderCommentRow.text}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </>
+                          );
                           return (
                             <div
                               key={`${groupPartyId}:${entry.mergeKey}`}
-                              className={cfList ? orderRowListShell : orderRowGridShell}
+                              className={`transition duration-200 ease-in-out ${
+                                cfList
+                                  ? `relative lm-card lm-list-card lm-product-card-list flex flex-col gap-3 p-3 md:gap-3.5 ${orderCardHighlight}`
+                                  : `relative lm-card lm-grid-card lm-product-card lm-product-card--feed h-full min-h-0 flex-1 flex flex-col overflow-hidden p-0 ${orderCardHighlight}`
+                              }`}
                             >
-                              <div
-                                className={`flex flex-col md:flex-row md:items-start ${
-                                  cfCompact ? "gap-2 md:gap-3" : "gap-3 md:gap-3"
-                                }`}
-                              >
-                                <div className="flex shrink-0 flex-row items-start gap-3">
-                                  {ordersStatusTab === "pending" ? (
-                                    <input
-                                      type="checkbox"
-                                      className={`h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500 ${
-                                        cfList ? "mt-1" : "mt-0.5 md:mt-1"
-                                      }`}
-                                      checked={rowAllSelected}
-                                      onChange={() => {
-                                        const nextChecked = !rowAllSelected;
-                                        setOrderSelection((prev) => {
-                                          const next = { ...prev };
-                                          for (const id of entry.orderIds) {
-                                            if (!id) continue;
-                                            if (nextChecked) next[id] = true;
-                                            else delete next[id];
-                                          }
-                                          return next;
-                                        });
-                                      }}
-                                      aria-label={`Select order ${orderId}${entry.orderIds.length > 1 ? " group" : ""}`}
-                                    />
-                                  ) : null}
-                                  <div className={`relative ${orderThumbClass} shrink-0`}>
+                              {ordersStatusTab === "pending" ? (
+                                <input
+                                  type="checkbox"
+                                  className={`h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500 ${
+                                    cfList
+                                      ? "absolute left-4 top-4 z-10 bg-white/90 dark:bg-slate-900/90"
+                                      : "absolute left-2 top-2 z-10 bg-white/90 dark:bg-slate-900/90"
+                                  }`}
+                                  checked={rowAllSelected}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={() => {
+                                    const nextChecked = !rowAllSelected;
+                                    setOrderSelection((prev) => {
+                                      const next = { ...prev };
+                                      for (const id of entry.orderIds) {
+                                        if (!id) continue;
+                                        if (nextChecked) next[id] = true;
+                                        else delete next[id];
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                  aria-label={`Select order ${orderId}${entry.orderIds.length > 1 ? " group" : ""}`}
+                                />
+                              ) : null}
+                              {cfList ? (
+                                <div className="flex w-full min-w-0 items-start gap-3">
+                                  <button
+                                    type="button"
+                                    className={`lm-product-media lm-product-media--soft relative ${orderThumbList} shrink-0 cursor-pointer overflow-hidden rounded-md outline-none transition hover:opacity-95 focus-visible:ring-2 focus-visible:ring-brand-primary/45 dark:focus-visible:ring-brand-accent/45`}
+                                    onClick={openOrderProductInspect}
+                                    aria-label={`View full product details: ${String(cardListing.title || "Product").trim()}`}
+                                  >
                                     <ProductListingMedia
                                       listing={cardListing}
                                       variant="list"
@@ -10800,55 +11283,48 @@ function App() {
                                       loading="lazy"
                                       sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
                                     />
-                                  </div>
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  {shouldHighlightRecent ? (
-                                    <span className="mb-1 inline-flex items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
-                                      Recently updated
-                                    </span>
-                                  ) : null}
-                                  <DeferredProductDetailStack
-                                    title={cardListing.title || "Product"}
-                                    priceCents={cardListing.priceCents}
-                                    description={cardListing.description}
-                                    hideDescription
-                                    hideAvailability
-                                    fulfillmentModes={cardListing.fulfillmentModes}
-                                    orderType={cardListing.orderType}
-                                    processingTime={cardListing.processingTime}
-                                    optionNameA={cardListing.optionNameA}
-                                    optionValuesA={cardListing.optionValuesA}
-                                    optionNameB={cardListing.optionNameB}
-                                    optionValuesB={cardListing.optionValuesB}
-                                    listingMetaDensity="compact"
-                                  />
-                                  <p className="mt-1 text-pretty text-[11px] leading-snug text-neutral-600 md:text-xs dark:text-slate-400">
-                                    <span className="font-medium text-neutral-700 dark:text-slate-300">Qty</span>{" "}
-                                    <span className="font-semibold tabular-nums">{Number(cardListing.quantity) || 1}</span>
-                                    <span className="text-neutral-400 dark:text-slate-600"> · </span>
-                                    {listingCodAvailabilityLabel(cardListing.fulfillmentModes)}
-                                  </p>
-                                  <div
-                                    className={`mt-1 space-y-0.5 leading-snug text-neutral-600 dark:text-slate-400 ${
-                                      cfCompact ? "text-[10px] md:text-[11px]" : "text-[11px] md:text-xs md:leading-normal"
-                                    }`}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="flex w-full min-w-0 cursor-pointer flex-col gap-1 rounded-lg text-left outline-none transition hover:bg-neutral-50/90 focus-visible:ring-2 focus-visible:ring-brand-primary/45 min-[400px]:min-w-0 min-[400px]:flex-1 dark:hover:bg-slate-800/50 dark:focus-visible:ring-brand-accent/45"
+                                    onClick={openOrderCardProduct}
+                                    aria-label={`Buy flow: ${String(cardListing.title || "Product").trim()}`}
                                   >
-                                    {orderHasDesc ? (
-                                      <p className="line-clamp-2 text-pretty">Description: {orderDescPlain}</p>
-                                    ) : null}
-                                    {orderHasComment ? (
-                                      <p className="line-clamp-2 text-pretty">Comment: {orderCommentPlain}</p>
-                                    ) : null}
-                                  </div>
+                                    {orderCardBody}
+                                  </button>
                                 </div>
-                              </div>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    className={`${orderThumbGrid} lm-product-card--tap relative block w-full cursor-pointer overflow-hidden rounded-none border-0 bg-transparent p-0 outline-none`}
+                                    onClick={openOrderProductInspect}
+                                    aria-label={`View full product details: ${String(cardListing.title || "Product").trim()}`}
+                                  >
+                                    <ProductListingMedia
+                                      listing={cardListing}
+                                      variant="grid"
+                                      className="absolute inset-0 min-h-0"
+                                      loading="lazy"
+                                      sizes="(max-width: 768px) 45vw, min(240px, 22vw)"
+                                    />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="lm-product-card-body flex w-full cursor-pointer flex-col border-0 bg-transparent p-0 text-left outline-none transition hover:bg-neutral-50/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/45 dark:hover:bg-slate-800/40 dark:focus-visible:ring-brand-accent/45"
+                                    onClick={openOrderCardProduct}
+                                    aria-label={`Buy flow: ${String(cardListing.title || "Product").trim()}`}
+                                  >
+                                    {orderCardBody}
+                                  </button>
+                                </>
+                              )}
                               <div
                                 className={`border-t border-neutral-200/80 text-sm dark:border-slate-700/80 ${
                                   multicolOrderCard
                                     ? "mt-1.5 space-y-1 pt-1.5 md:mt-2 md:space-y-1.5 md:pt-2"
                                     : "mt-2 space-y-1.5 pt-1.5 md:mt-3 md:space-y-2 md:pt-2"
-                                }`}
+                                } ${cfList ? "" : "px-2 pb-2 min-[400px]:px-2.5 min-[400px]:pb-2.5"}`}
                               >
                                 {!completedHistoryRow ? (
                                   <>
@@ -11061,93 +11537,6 @@ function App() {
                                       multicolOrderCard ? "gap-1.5" : "gap-2"
                                     }`}
                                   >
-                                  <button
-                                    type="button"
-                                    className={`btn-secondary w-full touch-manipulation whitespace-nowrap md:w-auto md:min-h-0 ${
-                                      multicolOrderCard
-                                        ? "min-h-9 shrink-0 px-2.5 py-1.5 text-[11px] md:min-h-0"
-                                        : "min-h-10 shrink-0 px-3 text-xs md:min-h-0"
-                                    }`}
-                                    onClick={() => {
-                                      const L = orderListingsById[String(o.listingId)];
-                                      const base =
-                                        L ||
-                                        ({
-                                          id: o.listingId,
-                                          title: cardListing.title,
-                                          imageUrl: cardListing.imageUrl,
-                                          priceCents: cardListing.priceCents,
-                                          description: cardListing.description,
-                                          fulfillmentModes: cardListing.fulfillmentModes,
-                                          quantity: cardListing.quantity,
-                                          sellerId: o.sellerId,
-                                          communityId: cardListing.communityId,
-                                        });
-                                      const listingIdStr = String(base.id || o.listingId || "");
-                                      const forQuick = {
-                                        ...base,
-                                        id: listingIdStr,
-                                        priceCents: base.priceCents,
-                                        quantity: base.quantity,
-                                        fulfillmentModes:
-                                          Array.isArray(base.fulfillmentModes) && base.fulfillmentModes.length
-                                            ? base.fulfillmentModes
-                                            : [o.fulfillmentType],
-                                        sellerId: base.sellerId ?? o.sellerId,
-                                        communityId: base.communityId,
-                                        imageUrl: base.imageUrl,
-                                        title: base.title,
-                                        description: base.description,
-                                      };
-                                      const stockQty = Math.max(0, Number(base.quantity) || 0);
-                                      const isBuyer = ordersRole === "buyer";
-                                      const isOrderSeller =
-                                        ordersRole === "seller" && String(o.sellerId || "") === String(user?.id || "");
-                                      const buyerCanShop = isBuyer && String(o.sellerId || "") !== String(user?.id || "");
-
-                                      openProductInspect(forQuick, {
-                                        quantity: Number(cardListing.quantity) || 1,
-                                        comment: orderCommentPlain,
-                                        commentSectionRequired: true,
-                                        commentHeading:
-                                          ordersRole === "seller" ? "Buyer's note" : "Your order note",
-                                        subtitle:
-                                          ordersRole === "buyer"
-                                            ? `Your purchase · ${o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"}`
-                                            : `Buyer order · ${o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"}`,
-                                        listingStockQty: stockQty,
-                                        showBuyerCommerceActions: buyerCanShop && Boolean(listingIdStr),
-                                        showSellerCommerceActions: isOrderSeller && Boolean(listingIdStr),
-                                        onAddToCart:
-                                          buyerCanShop && listingIdStr
-                                            ? () => {
-                                                openQuickAddModal(forQuick, "cart");
-                                              }
-                                            : undefined,
-                                        onBuyNow:
-                                          buyerCanShop && listingIdStr
-                                            ? () => {
-                                                openQuickAddModal(forQuick, "buy");
-                                              }
-                                            : undefined,
-                                        onEditListing:
-                                          isOrderSeller && listingIdStr
-                                            ? () => {
-                                                beginEditSellerListing(forQuick);
-                                              }
-                                            : undefined,
-                                        onSaleSelect:
-                                          isOrderSeller && listingIdStr
-                                            ? (pct) => {
-                                                closeProductInspect();
-                                                void applySellerListingDiscount(forQuick, pct);
-                                              }
-                                            : undefined,
-                                      });
-                                    }}
-                                  >
-                                    View details
-                                  </button>
                                   {ordersRole === "buyer" &&
                                   String(o.status || "") === "ready_for_pickup" &&
                                   o.fulfillmentType === "pickup" &&
@@ -11206,15 +11595,6 @@ function App() {
                                       Mark delivered
                                     </button>
                                   ) : null}
-                                  {o.status === "bidding_open" ? (
-                                    <button
-                                      type="button"
-                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
-                                      onClick={() => loadBidsForOrder(o.id)}
-                                    >
-                                      {expandedBidOrderId === o.id ? "Reload bids" : "View bids"}
-                                    </button>
-                                  ) : null}
                                   </div>
                                   {ordersRole === "seller" && o.status === "ready_for_pickup" && pickupBuyerAcknowledgedAny ? (
                                     <div className="max-w-xl space-y-1 text-[11px] leading-snug text-neutral-500 dark:text-slate-400">
@@ -11232,30 +11612,6 @@ function App() {
                                     </div>
                                   ) : null}
                                 </div>
-                                {expandedBidOrderId === o.id && o.status === "bidding_open" ? (
-                                  <ul className="mt-2 space-y-2 rounded-lg border border-neutral-200/80 bg-neutral-50/80 p-3 dark:border-slate-600 dark:bg-slate-900/50">
-                                    {bidsForOrder.length === 0 ? <li className="text-xs text-neutral-500">No bids yet.</li> : null}
-                                    {bidsForOrder.map((b) => (
-                                      <li
-                                        key={b.id}
-                                        className="flex flex-col gap-2 text-xs md:flex-row md:items-center md:justify-between"
-                                      >
-                                        <span className="min-w-0 break-words text-neutral-700 dark:text-slate-300">
-                                          {formatCents(b.amountCents)} · {b.mode} · {b.status}
-                                        </span>
-                                        {b.status === "pending" && (o.buyerId === user?.id || o.sellerId === user?.id) ? (
-                                          <button
-                                            type="button"
-                                            className="min-h-10 shrink-0 touch-manipulation self-start text-brand-primary hover:underline md:self-auto"
-                                            onClick={() => acceptOrderBid(o.id, b.id)}
-                                          >
-                                            Accept bid
-                                          </button>
-                                        ) : null}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : null}
                               </div>
                             </div>
                           );
@@ -11264,7 +11620,29 @@ function App() {
                     </div>
                   );
                 })}
-              </div>
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
+            {!ordersFetchError && ordersLoading && orders.length === 0 ? (
+              <ScreenLoading message="Loading orders…" />
+            ) : null}
+            {!ordersFetchError && !(ordersLoading && orders.length === 0) && orders.length === 0 ? (
+              <ScreenEmpty
+                title={activeView === VIEWS.MY_PURCHASES ? "No purchases yet" : "No orders yet"}
+                description={
+                  activeView === VIEWS.MY_PURCHASES
+                    ? "Orders you place with sellers show up here with status updates for pickup or delivery."
+                    : "When buyers order your listings, you’ll accept or decline here and track each stage."
+                }
+                primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
+                secondaryAction={
+                  activeView === VIEWS.MY_PURCHASES
+                    ? { label: "View cart", onClick: goCart }
+                    : { label: "Upload", onClick: openUploadAtTop }
+                }
+              />
             ) : null}
           </section>
         )}
@@ -12820,7 +13198,7 @@ function App() {
 
       {quickAddImagePreviewOpen && quickAddListing && String(quickAddListing.imageUrl || "").trim() ? (
         <div
-          className="fixed inset-0 z-[96] flex items-center justify-center p-3 md:p-6"
+          className="fixed inset-0 z-[130] flex items-center justify-center p-3 md:p-6"
           role="dialog"
           aria-modal="true"
           aria-label="Product image preview"
@@ -12876,16 +13254,27 @@ function App() {
       ) : null}
 
       {quickAddModalOpen && quickAddListing ? (
-        <div className="fixed inset-0 z-[90] h-[100dvh] overflow-y-auto bg-white dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="quick-add-modal-title">
+        <div
+          className="fixed inset-0 z-[90] flex items-end justify-center p-0 md:items-center md:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="quick-add-modal-title"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-neutral-900/50 backdrop-blur-[2px] dark:bg-black/55"
+            aria-label="Close add to cart"
+            onClick={closeQuickAddModal}
+          />
           <div
-            className="relative z-10 min-h-full w-full bg-white px-4 pt-0 pb-[calc(6.75rem+env(safe-area-inset-bottom,0px))] dark:bg-slate-900 md:px-4 md:pb-[max(1rem,env(safe-area-inset-bottom))]"
+            className={`relative z-10 flex max-h-[min(88dvh,42rem)] w-full max-w-lg min-h-0 flex-col overflow-hidden rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-[#1f3c56] dark:bg-[#0f2234] md:max-h-[min(90dvh,44rem)] md:rounded-2xl md:shadow-[0_20px_60px_rgba(15,23,42,0.22)] ${UI_KIT.surfaceFloating}`}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="sticky top-0 z-[40] -mx-4 mb-0 flex items-center gap-2.5 border-b border-neutral-200 bg-white px-4 py-2.5 shadow-sm dark:border-slate-700 dark:bg-slate-950">
+            <div className="flex min-w-0 shrink-0 items-start justify-between gap-2.5 border-b border-neutral-200/80 px-3 pb-2 pt-2.5 min-[390px]:gap-3 min-[390px]:px-4 min-[390px]:pb-2.5 min-[390px]:pt-3 min-[430px]:px-5 dark:border-[#1f3c56]/85 md:px-5 md:pb-3 md:pt-4">
               <button
                 type="button"
                 className="inline-flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-50 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
-                aria-label="Back"
+                aria-label="Close"
                 onClick={closeQuickAddModal}
               >
                 <svg
@@ -12903,210 +13292,231 @@ function App() {
                   <path d="M11 6l-6 6 6 6" />
                 </svg>
               </button>
-              <div className="min-w-0 flex-1">
-                <h2 id="quick-add-modal-title" className="text-sm font-semibold text-neutral-900 dark:text-slate-100">
+              <div className="min-w-0 flex-1 text-center md:text-left">
+                <h2
+                  id="quick-add-modal-title"
+                  className="break-words text-sm font-semibold leading-snug text-neutral-900 dark:text-slate-100 min-[390px]:text-base"
+                >
                   {quickActionType === "buy" ? "Place order" : "Add to cart"}
                 </h2>
               </div>
+              <span className="inline-flex h-11 w-11 shrink-0 md:h-9 md:w-9" aria-hidden />
             </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-3">
-              <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/60">
-                <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-start">
-                  <div className="relative mx-auto h-36 w-full max-w-[20rem] shrink-0 md:mx-0 md:h-32 md:w-32 md:max-w-none">
-                    {resolveListingCoverImageUrl(quickAddListing) ? (
-                      <button
-                        type="button"
-                        className="absolute inset-0 cursor-zoom-in"
-                        aria-label="View larger product image"
-                        onClick={() => setQuickAddImagePreviewOpen(true)}
-                      >
+
+            <div className="drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-2.5 min-[390px]:px-4 min-[390px]:py-3 min-[430px]:px-5 md:px-5 md:py-4">
+              <div className="mx-auto min-w-0 max-w-2xl space-y-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:gap-4 lg:gap-6">
+                  <div className="mx-auto flex w-full shrink-0 flex-col md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]">
+                    <div className="relative mx-auto aspect-square w-full max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]">
+                      {resolveListingCoverImageUrl(quickAddListing) ? (
+                        <button
+                          type="button"
+                          className="absolute inset-0 z-0 cursor-zoom-in touch-pan-y"
+                          aria-label="View larger product image"
+                          onClick={() => setQuickAddImagePreviewOpen(true)}
+                          style={{ touchAction: "pan-x pan-y" }}
+                        >
+                          <ProductListingMedia
+                            listing={quickAddListing}
+                            variant="grid"
+                            fillFrame
+                            className="pointer-events-none absolute inset-0 min-h-0"
+                            imageClassName="transition duration-200 hover:scale-[1.02]"
+                            sizes="(max-width: 768px) min(100vw, 64rem), 12rem"
+                            loading="eager"
+                          />
+                        </button>
+                      ) : (
                         <ProductListingMedia
                           listing={quickAddListing}
                           variant="grid"
                           fillFrame
                           className="absolute inset-0 min-h-0"
-                          imageClassName="transition duration-200 hover:scale-[1.02]"
-                          sizes="(max-width: 768px) 100vw, 8rem"
+                          sizes="(max-width: 768px) min(100vw, 64rem), 12rem"
                           loading="eager"
                         />
-                      </button>
-                    ) : (
-                      <ProductListingMedia
-                        listing={quickAddListing}
-                        variant="grid"
-                        fillFrame
-                        className="absolute inset-0 min-h-0"
-                        sizes="(max-width: 768px) 100vw, 8rem"
-                        loading="eager"
-                      />
-                    )}
+                      )}
+                    </div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                  <DeferredProductDetailStack
-                    title={quickAddListing.title || "Product"}
-                    priceCents={quickAddListing.priceCents}
-                    description={quickAddListing.description}
-                    fulfillmentModes={quickAddListing.fulfillmentModes}
-                    orderType={quickAddListing.orderType}
-                    processingTime={quickAddListing.processingTime}
-                    optionNameA={quickAddListing.optionNameA}
-                    optionValuesA={quickAddListing.optionValuesA}
-                    optionNameB={quickAddListing.optionNameB}
-                    optionValuesB={quickAddListing.optionValuesB}
-                    listingMetaDensity="compact"
-                    frameDescriptionAsSellerNote
-                    quantityAfterDescription
-                    quantityRow={
-                      <div className="flex min-w-0 flex-wrap items-center gap-2 md:gap-3">
-                        <span className="text-xs font-medium text-neutral-600 dark:text-slate-400">Qty</span>
-                        <div className="inline-flex items-center gap-1 md:gap-1.5">
-                          <button
-                            type="button"
-                            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-10 md:w-10"
-                            aria-label="Decrease quantity"
-                            disabled={Number(quickAddQuantity) <= 1 || quickAddSubmitting}
-                            onClick={() =>
-                              setQuickAddQuantity((prev) => {
-                                const current = Number(prev);
-                                const safeCurrent = Number.isFinite(current) && current > 0 ? current : 1;
-                                return String(Math.max(1, safeCurrent - 1));
-                              })
-                            }
-                          >
-                            −
-                          </button>
-                          <input
-                            id="quick-add-qty"
-                            type="number"
-                            min={1}
-                            max={Math.max(1, Number(quickAddListing.quantity) || 1)}
-                            className="input-base h-11 w-16 px-1 text-center text-sm tabular-nums md:h-10 md:w-14"
-                            value={quickAddQuantity}
-                            disabled={quickAddSubmitting}
-                            onChange={(e) => {
-                              const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
-                              const digitsOnly = String(e.target.value || "").replace(/\D/g, "");
-                              if (!digitsOnly) {
-                                setQuickAddQuantity("1");
-                                return;
-                              }
-                              const next = Math.min(maxQty, Math.max(1, Number(digitsOnly)));
-                              setQuickAddQuantity(String(next));
-                            }}
-                            onBlur={() => {
-                              const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
-                              const parsed = Number(quickAddQuantity);
-                              if (!Number.isFinite(parsed) || parsed < 1) {
-                                setQuickAddQuantity("1");
-                                return;
-                              }
-                              if (parsed > maxQty) {
-                                setQuickAddQuantity(String(maxQty));
-                              }
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-10 md:w-10"
-                            aria-label="Increase quantity"
-                            disabled={
-                              Number(quickAddQuantity) >= Math.max(1, Number(quickAddListing.quantity) || 1) || quickAddSubmitting
-                            }
-                            onClick={() =>
-                              setQuickAddQuantity((prev) => {
-                                const current = Number(prev);
-                                const safeCurrent = Number.isFinite(current) && current > 0 ? current : 1;
-                                const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
-                                return String(Math.min(maxQty, safeCurrent + 1));
-                              })
-                            }
-                          >
-                            +
-                          </button>
-                        </div>
-                        <span className="text-[11px] text-neutral-500 dark:text-slate-500">
-                          In stock: {Math.max(1, Number(quickAddListing.quantity) || 1)}
-                        </span>
-                      </div>
-                    }
-                  />
-                  </div>
-                </div>
-                <div className="mt-3 border-t border-neutral-200/60 pt-3 dark:border-slate-600/60">
-                  <button
-                    type="button"
-                    className="w-full text-left text-xs font-semibold text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:text-brand-primary/90 dark:text-brand-accent"
-                    onClick={() => {
-                      const q = Number(quickAddQuantity);
-                      openProductInspect(
-                        { ...quickAddListing, priceCents: quickAddListing.priceCents },
-                        {
-                          quantity: Number.isFinite(q) && q > 0 ? q : 1,
-                          comment: String(quickAddComment || "").trim(),
-                          commentSectionRequired: true,
-                          commentHeading:
-                            quickActionType === "buy" ? "Your note with this order" : "Your note to the seller",
-                          subtitle: quickActionType === "buy" ? "Order preview" : "Add to cart preview",
-                        },
+                  <div className="min-w-0 flex-1 space-y-4">
+                    {(() => {
+                      const saleMeta = parseSaleMetaFromDescription(String(quickAddListing.description || ""));
+                      const currentPesos = Math.floor((Number(quickAddListing.priceCents) || 0) / 100);
+                      const originalPesos = Number.isFinite(Number(saleMeta?.originalPesos))
+                        ? Number(saleMeta.originalPesos)
+                        : null;
+                      const showStrike = originalPesos != null && originalPesos > currentPesos;
+                      const qaValsA = normalizeListingOptionValues(quickAddListing.optionValuesA);
+                      const qaValsB = normalizeListingOptionValues(quickAddListing.optionValuesB);
+                      const qaLabelA = String(quickAddListing.optionNameA || "").trim();
+                      const qaLabelB = String(quickAddListing.optionNameB || "").trim();
+                      const showVariantPickers =
+                        Boolean(qaLabelA && qaValsA.length > 0) || Boolean(qaLabelB && qaValsB.length > 0);
+                      return (
+                        <>
+                          <div className="min-w-0 space-y-2">
+                            <p className="product-card-title break-words">{quickAddListing.title || "Product"}</p>
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <p className="product-price tabular-nums">{formatPesoWhole(quickAddListing.priceCents)}</p>
+                              {showStrike ? (
+                                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                                  <span className="text-[11px] font-medium text-neutral-500 line-through min-[380px]:text-xs dark:text-slate-500">
+                                    ₱{originalPesos}
+                                  </span>
+                                  {saleMeta?.percent ? (
+                                    <span className="rounded-md border border-amber-300/80 bg-amber-100/80 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-300">
+                                      -{saleMeta.percent}%
+                                    </span>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                          {showVariantPickers ? (
+                            <div className="space-y-3">
+                              {qaLabelA && qaValsA.length > 0 ? (
+                                <fieldset className="min-w-0 space-y-1.5 border-0 p-0">
+                                  <legend className="float-none text-xs font-semibold text-neutral-900 dark:text-slate-100">
+                                    {qaLabelA}
+                                  </legend>
+                                  <div className="mt-1 flex flex-wrap gap-2">
+                                    {qaValsA.map((choice) => {
+                                      const selected = quickAddSelectedVariantA === choice;
+                                      return (
+                                        <button
+                                          key={`quick-add-opt-a-${choice}`}
+                                          type="button"
+                                          role="radio"
+                                          aria-checked={selected}
+                                          disabled={quickAddSubmitting}
+                                          className={`min-h-[44px] min-w-[44px] rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
+                                            selected
+                                              ? "border-brand-primary bg-brand-primary/12 text-brand-primary shadow-sm dark:border-brand-accent dark:bg-brand-accent/15 dark:text-slate-50"
+                                              : "border-neutral-300 bg-white text-neutral-800 hover:border-neutral-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500"
+                                          }`}
+                                          onClick={() => setQuickAddSelectedVariantA(choice)}
+                                        >
+                                          {choice}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </fieldset>
+                              ) : null}
+                              {qaLabelB && qaValsB.length > 0 ? (
+                                <fieldset className="min-w-0 space-y-1.5 border-0 p-0">
+                                  <legend className="float-none text-xs font-semibold text-neutral-900 dark:text-slate-100">
+                                    {qaLabelB}
+                                  </legend>
+                                  <div className="mt-1 flex flex-wrap gap-2">
+                                    {qaValsB.map((choice) => {
+                                      const selected = quickAddSelectedVariantB === choice;
+                                      return (
+                                        <button
+                                          key={`quick-add-opt-b-${choice}`}
+                                          type="button"
+                                          role="radio"
+                                          aria-checked={selected}
+                                          disabled={quickAddSubmitting}
+                                          className={`min-h-[44px] min-w-[44px] rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
+                                            selected
+                                              ? "border-brand-primary bg-brand-primary/12 text-brand-primary shadow-sm dark:border-brand-accent dark:bg-brand-accent/15 dark:text-slate-50"
+                                              : "border-neutral-300 bg-white text-neutral-800 hover:border-neutral-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500"
+                                          }`}
+                                          onClick={() => setQuickAddSelectedVariantB(choice)}
+                                        >
+                                          {choice}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </fieldset>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          <div className="space-y-1.5">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                              Quantity
+                            </p>
+                            <div className="flex min-w-0 flex-wrap items-center gap-2 md:gap-3">
+                              <div className="inline-flex items-center gap-1 md:gap-1.5">
+                                <button
+                                  type="button"
+                                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-10 md:w-10"
+                                  aria-label="Decrease quantity"
+                                  disabled={Number(quickAddQuantity) <= 1 || quickAddSubmitting}
+                                  onClick={() =>
+                                    setQuickAddQuantity((prev) => {
+                                      const current = Number(prev);
+                                      const safeCurrent = Number.isFinite(current) && current > 0 ? current : 1;
+                                      return String(Math.max(1, safeCurrent - 1));
+                                    })
+                                  }
+                                >
+                                  −
+                                </button>
+                                <input
+                                  id="quick-add-qty"
+                                  type="number"
+                                  min={1}
+                                  max={Math.max(1, Number(quickAddListing.quantity) || 1)}
+                                  className="input-base h-11 w-16 px-1 text-center text-sm tabular-nums md:h-10 md:w-14"
+                                  value={quickAddQuantity}
+                                  disabled={quickAddSubmitting}
+                                  onChange={(e) => {
+                                    const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
+                                    const digitsOnly = String(e.target.value || "").replace(/\D/g, "");
+                                    if (!digitsOnly) {
+                                      setQuickAddQuantity("1");
+                                      return;
+                                    }
+                                    const next = Math.min(maxQty, Math.max(1, Number(digitsOnly)));
+                                    setQuickAddQuantity(String(next));
+                                  }}
+                                  onBlur={() => {
+                                    const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
+                                    const parsed = Number(quickAddQuantity);
+                                    if (!Number.isFinite(parsed) || parsed < 1) {
+                                      setQuickAddQuantity("1");
+                                      return;
+                                    }
+                                    if (parsed > maxQty) {
+                                      setQuickAddQuantity(String(maxQty));
+                                    }
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-10 md:w-10"
+                                  aria-label="Increase quantity"
+                                  disabled={
+                                    Number(quickAddQuantity) >= Math.max(1, Number(quickAddListing.quantity) || 1) ||
+                                    quickAddSubmitting
+                                  }
+                                  onClick={() =>
+                                    setQuickAddQuantity((prev) => {
+                                      const current = Number(prev);
+                                      const safeCurrent = Number.isFinite(current) && current > 0 ? current : 1;
+                                      const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
+                                      return String(Math.min(maxQty, safeCurrent + 1));
+                                    })
+                                  }
+                                >
+                                  +
+                                </button>
+                              </div>
+                              <span className="text-[11px] text-neutral-500 dark:text-slate-500">
+                                In stock: {Math.max(1, Number(quickAddListing.quantity) || 1)}
+                              </span>
+                            </div>
+                          </div>
+                        </>
                       );
-                    }}
-                  >
-                    View full description & note
-                  </button>
-                </div>
-              </div>
-              {quickActionType === "buy" ? (
-                <div className="border-t border-neutral-200/90 pt-3 dark:border-slate-600/90">
-                  <p className="mb-2 text-xs font-medium text-neutral-600 dark:text-slate-400">Fulfillment</p>
-                  <div className="flex flex-col gap-1 md:flex-row md:flex-wrap md:gap-x-4 md:gap-y-1">
-                    {(Array.isArray(quickAddListing.fulfillmentModes) && quickAddListing.fulfillmentModes.length
-                      ? quickAddListing.fulfillmentModes
-                      : ["pickup"]
-                    ).includes("pickup") ? (
-                      <label className="inline-flex min-h-[44px] cursor-pointer items-center gap-2.5 rounded-lg py-1 pr-2 text-sm md:min-h-0">
-                        <input
-                          type="radio"
-                          name="quick-order-fulfillment"
-                          className="h-4 w-4 shrink-0"
-                          checked={quickOrderFulfillmentType === "pickup"}
-                          onChange={() => setQuickOrderFulfillmentType("pickup")}
-                        />
-                        Pickup
-                      </label>
-                    ) : null}
-                    {(Array.isArray(quickAddListing.fulfillmentModes) && quickAddListing.fulfillmentModes.length
-                      ? quickAddListing.fulfillmentModes
-                      : ["pickup"]
-                    ).includes("delivery") ? (
-                      <label className="inline-flex min-h-[44px] cursor-pointer items-center gap-2.5 rounded-lg py-1 pr-2 text-sm md:min-h-0">
-                        <input
-                          type="radio"
-                          name="quick-order-fulfillment"
-                          className="h-4 w-4 shrink-0"
-                          checked={quickOrderFulfillmentType === "delivery"}
-                          onChange={() => setQuickOrderFulfillmentType("delivery")}
-                        />
-                        Delivery
-                      </label>
-                    ) : null}
+                    })()}
                   </div>
-                  {(() => {
-                    const q = Math.max(1, Number(quickAddQuantity) || 1);
-                    const unitCents = Math.max(0, Number(quickAddListing.priceCents) || 0);
-                    const lineCents = unitCents * q;
-                    return (
-                      <div className="mt-3 rounded-lg border border-neutral-200/80 bg-neutral-50/80 px-3 py-2.5 dark:border-slate-600 dark:bg-slate-800/50">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Subtotal</p>
-                        <p className="mt-1 text-base font-semibold tabular-nums text-neutral-900 dark:text-slate-100">{formatCents(lineCents)}</p>
-                        <p className="mt-0.5 text-xs text-neutral-500 dark:text-slate-400">
-                          {q} {q === 1 ? "item" : "items"} at {formatCents(unitCents)} each
-                        </p>
-                      </div>
-                    );
-                  })()}
                 </div>
-              ) : null}
-              <div className="border-t border-neutral-200/90 pt-3 dark:border-slate-600/90">
+
+              <div className="mt-3 border-t border-neutral-200/70 pt-3 dark:border-slate-700/70">
                 <label className="label-base mb-1" htmlFor="quick-add-comment">
                   Comment
                 </label>
@@ -13122,28 +13532,30 @@ function App() {
                   onChange={(e) => setQuickAddComment(e.target.value)}
                 />
               </div>
-              <div className="max-md:fixed max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:z-[70] mt-auto border-t border-neutral-200/90 bg-white/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/85 dark:border-slate-600/90 dark:bg-slate-900/95 dark:shadow-none md:mx-0 md:border-0 md:bg-transparent md:px-0 md:pb-0 md:pt-0 md:shadow-none md:backdrop-blur-0">
-                <button
-                  type="button"
-                  className="btn-primary w-full"
-                  disabled={quickAddSubmitting}
-                  aria-busy={quickAddSubmitting}
-                  onClick={submitQuickAddOrder}
-                >
-                  {quickAddSubmitting
-                    ? quickActionType === "buy"
-                      ? "Placing order…"
-                      : "Adding…"
-                    : quickActionType === "buy"
-                      ? "Place order"
-                      : "Add to cart"}
-                </button>
-                {quickAddInlineError ? (
-                  <p className="app-alert-error mt-2 text-sm" role="alert">
-                    {quickAddInlineError}
-                  </p>
-                ) : null}
               </div>
+            </div>
+
+            <div className="shrink-0 border-t border-neutral-200/80 bg-white/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/85 min-[390px]:px-4 min-[390px]:pt-2.5 min-[430px]:px-5 dark:border-[#1f3c56]/85 dark:bg-[#0f2234]/95 dark:shadow-none md:px-5 md:pb-4 md:pt-3">
+              <button
+                type="button"
+                className="btn-primary w-full"
+                disabled={quickAddSubmitting}
+                aria-busy={quickAddSubmitting}
+                onClick={submitQuickAddOrder}
+              >
+                {quickAddSubmitting
+                  ? quickActionType === "buy"
+                    ? "Placing order…"
+                    : "Adding…"
+                  : quickActionType === "buy"
+                    ? "Place order"
+                    : "Add to cart"}
+              </button>
+              {quickAddInlineError ? (
+                <p className="app-alert-error mt-2 text-sm" role="alert">
+                  {quickAddInlineError}
+                </p>
+              ) : null}
             </div>
           </div>
         </div>

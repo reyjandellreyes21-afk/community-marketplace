@@ -98,13 +98,20 @@ export const marketplaceRouteValidators = {
     body("listingId").isUUID(),
     body("quantity").optional().isInt({ min: 1 }),
     body("comment").optional().isString().isLength({ max: 2000 }),
+    body("variantSignature").optional().isString().isLength({ max: 512 }),
   ],
-  cartPatch: [param("listingId").isUUID(), body("quantity").isInt({ min: 1 })],
+  cartPatch: [
+    param("listingId").isUUID(),
+    body("quantity").isInt({ min: 1 }),
+    query("variantSignature").optional().isString().isLength({ max: 512 }),
+  ],
+  cartDelete: [param("listingId").isUUID(), query("variantSignature").optional().isString().isLength({ max: 512 })],
   createOrder: [
     body("listingId").isUUID(),
     body("fulfillmentType").isIn(["pickup", "delivery"]),
     body("quantity").optional().isInt({ min: 1 }),
     body("comment").optional().isString().isLength({ max: 2000 }),
+    body("variantSignature").optional().isString().isLength({ max: 512 }),
   ],
   patchOrder: [param("id").isUUID(), body("transition").trim().isString().notEmpty()],
   listOrders: [

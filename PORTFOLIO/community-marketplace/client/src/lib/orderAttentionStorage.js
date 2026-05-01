@@ -4,7 +4,15 @@ export const PURCHASES_RECENT_STATUS_BADGE_STORAGE_KEY = "lm_recent_status_badge
 export const SELLER_PENDING_BADGE_STORAGE_KEY = "lm_recent_pending_seller_order_ids_v1";
 export const SELLER_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY = "lm_seller_recent_status_highlight_ids_by_tab_v1";
 export const SELLER_RECENT_STATUS_BADGE_STORAGE_KEY = "lm_seller_recent_status_badge_ids_by_tab_v1";
+/** @deprecated Legacy “recently added” cart lines — replaced by per-user seen IDs (`cartSeenListingIdsStorageKey`). */
 export const CART_RECENT_BADGE_STORAGE_KEY = "lm_recent_cart_listing_ids_v1";
+
+/** Per-user: listing IDs marked seen after leaving Cart (same dismissal model as order tabs). */
+export const cartSeenListingIdsStorageKey = (userId) =>
+  `lm_cart_seen_listing_ids_v1:${String(userId || "")}`;
+/** Per-user: favorite listing IDs marked seen after leaving Favorites. */
+export const favoritesSeenListingIdsStorageKey = (userId) =>
+  `lm_favorites_seen_listing_ids_v1:${String(userId || "")}`;
 /** Last chosen quick-buy fulfillment (pickup | delivery) for listings that support it. */
 export const QUICK_ORDER_FULFILLMENT_PREF_KEY = "lm_quick_order_fulfillment_pref_v1";
 

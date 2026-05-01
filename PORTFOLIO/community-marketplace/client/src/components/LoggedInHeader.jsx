@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { LinkMartLogo } from "./media/LinkMartLogo.jsx";
 import { StableAvatar } from "./media/StableMediaImage.jsx";
 import { VIEWS } from "../views.js";
+
+/** `matchMedia("(min-width: 768px)")` — desktop header path; mobile browse chrome uses scroll-collapse. */
+const MD_MIN_WIDTH_PX = 768;
 
 function ChevronDownIcon(props) {
   return (
@@ -453,8 +456,16 @@ function mobileIconTabClass(active) {
   return `${base} text-brand-primary after:pointer-events-none after:absolute after:bottom-0 after:left-1/2 after:h-[2px] after:w-9 after:max-w-[42%] after:-translate-x-1/2 after:bg-brand-primary dark:text-brand-accent dark:after:bg-brand-accent [&_.mobile-nav-tab-icon]:text-brand-primary dark:[&_.mobile-nav-tab-icon]:text-brand-accent`;
 }
 
+/** Corner count pills for icon tabs + primary utilities — one style (no ring; matches desktop utility icons). */
 const mobileNavBadgeBase =
-  "pointer-events-none absolute -right-0.5 -top-0.5 z-[1] inline-flex min-h-[1rem] min-w-[1rem] items-center justify-center rounded-full px-1 py-px text-[9px] font-bold leading-none shadow-sm";
+  "pointer-events-none absolute right-1 top-1 z-[2] inline-flex min-h-[1rem] min-w-[1rem] max-w-[min(3rem,calc(100%-0.5rem))] items-center justify-center rounded-full px-1 py-[2px] text-[10px] font-bold leading-none shadow-sm";
+
+/** Rose: unseen / needs attention. Slate: total exists, nothing new to highlight. */
+const navBadgeRose = "bg-rose-600 text-white dark:bg-rose-500";
+const navBadgeMuted = "bg-slate-500 text-white dark:bg-slate-600";
+
+const desktopNavPillBadgeBase =
+  "ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none shadow-sm";
 
 const mobileSheetMenuItem = `${accountMenuItemBase} min-h-[44px] items-center rounded-xl py-3`;
 
@@ -508,7 +519,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {() => void} props.goMyPurchases
  * @param {() => void} props.goCart
  * @param {number} [props.inboxBadgeCount] Badge total for messages icon (messages + orders attention + notifications)
- * @param {number} [props.messagesUnreadCount] Unread messages badge count
+ * @param {number} [props.messagesUnreadCount] Unread messages (aria-label only; no header badge)
  * @param {"light"|"dark"} props.theme
  * @param {(t: "light"|"dark") => void} props.setTheme
  * @param {() => void} props.onLogout
@@ -516,10 +527,12 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {number} [props.cartItemCount] Unseen cart badge count
  * @param {number} [props.totalCartCount] Total cart line-item count
  * @param {number} [props.purchasesItemCount] Recent purchases badge count
- * @param {number} [props.totalPurchasesCount] Total buyer orders count
+ * @param {boolean} [props.purchasesAttentionMuted] When true and unseen count &gt; 0, use navBadgeMuted instead of rose (default false)
+ * @param {number} [props.totalPurchasesCount] Buyer Pending+Processing count (muted badge; excludes Completed/Cancelled)
  * @param {number} [props.ordersItemCount] Seller orders tab / new-order badge count
- * @param {number} [props.totalOrdersCount] Total seller orders count
- * @param {number} [props.notificationUnreadCount] Unread notification badge count
+ * @param {boolean} [props.ordersAttentionMuted] When true and unseen count &gt; 0, use navBadgeMuted instead of rose (default false)
+ * @param {number} [props.totalOrdersCount] Seller Pending+Processing count (muted badge; excludes Completed/Cancelled)
+ * @param {number} [props.notificationUnreadCount] Unread count — badge only when &gt; 0 (rose)
  * @param {number} [props.favoritesBadgeCount] Unseen favorites-related updates
  * @param {number} [props.favoriteCount] Saved favorites count (shop / community product hearts)
  * @param {() => void} [props.onNavigateHome] Clear SPA path (e.g. /l/…) when opening marketplace from the logo
@@ -528,6 +541,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {(collapsed: boolean) => void} [props.onMobileBrowseNavCollapsedChange] Fires when mobile primary+secondary chrome finishes collapsing/expanding (shop-like views).
  * @param {number} [props.mobileSecondaryDragX] Horizontal drag offset for secondary nav swipe gestures.
  * @param {boolean} [props.hideNavigationChrome] Hide top nav/header chrome (content only).
+ * @param {boolean} [props.liftChromeAboveOverlay] Raise header stacking above app-root overlays (e.g. quick-add sheet backdrop).
  */
 export function LoggedInHeader({
   user,
@@ -547,8 +561,10 @@ export function LoggedInHeader({
   cartItemCount = 0,
   totalCartCount = 0,
   purchasesItemCount = 0,
+  purchasesAttentionMuted = false,
   totalPurchasesCount = 0,
   ordersItemCount = 0,
+  ordersAttentionMuted = false,
   totalOrdersCount = 0,
   notificationUnreadCount = 0,
   favoritesBadgeCount = 0,
@@ -558,6 +574,7 @@ export function LoggedInHeader({
   onMobileBrowseNavCollapsedChange,
   mobileSecondaryDragX = 0,
   hideNavigationChrome = false,
+  liftChromeAboveOverlay = false,
   children,
 }) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -581,9 +598,26 @@ export function LoggedInHeader({
     width: 320,
   });
   const swipeCloseAfterTransitionRef = useRef(false);
-  /** Mobile Shop / Community shop: live scroll-linked hide offset (0..primary row height only). */
   const mobilePrimaryNavRef = useRef(null);
-  const [mobilePrimaryScrollY, setMobilePrimaryScrollY] = useState(0);
+  /** Mobile browse / community shop: safe-area inset + primary row + tab row + optional `mobileSecondaryNav` — measured for scroll-collapse. */
+  const mobileBrowseShellContentRef = useRef(null);
+  /** Clip wrapper whose height shrinks with scroll (layout + paint, no React per frame). */
+  const mobileBrowseShellClipRef = useRef(null);
+
+  const browseScrollTopRef = useRef(0);
+  const browseShellHeightRef = useRef(0);
+  const primaryRowHeightRef = useRef(0);
+  const browseChromeRafRef = useRef(0);
+  const applyBrowseChromeTransformsRef = useRef(() => {});
+  const lastBrowseCollapsedNotifiedRef = useRef(false);
+
+  const scheduleApplyBrowseChrome = useCallback(() => {
+    if (browseChromeRafRef.current !== 0) return;
+    browseChromeRafRef.current = requestAnimationFrame(() => {
+      browseChromeRafRef.current = 0;
+      applyBrowseChromeTransformsRef.current();
+    });
+  }, []);
 
   const closeAllMenus = useCallback(() => {
     setAccountMenuOpen(false);
@@ -595,6 +629,11 @@ export function LoggedInHeader({
     setMobileSettingsOpen(false);
     setDesktopSettingsOpen(false);
   }, []);
+
+  const notificationsAriaLabel =
+    notificationUnreadCount > 0
+      ? `Notifications, ${notificationUnreadCount > 99 ? "99 plus" : notificationUnreadCount} unread`
+      : "Notifications";
 
   const goMarketplaceRoot = useCallback(() => {
     goBrowse();
@@ -761,50 +800,49 @@ export function LoggedInHeader({
     activeView === VIEWS.COMMUNITY_SHOP ||
     activeView === VIEWS.FAVORITES;
 
-  /** Mobile Shop tab — marketplace feed (excludes Favorites; hearts live in the top bar). */
+  /** Mobile Shop tab — marketplace feed including Favorites (same “browse” family as desktop Home). */
   const mobileShopTabActive =
-    activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP;
+    activeView === VIEWS.BROWSE ||
+    activeView === VIEWS.COMMUNITY_SHOP ||
+    activeView === VIEWS.FAVORITES;
 
-  /** When true, scroll on `#main-content` can hide the primary utility row only (not the icon tab row). */
+  /** When true, vertical scroll on `#main-content` collapses the whole mobile browse chrome (safe area + bars). */
   const mobileShopBrowseScrollCollapseActive =
     activeView === VIEWS.BROWSE ||
     activeView === VIEWS.COMMUNITY_SHOP;
 
   useEffect(() => {
     if (!mobileShopBrowseScrollCollapseActive || mobileMenuOpen) {
-      setMobilePrimaryScrollY(0);
+      browseScrollTopRef.current = 0;
+      scheduleApplyBrowseChrome();
       return undefined;
     }
     const main = document.getElementById("main-content");
     if (!main) return undefined;
 
-    const mq = window.matchMedia("(min-width: 768px)");
+    const mq = window.matchMedia(`(min-width: ${MD_MIN_WIDTH_PX}px)`);
 
     const onScroll = () => {
       if (mq.matches) {
-        setMobilePrimaryScrollY(0);
+        browseScrollTopRef.current = 0;
+        scheduleApplyBrowseChrome();
         return;
       }
       const y = Math.max(0, main.scrollTop || 0);
-      const chromeHeight = mobilePrimaryNavRef.current?.offsetHeight ?? 0;
+      const chromeHeight = browseShellHeightRef.current || primaryRowHeightRef.current || 0;
       const maxH = Math.max(0, chromeHeight);
       const maxScrollableY = Math.max(0, (main.scrollHeight || 0) - (main.clientHeight || 0));
-      const canStablyCollapse = maxScrollableY > maxH + 2;
-      if (!canStablyCollapse) {
-        setMobilePrimaryScrollY(0);
-        return;
-      }
-      // Track absolute scroll Y; hide amount is derived later from measured primary-row height.
-      setMobilePrimaryScrollY(y);
+      const canStablyCollapse = maxScrollableY > maxH + 24;
+      browseScrollTopRef.current = canStablyCollapse ? y : 0;
+      scheduleApplyBrowseChrome();
     };
 
     onScroll();
     main.addEventListener("scroll", onScroll, { passive: true });
 
     const onMm = () => {
-      if (mq.matches) {
-        setMobilePrimaryScrollY(0);
-      }
+      browseScrollTopRef.current = 0;
+      scheduleApplyBrowseChrome();
     };
     mq.addEventListener("change", onMm);
 
@@ -812,15 +850,14 @@ export function LoggedInHeader({
       main.removeEventListener("scroll", onScroll);
       mq.removeEventListener("change", onMm);
     };
-  }, [mobileShopBrowseScrollCollapseActive, mobileMenuOpen, activeView]);
+  }, [mobileShopBrowseScrollCollapseActive, mobileMenuOpen, activeView, scheduleApplyBrowseChrome]);
 
   const mobileSellingTabActive =
     activeView === VIEWS.ORDERS ||
     activeView === VIEWS.SELLER ||
     activeView === VIEWS.MY_LISTINGS;
-  /** Mobile: hide top utility row on secondary tabs (keep visible on Shop-like views). */
+  /** Mobile: hide top utility row on secondary tabs (keep visible on Shop-like views and Cart so favorites/menu stay reachable). */
   const hideMobilePrimaryRow =
-    activeView === VIEWS.CART ||
     activeView === VIEWS.MY_PURCHASES ||
     activeView === VIEWS.ORDERS ||
     activeView === VIEWS.SELLER ||
@@ -831,29 +868,133 @@ export function LoggedInHeader({
 
   const drawerUsesPullTransform =
     mobileSheetEntered && (isDrawerDragging || drawerPullPx !== 0);
-  const SWIPE_HIDE_DISTANCE_PX = 120;
-  const COLLAPSED_OFFSET_PX = 6;
-  const primaryNavHeight = Math.max(0, mobilePrimaryNavRef.current?.offsetHeight ?? 0);
-  const scrollProgress = primaryNavHeight > 0 ? Math.min(1, mobilePrimaryScrollY / primaryNavHeight) : 0;
-  /** Rightward swipe (positive drag X) tucks the primary row only; secondary tab nav stays put. */
-  const swipeProgress = Math.max(0, Math.min(1, (mobileSecondaryDragX || 0) / SWIPE_HIDE_DISTANCE_PX));
-  const dragHideOffset = primaryNavHeight * swipeProgress;
-  const scrollHideOffset = primaryNavHeight * scrollProgress;
-  const mobileChromeOffset =
-    mobileShopBrowseScrollCollapseActive && !mobileMenuOpen
-      ? Math.max(scrollHideOffset, dragHideOffset)
-      : 0;
-  const mobileShopBrowseNavCollapsed = mobileChromeOffset > COLLAPSED_OFFSET_PX;
-  useEffect(() => {
-    onMobileBrowseNavCollapsedChange?.(mobileShopBrowseNavCollapsed);
-  }, [mobileShopBrowseNavCollapsed, onMobileBrowseNavCollapsedChange]);
-  const primaryNavPullStyle =
-    mobileShopBrowseScrollCollapseActive && !mobileMenuOpen
-      ? {
-          transform: `translate3d(0, -${mobileChromeOffset}px, 0)`,
-          marginBottom: `-${mobileChromeOffset}px`,
+
+  /** Imperative transforms + clip (RAF): avoids React re-renders on every scroll tick for tighter feedback. */
+  const SWIPE_PRIMARY_HIDE_DISTANCE_PX = 120;
+  const NAV_COLLAPSED_THRESHOLD_PX = 6;
+
+  const collapseChromeActive = mobileShopBrowseScrollCollapseActive && !mobileMenuOpen;
+
+  useLayoutEffect(() => {
+    applyBrowseChromeTransformsRef.current = () => {
+      const clipEl = mobileBrowseShellClipRef.current;
+      const shellEl = mobileBrowseShellContentRef.current;
+      const primaryEl = mobilePrimaryNavRef.current;
+
+      const desktop =
+        typeof window !== "undefined" && window.matchMedia(`(min-width: ${MD_MIN_WIDTH_PX}px)`).matches;
+      const collapseAllowed =
+        mobileShopBrowseScrollCollapseActive &&
+        !mobileMenuOpen &&
+        !hideNavigationChrome &&
+        !desktop;
+
+      if (!collapseAllowed) {
+        browseScrollTopRef.current = 0;
+        clipEl?.style.removeProperty("height");
+        clipEl?.style.removeProperty("overflow");
+        shellEl?.style.removeProperty("transform");
+        shellEl?.style.removeProperty("will-change");
+        primaryEl?.style.removeProperty("transform");
+        primaryEl?.style.removeProperty("will-change");
+        if (lastBrowseCollapsedNotifiedRef.current) {
+          lastBrowseCollapsedNotifiedRef.current = false;
+          onMobileBrowseNavCollapsedChange?.(false);
         }
-      : undefined;
+        return;
+      }
+
+      if (!clipEl || !shellEl) return;
+
+      const shellH = browseShellHeightRef.current;
+      const primaryH = primaryRowHeightRef.current;
+      const y = browseScrollTopRef.current;
+
+      const scrollTuckPx = shellH > 0 ? Math.min(y, shellH) : 0;
+
+      const swipeTuckPx =
+        primaryH *
+        Math.max(0, Math.min(1, (mobileSecondaryDragX || 0) / SWIPE_PRIMARY_HIDE_DISTANCE_PX));
+
+      const totalTuckPx = scrollTuckPx + swipeTuckPx;
+
+      if (shellH > 0 && scrollTuckPx > 0) {
+        clipEl.style.height = `${Math.max(0, shellH - scrollTuckPx)}px`;
+        clipEl.style.overflow = "hidden";
+      } else {
+        clipEl.style.removeProperty("height");
+        clipEl.style.removeProperty("overflow");
+      }
+
+      if (scrollTuckPx > 0) {
+        shellEl.style.transform = `translate3d(0, -${scrollTuckPx}px, 0)`;
+        shellEl.style.willChange = "transform";
+      } else {
+        shellEl.style.removeProperty("transform");
+        shellEl.style.removeProperty("will-change");
+      }
+
+      if (primaryEl) {
+        if (swipeTuckPx > 0) {
+          primaryEl.style.transform = `translate3d(0, -${swipeTuckPx}px, 0)`;
+          primaryEl.style.willChange = "transform";
+        } else {
+          primaryEl.style.removeProperty("transform");
+          primaryEl.style.removeProperty("will-change");
+        }
+      }
+
+      const collapsed = totalTuckPx > NAV_COLLAPSED_THRESHOLD_PX;
+      if (collapsed !== lastBrowseCollapsedNotifiedRef.current) {
+        lastBrowseCollapsedNotifiedRef.current = collapsed;
+        onMobileBrowseNavCollapsedChange?.(collapsed);
+      }
+    };
+
+    const measure = () => {
+      browseShellHeightRef.current = Math.max(0, mobileBrowseShellContentRef.current?.offsetHeight ?? 0);
+      primaryRowHeightRef.current = Math.max(0, mobilePrimaryNavRef.current?.offsetHeight ?? 0);
+      scheduleApplyBrowseChrome();
+    };
+    measure();
+    const shellEl = mobileBrowseShellContentRef.current;
+    const primaryEl = mobilePrimaryNavRef.current;
+    const ro = new ResizeObserver(measure);
+    if (shellEl) ro.observe(shellEl);
+    if (primaryEl) ro.observe(primaryEl);
+    scheduleApplyBrowseChrome();
+    return () => ro.disconnect();
+  }, [
+    hideMobilePrimaryRow,
+    activeView,
+    mobileShopBrowseScrollCollapseActive,
+    mobileMenuOpen,
+    scheduleApplyBrowseChrome,
+    hideNavigationChrome,
+    mobileSecondaryDragX,
+    onMobileBrowseNavCollapsedChange,
+  ]);
+
+  useEffect(() => {
+    scheduleApplyBrowseChrome();
+  }, [
+    mobileSecondaryDragX,
+    hideNavigationChrome,
+    mobileShopBrowseScrollCollapseActive,
+    mobileMenuOpen,
+    hideMobilePrimaryRow,
+    activeView,
+    scheduleApplyBrowseChrome,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (browseChromeRafRef.current !== 0) {
+        cancelAnimationFrame(browseChromeRafRef.current);
+        browseChromeRafRef.current = 0;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const el = mobileMenuPanelRef.current;
@@ -869,31 +1010,41 @@ export function LoggedInHeader({
     /* Mobile: column (header → main). md+: `contents` flattens into App shell so sticky header + scroll work without an extra nested flex wrapper. */
     <div className="flex w-full min-h-0 flex-1 flex-col overflow-hidden md:contents">
     <header
-      className={`mobile-app-top-header sticky top-0 z-50 shrink-0 pt-[env(safe-area-inset-top,0px)] md:sticky md:top-0 border-b border-neutral-200/40 bg-white/95 backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95 md:shadow-[0_1px_0_rgba(15,23,42,0.04)] ${
+      className={`mobile-app-top-header sticky top-0 shrink-0 md:sticky md:top-0 md:border-b md:border-neutral-200/40 md:bg-white/95 md:pt-[env(safe-area-inset-top,0px)] md:backdrop-blur-md md:shadow-[0_1px_0_rgba(15,23,42,0.04)] dark:md:border-slate-700/60 dark:md:bg-slate-900/95 max-md:border-b-0 max-md:bg-transparent max-md:backdrop-blur-none ${
+        liftChromeAboveOverlay ? "z-[100]" : "z-50"
+      } ${
         hideNavigationChrome ? "hidden" : ""
       }`}
     >
       {/*
-        Mobile only (md:hidden): primary + secondary chrome — grid 0fr/1fr collapse (smoother than max-height).
-        Desktop header is a sibling block with md:flex — unchanged.
+        Mobile (md:hidden): scroll-collapsible shell — clip height + translate so the whole chrome (incl. safe-area band)
+        leaves the layout flow on Browse / Community shop. Desktop row is a sibling (`hidden md:flex`).
       */}
-      <div className="md:hidden grid shrink-0 grid-rows-[1fr]">
-        <div className="min-h-0 overflow-hidden">
-        <div className="flex flex-col">
+      <div
+        ref={mobileBrowseShellClipRef}
+        className={`md:hidden shrink-0 overflow-hidden border-b border-neutral-200/40 bg-white/95 backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95 ${
+          collapseChromeActive && !mobileMenuOpen ? "will-change-[height] transition-none" : ""
+        }`}
+      >
         <div
-          ref={mobilePrimaryNavRef}
-          className={`app-shell-content-inset flex w-full max-w-full items-center gap-2 overflow-hidden ${
-            mobileShopBrowseScrollCollapseActive && !mobileMenuOpen
+          ref={mobileBrowseShellContentRef}
+          className={`flex flex-col ${
+            collapseChromeActive && !mobileMenuOpen
               ? "will-change-transform transition-none"
-              : "will-change-auto transition-[max-height,opacity,transform,margin-bottom] duration-300 ease-out motion-reduce:transition-none"
-          } ${
-            hideMobilePrimaryRow
-              ? "pointer-events-none max-h-0 -translate-y-1 opacity-0"
-              : "h-[4.25rem] max-h-[4.25rem] translate-y-0 opacity-100"
+              : "will-change-auto transition-[transform] duration-300 ease-out motion-reduce:transition-none"
           }`}
-          style={primaryNavPullStyle}
-          aria-hidden={hideMobilePrimaryRow ? true : undefined}
         >
+          <div className="flex min-h-0 flex-col pt-[env(safe-area-inset-top,0px)]">
+            <div className={`overflow-hidden shrink-0 ${hideMobilePrimaryRow ? "max-h-0" : ""}`}>
+              <div
+                ref={mobilePrimaryNavRef}
+                className={`app-shell-content-inset flex h-[4.25rem] max-h-[4.25rem] w-full max-w-full shrink-0 items-center gap-2 overflow-hidden ${
+                  hideMobilePrimaryRow
+                    ? "pointer-events-none max-h-0 -translate-y-1 opacity-0"
+                    : "translate-y-0 opacity-100 will-change-auto transition-[max-height,opacity] duration-300 ease-out motion-reduce:transition-none"
+                }`}
+                aria-hidden={hideMobilePrimaryRow ? true : undefined}
+              >
           <button
             ref={mobileMenuButtonRef}
             id="mobile-menu-toggle"
@@ -921,9 +1072,17 @@ export function LoggedInHeader({
             aria-label={
               favoritesBadgeCount > 0
                 ? `Favorites, ${favoritesBadgeCount > 99 ? "99 plus" : favoritesBadgeCount} new updates`
-                : "Favorites"
+                : favoriteCount > 0
+                  ? `Favorites, ${favoriteCount > 99 ? "99 plus" : favoriteCount} saved`
+                  : "Favorites"
             }
-            title={favoritesBadgeCount > 0 ? `${favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount} new updates` : "Saved listings"}
+            title={
+              favoritesBadgeCount > 0
+                ? `${favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount} new updates`
+                : favoriteCount > 0
+                  ? `${favoriteCount > 99 ? "99+" : favoriteCount} saved`
+                  : "Saved listings"
+            }
             onClick={() => {
               setActiveView(VIEWS.FAVORITES);
               closeAllMenus();
@@ -934,8 +1093,12 @@ export function LoggedInHeader({
               className={activeView === VIEWS.FAVORITES ? "text-primary dark:text-brand-accent" : ""}
             />
             {favoritesBadgeCount > 0 ? (
-              <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
+              <span className={`${mobileNavBadgeBase} ${navBadgeRose}`}>
                 {favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount}
+              </span>
+            ) : favoriteCount > 0 ? (
+              <span className={`${mobileNavBadgeBase} ${navBadgeMuted}`}>
+                {favoriteCount > 99 ? "99+" : favoriteCount}
               </span>
             ) : null}
           </button>
@@ -956,15 +1119,11 @@ export function LoggedInHeader({
               filled={activeView === VIEWS.MESSAGES}
               className={activeView === VIEWS.MESSAGES ? "text-primary dark:text-brand-accent" : ""}
             />
-            {messagesUnreadCount > 0 ? (
-              <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
-                {messagesUnreadCount > 99 ? "99+" : messagesUnreadCount}
-              </span>
-            ) : null}
           </button>
         </div>
+            </div>
 
-        <nav className="mobile-app-secondary-nav" role="navigation" aria-label="Main sections">
+        <nav className="mobile-app-secondary-nav shrink-0" role="navigation" aria-label="Main sections">
           <div
             className="app-shell-content-inset flex min-h-[var(--ui-touch-target,44px)] w-full max-w-full items-stretch gap-0.5 py-1 min-[360px]:gap-1 min-[390px]:gap-1.5 min-[430px]:gap-2"
             role="tablist"
@@ -1006,18 +1165,18 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <span className="mobile-nav-tab-icon relative inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
+              <span className="mobile-nav-tab-icon inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
                 <MobileNavCartIcon filled={activeView === VIEWS.CART} className="h-6 w-6 shrink-0" aria-hidden />
-                {cartItemCount > 0 ? (
-                  <span className={`${mobileNavBadgeBase} bg-rose-600 text-white dark:bg-rose-500`}>
-                    {cartItemCount > 99 ? "99+" : cartItemCount}
-                  </span>
-                ) : totalCartCount > 0 ? (
-                  <span className={`${mobileNavBadgeBase} bg-rose-600 text-white dark:bg-rose-500`} aria-hidden>
-                    {totalCartCount > 99 ? "99+" : totalCartCount}
-                  </span>
-                ) : null}
               </span>
+              {cartItemCount > 0 ? (
+                <span className={`${mobileNavBadgeBase} ${navBadgeRose}`}>
+                  {cartItemCount > 99 ? "99+" : cartItemCount}
+                </span>
+              ) : totalCartCount > 0 ? (
+                <span className={`${mobileNavBadgeBase} ${navBadgeMuted}`} aria-hidden>
+                  {totalCartCount > 99 ? "99+" : totalCartCount}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -1028,21 +1187,27 @@ export function LoggedInHeader({
               aria-label={
                 purchasesItemCount > 0
                   ? `Purchases, ${purchasesItemCount > 99 ? "99 plus" : purchasesItemCount} updates`
-                  : "Purchases"
+                  : totalPurchasesCount > 0
+                    ? `Purchases, ${totalPurchasesCount > 99 ? "99 plus" : totalPurchasesCount} orders, no new updates`
+                    : "Purchases"
               }
               onClick={() => {
                 goMyPurchases();
                 closeAllMenus();
               }}
             >
-              <span className="mobile-nav-tab-icon relative inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
+              <span className="mobile-nav-tab-icon inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
                 <MobileNavBuyingIcon filled={activeView === VIEWS.MY_PURCHASES} className="h-6 w-6 shrink-0" aria-hidden />
-                {purchasesItemCount > 0 ? (
-                  <span className={`${mobileNavBadgeBase} bg-rose-600 text-white dark:bg-rose-500`}>
-                    {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
-                  </span>
-                ) : null}
               </span>
+              {purchasesItemCount > 0 ? (
+                <span className={`${mobileNavBadgeBase} ${purchasesAttentionMuted ? navBadgeMuted : navBadgeRose}`}>
+                  {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
+                </span>
+              ) : totalPurchasesCount > 0 ? (
+                <span className={`${mobileNavBadgeBase} ${navBadgeMuted}`} aria-hidden>
+                  {totalPurchasesCount > 99 ? "99+" : totalPurchasesCount}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -1053,21 +1218,27 @@ export function LoggedInHeader({
               aria-label={
                 ordersItemCount > 0
                   ? `Orders, ${ordersItemCount > 99 ? "99 plus" : ordersItemCount} alerts`
-                  : "Orders"
+                  : totalOrdersCount > 0
+                    ? `Orders, ${totalOrdersCount > 99 ? "99 plus" : totalOrdersCount} orders, no new alerts`
+                    : "Orders"
               }
               onClick={() => {
                 goOrders();
                 closeAllMenus();
               }}
             >
-              <span className="mobile-nav-tab-icon relative inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
+              <span className="mobile-nav-tab-icon inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
                 <MobileNavSellingIcon filled={mobileSellingTabActive} className="h-6 w-6 shrink-0" aria-hidden />
-                {ordersItemCount > 0 ? (
-                  <span className={`${mobileNavBadgeBase} bg-rose-600 text-white dark:bg-rose-500`}>
-                    {ordersItemCount > 99 ? "99+" : ordersItemCount}
-                  </span>
-                ) : null}
               </span>
+              {ordersItemCount > 0 ? (
+                <span className={`${mobileNavBadgeBase} ${ordersAttentionMuted ? navBadgeMuted : navBadgeRose}`}>
+                  {ordersItemCount > 99 ? "99+" : ordersItemCount}
+                </span>
+              ) : totalOrdersCount > 0 ? (
+                <span className={`${mobileNavBadgeBase} ${navBadgeMuted}`} aria-hidden>
+                  {totalOrdersCount > 99 ? "99+" : totalOrdersCount}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -1075,24 +1246,20 @@ export function LoggedInHeader({
               aria-selected={activeView === VIEWS.NOTIFICATIONS}
               aria-current={activeView === VIEWS.NOTIFICATIONS ? "page" : undefined}
               className={mobileIconTabClass(activeView === VIEWS.NOTIFICATIONS)}
-              aria-label={
-                notificationUnreadCount > 0
-                  ? `Notifications, ${notificationUnreadCount > 99 ? "99 plus" : notificationUnreadCount} unread`
-                  : "Notifications"
-              }
+              aria-label={notificationsAriaLabel}
               onClick={() => {
                 setActiveView(VIEWS.NOTIFICATIONS);
                 closeAllMenus();
               }}
             >
-              <span className="mobile-nav-tab-icon relative inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
+              <span className="mobile-nav-tab-icon inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
                 <MobileNavNotificationsIcon filled={activeView === VIEWS.NOTIFICATIONS} className="h-6 w-6 shrink-0" aria-hidden />
-                {notificationUnreadCount > 0 ? (
-                  <span className={`${mobileNavBadgeBase} bg-rose-600 text-white dark:bg-rose-500`}>
-                    {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
-                  </span>
-                ) : null}
               </span>
+              {notificationUnreadCount > 0 ? (
+                <span className={`${mobileNavBadgeBase} ${navBadgeRose}`}>
+                  {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -1113,12 +1280,12 @@ export function LoggedInHeader({
           </div>
         </nav>
 
-        {mobileSecondaryNav ? (
-          <div className="border-t border-neutral-200/35 bg-white/90 py-2.5 dark:border-slate-700/45 dark:bg-slate-900/90">
-            <div className="app-shell-content-inset">{mobileSecondaryNav}</div>
+            {mobileSecondaryNav ? (
+              <div className="border-t border-neutral-200/35 bg-white/90 py-2.5 dark:border-slate-700/45 dark:bg-slate-900/90">
+                <div className="app-shell-content-inset">{mobileSecondaryNav}</div>
+              </div>
+            ) : null}
           </div>
-        ) : null}
-        </div>
         </div>
       </div>
 
@@ -1177,11 +1344,11 @@ export function LoggedInHeader({
                 />
                 <span className="max-w-[7rem] truncate md:max-w-none">Cart</span>
                 {cartItemCount > 0 ? (
-                  <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
+                  <span className={`${desktopNavPillBadgeBase} ${navBadgeRose}`}>
                     {cartItemCount > 99 ? "99+" : cartItemCount}
                   </span>
                 ) : totalCartCount > 0 ? (
-                  <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
+                  <span className={`${desktopNavPillBadgeBase} ${navBadgeMuted}`}>
                     {totalCartCount > 99 ? "99+" : totalCartCount}
                   </span>
                 ) : null}
@@ -1207,11 +1374,13 @@ export function LoggedInHeader({
                 />
                 <span className="max-w-[5.5rem] truncate md:max-w-none">Purchases</span>
                 {purchasesItemCount > 0 ? (
-                  <span className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
+                  <span
+                    className={`${desktopNavPillBadgeBase} ${purchasesAttentionMuted ? navBadgeMuted : navBadgeRose}`}
+                  >
                     {purchasesItemCount > 99 ? "99+" : purchasesItemCount}
                   </span>
                 ) : totalPurchasesCount > 0 ? (
-                  <span className="ml-1 text-[11px] font-semibold leading-none text-neutral-500 dark:text-slate-400">
+                  <span className={`${desktopNavPillBadgeBase} ${navBadgeMuted}`}>
                     {totalPurchasesCount > 99 ? "99+" : totalPurchasesCount}
                   </span>
                 ) : null}
@@ -1244,13 +1413,13 @@ export function LoggedInHeader({
                 <span className="max-w-[5.5rem] truncate md:max-w-none">Orders</span>
                 {ordersItemCount > 0 ? (
                   <span
-                    className="ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500"
+                    className={`${desktopNavPillBadgeBase} ${ordersAttentionMuted ? navBadgeMuted : navBadgeRose}`}
                     aria-hidden
                   >
                     {ordersItemCount > 99 ? "99+" : ordersItemCount}
                   </span>
                 ) : totalOrdersCount > 0 ? (
-                  <span className="ml-1 text-[11px] font-semibold leading-none text-neutral-500 dark:text-slate-400">
+                  <span className={`${desktopNavPillBadgeBase} ${navBadgeMuted}`}>
                     {totalOrdersCount > 99 ? "99+" : totalOrdersCount}
                   </span>
                 ) : null}
@@ -1278,16 +1447,11 @@ export function LoggedInHeader({
                 filled={activeView === VIEWS.MESSAGES}
                 className={activeView === VIEWS.MESSAGES ? "text-emerald-600 dark:text-emerald-300" : ""}
               />
-              {messagesUnreadCount > 0 ? (
-                <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
-                  {messagesUnreadCount > 99 ? "99+" : messagesUnreadCount}
-                </span>
-              ) : null}
             </button>
             <button
               type="button"
               className={`${headerUtilityButtonBase} ${activeView === VIEWS.NOTIFICATIONS ? headerUtilityButtonActive : ""}`}
-              aria-label="Notifications"
+              aria-label={notificationsAriaLabel}
               onClick={() => {
                 setActiveView(VIEWS.NOTIFICATIONS);
                 closeAllMenus();
@@ -1298,7 +1462,7 @@ export function LoggedInHeader({
                 className={activeView === VIEWS.NOTIFICATIONS ? "text-emerald-600 dark:text-emerald-300" : ""}
               />
               {notificationUnreadCount > 0 ? (
-                <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
+                <span className={`${mobileNavBadgeBase} ${navBadgeRose}`}>
                   {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
                 </span>
               ) : null}
@@ -1308,10 +1472,18 @@ export function LoggedInHeader({
               className={`${headerUtilityButtonBase} ${activeView === VIEWS.FAVORITES ? headerUtilityButtonActive : ""}`}
               aria-label={
                 favoritesBadgeCount > 0
-                  ? `My Favorites, ${favoritesBadgeCount > 99 ? "99 plus" : favoritesBadgeCount} new updates`
-                  : "My Favorites"
+                  ? `Favorites, ${favoritesBadgeCount > 99 ? "99 plus" : favoritesBadgeCount} new updates`
+                  : favoriteCount > 0
+                    ? `Favorites, ${favoriteCount > 99 ? "99 plus" : favoriteCount} saved`
+                    : "Favorites"
               }
-              title={favoritesBadgeCount > 0 ? `${favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount} new updates` : "Saved listings"}
+              title={
+                favoritesBadgeCount > 0
+                  ? `${favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount} new updates`
+                  : favoriteCount > 0
+                    ? `${favoriteCount > 99 ? "99+" : favoriteCount} saved`
+                    : "Saved listings"
+              }
               onClick={() => {
                 setActiveView(VIEWS.FAVORITES);
                 closeAllMenus();
@@ -1322,8 +1494,12 @@ export function LoggedInHeader({
                 className={activeView === VIEWS.FAVORITES ? "text-emerald-600 dark:text-emerald-300" : ""}
               />
               {favoritesBadgeCount > 0 ? (
-                <span className="absolute -right-1 -top-1 inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white shadow-sm dark:bg-rose-500">
+                <span className={`${mobileNavBadgeBase} ${navBadgeRose}`}>
                   {favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount}
+                </span>
+              ) : favoriteCount > 0 ? (
+                <span className={`${mobileNavBadgeBase} ${navBadgeMuted}`}>
+                  {favoriteCount > 99 ? "99+" : favoriteCount}
                 </span>
               ) : null}
             </button>
