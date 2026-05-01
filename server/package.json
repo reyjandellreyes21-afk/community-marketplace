@@ -8,6 +8,7 @@
     "dev": "node index.js",
     "start": "node index.js",
     "demo:account": "node scripts/create-demo-account.js",
+    "db:apply-cart-fulfillment": "node scripts/apply-cart-fulfillment-type.js",
     "check": "node --check index.js && node --check load-env.js && node --check src/app.js && node --check src/schemas/index.js",
     "test": "node --test"
   },
@@ -24,6 +25,7 @@
     "express-validator": "^7.3.2",
     "google-auth-library": "^10.6.2",
     "morgan": "^1.10.1",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "pg": "^8.13.1"
   }
 }
