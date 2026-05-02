@@ -101,9 +101,6 @@ export function CommunityCourierPanel({
   return (
     <div className={`space-y-2 ${compact ? "" : "md:space-y-2.5"}`}>
       <p className={`font-medium text-neutral-800 dark:text-slate-200 ${compact ? "text-[11px]" : "text-xs"}`}>{heading}</p>
-      <p className={`text-pretty text-neutral-600 dark:text-slate-400 ${compact ? "text-[10px]" : "text-[11px]"}`}>
-        Same-neighborhood members only. Agree meetup in chat — cash on delivery at handoff.
-      </p>
       {error ? (
         <p className="text-[11px] text-red-600 dark:text-red-400" role="alert">
           {error}

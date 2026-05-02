@@ -115,6 +115,7 @@ export const marketplaceRouteValidators = {
     body("quantity").optional().isInt({ min: 1 }),
     body("comment").optional().isString().isLength({ max: 2000 }),
     body("variantSignature").optional().isString().isLength({ max: 512 }),
+    body("buyerCourierContributionCents").optional().isInt({ min: 0, max: 10000000 }),
   ],
   patchOrder: [
     param("id").isUUID(),
@@ -123,6 +124,8 @@ export const marketplaceRouteValidators = {
       .optional()
       .isIn(["change_of_mind", "change_variant", "better_price_elsewhere", "placed_by_mistake", "other"]),
     body("cancellationNote").optional({ nullable: true }).isString().isLength({ max: 500 }),
+    body("sellerCourierContributionCents").optional().isInt({ min: 0, max: 10000000 }),
+    body("buyerCourierContributionCents").optional().isInt({ min: 0, max: 10000000 }),
   ],
   listOrders: [
     query("role").optional().isIn(["buyer", "seller"]),
@@ -138,16 +141,52 @@ export const marketplaceRouteValidators = {
     body("rating").isInt({ min: 1, max: 5 }),
     body("reviewText").optional({ checkFalsy: true }).isString().isLength({ max: 2000 }),
   ],
+  orderCourierReview: [
+    param("id").isUUID(),
+    body("rating").isInt({ min: 1, max: 5 }),
+    body("tags").optional().isArray(),
+    body("abuseNote").optional({ nullable: true }).isString().isLength({ max: 500 }),
+  ],
   orderIdParam: [param("id").isUUID()],
   patchCourierModes: [body("modes").isArray()],
   patchCourierPresence: [
-    body("courierStatus").optional().isIn(["offline", "available", "active", "busy"]),
-    body("courier_status").optional().isIn(["offline", "available", "active", "busy"]),
+    body("courierStatus").optional().isIn(["offline", "available", "active"]),
+    body("courier_status").optional().isIn(["offline", "available", "active"]),
     body("optionalTags").optional().isArray(),
     body("optional_tags").optional().isArray(),
+    body("suggestedCompensationCents").optional({ nullable: true }).isInt({ min: 0, max: 10000000 }),
+    body("suggested_compensation_cents").optional({ nullable: true }).isInt({ min: 0, max: 10000000 }),
+    body("allowCourierTaskNotifications").optional().isBoolean(),
+    body("pushNotificationToken").optional({ nullable: true }).isString().isLength({ max: 512 }),
+    body("pushNotificationPlatform").optional({ nullable: true }).isIn(["fcm", "apns", ""]),
+    body().custom((_, { req }) => {
+      const b = req.body || {};
+      const keys = [
+        "courierStatus",
+        "courier_status",
+        "optionalTags",
+        "optional_tags",
+        "suggestedCompensationCents",
+        "suggested_compensation_cents",
+        "allowCourierTaskNotifications",
+        "pushNotificationToken",
+        "pushNotificationPlatform",
+      ];
+      if (keys.some((k) => Object.prototype.hasOwnProperty.call(b, k))) return true;
+      throw new Error("Provide at least one field to update.");
+    }),
   ],
-  assignCommunityCourier: [param("id").isUUID(), body("courierId").isUUID()],
-  claimCommunityCourier: [param("id").isUUID()],
+  assignCommunityCourier: [
+    param("id").isUUID(),
+    body("courierId").isUUID(),
+    body("mode").optional().isIn(["walk", "run", "bike"]),
+  ],
+  claimCommunityCourier: [param("id").isUUID(), body("mode").optional().isIn(["walk", "run", "bike"])],
+  respondCourierInvitation: [
+    param("id").isUUID(),
+    body("accept").isBoolean(),
+    body("mode").optional().isIn(["walk", "run", "bike"]),
+  ],
   createExpense: [
     body("amountCents").isInt({ min: 0 }),
     body("category").optional().isString(),

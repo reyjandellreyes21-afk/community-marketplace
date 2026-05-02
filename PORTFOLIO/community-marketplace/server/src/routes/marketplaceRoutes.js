@@ -16,6 +16,7 @@ import {
   getListing,
   getMeOrderAttention,
   listCommunityCouriers,
+  getCommunityCourierEngagement,
   listCartItems,
   patchCartItem,
   listExpenses,
@@ -26,12 +27,16 @@ import {
   listListings,
   listMyListings,
   listOpenDeliveryOrders,
+  listCourierInvitations,
+  respondCourierInvitation,
+  getCourierActiveDelivery,
   listOrders,
   listUsersDirectory,
   patchCourierModes,
   patchCourierPresence,
   patchOrder,
   upsertOrderReview,
+  upsertCourierDeliveryReview,
   putMeOrderAttention,
   removeFavorite,
   removeCartItem,
@@ -55,6 +60,13 @@ marketplaceRouter.get(
   marketplaceRouteValidators.communityCouriersParam,
   validate,
   listCommunityCouriers,
+);
+marketplaceRouter.get(
+  "/communities/:communityId/courier-engagement",
+  requireAuth,
+  marketplaceRouteValidators.communityCouriersParam,
+  validate,
+  getCommunityCourierEngagement,
 );
 marketplaceRouter.get("/communities/:id", marketplaceRouteValidators.communityIdParam, validate, getCommunityById);
 marketplaceRouter.post("/communities", requireAuth, writeLimiter, communityImageUpload.single("image"), createCommunity);
@@ -164,7 +176,25 @@ marketplaceRouter.put(
   validate,
   upsertOrderReview,
 );
+marketplaceRouter.put(
+  "/orders/:id/courier-review",
+  requireAuth,
+  writeLimiter,
+  marketplaceRouteValidators.orderCourierReview,
+  validate,
+  upsertCourierDeliveryReview,
+);
 marketplaceRouter.get("/delivery/open", requireAuth, listOpenDeliveryOrders);
+marketplaceRouter.get("/delivery/invitations", requireAuth, listCourierInvitations);
+marketplaceRouter.post(
+  "/orders/:id/courier/invitation/respond",
+  requireAuth,
+  writeLimiter,
+  marketplaceRouteValidators.respondCourierInvitation,
+  validate,
+  respondCourierInvitation,
+);
+marketplaceRouter.get("/delivery/active", requireAuth, getCourierActiveDelivery);
 marketplaceRouter.get("/me/courier-modes", requireAuth, getCourierModes);
 marketplaceRouter.patch("/me/courier-modes", requireAuth, writeLimiter, marketplaceRouteValidators.patchCourierModes, validate, patchCourierModes);
 marketplaceRouter.get("/me/courier-presence", requireAuth, getCourierPresence);

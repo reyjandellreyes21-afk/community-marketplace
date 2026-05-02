@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LinkMartLogo } from "./media/LinkMartLogo.jsx";
 import { StableAvatar } from "./media/StableMediaImage.jsx";
-import { getActivityTabChrome } from "../lib/activityTabTheme.js";
+import { activityPrimaryTabsFooterShellClass, getActivityTabChrome } from "../lib/activityTabTheme.js";
 import { ACTIVITY_TABS, VIEWS } from "../views.js";
 import { ActivityPrimaryTabs } from "./ActivityPrimaryTabs.jsx";
 
@@ -214,13 +214,14 @@ function MenuFeedbackIcon(props) {
 /** Mobile secondary nav icons — 24×24, unified 1.75 stroke / filled-solid pairs (mobile strip only). */
 const MOBILE_NAV_ICON_STROKE = 1.75;
 
-function MobileNavShopIcon({ filled = false, className = "", ...props }) {
+/** Home — house glyph (matches aria-label "Home"; storefront lives in desktop pills / branding). */
+function MobileNavHomeIcon({ filled = false, className = "", ...props }) {
   if (filled) {
     return (
       <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
         <path
           fill="currentColor"
-          d="M5 9h14l-1.25 9.25A1.75 1.75 0 0116.52 20H7.48a1.75 1.75 0 01-1.73-1.75L5 9zm2.5-5.25h9L18 8H6l1.5-4.25zM10 21.25a.75.75 0 01.75-.75h2.5a.75.75 0 010 1.5h-2.5a.75.75 0 01-.75-.75z"
+          d="M12 2.25L3.75 9.5h2.5v11.25h4.5v-6.25h3.5v6.25h4.5V9.5h2.5L12 2.25z"
         />
       </svg>
     );
@@ -240,9 +241,7 @@ function MobileNavShopIcon({ filled = false, className = "", ...props }) {
       aria-hidden
       {...props}
     >
-      <path d="M5 10h14v9a1.5 1.5 0 01-1.5 1.5H6.5A1.5 1.5 0 015 19v-9z" />
-      <path d="M5 10V8.5l2.25-5h9.5L19 8.5V10" />
-      <path d="M10 21.25h4" />
+      <path d="M3.75 9.75L12 3l8.25 6.75V20.5c0 .55-.45 1-1 1h-4v-6.5c0-.83-.67-1.5-1.5-1.5h-1.5c-.83 0-1.5.67-1.5 1.5V21.5H4.75c-.55 0-1-.45-1-1V9.75z" />
     </svg>
   );
 }
@@ -253,7 +252,7 @@ function MobileNavCartIcon({ filled = false, className = "", ...props }) {
       <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
         <path
           fill="currentColor"
-          d="M8.25 18.5a1.75 1.75 0 11-.001 3.501A1.75 1.75 0 018.25 18.5zm9.5 0a1.75 1.75 0 11-.001 3.501 1.75 1.75 0 01.001-3.501zM2.25 3.75h2.02l.37 1.5h14.47a.75.75 0 01.73.92l-1.56 6.02a1.5 1.5 0 01-1.45 1.12H8.18l-.98 5.29h12.05a.75.75 0 010 1.5H6.53a1.5 1.5 0 01-1.48-1.22l-3.09-15.1a.75.75 0 01.73-.89H4.4l-.4-1.59a.75.75 0 01.75-.93z"
+          d="M7.5 20.25a1.75 1.75 0 11-.001 3.501A1.75 1.75 0 017.5 20.25zm9.25 0a1.75 1.75 0 11-.001 3.501 1.75 1.75 0 01.001-3.501zM2.5 3.25h1.9l.42 1.6h14.35c.66 0 1.14.62.98 1.25l-1.48 5.9a1.5 1.5 0 01-1.45 1.14H7.75l-.38 1.75h10.75a.85.85 0 010 1.7H6.9a1.5 1.5 0 01-1.47-1.2L3.05 4.6l-.35-1.35H2.5a.85.85 0 010-1.7z"
         />
       </svg>
     );
@@ -273,9 +272,9 @@ function MobileNavCartIcon({ filled = false, className = "", ...props }) {
       aria-hidden
       {...props}
     >
-      <circle cx="9" cy="20.25" r="1.25" />
-      <circle cx="17" cy="20.25" r="1.25" />
-      <path d="M3.25 3.75h1.7l1.35 9.05a1.25 1.25 0 001.24 1.07h9.37a1.25 1.25 0 001.21-.94l1.46-5.68H6.42" />
+      <circle cx="8.5" cy="20.5" r="1.5" />
+      <circle cx="17.5" cy="20.5" r="1.5" />
+      <path d="M3.25 4h1.6l1.4 9.25a1.25 1.25 0 001.24 1.1h9.5a1.25 1.25 0 001.2-.9l1.5-5.95H6.6" />
     </svg>
   );
 }
@@ -379,14 +378,14 @@ function MobileNavNotificationsIcon({ filled = false, className = "", ...props }
   );
 }
 
-/** Purchases + orders unified tab */
+/** Activity hub — receipt / order slip (distinct from notifications bell + profile). */
 function MobileNavActivityIcon({ filled = false, className = "", ...props }) {
   if (filled) {
     return (
       <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
         <path
           fill="currentColor"
-          d="M6.75 3.75h10.5a2.25 2.25 0 012.25 2.25v12a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 18v-12a2.25 2.25 0 012.25-2.25zm1.5 3v1.5h9V6.75h-9zm0 3v1.5h6V9.75h-6zm0 3v1.5h9v-1.5h-9z"
+          d="M7.25 2.75h9.5c.83 0 1.5.67 1.5 1.5v15.35l-1.38-.92-1.37.92-1.37-.92-1.38.92-1.37-.92-1.37.92-1.38-.92L6 19.6V4.25c0-.83.67-1.5 1.5-1.5zm2 5.25h5.5v1.75h-5.5V8zm0 3.25h5.5v1.75h-5.5v-1.75zm0 3.25h3.25v1.75H9.25v-1.75z"
         />
       </svg>
     );
@@ -406,8 +405,8 @@ function MobileNavActivityIcon({ filled = false, className = "", ...props }) {
       aria-hidden
       {...props}
     >
-      <path d="M7.5 5.25h9a1.5 1.5 0 011.5 1.5v11a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 016 17.75v-11a1.5 1.5 0 011.5-1.5z" />
-      <path d="M8.25 9h7.5M8.25 12h7.5M8.25 15h4.5" />
+      <path d="M7.25 4.25h9.5a1.5 1.5 0 011.5 1.5v14.6l-1.25-.83-1.25.83-1.25-.83-1.25.83-1.25-.83-1.25.83-1.25-.83L5.75 20.35V5.75a1.5 1.5 0 011.5-1.5z" />
+      <path d="M9.25 8.5h5.5M9.25 11.75h5.5M9.25 15h3.25" />
     </svg>
   );
 }
@@ -552,8 +551,8 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {() => void} props.goBrowse
  * @param {(tab?: string) => void} props.goActivity Merge hub for purchases, seller orders, courier
  * @param {string} [props.activityTab] Current Activity primary tab (`ACTIVITY_TABS`) when `activeView` is Activity
- * @param {number} [props.courierAttentionCount] Courier slice for Activity rose total (Deliver + Buying tab).
- * @param {number} [props.courierPipelineCount] Full courier pipeline for muted Activity fallback (Deliver + sales + purchases).
+ * @param {number} [props.courierAttentionCount] Courier slice for Activity rose total (open delivery tasks + buyer orders needing courier suggest).
+ * @param {number} [props.courierPipelineCount] Full courier pipeline for muted Activity fallback (open tasks + sales + purchases coordination).
  * @param {{ count: number, rose: boolean }} [props.activityPrimaryBuyingBadge] Activity strip Buying glyph count + rose/slate.
  * @param {{ count: number, rose: boolean }} [props.activityPrimarySellingBadge]
  * @param {{ count: number, rose: boolean }} [props.activityPrimaryCourierBadge]
@@ -579,6 +578,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {number} [props.favoriteCount] Saved favorites count (shop / community product hearts)
  * @param {() => void} [props.onNavigateHome] Clear SPA path (e.g. /l/…) when opening marketplace from the logo
  * @param {import('react').ReactNode} [props.children] Main scroll region (below the sticky header and mobile tab row)
+ * @param {import('react').ReactNode} [props.activityHubChildStrip] Activity hub secondary strip (order status or courier sub-tabs) below header nav
  * @param {import('react').ReactNode} [props.mobileSecondaryNav] Optional strip below the top header (mobile only)
  * @param {(collapsed: boolean) => void} [props.onMobileBrowseNavCollapsedChange] Fires when mobile primary+secondary chrome finishes collapsing/expanding (shop-like views).
  * @param {number} [props.mobileSecondaryDragX] Horizontal drag offset for secondary nav swipe gestures.
@@ -624,6 +624,7 @@ export function LoggedInHeader({
   mobileSecondaryDragX = 0,
   hideNavigationChrome = false,
   liftChromeAboveOverlay = false,
+  activityHubChildStrip = null,
   children,
 }) {
   const openActivity =
@@ -635,7 +636,7 @@ export function LoggedInHeader({
 
   const courierRoseForHub = Math.min(99, Math.max(0, courierAttentionCount));
   const courierPipelineForHub = Math.min(99, Math.max(0, courierPipelineCount));
-  /** Rose total = unseen orders (all status tabs) + courier Deliver/purchases attention; slate fallback = P+P volumes + full courier pipeline. */
+  /** Rose total = unseen orders (all status tabs) + courier open tasks / buyer coordinate attention; slate fallback = P+P volumes + full courier pipeline. */
   const activityAttentionCount = Math.min(
     99,
     purchasesItemCount + ordersItemCount + courierRoseForHub,
@@ -929,8 +930,9 @@ export function LoggedInHeader({
     activeView === VIEWS.ACTIVITY ||
     activeView === VIEWS.SELLER ||
     activeView === VIEWS.MY_LISTINGS;
-  /** Mobile: hide top utility row on secondary tabs (keep visible on Shop-like views and Cart so favorites/menu stay reachable). */
+  /** Mobile: hide top utility row (logo, favorites, messages) on secondary tabs — same treatment for Cart as Activity/Inbox (bottom tab strip stays). */
   const hideMobilePrimaryRow =
+    activeView === VIEWS.CART ||
     activeView === VIEWS.ACTIVITY ||
     activeView === VIEWS.SELLER ||
     activeView === VIEWS.MY_LISTINGS ||
@@ -1216,7 +1218,7 @@ export function LoggedInHeader({
               }}
             >
               <span className="mobile-nav-tab-icon relative inline-flex size-6 shrink-0 items-center justify-center" aria-hidden>
-                <MobileNavShopIcon filled={mobileShopTabActive} className="h-6 w-6 shrink-0" aria-hidden />
+                <MobileNavHomeIcon filled={mobileShopTabActive} className="h-6 w-6 shrink-0" aria-hidden />
               </span>
             </button>
             <button
@@ -1320,20 +1322,6 @@ export function LoggedInHeader({
             </button>
           </div>
         </nav>
-
-            {activeView === VIEWS.ACTIVITY ? (
-              <div
-                className={`md:hidden ${getActivityTabChrome(activityTab).shellMobile}`}
-              >
-                <ActivityPrimaryTabs
-                  activityTab={activityTab}
-                  goActivity={openActivity}
-                  buyingBadge={activityPrimaryBuyingBadge}
-                  sellingBadge={activityPrimarySellingBadge}
-                  courierBadge={activityPrimaryCourierBadge}
-                />
-              </div>
-            ) : null}
 
             {mobileSecondaryNav ? (
               <div className="border-t border-neutral-200/35 bg-white/90 py-2.5 dark:border-slate-700/45 dark:bg-slate-900/90">
@@ -1656,8 +1644,18 @@ export function LoggedInHeader({
         </div>
       </div>
 
+      {activeView === VIEWS.ACTIVITY && activityHubChildStrip ? (
+        <div className={`w-full shrink-0 ${getActivityTabChrome(activityTab).childStripHeaderBand}`}>
+          {activityHubChildStrip}
+        </div>
+      ) : null}
+
+    </header>
+
       {activeView === VIEWS.ACTIVITY ? (
-        <div className={`hidden w-full md:block ${getActivityTabChrome(activityTab).shellDesktop}`}>
+        <div
+          className={`pointer-events-auto fixed inset-x-0 bottom-0 z-40 px-1 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 ${activityPrimaryTabsFooterShellClass(activityTab)}`}
+        >
           <ActivityPrimaryTabs
             activityTab={activityTab}
             goActivity={openActivity}
@@ -1667,7 +1665,6 @@ export function LoggedInHeader({
           />
         </div>
       ) : null}
-    </header>
 
       {mobileMenuOpen ? (
         <>

@@ -23,6 +23,12 @@ const isVariantSignatureMissingError = (error) => {
   return /variant_signature/i.test(msg) && (error.code === "PGRST204" || /schema cache/i.test(msg));
 };
 
+const isMissingProfilesNotifyCourierColumn = (error) =>
+  /notify_courier_open_tasks/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
+const isMissingProfilesPushTokenColumn = (error) =>
+  /push_notification_token|push_notification_platform/i.test(String(error?.message || "")) &&
+  /profiles|schema cache/i.test(String(error?.message || ""));
+
 /** Validates requested fulfillment against `listing.fulfillment_modes`; picks default when omitted/invalid. */
 function resolveBuyerFulfillmentForListing(listing, requested) {
   const modes =
@@ -77,7 +83,43 @@ const ORDER_UPDATE_OPTIONAL_COLUMNS = [
   "buyer_receipt_acknowledged_at",
   "buyer_comment",
   "variant_signature",
+  "buyer_courier_contribution_cents",
+  "seller_courier_contribution_cents",
 ];
+
+/** PHP centavos — sanity cap for voluntary courier pool lines (no wallet). */
+const MAX_COURIER_CONTRIBUTION_CENTS = 10_000_000;
+
+function parseOptionalCourierContributionCents(raw) {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 0) {
+    throw new AppError(400, "Courier contribution must be a non-negative integer (centavos).");
+  }
+  if (n > MAX_COURIER_CONTRIBUTION_CENTS) {
+    throw new AppError(400, "Courier contribution exceeds maximum.");
+  }
+  return n;
+}
+
+function deliveryCodTotalFromSplit(buyerCents, sellerCents) {
+  const b = Math.max(0, Math.floor(Number(buyerCents) || 0));
+  const s = Math.max(0, Math.floor(Number(sellerCents) || 0));
+  return b + s;
+}
+
+function orderHasAcceptedCommunityCourier(row) {
+  const id = row?.accepted_courier_assignment_id ?? row?.accepted_bid_id;
+  return Boolean(id);
+}
+
+/** Hide open courier tasks until pooled COD ≥ this many centavos (env; 100 ≈ ₱1). Default 0 = show all. */
+function openDeliveryMinCourierCents() {
+  const raw = process.env.OPEN_DELIVERY_MIN_COURIER_CENTS;
+  if (raw === undefined || raw === "") return 0;
+  const n = parseInt(String(raw).trim(), 10);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
 
 const ALLOWED_ORDER_CANCELLATION_REASONS = new Set([
   "change_of_mind",
@@ -92,6 +134,25 @@ function postgrestErrorText(error) {
   const nested =
     typeof error === "object" && error.cause ? postgrestErrorText(error.cause) : "";
   return [error.message, error.details, error.hint, nested].filter(Boolean).join(" ").trim();
+}
+
+/** When `20260430125500_orders_status_milestone_timestamps` has not been applied yet. */
+function isMissingOrdersCompletedAtColumn(error) {
+  const t = postgrestErrorText(error);
+  return (
+    /completed_at/i.test(t) &&
+    (/orders/i.test(t) || /[`'"]orders[`'"]/i.test(t)) &&
+    (/does not exist/i.test(t) || /schema cache/i.test(t) || /could not find/i.test(t))
+  );
+}
+
+/** When `20260502120000_order_courier_contributions` has not been applied (or schema cache lags). */
+function isMissingOrdersCourierContributionColumn(error) {
+  const t = postgrestErrorText(error);
+  return (
+    /buyer_courier_contribution_cents|seller_courier_contribution_cents/i.test(t) &&
+    (/orders/i.test(t) || /schema cache/i.test(t) || /could not find/i.test(t))
+  );
 }
 
 function normalizeListingImageUrlKey(url) {
@@ -360,6 +421,8 @@ function minimalOrdersWritePatchFallback(full) {
     "fulfillment_type",
     "cod_goods_cents",
     "cod_delivery_cents",
+    /* Omit buyer/seller courier split columns here — they are in ORDER_UPDATE_OPTIONAL_COLUMNS; re-including them
+     * caused PostgREST to keep failing after those keys were stripped (schema cache / unmigrated DB). */
     "accepted_courier_assignment_id",
     "accepted_bid_id",
   ];
@@ -568,6 +631,20 @@ const buyerReviewRowToApi = (row) => {
   };
 };
 
+const ALLOWED_COURIER_DELIVERY_REVIEW_TAGS = new Set(["fast", "late", "friendly"]);
+
+const buyerCourierReviewRowToApi = (row) => {
+  if (!row) return null;
+  const tags = Array.isArray(row.tags) ? row.tags.map((t) => String(t).toLowerCase()).filter(Boolean) : [];
+  return {
+    rating: row.rating,
+    tags,
+    abuseNote: row.abuse_note != null && String(row.abuse_note).trim() ? String(row.abuse_note).trim() : null,
+    abuseReportedAt: row.abuse_reported_at ?? null,
+    updatedAt: row.updated_at,
+  };
+};
+
 /** Snapshot fields from `listings` row (snake_case) for order responses — keeps thumbnails working without extra client fetches. */
 function orderListingSnapshotFromDbRow(row) {
   if (!row) return { listingTitle: null, listingImageUrl: "", listingImageUrls: [], listingCommunityId: null };
@@ -582,7 +659,7 @@ function orderListingSnapshotFromDbRow(row) {
   };
 }
 
-const orderRowToApi = (row, reviewRow = null, listingMeta = null) => {
+const orderRowToApi = (row, reviewRow = null, listingMeta = null, courierReviewRow = null) => {
   const courierAssignmentId = row.accepted_courier_assignment_id ?? row.accepted_bid_id ?? null;
   return {
   id: row.id,
@@ -594,6 +671,8 @@ const orderRowToApi = (row, reviewRow = null, listingMeta = null) => {
   status: row.status,
   codGoodsCents: row.cod_goods_cents,
   codDeliveryCents: row.cod_delivery_cents,
+  buyerCourierContributionCents: Math.max(0, Math.floor(Number(row.buyer_courier_contribution_cents) || 0)),
+  sellerCourierContributionCents: Math.max(0, Math.floor(Number(row.seller_courier_contribution_cents) || 0)),
   acceptedCourierAssignmentId: courierAssignmentId,
   /** @deprecated Use acceptedCourierAssignmentId */
   acceptedBidId: courierAssignmentId,
@@ -601,6 +680,7 @@ const orderRowToApi = (row, reviewRow = null, listingMeta = null) => {
   variantSignature: String(row.variant_signature ?? "").trim(),
   buyerReceiptAcknowledgedAt: row.buyer_receipt_acknowledged_at ?? null,
   buyerReview: buyerReviewRowToApi(reviewRow),
+  buyerCourierReview: buyerCourierReviewRowToApi(courierReviewRow),
   processingEnteredAt: row.processing_entered_at ?? null,
   completedAt: row.completed_at ?? null,
   cancelledAt: row.cancelled_at ?? null,
@@ -678,6 +758,77 @@ async function resolveOrderCommunityId(order) {
   return prof?.community_id ? String(prof.community_id) : null;
 }
 
+function utcDayStartIso(d = new Date()) {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0)).toISOString();
+}
+
+/** Monday 00:00 UTC for the ISO week containing `d`. */
+function utcWeekStartMondayIso(d = new Date()) {
+  const day = d.getUTCDay();
+  const daysFromMonday = (day + 6) % 7;
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - daysFromMonday, 0, 0, 0, 0)).toISOString();
+}
+
+function engagementThresholds() {
+  const r = parseFloat(String(process.env.COURIER_TOP_MIN_AVG_RATING ?? "4").trim());
+  const minAvgRating = Number.isFinite(r) ? Math.min(5, Math.max(1, r)) : 4;
+  const minRev = parseInt(String(process.env.COURIER_TOP_MIN_REVIEWS ?? "1").trim(), 10);
+  const fastSamples = parseInt(String(process.env.COURIER_FASTEST_MIN_DELIVERIES ?? "2").trim(), 10);
+  const lim = parseInt(String(process.env.COURIER_LEADERBOARD_LIMIT ?? "15").trim(), 10);
+  return {
+    minAvgRating,
+    minReviews: Number.isFinite(minRev) ? Math.max(1, minRev) : 1,
+    fastestMinDeliveries: Number.isFinite(fastSamples) ? Math.max(2, fastSamples) : 2,
+    leaderboardLimit: Number.isFinite(lim) ? Math.min(50, Math.max(5, lim)) : 15,
+  };
+}
+
+/**
+ * Effective listing community (listing.community_id else seller profile.community_id) — matches open-delivery matching.
+ * @param {{ id?: string, listing_id?: string }[]} orderRows
+ */
+async function mapOrderIdsToCommunityIds(orderRows) {
+  const rows = Array.isArray(orderRows) ? orderRows : [];
+  if (rows.length === 0) return new Map();
+  const listingIds = [...new Set(rows.map((r) => String(r?.listing_id || "").trim()).filter(Boolean))];
+  /** @type {Map<string, string | null>} */
+  const out = new Map();
+  if (listingIds.length === 0) return out;
+  const { data: listings } = await supabaseAdmin
+    .from("listings")
+    .select("id, community_id, seller_id")
+    .in("id", listingIds);
+  const listingRows = listings || [];
+  const sellersNeedingCommunity = listingRows.filter((L) => !L.community_id && L.seller_id).map((L) => L.seller_id);
+  let sellerCommunityById = new Map();
+  if (sellersNeedingCommunity.length > 0) {
+    const { data: sellerProfs } = await supabaseAdmin
+      .from("profiles")
+      .select("id, community_id")
+      .in("id", [...new Set(sellersNeedingCommunity)]);
+    sellerCommunityById = new Map(
+      (sellerProfs || []).map((p) => [String(p.id), p.community_id ? String(p.community_id) : null]),
+    );
+  }
+  const metaByListing = new Map(listingRows.map((L) => [String(L.id), L]));
+  for (const r of rows) {
+    const oid = String(r?.id || "").trim();
+    const lid = String(r?.listing_id || "").trim();
+    if (!oid || !lid) continue;
+    const L = metaByListing.get(lid);
+    if (!L) {
+      out.set(oid, null);
+      continue;
+    }
+    if (L.community_id) out.set(oid, String(L.community_id));
+    else {
+      const sid = L.seller_id ? String(L.seller_id) : "";
+      out.set(oid, sid ? sellerCommunityById.get(sid) || null : null);
+    }
+  }
+  return out;
+}
+
 async function fetchListingMetaForOrder(order) {
   if (!order?.listing_id) return null;
   const { data: listing } = await supabaseAdmin
@@ -715,11 +866,91 @@ async function markCourierBusy(courierId) {
   await setProfileCourierStatus(courierId, "busy");
 }
 
+const COURIER_TRANSPORT_MODES = ["walk", "run", "bike"];
+
+/** True when this courier has an accepted assignment on an order still in the delivery pipeline (not completed/cancelled). */
+async function courierHasInProgressDelivery(courierId) {
+  const cid = String(courierId || "").trim();
+  if (!cid) return false;
+  const { data: assignments, error: aerr } = await supabaseAdmin
+    .from("courier_assignments")
+    .select("order_id")
+    .eq("courier_id", cid)
+    .eq("status", "accepted");
+  if (aerr || !assignments?.length) return false;
+  const orderIds = [...new Set(assignments.map((a) => String(a.order_id || "")).filter(Boolean))];
+  if (orderIds.length === 0) return false;
+  const { data: orders, error: oerr } = await supabaseAdmin
+    .from("orders")
+    .select("id")
+    .in("id", orderIds)
+    .in("status", ["courier_assigned", "out_for_delivery"]);
+  if (oerr) return false;
+  return (orders || []).length > 0;
+}
+
 /**
- * Community delivery: record courier on `courier_assignments`, set order to `courier_assigned`.
- * First successful DB transition wins for concurrent claims.
+ * Picks `courier_assignments.mode`: explicit request wins if allowed by profile; else bike → run → walk.
+ * @param {string[]} profileModes normalized list from `profiles.courier_modes`
+ * @param {string} [requestedRaw] optional `walk` | `run` | `bike` from claim/assign body
  */
-async function assignCourierToOpenDeliveryOrder(orderId, courierId, actorUserId, role) {
+function resolveCourierAssignmentMode(profileModes, requestedRaw) {
+  const modes = normalizeDbTextArray(profileModes);
+  const req = requestedRaw != null ? String(requestedRaw).trim().toLowerCase() : "";
+  if (req) {
+    if (!COURIER_TRANSPORT_MODES.includes(req)) {
+      throw new AppError(400, "mode must be walk, run, or bike.");
+    }
+    if (modes.length > 0 && !modes.includes(req)) {
+      throw new AppError(400, "Choose a transport mode enabled on your courier profile.");
+    }
+    return req;
+  }
+  if (modes.includes("bike")) return "bike";
+  if (modes.includes("run")) return "run";
+  if (modes.includes("walk")) return "walk";
+  return "walk";
+}
+
+/**
+ * Win `seller_accepted` → `courier_assigned` for an existing `courier_assignments` row (claim or invitation accept).
+ */
+async function atomicAcceptCourierAssignment(order, bidId, courierId) {
+  const orderId = order.id;
+  const bidTs = new Date().toISOString();
+  const orderPatch = compactOrderPatchForWrite({
+    status: "courier_assigned",
+    accepted_courier_assignment_id: bidId,
+    updated_at: bidTs,
+    ...(!order.processing_entered_at ? { processing_entered_at: bidTs } : {}),
+  });
+
+  const { error: uerr } = await supabaseAdmin.from("orders").update(orderPatch).eq("id", orderId).eq("status", "seller_accepted");
+  if (uerr) throw new AppError(500, uerr.message);
+
+  const { data: updatedOrder } = await supabaseAdmin.from("orders").select("*").eq("id", orderId).maybeSingle();
+  if (!updatedOrder || updatedOrder.status !== "courier_assigned") {
+    await supabaseAdmin.from("courier_assignments").update({ status: "rejected" }).eq("id", bidId);
+    throw new AppError(409, "Someone else just accepted this delivery. Try another order.");
+  }
+
+  await supabaseAdmin.from("courier_assignments").update({ status: "rejected" }).eq("order_id", orderId).neq("id", bidId);
+  await supabaseAdmin.from("courier_assignments").update({ status: "accepted" }).eq("id", bidId);
+  await markCourierBusy(courierId);
+
+  const listingMeta = await fetchListingMetaForOrder(updatedOrder);
+  return orderRowToApi(updatedOrder, null, listingMeta);
+}
+
+/**
+ * Community delivery: record courier on `courier_assignments`, optionally only as an invitation (buyer/seller suggest).
+ * Courier self-claim finalizes immediately; buyer/seller assign leaves order on `seller_accepted` until the courier accepts.
+ *
+ * @param {{ mode?: string, invitationOnly?: boolean }} [options]
+ */
+async function assignCourierToOpenDeliveryOrder(orderId, courierId, actorUserId, role, options = {}) {
+  const invitationOnly = Boolean(options.invitationOnly);
+
   const { data: order, error: oerr } = await supabaseAdmin.from("orders").select("*").eq("id", orderId).maybeSingle();
   if (oerr) throw new AppError(500, oerr.message);
   if (!order) throw new AppError(404, "Order not found.");
@@ -773,61 +1004,111 @@ async function assignCourierToOpenDeliveryOrder(orderId, courierId, actorUserId,
 
   const { data: modeRow } = await supabaseAdmin.from("profiles").select("courier_modes").eq("id", courierId).maybeSingle();
   const modes = normalizeDbTextArray(modeRow?.courier_modes);
-  const mode = modes.includes("bike") ? "bike" : modes.includes("run") ? "run" : "walk";
+  const mode = resolveCourierAssignmentMode(modes, options.mode);
+
+  if (invitationOnly) {
+    await supabaseAdmin
+      .from("courier_assignments")
+      .update({ status: "superseded" })
+      .eq("order_id", orderId)
+      .eq("status", "pending")
+      .neq("courier_id", courierId);
+  }
+
+  const { data: existingPair } = await supabaseAdmin
+    .from("courier_assignments")
+    .select("id, status")
+    .eq("order_id", orderId)
+    .eq("courier_id", courierId)
+    .maybeSingle();
 
   let bidId = null;
-  const { data: inserted, error: ierr } = await supabaseAdmin
-    .from("courier_assignments")
-    .insert({
-      order_id: orderId,
-      courier_id: courierId,
-      amount_cents: COMMUNITY_DELIVERY_PLACEHOLDER_CENTS,
-      eta_minutes: null,
-      mode,
-      status: "pending",
-    })
-    .select("id")
-    .single();
 
-  if (ierr?.code === "23505") {
-    const { data: existing } = await supabaseAdmin
+  if (existingPair) {
+    const st = String(existingPair.status || "").toLowerCase();
+    if (st === "accepted") {
+      throw new AppError(409, "This order already has a courier.");
+    }
+    if (invitationOnly) {
+      if (st === "pending") {
+        await supabaseAdmin.from("courier_assignments").update({ mode }).eq("id", existingPair.id);
+        bidId = existingPair.id;
+      } else if (st === "rejected" || st === "superseded") {
+        const { error: reinvErr } = await supabaseAdmin
+          .from("courier_assignments")
+          .update({
+            mode,
+            status: "pending",
+            amount_cents: COMMUNITY_DELIVERY_PLACEHOLDER_CENTS,
+          })
+          .eq("id", existingPair.id);
+        if (reinvErr) throw new AppError(400, reinvErr.message);
+        bidId = existingPair.id;
+      } else {
+        throw new AppError(400, "Cannot suggest this courier for this order right now.");
+      }
+    } else if (st === "pending") {
+      bidId = existingPair.id;
+    } else if (st === "rejected" || st === "superseded") {
+      const { error: reclaimErr } = await supabaseAdmin
+        .from("courier_assignments")
+        .update({
+          mode,
+          status: "pending",
+          amount_cents: COMMUNITY_DELIVERY_PLACEHOLDER_CENTS,
+        })
+        .eq("id", existingPair.id);
+      if (reclaimErr) throw new AppError(400, reclaimErr.message);
+      bidId = existingPair.id;
+    } else {
+      throw new AppError(409, "Could not claim this delivery.");
+    }
+  }
+
+  if (!bidId) {
+    const { data: inserted, error: ierr } = await supabaseAdmin
       .from("courier_assignments")
+      .insert({
+        order_id: orderId,
+        courier_id: courierId,
+        amount_cents: COMMUNITY_DELIVERY_PLACEHOLDER_CENTS,
+        eta_minutes: null,
+        mode,
+        status: "pending",
+      })
       .select("id")
-      .eq("order_id", orderId)
-      .eq("courier_id", courierId)
-      .maybeSingle();
-    if (existing?.id) bidId = existing.id;
-    else throw new AppError(409, "Could not claim this delivery.");
-  } else if (ierr) {
-    throw new AppError(400, ierr.message);
-  } else {
-    bidId = inserted.id;
+      .single();
+
+    if (ierr?.code === "23505") {
+      const { data: race } = await supabaseAdmin
+        .from("courier_assignments")
+        .select("id, status")
+        .eq("order_id", orderId)
+        .eq("courier_id", courierId)
+        .maybeSingle();
+      const rst = String(race?.status || "").toLowerCase();
+      if (race?.id && rst === "pending") {
+        bidId = race.id;
+        if (invitationOnly) {
+          await supabaseAdmin.from("courier_assignments").update({ mode }).eq("id", bidId);
+        }
+      } else {
+        throw new AppError(409, "Could not claim this delivery.");
+      }
+    } else if (ierr) {
+      throw new AppError(400, ierr.message);
+    } else {
+      bidId = inserted.id;
+    }
   }
 
-  const bidTs = new Date().toISOString();
-  const orderPatch = compactOrderPatchForWrite({
-    status: "courier_assigned",
-    accepted_courier_assignment_id: bidId,
-    cod_delivery_cents: 0,
-    updated_at: bidTs,
-    ...(!order.processing_entered_at ? { processing_entered_at: bidTs } : {}),
-  });
-
-  const { error: uerr } = await supabaseAdmin.from("orders").update(orderPatch).eq("id", orderId).eq("status", "seller_accepted");
-  if (uerr) throw new AppError(500, uerr.message);
-
-  const { data: updatedOrder } = await supabaseAdmin.from("orders").select("*").eq("id", orderId).maybeSingle();
-  if (!updatedOrder || updatedOrder.status !== "courier_assigned") {
-    await supabaseAdmin.from("courier_assignments").update({ status: "rejected" }).eq("id", bidId);
-    throw new AppError(409, "Someone else just accepted this delivery. Try another order.");
+  if (invitationOnly) {
+    const { data: freshOrder } = await supabaseAdmin.from("orders").select("*").eq("id", orderId).maybeSingle();
+    const listingMeta = await fetchListingMetaForOrder(freshOrder);
+    return orderRowToApi(freshOrder, null, listingMeta);
   }
 
-  await supabaseAdmin.from("courier_assignments").update({ status: "rejected" }).eq("order_id", orderId).neq("id", bidId);
-  await supabaseAdmin.from("courier_assignments").update({ status: "accepted" }).eq("id", bidId);
-  await markCourierBusy(courierId);
-
-  const listingMeta = await fetchListingMetaForOrder(updatedOrder);
-  return orderRowToApi(updatedOrder, null, listingMeta);
+  return atomicAcceptCourierAssignment(order, bidId, courierId);
 }
 
 const communityRowToApi = (row, memberCount) => {
@@ -1575,6 +1856,9 @@ export const createOrder = async (req, res, next) => {
       (o) => effectiveVariantSignatureFromOrderRow(o) === targetVariantSig,
     );
     let preferredRowId = null;
+    const newBuyerCourier =
+      fulfillmentType === "delivery" ? parseOptionalCourierContributionCents(req.body.buyerCourierContributionCents) ?? 0 : 0;
+
     if (matchingPlaced.length > 0) {
       const ordered = [...matchingPlaced].sort((a, b) => {
         const at = String(a?.created_at || "");
@@ -1586,6 +1870,8 @@ export const createOrder = async (req, res, next) => {
       const mergedQty = existingQtyTotal + quantity;
       const mergedBuyerComment =
         buyerComment || String(primary?.buyer_comment || "").trim();
+      const mergedBuyerPool = ordered.reduce((s, row) => s + Math.max(0, Number(row?.buyer_courier_contribution_cents) || 0), 0) + newBuyerCourier;
+      const mergedSellerPool = ordered.reduce((s, row) => s + Math.max(0, Number(row?.seller_courier_contribution_cents) || 0), 0);
       const patch = {
         quantity: mergedQty,
         cod_goods_cents: listing.price_cents * mergedQty,
@@ -1593,6 +1879,9 @@ export const createOrder = async (req, res, next) => {
         fulfillment_type: fulfillmentType,
         buyer_comment: mergedBuyerComment,
         variant_signature: targetVariantSig,
+        buyer_courier_contribution_cents: mergedBuyerPool,
+        seller_courier_contribution_cents: mergedSellerPool,
+        cod_delivery_cents: deliveryCodTotalFromSplit(mergedBuyerPool, mergedSellerPool),
       };
       const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(primary.id, patch);
       if (uerr) throw new AppError(400, uerr.message);
@@ -1611,7 +1900,9 @@ export const createOrder = async (req, res, next) => {
         fulfillment_type: fulfillmentType,
         status: initialStatus,
         cod_goods_cents: codGoodsCents,
-        cod_delivery_cents: 0,
+        buyer_courier_contribution_cents: newBuyerCourier,
+        seller_courier_contribution_cents: 0,
+        cod_delivery_cents: deliveryCodTotalFromSplit(newBuyerCourier, 0),
         buyer_comment: buyerComment,
         variant_signature: targetVariantSig,
       };
@@ -1630,6 +1921,13 @@ export const createOrder = async (req, res, next) => {
         if (isVariantSignatureMissingError(error) && Object.prototype.hasOwnProperty.call(insertPayload, "variant_signature")) {
           const next = { ...insertPayload };
           delete next.variant_signature;
+          insertPayload = next;
+          continue;
+        }
+        if (isMissingOrdersCourierContributionColumn(error)) {
+          const next = { ...insertPayload };
+          delete next.buyer_courier_contribution_cents;
+          delete next.seller_courier_contribution_cents;
           insertPayload = next;
           continue;
         }
@@ -1681,7 +1979,9 @@ const consolidateBuyerListingStatusOrders = async ({ buyerId, listingId, status,
   const others = sorted.filter((r) => String(r.id) !== String(primary.id));
   const totalQty = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.quantity) || 0), 0);
   const totalGoods = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.cod_goods_cents) || 0), 0);
-  const totalDelivery = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.cod_delivery_cents) || 0), 0);
+  const totalBuyerPool = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.buyer_courier_contribution_cents) || 0), 0);
+  const totalSellerPool = sorted.reduce((sum, r) => sum + Math.max(0, Number(r?.seller_courier_contribution_cents) || 0), 0);
+  const totalDelivery = deliveryCodTotalFromSplit(totalBuyerPool, totalSellerPool);
 
   let mergedBuyerComment = "";
   let bestCommentTs = "";
@@ -1698,6 +1998,8 @@ const consolidateBuyerListingStatusOrders = async ({ buyerId, listingId, status,
   const patch = {
     quantity: totalQty,
     cod_goods_cents: totalGoods,
+    buyer_courier_contribution_cents: totalBuyerPool,
+    seller_courier_contribution_cents: totalSellerPool,
     cod_delivery_cents: totalDelivery,
     buyer_comment: mergedBuyerComment,
     variant_signature: anchorSig,
@@ -1731,11 +2033,18 @@ export const listOrders = async (req, res, next) => {
     const rows = data || [];
     const orderIds = rows.map((r) => r?.id).filter(Boolean);
     const reviewByOrderId = new Map();
+    const courierReviewByOrderId = new Map();
     if (orderIds.length > 0) {
       const { data: revs, error: rerr } = await supabaseAdmin.from("order_reviews").select("*").in("order_id", orderIds);
       if (!rerr && Array.isArray(revs)) {
         for (const r of revs) {
           if (r?.order_id) reviewByOrderId.set(r.order_id, r);
+        }
+      }
+      const { data: crevs, error: cerr } = await supabaseAdmin.from("courier_delivery_reviews").select("*").in("order_id", orderIds);
+      if (!cerr && Array.isArray(crevs)) {
+        for (const r of crevs) {
+          if (r?.order_id) courierReviewByOrderId.set(r.order_id, r);
         }
       }
     }
@@ -1754,7 +2063,12 @@ export const listOrders = async (req, res, next) => {
     }
     res.json({
       orders: rows.map((row) =>
-        orderRowToApi(row, reviewByOrderId.get(row.id) || null, listingById.get(String(row.listing_id)) || null),
+        orderRowToApi(
+          row,
+          reviewByOrderId.get(row.id) || null,
+          listingById.get(String(row.listing_id)) || null,
+          courierReviewByOrderId.get(row.id) || null,
+        ),
       ),
       page: {
         limit: pageLimit,
@@ -1818,6 +2132,119 @@ export const upsertOrderReview = async (req, res, next) => {
   }
 };
 
+function normalizeCourierDeliveryReviewTags(raw) {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  for (const t of arr) {
+    const k = String(t || "")
+      .trim()
+      .toLowerCase();
+    if (!ALLOWED_COURIER_DELIVERY_REVIEW_TAGS.has(k) || seen.has(k)) continue;
+    seen.add(k);
+    out.push(k);
+  }
+  return out;
+}
+
+export const upsertCourierDeliveryReview = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const rating = Number(req.body.rating);
+    const tags = normalizeCourierDeliveryReviewTags(req.body.tags);
+    const abuseRaw = req.body.abuseNote != null ? String(req.body.abuseNote) : "";
+    const abuseNote = abuseRaw.trim().slice(0, 500);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new AppError(400, "Rating must be between 1 and 5.");
+
+    const { data: order, error } = await supabaseAdmin.from("orders").select("*").eq("id", id).maybeSingle();
+    if (error) throw new AppError(500, error.message);
+    if (!order) throw new AppError(404, "Order not found.");
+    if (order.buyer_id !== req.user.id) throw new AppError(403, "Only the buyer can review this delivery.");
+    if (order.status !== "completed") throw new AppError(400, "You can only review after the order is completed.");
+    if (order.fulfillment_type !== "delivery") throw new AppError(400, "Courier reviews apply to delivery orders only.");
+
+    const assignmentId = order.accepted_courier_assignment_id ?? order.accepted_bid_id ?? null;
+    if (!assignmentId) throw new AppError(400, "This order did not use a community courier — there is no courier to rate.");
+
+    const { data: assignment, error: aerr } = await supabaseAdmin
+      .from("courier_assignments")
+      .select("*")
+      .eq("id", assignmentId)
+      .maybeSingle();
+    if (aerr) throw new AppError(500, aerr.message);
+    if (!assignment || String(assignment.order_id) !== String(id)) throw new AppError(400, "Courier assignment not found for this order.");
+    if (String(assignment.status || "").toLowerCase() !== "accepted") {
+      throw new AppError(400, "Invalid courier assignment for review.");
+    }
+
+    const courierId = assignment.courier_id;
+    const now = new Date().toISOString();
+
+    const { data: existing } = await supabaseAdmin
+      .from("courier_delivery_reviews")
+      .select("*")
+      .eq("courier_assignment_id", assignmentId)
+      .maybeSingle();
+
+    let abuseReportedAt = existing?.abuse_reported_at ?? null;
+    if (abuseNote) {
+      if (!abuseReportedAt) abuseReportedAt = now;
+    }
+
+    let reviewRow;
+    if (existing?.id) {
+      const { data: updated, error: uerr } = await supabaseAdmin
+        .from("courier_delivery_reviews")
+        .update({
+          rating,
+          tags,
+          abuse_note: abuseNote || null,
+          abuse_reported_at: abuseReportedAt,
+          updated_at: now,
+        })
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+      if (uerr?.code === "PGRST205" || /courier_delivery_reviews/i.test(String(uerr?.message || ""))) {
+        throw new AppError(500, "Run the courier_delivery_reviews migration to enable courier ratings.");
+      }
+      if (uerr) throw new AppError(500, uerr.message);
+      reviewRow = updated;
+    } else {
+      const { data: inserted, error: ierr } = await supabaseAdmin
+        .from("courier_delivery_reviews")
+        .insert({
+          courier_assignment_id: assignmentId,
+          order_id: id,
+          buyer_id: order.buyer_id,
+          courier_id: courierId,
+          rating,
+          tags,
+          abuse_note: abuseNote || null,
+          abuse_reported_at: abuseReportedAt,
+          created_at: now,
+          updated_at: now,
+        })
+        .select("*")
+        .single();
+      if (ierr?.code === "PGRST205" || /courier_delivery_reviews/i.test(String(ierr?.message || ""))) {
+        throw new AppError(500, "Run the courier_delivery_reviews migration to enable courier ratings.");
+      }
+      if (ierr) throw new AppError(500, ierr.message);
+      reviewRow = inserted;
+    }
+
+    const { data: revRow } = await supabaseAdmin.from("order_reviews").select("*").eq("order_id", id).maybeSingle();
+    const listingMeta = await fetchListingMetaForOrder(order);
+    res.json({
+      order: orderRowToApi(order, revRow || null, listingMeta, reviewRow),
+      courierReview: buyerCourierReviewRowToApi(reviewRow),
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const patchOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -1835,6 +2262,46 @@ export const patchOrder = async (req, res, next) => {
       if (order.status !== "placed") throw new AppError(400, "Invalid state.");
       patch.status = "seller_accepted";
       if (!order.processing_entered_at) patch.processing_entered_at = ts;
+      if (order.fulfillment_type === "delivery") {
+        const sellerAdd = parseOptionalCourierContributionCents(req.body.sellerCourierContributionCents);
+        if (sellerAdd != null) {
+          const b = Math.max(0, Math.floor(Number(order.buyer_courier_contribution_cents) || 0));
+          patch.seller_courier_contribution_cents = sellerAdd;
+          patch.cod_delivery_cents = deliveryCodTotalFromSplit(b, sellerAdd);
+        }
+      }
+    } else if (transition === "update_courier_contributions") {
+      if (order.fulfillment_type !== "delivery") throw new AppError(400, "Only delivery orders use this action.");
+      if (orderHasAcceptedCommunityCourier(order)) {
+        throw new AppError(400, "A courier is already assigned. The pool can’t be changed in-app; coordinate off-app or cancel if needed.");
+      }
+      const buyerIn = parseOptionalCourierContributionCents(req.body.buyerCourierContributionCents);
+      const sellerIn = parseOptionalCourierContributionCents(req.body.sellerCourierContributionCents);
+      if (buyerIn == null && sellerIn == null) {
+        throw new AppError(400, "Provide buyerCourierContributionCents and/or sellerCourierContributionCents.");
+      }
+      let b = Math.max(0, Math.floor(Number(order.buyer_courier_contribution_cents) || 0));
+      let s = Math.max(0, Math.floor(Number(order.seller_courier_contribution_cents) || 0));
+      if (order.status === "placed") {
+        if (!isBuyer) throw new AppError(403, "Only the buyer can update the delivery tip while the order is pending.");
+        if (buyerIn == null) throw new AppError(400, "Set buyerCourierContributionCents.");
+        if (sellerIn != null) throw new AppError(400, "Only the buyer’s share can change while the order is still pending.");
+        b = buyerIn;
+      } else if (order.status === "seller_accepted") {
+        if (buyerIn != null) {
+          if (!isBuyer) throw new AppError(403, "Only the buyer can change the buyer’s share.");
+          b = buyerIn;
+        }
+        if (sellerIn != null) {
+          if (!isSeller) throw new AppError(403, "Only the seller can change the seller’s share.");
+          s = sellerIn;
+        }
+      } else {
+        throw new AppError(400, "Invalid state to update courier contributions.");
+      }
+      patch.buyer_courier_contribution_cents = b;
+      patch.seller_courier_contribution_cents = s;
+      patch.cod_delivery_cents = deliveryCodTotalFromSplit(b, s);
     } else if (transition === "mark_ready_for_pickup") {
       if (!isSeller) throw new AppError(403, "Only the seller can mark ready for pickup.");
       if (order.status !== "seller_accepted") throw new AppError(400, "Invalid state.");
@@ -1981,7 +2448,7 @@ export const listOpenDeliveryOrders = async (req, res, next) => {
     const listingIds = [...new Set(rows.map((r) => String(r?.listing_id || "")).filter(Boolean))];
     const { data: listings } = await supabaseAdmin
       .from("listings")
-      .select("id, community_id, seller_id")
+      .select("id, community_id, seller_id, title, image_url, image_urls")
       .in("id", listingIds);
     const listingRows = listings || [];
     const sellersNeedingCommunity = listingRows.filter((L) => !L.community_id && L.seller_id).map((L) => L.seller_id);
@@ -2008,9 +2475,194 @@ export const listOpenDeliveryOrders = async (req, res, next) => {
       return cid && cid === myCommunityId;
     });
 
+    const minCourier = openDeliveryMinCourierCents();
+    const visible =
+      minCourier > 0
+        ? filtered.filter((r) => Math.max(0, Number(r.cod_delivery_cents) || 0) >= minCourier)
+        : filtered;
+
     const metaByListing = new Map(listingRows.map((L) => [String(L.id), L]));
     res.json({
-      orders: filtered.map((r) => orderRowToApi(r, null, metaByListing.get(String(r.listing_id)) || null)),
+      orders: visible.map((r) => orderRowToApi(r, null, metaByListing.get(String(r.listing_id)) || null)),
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+/**
+ * GET for couriers: pending invitations (buyer/seller suggested this courier; order still `seller_accepted`).
+ */
+export const listCourierInvitations = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { data: meProf } = await supabaseAdmin.from("profiles").select("community_id").eq("id", userId).maybeSingle();
+    const myCommunityId = meProf?.community_id ? String(meProf.community_id) : null;
+    if (!myCommunityId) return res.json({ invitations: [] });
+
+    const { data: assignments, error: aerr } = await supabaseAdmin
+      .from("courier_assignments")
+      .select("id, order_id, mode, created_at")
+      .eq("courier_id", userId)
+      .eq("status", "pending");
+    if (aerr?.code === "PGRST205") return res.json({ invitations: [] });
+    if (aerr) throw new AppError(500, aerr.message);
+    const rows = assignments || [];
+    if (rows.length === 0) return res.json({ invitations: [] });
+
+    const orderIds = [...new Set(rows.map((r) => String(r.order_id || "")).filter(Boolean))];
+    const { data: orderRows, error: oerr } = await supabaseAdmin.from("orders").select("*").in("id", orderIds);
+    if (oerr) throw new AppError(500, oerr.message);
+    const orderById = new Map((orderRows || []).map((o) => [String(o.id), o]));
+
+    const listingIds = [...new Set((orderRows || []).map((r) => String(r?.listing_id || "")).filter(Boolean))];
+    const { data: listings } = await supabaseAdmin
+      .from("listings")
+      .select("id, community_id, seller_id, title, image_url, image_urls")
+      .in("id", listingIds);
+    const listingRows = listings || [];
+    const sellersNeedingCommunity = listingRows.filter((L) => !L.community_id && L.seller_id).map((L) => L.seller_id);
+    let sellerCommunityById = new Map();
+    if (sellersNeedingCommunity.length > 0) {
+      const { data: sellerProfs } = await supabaseAdmin
+        .from("profiles")
+        .select("id, community_id")
+        .in("id", [...new Set(sellersNeedingCommunity)]);
+      sellerCommunityById = new Map(
+        (sellerProfs || []).map((p) => [String(p.id), p.community_id ? String(p.community_id) : null]),
+      );
+    }
+    const effectiveCommunity = (listingId) => {
+      const L = listingRows.find((x) => String(x.id) === String(listingId));
+      if (!L) return null;
+      if (L.community_id) return String(L.community_id);
+      const sid = L.seller_id ? String(L.seller_id) : "";
+      return sid ? sellerCommunityById.get(sid) || null : null;
+    };
+
+    const minCourier = openDeliveryMinCourierCents();
+    /** @type {{ assignmentId: string, order: ReturnType<typeof orderRowToApi>, assignmentMode: string | null }[]} */
+    const invitations = [];
+    for (const a of rows) {
+      const ord = orderById.get(String(a.order_id));
+      if (!ord || String(ord.status) !== "seller_accepted" || ord.fulfillment_type !== "delivery") continue;
+      const cid = effectiveCommunity(ord.listing_id);
+      if (!cid || cid !== myCommunityId) continue;
+      if (minCourier > 0 && Math.max(0, Number(ord.cod_delivery_cents) || 0) < minCourier) continue;
+      const meta = listingRows.find((L) => String(L.id) === String(ord.listing_id)) || null;
+      const rawMode = a.mode != null ? String(a.mode).toLowerCase().trim() : "";
+      const assignmentMode = COURIER_TRANSPORT_MODES.includes(rawMode) ? rawMode : null;
+      invitations.push({
+        assignmentId: String(a.id),
+        order: orderRowToApi(ord, null, meta),
+        assignmentMode,
+      });
+    }
+
+    invitations.sort((x, y) => String(y.order?.updatedAt || "").localeCompare(String(x.order?.updatedAt || "")));
+    res.json({ invitations });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const respondCourierInvitation = async (req, res, next) => {
+  try {
+    const orderId = req.params.id;
+    const accept = Boolean(req.body?.accept);
+    const mode = req.body?.mode ?? req.body?.courierMode;
+    const userId = req.user.id;
+
+    const { data: order, error: oerr } = await supabaseAdmin.from("orders").select("*").eq("id", orderId).maybeSingle();
+    if (oerr) throw new AppError(500, oerr.message);
+    if (!order) throw new AppError(404, "Order not found.");
+    if (order.fulfillment_type !== "delivery") throw new AppError(400, "Not a delivery order.");
+    if (String(order.status) !== "seller_accepted") {
+      throw new AppError(400, "This order is no longer available to respond to.");
+    }
+
+    const { data: assignment, error: aerr } = await supabaseAdmin
+      .from("courier_assignments")
+      .select("id, courier_id, status")
+      .eq("order_id", orderId)
+      .eq("courier_id", userId)
+      .maybeSingle();
+    if (aerr) throw new AppError(500, aerr.message);
+    if (!assignment || String(assignment.status) !== "pending") {
+      throw new AppError(400, "No pending invitation for this order.");
+    }
+
+    if (!accept) {
+      await supabaseAdmin.from("courier_assignments").update({ status: "rejected" }).eq("id", assignment.id);
+      const listingMeta = await fetchListingMetaForOrder(order);
+      return res.json({ order: orderRowToApi(order, null, listingMeta) });
+    }
+
+    const communityId = await resolveOrderCommunityId(order);
+    if (!communityId) {
+      throw new AppError(400, "This listing is not linked to a community.");
+    }
+    const { data: courierProfile, error: perr } = await supabaseAdmin
+      .from("profiles")
+      .select("community_id, courier_status")
+      .eq("id", userId)
+      .maybeSingle();
+    if (perr) throw new AppError(500, perr.message);
+    if (!courierProfile || String(courierProfile.community_id || "") !== communityId) {
+      throw new AppError(403, "You must belong to the same community as this order.");
+    }
+    const cs = String(courierProfile.courier_status || "offline");
+    if (cs === "busy") throw new AppError(400, "Finish your current delivery before accepting another.");
+    if (cs !== "available" && cs !== "active") throw new AppError(400, "Set your courier status to Available or Active to accept.");
+
+    const { data: modeRow } = await supabaseAdmin.from("profiles").select("courier_modes").eq("id", userId).maybeSingle();
+    const modes = normalizeDbTextArray(modeRow?.courier_modes);
+    const resolvedMode = resolveCourierAssignmentMode(modes, mode);
+    await supabaseAdmin.from("courier_assignments").update({ mode: resolvedMode }).eq("id", assignment.id);
+
+    const apiOrder = await atomicAcceptCourierAssignment(order, assignment.id, userId);
+    res.json({ order: apiOrder });
+  } catch (e) {
+    next(e);
+  }
+};
+
+/**
+ * GET for couriers: the in-progress delivery (accepted assignment + order in courier_assigned / out_for_delivery).
+ * Open tasks use seller_accepted only; this fills the gap when the hub shows “busy”.
+ */
+export const getCourierActiveDelivery = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { data: assignments, error: aerr } = await supabaseAdmin
+      .from("courier_assignments")
+      .select("order_id, mode")
+      .eq("courier_id", userId)
+      .eq("status", "accepted");
+    if (aerr?.code === "PGRST205") return res.json({ order: null, assignmentMode: null });
+    if (aerr) throw new AppError(500, aerr.message);
+    const orderIds = [...new Set((assignments || []).map((a) => String(a.order_id || "")).filter(Boolean))];
+    if (orderIds.length === 0) return res.json({ order: null, assignmentMode: null });
+
+    const { data: orderRows, error: oerr } = await supabaseAdmin
+      .from("orders")
+      .select("*")
+      .in("id", orderIds)
+      .in("status", ["courier_assigned", "out_for_delivery"])
+      .order("updated_at", { ascending: false });
+    if (oerr?.code === "PGRST205") return res.json({ order: null, assignmentMode: null });
+    if (oerr) throw new AppError(500, oerr.message);
+    const row = (orderRows || [])[0];
+    if (!row) return res.json({ order: null, assignmentMode: null });
+
+    const assignForOrder = (assignments || []).find((a) => String(a.order_id) === String(row.id));
+    const rawMode = assignForOrder?.mode != null ? String(assignForOrder.mode).toLowerCase().trim() : "";
+    const assignmentMode = COURIER_TRANSPORT_MODES.includes(rawMode) ? rawMode : null;
+
+    const listingMeta = await fetchListingMetaForOrder(row);
+    res.json({
+      order: orderRowToApi(row, null, listingMeta),
+      assignmentMode,
     });
   } catch (e) {
     next(e);
@@ -2041,26 +2693,73 @@ export const getCourierModes = async (req, res, next) => {
   }
 };
 
+async function buildCourierPresencePayload(userId) {
+  let data;
+  let error;
+  ({ data, error } = await supabaseAdmin
+    .from("profiles")
+    .select(
+      "courier_status, courier_optional_tags, courier_modes, courier_suggested_cents, notify_courier_open_tasks, push_notification_token, push_notification_platform",
+    )
+    .eq("id", userId)
+    .maybeSingle());
+  if (error && /notify_courier|push_notification/i.test(String(error.message || ""))) {
+    ({ data, error } = await supabaseAdmin
+      .from("profiles")
+      .select("courier_status, courier_optional_tags, courier_modes, courier_suggested_cents")
+      .eq("id", userId)
+      .maybeSingle());
+  }
+
+  const defaults = () => ({
+    courierStatus: "offline",
+    optionalTags: [],
+    modes: [],
+    completedDeliveries: 0,
+    badges: [],
+    hasActiveDelivery: false,
+    suggestedCompensationCents: null,
+    allowCourierTaskNotifications: true,
+    pushNotificationRegistered: false,
+    pushNotificationPlatform: null,
+  });
+
+  if (error || !data) return defaults();
+
+  const modes = normalizeDbTextArray(data.courier_modes);
+  const optionalTags = normalizeDbTextArray(data.courier_optional_tags);
+  const completedMap = await countCompletedDeliveriesForCourierIds([userId]);
+  const completedDeliveries = completedMap.get(userId) || 0;
+  const badges = deriveCourierAchievementBadges({ completedDeliveries, optionalTags, modes });
+  const onActiveRun = await courierHasInProgressDelivery(userId);
+  const stored = String(data.courier_status || "offline");
+  const courierStatus = onActiveRun ? "busy" : stored;
+  const rawSug = data.courier_suggested_cents;
+  const suggestedCompensationCents =
+    rawSug != null && Number.isFinite(Number(rawSug)) ? Math.max(0, Math.floor(Number(rawSug))) : null;
+
+  const allowCourierTaskNotifications = data.notify_courier_open_tasks !== false;
+  const pushNotificationRegistered = Boolean(String(data.push_notification_token ?? "").trim());
+  const pp = String(data.push_notification_platform || "").toLowerCase();
+  const pushNotificationPlatform = pp === "fcm" || pp === "apns" ? pp : null;
+
+  return {
+    courierStatus,
+    optionalTags,
+    modes,
+    completedDeliveries,
+    badges,
+    hasActiveDelivery: onActiveRun,
+    suggestedCompensationCents,
+    allowCourierTaskNotifications,
+    pushNotificationRegistered,
+    pushNotificationPlatform,
+  };
+}
+
 export const getCourierPresence = async (req, res, next) => {
   try {
-    const { data, error } = await supabaseAdmin
-      .from("profiles")
-      .select("courier_status, courier_optional_tags, courier_modes")
-      .eq("id", req.user.id)
-      .maybeSingle();
-    if (error || !data) return res.json({ courierStatus: "offline", optionalTags: [], modes: [], completedDeliveries: 0, badges: [] });
-    const modes = normalizeDbTextArray(data.courier_modes);
-    const optionalTags = normalizeDbTextArray(data.courier_optional_tags);
-    const completedMap = await countCompletedDeliveriesForCourierIds([req.user.id]);
-    const completedDeliveries = completedMap.get(req.user.id) || 0;
-    const badges = deriveCourierAchievementBadges({ completedDeliveries, optionalTags, modes });
-    res.json({
-      courierStatus: data.courier_status || "offline",
-      optionalTags,
-      modes,
-      completedDeliveries,
-      badges,
-    });
+    res.json(await buildCourierPresencePayload(req.user.id));
   } catch (e) {
     next(e);
   }
@@ -2068,42 +2767,117 @@ export const getCourierPresence = async (req, res, next) => {
 
 export const patchCourierPresence = async (req, res, next) => {
   try {
-    const rawStatus = String(req.body.courierStatus ?? req.body.courier_status ?? "").trim().toLowerCase();
-    const allowed = ["offline", "available", "active", "busy"];
-    if (!rawStatus || !allowed.includes(rawStatus)) throw new AppError(400, "Set courierStatus to offline, available, active, or busy.");
-    const tagsIn = Array.isArray(req.body.optionalTags) ? req.body.optionalTags : req.body.optional_tags;
-    const tags = Array.isArray(tagsIn)
-      ? [
-          ...new Set(
-            tagsIn
-              .map((t) => String(t || "").trim().toLowerCase())
-              .filter((t) => ALLOWED_COURIER_OPTIONAL_TAGS.has(t)),
-          ),
-        ]
-      : [];
-    const patch = { courier_status: rawStatus, courier_optional_tags: tags };
-    const { error } = await supabaseAdmin.from("profiles").update(patch).eq("id", req.user.id);
-    if (error?.code === "PGRST204" || /courier_status|courier_optional/i.test(String(error?.message || ""))) {
+    const b = req.body || {};
+    const wantsStatus = b.courierStatus !== undefined || b.courier_status !== undefined;
+    const wantsTags = b.optionalTags !== undefined || b.optional_tags !== undefined;
+    const wantsSuggested =
+      Object.prototype.hasOwnProperty.call(b, "suggestedCompensationCents") ||
+      Object.prototype.hasOwnProperty.call(b, "suggested_compensation_cents");
+    const wantsNotify = Object.prototype.hasOwnProperty.call(b, "allowCourierTaskNotifications");
+    const wantsPushToken = Object.prototype.hasOwnProperty.call(b, "pushNotificationToken");
+    const wantsPushPlatform = Object.prototype.hasOwnProperty.call(b, "pushNotificationPlatform");
+
+    if (!wantsStatus && !wantsTags && !wantsSuggested && !wantsNotify && !wantsPushToken && !wantsPushPlatform) {
+      throw new AppError(400, "Nothing to update.");
+    }
+
+    const patch = {};
+
+    if (wantsTags) {
+      const tagsIn = Array.isArray(b.optionalTags) ? b.optionalTags : b.optional_tags;
+      const tags = Array.isArray(tagsIn)
+        ? [
+            ...new Set(
+              tagsIn
+                .map((t) => String(t || "").trim().toLowerCase())
+                .filter((t) => ALLOWED_COURIER_OPTIONAL_TAGS.has(t)),
+            ),
+          ]
+        : [];
+      patch.courier_optional_tags = tags;
+    }
+
+    if (wantsStatus) {
+      const onActiveRun = await courierHasInProgressDelivery(req.user.id);
+      if (onActiveRun) {
+        throw new AppError(400, "Finish or hand off your active delivery before changing availability.");
+      }
+      const rawStatus = String(b.courierStatus ?? b.courier_status ?? "").trim().toLowerCase();
+      const allowed = ["offline", "available", "active"];
+      if (!rawStatus || !allowed.includes(rawStatus)) {
+        throw new AppError(400, "Set courierStatus to offline, available, or active. (Busy is set automatically when you accept a delivery.)");
+      }
+      patch.courier_status = rawStatus;
+    }
+
+    if (wantsSuggested) {
+      const raw = b.suggestedCompensationCents ?? b.suggested_compensation_cents;
+      if (raw === null || raw === "") {
+        patch.courier_suggested_cents = null;
+      } else {
+        const n = parseOptionalCourierContributionCents(raw);
+        if (n === null) patch.courier_suggested_cents = null;
+        else patch.courier_suggested_cents = n;
+      }
+    }
+
+    if (wantsNotify) {
+      patch.notify_courier_open_tasks = Boolean(b.allowCourierTaskNotifications);
+    }
+    if (wantsPushToken) {
+      const raw = String(b.pushNotificationToken ?? "").trim();
+      patch.push_notification_token = raw.length ? raw.slice(0, 512) : null;
+      if (!raw.length) patch.push_notification_platform = null;
+    }
+    if (wantsPushPlatform) {
+      const p = String(b.pushNotificationPlatform ?? "").trim().toLowerCase();
+      let effectiveTok;
+      if (wantsPushToken) {
+        effectiveTok = String(patch.push_notification_token ?? "").trim();
+      } else {
+        const { data: profTok } = await supabaseAdmin
+          .from("profiles")
+          .select("push_notification_token")
+          .eq("id", req.user.id)
+          .maybeSingle();
+        effectiveTok = String(profTok?.push_notification_token ?? "").trim();
+      }
+      if (!p || !effectiveTok) {
+        patch.push_notification_platform = null;
+      } else if (p === "fcm" || p === "apns") {
+        patch.push_notification_platform = p;
+      } else {
+        throw new AppError(400, "pushNotificationPlatform must be fcm or apns.");
+      }
+    }
+
+    if (Object.keys(patch).length === 0) {
+      throw new AppError(400, "Nothing to update.");
+    }
+
+    let { error } = await supabaseAdmin.from("profiles").update(patch).eq("id", req.user.id);
+    if (error && (isMissingProfilesNotifyCourierColumn(error) || isMissingProfilesPushTokenColumn(error))) {
+      const stripped = { ...patch };
+      if (isMissingProfilesNotifyCourierColumn(error)) delete stripped.notify_courier_open_tasks;
+      if (isMissingProfilesPushTokenColumn(error)) {
+        delete stripped.push_notification_token;
+        delete stripped.push_notification_platform;
+      }
+      if (Object.keys(stripped).length > 0) {
+        const retry = await supabaseAdmin.from("profiles").update(stripped).eq("id", req.user.id);
+        error = retry.error;
+      } else {
+        error = null;
+      }
+    }
+    if (error?.code === "PGRST204" || /courier_status|courier_optional|courier_suggested/i.test(String(error?.message || ""))) {
       return res.json({
-        courierStatus: rawStatus,
-        optionalTags: tags,
-        modes: [],
-        completedDeliveries: 0,
-        badges: [],
-        note: "Run DB migrations to persist courier presence.",
+        ...(await buildCourierPresencePayload(req.user.id)),
+        note: "Run DB migrations to persist courier presence or notification preferences.",
       });
     }
     if (error) throw new AppError(500, error.message);
-    const { data: profAfter } = await supabaseAdmin
-      .from("profiles")
-      .select("courier_modes")
-      .eq("id", req.user.id)
-      .maybeSingle();
-    const modes = normalizeDbTextArray(profAfter?.courier_modes);
-    const completedMap = await countCompletedDeliveriesForCourierIds([req.user.id]);
-    const completedDeliveries = completedMap.get(req.user.id) || 0;
-    const badges = deriveCourierAchievementBadges({ completedDeliveries, optionalTags: tags, modes });
-    res.json({ courierStatus: rawStatus, optionalTags: tags, modes, completedDeliveries, badges });
+    res.json(await buildCourierPresencePayload(req.user.id));
   } catch (e) {
     next(e);
   }
@@ -2161,6 +2935,275 @@ export const listCommunityCouriers = async (req, res, next) => {
   }
 };
 
+/**
+ * Phase 5 — community engagement: delivery counts (today / week), top courier (min rating), fastest runner (claim → completed).
+ * Counts are **community delivery runs** with an **accepted** courier assignment.
+ */
+export const getCommunityCourierEngagement = async (req, res, next) => {
+  try {
+    const communityId = String(req.params.communityId || "").trim();
+    const { data: me } = await supabaseAdmin.from("profiles").select("community_id").eq("id", req.user.id).maybeSingle();
+    if (String(me?.community_id || "") !== communityId) {
+      throw new AppError(403, "You can only view engagement for your own community.");
+    }
+
+    const now = new Date();
+    const weekStartIso = utcWeekStartMondayIso(now);
+    const todayStartIso = utcDayStartIso(now);
+    const t = engagementThresholds();
+
+    let completionTimestampField = "completed_at";
+    let weekOrderRows = [];
+    const primaryWeekOrders = await supabaseAdmin
+      .from("orders")
+      .select("id, listing_id, completed_at")
+      .eq("status", "completed")
+      .eq("fulfillment_type", "delivery")
+      .gte("completed_at", weekStartIso)
+      .not("completed_at", "is", null);
+    if (!primaryWeekOrders.error) {
+      weekOrderRows = primaryWeekOrders.data || [];
+    } else if (isMissingOrdersCompletedAtColumn(primaryWeekOrders.error)) {
+      completionTimestampField = "updated_at";
+      const fallback = await supabaseAdmin
+        .from("orders")
+        .select("id, listing_id, updated_at")
+        .eq("status", "completed")
+        .eq("fulfillment_type", "delivery")
+        .gte("updated_at", weekStartIso);
+      if (fallback.error) throw new AppError(500, fallback.error.message);
+      weekOrderRows = (fallback.data || []).map((row) => ({
+        id: row.id,
+        listing_id: row.listing_id,
+        completed_at: row.updated_at,
+      }));
+    } else {
+      throw new AppError(500, primaryWeekOrders.error.message);
+    }
+
+    const allWeekOrders = weekOrderRows || [];
+    const communityByOrder = await mapOrderIdsToCommunityIds(allWeekOrders);
+    const inCommunityWeek = allWeekOrders.filter((o) => communityByOrder.get(String(o.id)) === communityId);
+    const inCommunityToday = inCommunityWeek.filter((o) => {
+      const c = o.completed_at ? new Date(o.completed_at).getTime() : 0;
+      return c >= new Date(todayStartIso).getTime();
+    });
+
+    const weekOrderIds = inCommunityWeek.map((o) => String(o.id)).filter(Boolean);
+    if (weekOrderIds.length === 0) {
+      return res.json({
+        communityId,
+        period: { weekStartsAt: weekStartIso, todayStartsAt: todayStartIso, generatedAt: now.toISOString() },
+        rules: {
+          minAvgRatingForTop: t.minAvgRating,
+          minReviewsForTop: t.minReviews,
+          fastestMinDeliveries: t.fastestMinDeliveries,
+          leaderboardLimit: t.leaderboardLimit,
+        },
+        leaderboardToday: [],
+        leaderboardWeek: [],
+        topCourierOfWeek: null,
+        fastestRunnerWeek: null,
+        meta: {
+          completionTimestampField,
+          ...(completionTimestampField === "updated_at"
+            ? {
+                completionTimestampNote:
+                  "Milestone column orders.completed_at is missing; using orders.updated_at as proxy until migrations are applied.",
+              }
+            : {}),
+          fastestExplanation:
+            "Fastest runner uses average minutes from courier assignment created_at to order completed_at (UTC), this community, this ISO week.",
+          fastestRunnerPhaseNote:
+            "“Fast” tag rate can augment rankings once courier_delivery_reviews volume is stable — see Phase 5 docs.",
+        },
+      });
+    }
+
+    const { data: assignsWeek, error: aerr } = await supabaseAdmin
+      .from("courier_assignments")
+      .select("courier_id, order_id, created_at")
+      .in("order_id", weekOrderIds)
+      .eq("status", "accepted");
+    if (aerr) throw new AppError(500, aerr.message);
+    const assignmentRows = assignsWeek || [];
+
+    /** @type {Map<string, { courier_id: string, created_at: string }>} */
+    const assignmentByOrderId = new Map();
+    for (const a of assignmentRows) {
+      const oid = String(a.order_id || "");
+      if (!oid) continue;
+      assignmentByOrderId.set(oid, { courier_id: String(a.courier_id || ""), created_at: String(a.created_at || "") });
+    }
+
+    const orderCompletedAt = new Map(inCommunityWeek.map((o) => [String(o.id), o.completed_at]));
+
+    /** @type {Map<string, number>} */
+    const weekCounts = new Map();
+    /** @type {Map<string, number>} */
+    const todayCounts = new Map();
+    /** @type {Map<string, number[]>} courier -> durations minutes */
+    const durationBuckets = new Map();
+
+    for (const o of inCommunityWeek) {
+      const oid = String(o.id);
+      const asg = assignmentByOrderId.get(oid);
+      if (!asg?.courier_id) continue;
+      const cid = String(asg.courier_id);
+      weekCounts.set(cid, (weekCounts.get(cid) || 0) + 1);
+
+      const completedRaw = orderCompletedAt.get(oid);
+      const completedMs = completedRaw ? new Date(completedRaw).getTime() : NaN;
+      const assignedMs = asg.created_at ? new Date(asg.created_at).getTime() : NaN;
+      if (Number.isFinite(completedMs) && Number.isFinite(assignedMs) && completedMs >= assignedMs) {
+        const mins = (completedMs - assignedMs) / 60000;
+        if (!durationBuckets.has(cid)) durationBuckets.set(cid, []);
+        durationBuckets.get(cid).push(mins);
+      }
+    }
+
+    for (const o of inCommunityToday) {
+      const oid = String(o.id);
+      const asg = assignmentByOrderId.get(oid);
+      if (!asg?.courier_id) continue;
+      const cid = String(asg.courier_id);
+      todayCounts.set(cid, (todayCounts.get(cid) || 0) + 1);
+    }
+
+    const courierIds = [...new Set([...weekCounts.keys(), ...todayCounts.keys()])];
+    /** @type {Map<string, { username: string, displayName: string, avatarUrl: string | null }>} */
+    const profileByCourier = new Map();
+    if (courierIds.length > 0) {
+      const { data: profs, error: perr } = await supabaseAdmin
+        .from("profiles")
+        .select("id, username, first_name, last_name, avatar_url")
+        .in("id", courierIds);
+      if (!perr && Array.isArray(profs)) {
+        for (const p of profs) {
+          const id = String(p.id || "");
+          if (!id) continue;
+          profileByCourier.set(id, {
+            username: String(p.username || "").trim(),
+            displayName:
+              [p.first_name, p.last_name].filter(Boolean).join(" ").trim() || String(p.username || "").trim(),
+            avatarUrl: String(p.avatar_url || "").trim() || null,
+          });
+        }
+      }
+    }
+
+    /** @type {Map<string, { sum: number, n: number, fast: number }>} */
+    const reviewAgg = new Map();
+    if (courierIds.length > 0) {
+      const { data: revs, error: revErr } = await supabaseAdmin
+        .from("courier_delivery_reviews")
+        .select("courier_id, rating, tags")
+        .in("courier_id", courierIds);
+      if (!revErr && Array.isArray(revs)) {
+        for (const r of revs) {
+          const cid = String(r.courier_id || "");
+          if (!cid) continue;
+          if (!reviewAgg.has(cid)) reviewAgg.set(cid, { sum: 0, n: 0, fast: 0 });
+          const x = reviewAgg.get(cid);
+          const rawR = Number(r.rating);
+          if (!Number.isFinite(rawR)) continue;
+          const rt = Math.max(1, Math.min(5, Math.round(rawR)));
+          x.sum += rt;
+          x.n += 1;
+          const tags = Array.isArray(r.tags) ? r.tags.map((tt) => String(tt || "").toLowerCase()) : [];
+          if (tags.includes("fast")) x.fast += 1;
+        }
+      }
+    }
+
+    const enrich = (id, count) => {
+      const prof = profileByCourier.get(id) || null;
+      const ra = reviewAgg.get(id);
+      const avgRating = ra && ra.n > 0 ? Math.round((ra.sum / ra.n) * 10) / 10 : null;
+      const reviewCount = ra?.n ?? 0;
+      const fastTagRate = ra && ra.n > 0 ? Math.round((ra.fast / ra.n) * 1000) / 1000 : null;
+      return {
+        courierId: id,
+        username: prof?.username || "",
+        displayName: prof?.displayName || "",
+        avatarUrl: prof?.avatarUrl ?? null,
+        deliveryCount: count,
+        avgRating,
+        reviewCount,
+        fastTagRate,
+      };
+    };
+
+    const sortDesc = (a, b) => b.deliveryCount - a.deliveryCount || String(a.username || "").localeCompare(String(b.username || ""), undefined, { sensitivity: "base" });
+
+    const leaderboardToday = [...todayCounts.entries()]
+      .map(([id, n]) => enrich(id, n))
+      .sort(sortDesc)
+      .slice(0, t.leaderboardLimit);
+
+    const leaderboardWeek = [...weekCounts.entries()]
+      .map(([id, n]) => enrich(id, n))
+      .sort(sortDesc)
+      .slice(0, t.leaderboardLimit);
+
+    /** Top courier of week: highest weekly deliveries among couriers meeting min avg rating + min reviews (global review stats). */
+    let topCourierOfWeek = null;
+    for (const row of leaderboardWeek) {
+      if ((row.reviewCount || 0) < t.minReviews) continue;
+      if (row.avgRating == null || row.avgRating < t.minAvgRating) continue;
+      topCourierOfWeek = row;
+      break;
+    }
+
+    /** Lowest average minutes from assignment → completed (UTC), minimum sample size per courier. */
+    let fastestRunnerWeek = null;
+    let bestAvg = Infinity;
+    for (const cid of courierIds) {
+      const arr = durationBuckets.get(cid);
+      if (!arr || arr.length < t.fastestMinDeliveries) continue;
+      const avg = arr.reduce((s, x) => s + x, 0) / arr.length;
+      if (avg < bestAvg) {
+        bestAvg = avg;
+        fastestRunnerWeek = {
+          ...enrich(cid, weekCounts.get(cid) || 0),
+          avgMinutesAssignedToComplete: Math.round(avg * 10) / 10,
+          deliverySamplesForTiming: arr.length,
+        };
+      }
+    }
+
+    res.json({
+      communityId,
+      period: { weekStartsAt: weekStartIso, todayStartsAt: todayStartIso, generatedAt: now.toISOString() },
+      rules: {
+        minAvgRatingForTop: t.minAvgRating,
+        minReviewsForTop: t.minReviews,
+        fastestMinDeliveries: t.fastestMinDeliveries,
+        leaderboardLimit: t.leaderboardLimit,
+      },
+      leaderboardToday,
+      leaderboardWeek,
+      topCourierOfWeek,
+      fastestRunnerWeek,
+      meta: {
+        completionTimestampField,
+        ...(completionTimestampField === "updated_at"
+          ? {
+              completionTimestampNote:
+                "Milestone column orders.completed_at is missing; using orders.updated_at as proxy until migrations are applied.",
+            }
+          : {}),
+        fastestExplanation:
+          "Fastest runner uses average minutes from courier assignment created_at to order completed_at (UTC), this community, this ISO week.",
+        fastestRunnerPhaseNote:
+          "Compare fastTagRate once reviews stabilize; optional future: weight Fast-tagged runs.",
+      },
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const assignCommunityCourier = async (req, res, next) => {
   try {
     const orderId = req.params.id;
@@ -2178,7 +3221,8 @@ export const assignCommunityCourier = async (req, res, next) => {
     if (orderRow.seller_id === uid) role = "seller";
     else if (orderRow.buyer_id === uid) role = "buyer";
     else throw new AppError(403, "Only the buyer or seller on this order can assign a courier.");
-    const order = await assignCourierToOpenDeliveryOrder(orderId, courierId, req.user.id, role);
+    const mode = req.body?.mode ?? req.body?.courierMode;
+    const order = await assignCourierToOpenDeliveryOrder(orderId, courierId, req.user.id, role, { mode, invitationOnly: true });
     res.json({ order });
   } catch (e) {
     next(e);
@@ -2188,7 +3232,8 @@ export const assignCommunityCourier = async (req, res, next) => {
 export const claimCommunityDelivery = async (req, res, next) => {
   try {
     const orderId = req.params.id;
-    const order = await assignCourierToOpenDeliveryOrder(orderId, req.user.id, req.user.id, "courier");
+    const mode = req.body?.mode ?? req.body?.courierMode;
+    const order = await assignCourierToOpenDeliveryOrder(orderId, req.user.id, req.user.id, "courier", { mode, invitationOnly: false });
     res.json({ order });
   } catch (e) {
     next(e);

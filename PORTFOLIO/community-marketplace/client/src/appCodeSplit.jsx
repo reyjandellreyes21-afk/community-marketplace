@@ -45,6 +45,10 @@ export const LazyOrderBuyerReviewForm = lazy(() =>
   import("./components/marketplace/OrderBuyerReviewForm.jsx").then((m) => ({ default: m.OrderBuyerReviewForm })),
 );
 
+export const LazyCourierDeliveryReviewForm = lazy(() =>
+  import("./components/marketplace/CourierDeliveryReviewForm.jsx").then((m) => ({ default: m.CourierDeliveryReviewForm })),
+);
+
 export const LazySellerBuyerFeedbackList = lazy(() =>
   import("./components/marketplace/SellerBuyerFeedbackList.jsx").then((m) => ({
     default: m.SellerBuyerFeedbackList,

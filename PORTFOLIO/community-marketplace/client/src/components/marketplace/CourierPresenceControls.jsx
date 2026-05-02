@@ -1,48 +1,60 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { apiRequest } from "../../lib/appApi.js";
 import { getActivityTabChrome } from "../../lib/activityTabTheme.js";
 import { cn } from "../../lib/cn.js";
 import { ACTIVITY_TABS } from "../../views.js";
 import { Button } from "../ui/Button.jsx";
 import { CourierOpenDeliveries } from "./CourierOpenDeliveries.jsx";
+import { CourierEngagementBoard } from "./CourierEngagementBoard.jsx";
 
 const courierChrome = getActivityTabChrome(ACTIVITY_TABS.COURIER);
 
-/** Status grid: selected uses theme primary; idle = calm cells on a shared “rail” (clearer than four matching outlines). */
 const courierStatusIdle =
-  "rounded-lg border-0 bg-white/85 py-2.5 text-[11px] font-semibold leading-tight text-violet-900 shadow-none ring-0 transition hover:bg-white dark:bg-violet-950/45 dark:text-violet-100 dark:hover:bg-violet-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-violet-100 dark:focus-visible:ring-offset-violet-950";
+  "rounded-xl border-0 bg-white/90 py-3 text-sm font-semibold text-violet-900 shadow-sm ring-1 ring-violet-200/60 transition hover:bg-white dark:bg-violet-950/50 dark:text-violet-100 dark:ring-violet-700/50 dark:hover:bg-violet-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/45";
 
-/** Optional tags: compact chips — off = paper outline; on = solid accent (distinct from status rail). */
-const courierChipOff =
-  "min-h-9 rounded-full border border-violet-200/90 bg-white/95 px-3 py-1.5 text-left text-[11px] font-semibold text-violet-900 shadow-sm transition hover:border-violet-400/70 hover:bg-white dark:border-violet-700/65 dark:bg-violet-950/55 dark:text-violet-100 dark:hover:border-violet-500 dark:hover:bg-violet-900/60";
-const courierChipOn =
-  "min-h-9 rounded-full border border-transparent bg-violet-600 px-3 py-1.5 text-left text-[11px] font-semibold text-white shadow-sm ring-1 ring-violet-700/25 transition hover:bg-violet-700 dark:bg-violet-500 dark:ring-violet-400/25";
+const SAVE_FEEDBACK = {
+  offline: "You’re off.",
+  available: "You’re on — check open tasks below.",
+  active: "Still on — tasks below.",
+  busy: "You’re on a delivery — finish up when you can.",
+};
 
-const STATUSES = [
-  { id: "offline", label: "Offline", hint: "Hidden from matching" },
-  { id: "available", label: "Available", hint: "Ready for deliveries" },
-  { id: "active", label: "Active", hint: "Moving — prioritized for sellers" },
-  { id: "busy", label: "Busy", hint: "On a delivery (set by app when you accept)" },
-];
+function presenceHint(status) {
+  if (status === "offline") return "Off — no delivery tasks.";
+  if (status === "busy") return "On a run — finish it, then turn off when you’re free.";
+  if (status === "active") return "On — neighbors can match you; tasks below.";
+  return "On — tasks appear below when your barangay has open deliveries.";
+}
 
-const OPTIONAL_TAGS = [
-  { id: "eco", label: "Eco", emoji: "🌱" },
-  { id: "bike", label: "Bike", emoji: "🚴" },
-  { id: "fast", label: "Fast", emoji: "⚡" },
-  { id: "helping", label: "Helping", emoji: "🧡" },
-];
+function PresenceLoadingSkeleton() {
+  return (
+    <div className="mt-4 h-14 animate-pulse rounded-xl bg-violet-200/40 dark:bg-violet-900/40" aria-hidden />
+  );
+}
 
 /**
- * Profile: courier visibility + optional modes. Walk/run/bike modes stay on existing courier-modes control if present.
+ * Minimal Find-deliveries controls: off/on availability + open tasks list.
+ *
+ * @param {{ token: string, communityId: string, onOrdersRefresh?: () => void | Promise<void> }} props
  */
 export function CourierPresenceControls({ token, communityId, onOrdersRefresh }) {
   const [courierStatus, setCourierStatus] = useState("offline");
+  /** Kept in sync with API so PATCH doesn’t wipe tags while tags UI is hidden. */
   const [optionalTags, setOptionalTags] = useState([]);
-  /** @type {{ id: string, label: string }[]} */
-  const [achievementBadges, setAchievementBadges] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState("");
+  const [saveFeedback, setSaveFeedback] = useState("");
+  /** @type {number | null} */
+  const [suggestedCompensationCents, setSuggestedCompensationCents] = useState(null);
+  const [suggestedPesosDraft, setSuggestedPesosDraft] = useState("");
+  const [savingSuggested, setSavingSuggested] = useState(false);
+  const [allowTaskNotifications, setAllowTaskNotifications] = useState(true);
+  const [savingNotify, setSavingNotify] = useState(false);
+  const feedbackClearRef = useRef(/** @type {number | null} */ (null));
+  const groupId = useId();
+  const hintId = `${groupId}-hint`;
+  const feedbackId = `${groupId}-feedback`;
 
   const refresh = useCallback(async () => {
     if (!token) {
@@ -54,12 +66,23 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh })
       const d = await apiRequest("/me/courier-presence", { token });
       setCourierStatus(String(d.courierStatus || "offline"));
       setOptionalTags(Array.isArray(d.optionalTags) ? d.optionalTags : []);
-      setAchievementBadges(Array.isArray(d.badges) ? d.badges : []);
+      setAllowTaskNotifications(d.allowCourierTaskNotifications !== false);
+      const sc = d.suggestedCompensationCents;
+      if (sc != null && Number.isFinite(Number(sc))) {
+        const n = Math.max(0, Math.floor(Number(sc)));
+        setSuggestedCompensationCents(n);
+        setSuggestedPesosDraft(String(n / 100));
+      } else {
+        setSuggestedCompensationCents(null);
+        setSuggestedPesosDraft("");
+      }
       setNote("");
     } catch {
       setCourierStatus("offline");
       setOptionalTags([]);
-      setAchievementBadges([]);
+      setAllowTaskNotifications(true);
+      setSuggestedCompensationCents(null);
+      setSuggestedPesosDraft("");
     } finally {
       setLoading(false);
     }
@@ -68,6 +91,82 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh })
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    return () => {
+      if (feedbackClearRef.current != null) window.clearTimeout(feedbackClearRef.current);
+    };
+  }, []);
+
+  const showSaveFeedback = (statusId) => {
+    setSaveFeedback(SAVE_FEEDBACK[statusId] || "");
+    if (feedbackClearRef.current != null) window.clearTimeout(feedbackClearRef.current);
+    feedbackClearRef.current = window.setTimeout(() => setSaveFeedback(""), 4000);
+  };
+
+  const saveSuggestedRate = async () => {
+    if (!token || courierStatus === "busy") return;
+    setSavingSuggested(true);
+    setNote("");
+    try {
+      const raw = String(suggestedPesosDraft || "").trim();
+      let suggestedPayload = null;
+      if (raw === "") {
+        suggestedPayload = null;
+      } else {
+        const pesos = Number(raw);
+        if (!Number.isFinite(pesos) || pesos < 0) {
+          setNote("Enter a valid suggested rate in pesos, or leave blank to clear.");
+          return;
+        }
+        suggestedPayload = Math.round(pesos * 100);
+      }
+      const d = await apiRequest("/me/courier-presence", {
+        method: "PATCH",
+        token,
+        body: {
+          suggestedCompensationCents: suggestedPayload,
+        },
+      });
+      const sc = d.suggestedCompensationCents;
+      if (sc != null && Number.isFinite(Number(sc))) {
+        const n = Math.max(0, Math.floor(Number(sc)));
+        setSuggestedCompensationCents(n);
+        setSuggestedPesosDraft(String(n / 100));
+      } else {
+        setSuggestedCompensationCents(null);
+        setSuggestedPesosDraft("");
+      }
+      setSaveFeedback("Suggested rate saved (reference only).");
+      if (feedbackClearRef.current != null) window.clearTimeout(feedbackClearRef.current);
+      feedbackClearRef.current = window.setTimeout(() => setSaveFeedback(""), 4000);
+    } catch (e) {
+      setNote(e?.message || "Could not save.");
+    } finally {
+      setSavingSuggested(false);
+    }
+  };
+
+  const saveTaskNotifications = async (next) => {
+    if (!token) return;
+    setSavingNotify(true);
+    setNote("");
+    try {
+      const d = await apiRequest("/me/courier-presence", {
+        method: "PATCH",
+        token,
+        body: { allowCourierTaskNotifications: next },
+      });
+      setAllowTaskNotifications(d.allowCourierTaskNotifications !== false);
+      setSaveFeedback(next ? "Task notifications on." : "Task notifications off.");
+      if (feedbackClearRef.current != null) window.clearTimeout(feedbackClearRef.current);
+      feedbackClearRef.current = window.setTimeout(() => setSaveFeedback(""), 4000);
+    } catch (e) {
+      setNote(e?.message || "Could not update notifications.");
+    } finally {
+      setSavingNotify(false);
+    }
+  };
 
   const saveStatus = async (next) => {
     if (!token) return;
@@ -79,34 +178,12 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh })
         token,
         body: { courierStatus: next, optionalTags },
       });
-      setCourierStatus(String(d.courierStatus || next));
-      if (Array.isArray(d.badges)) setAchievementBadges(d.badges);
+      const resolved = String(d.courierStatus || next);
+      setCourierStatus(resolved);
       if (d.note) setNote(String(d.note));
+      showSaveFeedback(resolved);
     } catch (e) {
       setNote(e?.message || "Could not update.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const toggleTag = async (tagId) => {
-    if (!token) return;
-    const next = optionalTags.includes(tagId) ? optionalTags.filter((t) => t !== tagId) : [...optionalTags, tagId];
-    setOptionalTags(next);
-    setSaving(true);
-    setNote("");
-    try {
-      const d = await apiRequest("/me/courier-presence", {
-        method: "PATCH",
-        token,
-        body: { courierStatus, optionalTags: next },
-      });
-      setCourierStatus(String(d.courierStatus || courierStatus));
-      if (Array.isArray(d.badges)) setAchievementBadges(d.badges);
-      if (d.note) setNote(String(d.note));
-    } catch (e) {
-      setNote(e?.message || "Could not update.");
-      setOptionalTags(optionalTags);
     } finally {
       setSaving(false);
     }
@@ -114,124 +191,144 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh })
 
   if (!token) return null;
 
+  const isOn = courierStatus !== "offline";
+  const availabilityLocked = courierStatus === "busy";
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div>
         <h3 className="text-sm font-semibold text-neutral-900 dark:text-slate-100">Community courier</h3>
-        <p className="mt-1 text-[11px] leading-relaxed text-neutral-600 dark:text-slate-400">
-          Earn by walking, running, or biking for neighbors in your community. No in-app wallet — coordinate meetups in chat.
+        <p className="mt-1 text-[11px] text-neutral-600 dark:text-slate-400">
+          COD only — no wallet. Turn on to see delivery tasks in your community.
         </p>
         {!communityId ? (
-          <p className="mt-3 text-[11px] text-amber-800 dark:text-amber-200">
-            Join a community on your profile so you can receive delivery requests from neighbors.
+          <p className="mt-2 text-[11px] text-amber-800 dark:text-amber-200">
+            Join a community on your profile to receive neighbor deliveries.
           </p>
         ) : null}
         {loading ? (
-          <p className="mt-3 text-xs text-neutral-500">Loading…</p>
+          <PresenceLoadingSkeleton />
         ) : (
           <>
+            <div className="mt-3 flex items-start gap-2 rounded-xl border border-neutral-200/80 bg-white/80 px-3 py-2.5 dark:border-slate-600/50 dark:bg-slate-900/40">
+              <input
+                id={`${groupId}-notify-tasks`}
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-violet-600 focus:ring-violet-500 dark:border-slate-600 dark:bg-slate-900"
+                checked={allowTaskNotifications}
+                disabled={savingNotify}
+                onChange={(e) => void saveTaskNotifications(e.target.checked)}
+              />
+              <label htmlFor={`${groupId}-notify-tasks`} className="cursor-pointer text-[11px] leading-snug text-neutral-800 dark:text-slate-200">
+                Allow notifications for new tasks / assignments.
+                <span className="mt-0.5 block text-[10px] font-normal text-neutral-500 dark:text-slate-500">
+                  Native apps can use this with your device push token later; we never show your token in the app.
+                </span>
+              </label>
+            </div>
             <div
-              className="mt-3 rounded-2xl border border-violet-200/70 bg-gradient-to-b from-violet-50/95 to-violet-100/50 p-1 shadow-[inset_0_1px_2px_rgba(76,29,149,0.06)] dark:border-violet-800/55 dark:from-violet-950/55 dark:to-violet-950/75 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.35)]"
-              role="group"
-              aria-label="Courier availability"
+              className="mt-4 rounded-2xl border border-violet-200/70 bg-gradient-to-b from-violet-50/90 to-violet-100/40 p-2 dark:border-violet-800/55 dark:from-violet-950/50 dark:to-violet-950/70"
+              role="radiogroup"
+              aria-labelledby={`${groupId}-legend`}
+              aria-describedby={hintId}
             >
-              <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
-                {STATUSES.map((s) => {
-                  const selected = courierStatus === s.id;
-                  return (
-                    <Button
-                      key={s.id}
-                      type="button"
-                      variant={selected ? "primary" : "ghost"}
-                      className={cn(
-                        "min-h-10 flex-col justify-center gap-0",
-                        selected ? cn("rounded-lg shadow-sm", courierChrome.recoveryPrimary) : courierStatusIdle,
-                      )}
-                      disabled={saving}
-                      onClick={() => saveStatus(s.id)}
-                      title={s.hint}
-                    >
-                      <span>{s.label}</span>
-                    </Button>
-                  );
-                })}
+              <p id={`${groupId}-legend`} className="sr-only">
+                Courier availability
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={!isOn ? "primary" : "ghost"}
+                  role="radio"
+                  aria-checked={!isOn}
+                  className={cn(
+                    "min-h-12 rounded-xl text-sm",
+                    !isOn ? cn(courierChrome.recoveryPrimary) : courierStatusIdle,
+                  )}
+                  disabled={saving || availabilityLocked}
+                  onClick={() => saveStatus("offline")}
+                  title={availabilityLocked ? "Finish your active delivery before going offline." : undefined}
+                >
+                  Off
+                </Button>
+                <Button
+                  type="button"
+                  variant={isOn ? "primary" : "ghost"}
+                  role="radio"
+                  aria-checked={isOn}
+                  className={cn(
+                    "min-h-12 rounded-xl text-sm",
+                    isOn ? cn(courierChrome.recoveryPrimary) : courierStatusIdle,
+                  )}
+                  disabled={saving || availabilityLocked}
+                  onClick={() => saveStatus("available")}
+                  title={availabilityLocked ? "Finish your active delivery before changing availability." : undefined}
+                >
+                  On
+                </Button>
               </div>
             </div>
-            <p className="mt-2.5 text-center text-[10px] text-neutral-600 dark:text-slate-400">
-              {STATUSES.find((x) => x.id === courierStatus)?.hint || ""}
+            <p id={hintId} className="mt-2 text-center text-[11px] text-neutral-600 dark:text-slate-400" aria-live="polite">
+              {availabilityLocked
+                ? "You’re on an active delivery — complete it before changing Off/On. Busy is set automatically."
+                : presenceHint(courierStatus)}
             </p>
+            {saveFeedback ? (
+              <p id={feedbackId} className="mt-1 text-center text-[11px] font-medium text-emerald-800 dark:text-emerald-200" aria-live="polite">
+                {saveFeedback}
+              </p>
+            ) : null}
+            <div className="mt-3 rounded-lg border border-violet-200/50 bg-white/60 px-2.5 py-2 dark:border-violet-800/40 dark:bg-violet-950/20">
+              <p className="text-[10px] font-medium text-neutral-800 dark:text-slate-200">Suggested courier pay (optional)</p>
+              <p className="mt-0.5 text-[10px] text-neutral-600 dark:text-slate-400">
+                For neighbors&apos; reference only — not auto-charged and not a bid.
+              </p>
+              <div className="mt-2 flex flex-wrap items-end gap-2">
+                <label className="flex min-w-0 flex-1 flex-col text-[10px] text-neutral-700 dark:text-slate-300">
+                  ₱
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="mt-0.5 min-h-9 rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-950"
+                    placeholder="e.g. 50"
+                    value={suggestedPesosDraft}
+                    onChange={(e) => setSuggestedPesosDraft(e.target.value)}
+                    disabled={savingSuggested || courierStatus === "busy"}
+                    autoComplete="off"
+                  />
+                </label>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="compact"
+                  className="min-h-9 shrink-0"
+                  disabled={savingSuggested || courierStatus === "busy"}
+                  loading={savingSuggested}
+                  loadingLabel="…"
+                  onClick={() => void saveSuggestedRate()}
+                >
+                  Save
+                </Button>
+              </div>
+            </div>
           </>
         )}
       </div>
 
       {!loading ? (
-        <div
-          className={cn(
-            courierChrome.courierPanelSurface,
-            "shadow-sm shadow-violet-900/[0.04] dark:shadow-black/30",
-          )}
-        >
-          <div className="space-y-0.5">
-            <p className="text-[11px] font-semibold text-violet-950 dark:text-violet-100">Optional modes</p>
-            <p className="text-[10px] leading-snug text-neutral-600 dark:text-slate-400">
-              Optional tags on your runs — tap to turn on or off.
-            </p>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {OPTIONAL_TAGS.map((t) => {
-              const on = optionalTags.includes(t.id);
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  disabled={saving}
-                  title={`${on ? "Remove" : "Add"} ${t.label}`}
-                  aria-pressed={on}
-                  onClick={() => toggleTag(t.id)}
-                  className={cn(
-                    "inline-flex max-w-full items-center gap-1.5 transition motion-reduce:transition-none",
-                    on ? courierChipOn : courierChipOff,
-                    saving && "pointer-events-none opacity-60",
-                  )}
-                >
-                  <span className="shrink-0 leading-none" aria-hidden>
-                    {t.emoji}
-                  </span>
-                  <span className="truncate">{t.label}</span>
-                </button>
-              );
-            })}
-          </div>
-          {achievementBadges.length ? (
-            <div className="mt-3">
-              <p className="text-[11px] font-medium text-neutral-700 dark:text-slate-300">Trust badges</p>
-              <p className="mt-1 text-[10px] text-neutral-500 dark:text-slate-500">
-                Earned from completed deliveries — neighbors see these when you offer runs.
-              </p>
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {achievementBadges.map((b) => (
-                  <span
-                    key={b.id}
-                    className="rounded-full bg-amber-100/95 px-2 py-0.5 text-[10px] font-semibold text-amber-950 ring-1 ring-amber-300/60 dark:bg-amber-950/50 dark:text-amber-100 dark:ring-amber-700/50"
-                  >
-                    {b.label}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {note ? (
-            <p className="mt-2 text-[11px] text-neutral-600 dark:text-slate-400">{note}</p>
-          ) : null}
+        <div className="rounded-xl border border-neutral-200/80 bg-white/70 p-3 dark:border-slate-600/60 dark:bg-slate-900/45 md:p-4">
+          {note ? <p className="mb-3 text-[11px] text-neutral-600 dark:text-slate-400">{note}</p> : null}
           <CourierOpenDeliveries
             token={token}
             communityId={communityId}
             courierStatus={courierStatus}
+            viewerSuggestedCompensationCents={suggestedCompensationCents}
             onClaimed={async () => {
               await refresh();
               if (typeof onOrdersRefresh === "function") await onOrdersRefresh();
             }}
           />
+          <CourierEngagementBoard token={token} communityId={communityId} />
         </div>
       ) : null}
     </div>

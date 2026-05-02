@@ -9,7 +9,7 @@ const TAB_BADGE_ROSE =
   "pointer-events-none absolute -right-0.5 -top-0.5 z-[1] inline-flex min-h-[1rem] min-w-[1rem] max-w-[min(2.75rem,calc(100%-0.35rem))] items-center justify-center rounded-full bg-rose-600 px-[3px] py-px text-[9px] font-bold leading-none text-white shadow-sm dark:bg-rose-500";
 
 /**
- * Buying / Selling / Courier strip — rose = unseen (or courier Deliver+purchases slice); slate = pipeline-only fallback.
+ * Buying / Selling / Courier strip — rose = unseen (or open courier tasks + buyer assign slice); slate = pipeline-only fallback.
  *
  * @param {{ count: number, rose?: boolean }} [props.buyingBadge]
  * @param {{ count: number, rose?: boolean }} [props.sellingBadge]

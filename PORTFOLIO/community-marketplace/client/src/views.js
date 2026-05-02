@@ -35,14 +35,10 @@ export const SELLER_TABS = {
   FEEDBACK: "feedback",
 };
 
-/** Sub-navigation for the courier area (Activity → Courier tab; stored in App state `courierTab`). Strip order: Deliver, Buying, Selling (mirrors Activity Buying → Selling). */
+/** Legacy courier sub-tab ids (no longer used in UI; Activity → Courier is a single “Find deliveries” view). */
 export const COURIER_TABS = {
-  /** Courier role: availability + claim open deliveries. */
   DELIVER: "deliver",
-  /** Buyer: suggest a neighbor courier (tab label: Buying). */
-  BUY: "buy",
-  /** Seller: assign or self-deliver (tab label: Selling). */
-  SELL: "sell",
+  ACTIVE: "active",
 };
 
 /** Primary tabs inside `VIEWS.ACTIVITY`. */

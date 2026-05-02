@@ -12,8 +12,8 @@ import {
 import { formatBrowseLabel, getListingCategoryShortLabel, getVerticalById, VERTICALS } from "./categoryNav.js";
 import { gradientForId, initialsFromName } from "./communityUi.js";
 import { LoggedInHeader } from "./components/LoggedInHeader.jsx";
-import { OrderStatusTabGlyph } from "./components/OrderStatusTabGlyph.jsx";
-import { CourierHubTabGlyph } from "./components/CourierHubTabGlyph.jsx";
+import { ActivityHubOrderStatusStrip } from "./components/ActivityHubOrderStatusStrip.jsx";
+import { CommunityCourierPanel } from "./components/marketplace/CommunityCourierPanel.jsx";
 import {
   LazyPublicListingPage,
   LazyLandingIllustration,
@@ -21,6 +21,7 @@ import {
   DeferredProductDetailStack,
   LazyProductInspectModal,
   LazyOrderBuyerReviewForm,
+  LazyCourierDeliveryReviewForm,
   LazySellerBuyerFeedbackList,
 } from "./appCodeSplit.jsx";
 import { ImagetoolsPicture } from "./components/media/ImagetoolsPicture.jsx";
@@ -33,7 +34,8 @@ import {
   resolveListingGalleryUrls,
 } from "./lib/listingImageUrl.js";
 import { formatCents } from "./marketplace/money.js";
-import { ACTIVITY_TABS, COURIER_TABS, SELLER_TABS, VIEWS } from "./views.js";
+import { orderLineUnitPriceCents } from "./lib/orderLineCents.js";
+import { ACTIVITY_TABS, SELLER_TABS, VIEWS } from "./views.js";
 import {
   clearActiveView,
   readActiveView,
@@ -115,11 +117,7 @@ import {
   ORDERS_STATUS_TABS,
   orderMatchesOrdersStatusTab,
 } from "./lib/orderAttentionStorage.js";
-import {
-  commerceOrderStatusStripClass,
-  courierHubFooterStripClass,
-  getActivityTabChrome,
-} from "./lib/activityTabTheme.js";
+import { getActivityTabChrome } from "./lib/activityTabTheme.js";
 import {
   isDeliveryCourierAssigned,
   isDeliveryInTransit,
@@ -138,10 +136,13 @@ import { LANDING_DISCOVERY_SLIDES, BROWSE_QUICK_FILTERS } from "./lib/landingDis
 import { quickFilterIcon, categoryIcon } from "./components/browse/BrowseFilterIcons.jsx";
 import { SectionHeading } from "./components/marketplace/SectionHeading.jsx";
 import { FilterOptionButton } from "./components/marketplace/FilterOptionButton.jsx";
-import { CommunityCourierPanel } from "./components/marketplace/CommunityCourierPanel.jsx";
-import { CourierPresenceControls } from "./components/marketplace/CourierPresenceControls.jsx";
+import { CourierRunnerHubPanel } from "./components/marketplace/CourierRunnerHubPanel.jsx";
 import { ListingCategoryPicker } from "./components/marketplace/ListingCategoryPicker.jsx";
 import { CartSellerSelectAllCheckbox } from "./components/marketplace/CartSellerSelectAllCheckbox.jsx";
+import {
+  OrderCourierPoolAdjust,
+  canAdjustCourierPoolForViewer,
+} from "./components/marketplace/OrderCourierPoolAdjust.jsx";
 import { LandingFeatureRow, LANDING_FEATURE_ROWS } from "./components/landing/LandingFeatureRows.jsx";
 import {
   ChevronDownIcon,
@@ -654,13 +655,6 @@ function pickMergedOrderCommentForVariantChips(entry, ordersList) {
  * Parsed `Selected:` → canonical sig; otherwise stable `__order__:id` so different DB rows never fold
  * when comments are missing or unparsed (cart never merges unknown variant lines).
  */
-/** Persists line total on the order row — use for display instead of live `listing.priceCents`. */
-function orderLineUnitPriceCents(order) {
-  const q = Math.max(1, Math.floor(Number(order?.quantity) || 1));
-  const goods = Math.max(0, Number(order?.codGoodsCents ?? order?.cod_goods_cents) || 0);
-  return Math.round(goods / q);
-}
-
 function buyerPendingOrderMergeKey(order) {
   const listingId = String(order?.listingId || "");
   const fromApi = String(order?.variantSignature ?? order?.variant_signature ?? "").trim();
@@ -831,6 +825,19 @@ function App() {
   const activitySelling = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.SELLING;
   const activityCourier = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.COURIER;
   const activityTabChrome = useMemo(() => getActivityTabChrome(activityTab), [activityTab]);
+  /** Last Activity Buying vs Selling before Courier — drives `ordersRole` for order lists and badges. */
+  const lastBuyingSellingActivityTabRef = useRef(
+    readInitialActivityTab() === ACTIVITY_TABS.SELLING ? ACTIVITY_TABS.SELLING : ACTIVITY_TABS.BUYING,
+  );
+  useEffect(() => {
+    if (activityTab === ACTIVITY_TABS.BUYING || activityTab === ACTIVITY_TABS.SELLING) {
+      lastBuyingSellingActivityTabRef.current = activityTab;
+    }
+  }, [activityTab]);
+  useEffect(() => {
+    if (activeView !== VIEWS.ACTIVITY || activityTab !== ACTIVITY_TABS.COURIER) return;
+    setOrdersRole(lastBuyingSellingActivityTabRef.current === ACTIVITY_TABS.SELLING ? "seller" : "buyer");
+  }, [activeView, activityTab]);
   const isBrowseLikeView = useMemo(
     () => activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP || activeView === VIEWS.FAVORITES,
     [activeView],
@@ -970,13 +977,16 @@ function App() {
   const [orderSelection, setOrderSelection] = useState({});
   /** Which bulk order transition is in flight (`seller_accept` | `cancel`) — only that action shows loading on its button. */
   const [ordersBulkActionLoadingTransition, setOrdersBulkActionLoadingTransition] = useState(/** @type {string | null} */ (null));
-  /** Seller orders loaded for the Courier hub view (separate from `orders` + ORDERS tab). */
+  /** Seller-only: optional add-on to courier COD pool (whole ₱) when accepting pending orders — sent as centavos per order. */
+  const [sellerAcceptCourierPesos, setSellerAcceptCourierPesos] = useState("");
+  /** Seller orders loaded for courier badge counts (separate fetch from Activity orders tab). */
   const [courierHubOrders, setCourierHubOrders] = useState([]);
-  /** Buyer orders for Courier hub Buying tab. */
+  /** Buyer orders for courier badge counts (delivery still preparing). */
   const [courierHubBuyerOrders, setCourierHubBuyerOrders] = useState([]);
-  const [courierHubLoading, setCourierHubLoading] = useState(false);
   /** Open delivery jobs in the member’s community (tab badge on Deliver). */
   const [courierOpenDeliveryCount, setCourierOpenDeliveryCount] = useState(0);
+  /** Pending buyer/seller invitations for this user as courier (GET /delivery/invitations). */
+  const [courierInvitationCount, setCourierInvitationCount] = useState(0);
   const [orderCancelReasonModalOpen, setOrderCancelReasonModalOpen] = useState(false);
   const [orderCancelReasonId, setOrderCancelReasonId] = useState("");
   const [orderCancelNote, setOrderCancelNote] = useState("");
@@ -1719,7 +1729,6 @@ function App() {
     });
   }, [favoriteIds]);
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
-  const [courierTab, setCourierTab] = useState(COURIER_TABS.DELIVER);
   const [sellerProductsView, setSellerProductsView] = useState("list");
   const [communityProductsView, setCommunityProductsView] = useState("grid");
   const [communityListingsQuery, setCommunityListingsQuery] = useState("");
@@ -4346,6 +4355,19 @@ function App() {
         let successCount = 0;
         let failedCount = 0;
         let firstFailureMessage = "";
+        let extraFields = /** @type {Record<string, unknown>} */ ({});
+        if (transitionNorm === "seller_accept") {
+          const raw = String(sellerAcceptCourierPesos || "").trim();
+          if (raw !== "") {
+            const pesos = Number(raw);
+            if (!Number.isFinite(pesos) || pesos < 0) {
+              pushMarketplaceToast("Enter a valid peso amount for the courier add-on, or leave it blank.");
+              return;
+            }
+            const cents = Math.round(pesos * 100);
+            if (cents > 0) extraFields = { sellerCourierContributionCents: cents };
+          }
+        }
         for (const order of selectedOrders) {
           const oid = String(order?.id ?? "").trim();
           if (!oid) {
@@ -4354,7 +4376,7 @@ function App() {
             continue;
           }
           try {
-            const body = { transition: transitionNorm };
+            const body = { transition: transitionNorm, ...extraFields };
             if (transitionNorm === "cancel" && cancelPayload && typeof cancelPayload === "object") {
               const cr = String(cancelPayload.cancellationReason || "").trim();
               if (cr) body.cancellationReason = cr;
@@ -4397,7 +4419,7 @@ function App() {
         setOrdersBulkActionLoadingTransition(null);
       }
     },
-    [selectedOrders, token, ordersRole],
+    [selectedOrders, token, ordersRole, sellerAcceptCourierPesos],
   );
 
   useEffect(() => {
@@ -5203,23 +5225,24 @@ function App() {
 
   const refreshCourierHub = useCallback(async () => {
     if (!token) return;
-    setCourierHubLoading(true);
     try {
-      const [sellerData, buyerData, openData] = await Promise.all([
+      const [sellerData, buyerData, openData, invData] = await Promise.all([
         apiRequest(`/orders?role=seller`, { token }),
         apiRequest(`/orders?role=buyer`, { token }),
         apiRequest(`/delivery/open`, { token }).catch(() => ({ orders: [] })),
+        apiRequest(`/delivery/invitations`, { token }).catch(() => ({ invitations: [] })),
       ]);
       setCourierHubOrders(sellerData.orders || []);
       setCourierHubBuyerOrders(buyerData.orders || []);
       const open = Array.isArray(openData?.orders) ? openData.orders : [];
       setCourierOpenDeliveryCount(open.length);
+      const inv = Array.isArray(invData?.invitations) ? invData.invitations : [];
+      setCourierInvitationCount(inv.length);
     } catch {
       setCourierHubOrders([]);
       setCourierHubBuyerOrders([]);
       setCourierOpenDeliveryCount(0);
-    } finally {
-      setCourierHubLoading(false);
+      setCourierInvitationCount(0);
     }
   }, [token]);
 
@@ -5244,14 +5267,17 @@ function App() {
     [courierHubBuyerOrders],
   );
 
-  /** Deliver + Buying tab — Activity hub rose courier slice (open jobs + buyer-side assigns). */
+  /** Find deliveries + buyer-side assign attention — Activity hub rose courier slice (open jobs + orders needing courier suggest). */
   const courierRoseAttentionCount = useMemo(
     () =>
-      Math.min(99, Math.max(0, courierOpenDeliveryCount + courierBuyerAssignOrders.length)),
-    [courierOpenDeliveryCount, courierBuyerAssignOrders.length],
+      Math.min(
+        99,
+        Math.max(0, courierOpenDeliveryCount + courierBuyerAssignOrders.length + courierInvitationCount),
+      ),
+    [courierOpenDeliveryCount, courierBuyerAssignOrders.length, courierInvitationCount],
   );
 
-  /** Full courier pipeline including Selling tab (muted Activity fallback + Courier tab slate). */
+  /** Full courier pipeline: open tasks + seller/buyer delivery orders not yet assigned (muted Activity fallback). */
   const courierFullPipelineCount = useMemo(
     () =>
       Math.min(
@@ -5260,22 +5286,25 @@ function App() {
           0,
           courierOpenDeliveryCount +
             courierSellerAssignOrders.length +
-            courierBuyerAssignOrders.length,
+            courierBuyerAssignOrders.length +
+            courierInvitationCount,
         ),
       ),
     [
       courierOpenDeliveryCount,
       courierSellerAssignOrders.length,
       courierBuyerAssignOrders.length,
+      courierInvitationCount,
     ],
   );
 
   const activityPrimaryCourierBadge = useMemo(() => {
-    const roseRaw = courierOpenDeliveryCount + courierBuyerAssignOrders.length;
+    const roseRaw = courierOpenDeliveryCount + courierBuyerAssignOrders.length + courierInvitationCount;
     const fullRaw =
       courierOpenDeliveryCount +
       courierSellerAssignOrders.length +
-      courierBuyerAssignOrders.length;
+      courierBuyerAssignOrders.length +
+      courierInvitationCount;
     return {
       count: Math.min(99, roseRaw > 0 ? roseRaw : fullRaw),
       rose: roseRaw > 0,
@@ -5284,6 +5313,7 @@ function App() {
     courierOpenDeliveryCount,
     courierSellerAssignOrders.length,
     courierBuyerAssignOrders.length,
+    courierInvitationCount,
   ]);
 
   useEffect(() => {
@@ -5303,7 +5333,8 @@ function App() {
           ? [...new Set(orderIds.map((x) => String(x || "")).filter(Boolean))]
           : [String(orderId || "")].filter(Boolean);
       for (const id of ids) {
-        await apiRequest(`/orders/${id}`, { method: "PATCH", token, body: { transition: transitionNorm } });
+        const body = { transition: transitionNorm, ...(options.extraBody || {}) };
+        await apiRequest(`/orders/${id}`, { method: "PATCH", token, body });
       }
       const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
       setOrders(data.orders || []);
@@ -5323,6 +5354,22 @@ function App() {
       pushMarketplaceToast("Thanks for your feedback.");
     } catch (e) {
       pushMarketplaceToast(e.message || "Could not save review.");
+    }
+  };
+
+  const submitCourierDeliveryReview = async (orderId, rating, tags, abuseNote) => {
+    clearMarketplaceToasts();
+    try {
+      await apiRequest(`/orders/${orderId}/courier-review`, {
+        method: "PUT",
+        token,
+        body: { rating, tags, abuseNote: abuseNote || undefined },
+      });
+      const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+      setOrders(data.orders || []);
+      pushMarketplaceToast("Courier review saved.");
+    } catch (e) {
+      pushMarketplaceToast(e.message || "Could not save courier review.");
     }
   };
 
@@ -7712,7 +7759,11 @@ function App() {
       >
       {marketplaceToasts.length > 0 ? (
         <div
-          className="pointer-events-none fixed safe-fixed-x bottom-[max(1rem,calc(env(safe-area-inset-bottom,0px)+0.75rem))] z-[70] flex max-h-[min(70vh,calc(100dvh-10rem))] flex-col gap-2 overflow-y-auto md:left-auto md:right-6 md:bottom-6 md:w-[24rem]"
+          className={`pointer-events-none fixed safe-fixed-x z-[70] flex max-h-[min(70vh,calc(100dvh-10rem))] flex-col gap-2 overflow-y-auto md:left-auto md:right-6 md:w-[24rem] ${
+            activeView === VIEWS.ACTIVITY
+              ? "bottom-[max(1rem,calc(env(safe-area-inset-bottom,0px)+var(--activity-primary-footer)+0.75rem))] md:bottom-[calc(env(safe-area-inset-bottom,0px)+var(--activity-primary-footer)+1.5rem)]"
+              : "bottom-[max(1rem,calc(env(safe-area-inset-bottom,0px)+0.75rem))] md:bottom-6"
+          }`}
           role="region"
           aria-label="Notifications"
           aria-live="polite"
@@ -7799,10 +7850,8 @@ function App() {
             ? activityTabChrome.activityMainSurface
             : "bg-white dark:bg-slate-950 md:bg-transparent md:dark:bg-transparent"
         } ${
-          activeView === VIEWS.ACTIVITY &&
-          isMobileViewport &&
-          (((activityBuying || activitySelling) && !ordersFetchError) || (activityCourier && token))
-            ? "max-md:scroll-pb-[calc(env(safe-area-inset-bottom,0px)+var(--commerce-order-status-footer)+1rem)] max-md:pb-[calc(env(safe-area-inset-bottom,0px)+var(--commerce-order-status-footer)+1rem)]"
+          activeView === VIEWS.ACTIVITY
+            ? "scroll-pb-[calc(env(safe-area-inset-bottom,0px)+var(--activity-primary-footer)+1rem)] pb-[calc(env(safe-area-inset-bottom,0px)+var(--activity-primary-footer)+1rem)] md:scroll-pb-[calc(env(safe-area-inset-bottom,0px)+var(--activity-primary-footer)+1rem)] md:pb-[calc(env(safe-area-inset-bottom,0px)+var(--activity-primary-footer)+1rem)]"
             : ""
         } ${
           lockMainScrollForOverlay
@@ -10665,7 +10714,7 @@ function App() {
                             });
                           };
                           const thumbClass = cfList
-                            ? "aspect-[4/3] w-[6.5rem] min-[400px]:aspect-square min-[400px]:h-[7.5rem] min-[400px]:w-[7.5rem] min-[400px]:max-h-[7.5rem] min-[400px]:max-w-[7.5rem] min-[400px]:shrink-0"
+                            ? "aspect-square w-[6.5rem] shrink-0 min-[400px]:w-[7.5rem]"
                             : "lm-product-card-media aspect-square w-full min-h-0";
                           const cartLineVariantPick = narrowListingOptionValuesForBuyerSelection(item);
                           const cartModesList = Array.isArray(item.fulfillmentModes) ? item.fulfillmentModes.map(String) : [];
@@ -10872,19 +10921,26 @@ function App() {
           <section id="activity-hub-panel" className={activityTabChrome.activityViewSection}>
             {(activityBuying || activitySelling) && (
               <>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0 flex-1 space-y-0.5">
                 <h3 className="min-w-0 text-lg font-semibold tracking-tight text-neutral-900 md:text-xl dark:text-slate-100">
                   {activityBuying ? "Purchases" : "Orders"}
                 </h3>
-                {!ordersFetchError ? (
-                  <p className="max-w-xl text-xs leading-snug text-neutral-500 dark:text-slate-400 md:text-sm">
-                    Filter by stage with{" "}
-                    <span className="font-medium text-neutral-600 dark:text-slate-300">Pending–Cancelled</span>{" "}
-                    <span className="max-md:hidden">below</span>
-                    <span className="md:hidden">at the bottom of the screen</span>.
-                  </p>
-                ) : null}
+                <p
+                  className="text-xs font-medium text-neutral-600 dark:text-slate-400"
+                  aria-label="Activity context"
+                >
+                  <span className={activityTabChrome.labelSelected}>
+                    {activityBuying ? "Buying" : "Selling"}
+                  </span>
+                  <span className="text-neutral-400 dark:text-slate-500" aria-hidden>
+                    {" "}
+                    ·{" "}
+                  </span>
+                  <span className="text-neutral-600 dark:text-slate-300">
+                    {ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label ?? "Pending"}
+                  </span>
+                </p>
               </div>
               {orders.length > 0 ? (
                 <div className="flex shrink-0 items-center justify-end">
@@ -10903,6 +10959,17 @@ function App() {
                 </div>
               ) : null}
             </div>
+            {!ordersFetchError ? (
+              <ActivityHubOrderStatusStrip
+                activityBuying={activityBuying}
+                activityTab={activityTab}
+                ordersStatusTab={ordersStatusTab}
+                commitOrdersStatusTab={commitOrdersStatusTab}
+                pendingTabBadgeDisplayCount={pendingTabBadgeDisplayCount}
+                processingTabBadgeDisplayCount={processingTabBadgeDisplayCount}
+                ordersTabBadgeIdsByTab={ordersTabBadgeIdsByTab}
+              />
+            ) : null}
             {ordersFetchError ? (
               <ScreenError
                 title="Couldn’t load orders"
@@ -10914,121 +10981,6 @@ function App() {
             ) : null}
             {!ordersFetchError ? (
               <>
-                <div className={commerceOrderStatusStripClass(activityTab)}>
-                  <div
-                    className="grid w-full min-w-0 grid-cols-4 gap-0"
-                      role="tablist"
-                      aria-label={activityBuying ? "Purchase status" : "Order status"}
-                      onKeyDown={(e) => {
-                        const tabs = ORDERS_STATUS_TABS;
-                        const { key } = e;
-                        if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
-                        e.preventDefault();
-                        const idx = tabs.findIndex((t) => t.id === ordersStatusTab);
-                        let next = idx;
-                        if (key === "ArrowRight") next = Math.min(tabs.length - 1, idx + 1);
-                        else if (key === "ArrowLeft") next = Math.max(0, idx - 1);
-                        else if (key === "Home") next = 0;
-                        else if (key === "End") next = tabs.length - 1;
-                        if (next !== idx) {
-                          const nextId = tabs[next].id;
-                          commitOrdersStatusTab(nextId);
-                          queueMicrotask(() => {
-                            document.getElementById(`commerce-flow-status-tab-${nextId}`)?.focus();
-                          });
-                        }
-                      }}
-                    >
-                      {ORDERS_STATUS_TABS.map(({ id, label, hint }) => {
-                        const selected = ordersStatusTab === id;
-                        const tabBadgeCount =
-                          id === "pending"
-                            ? pendingTabBadgeDisplayCount
-                            : id === "processing"
-                              ? processingTabBadgeDisplayCount
-                              : id === "completed" || id === "cancelled"
-                                ? ordersTabBadgeIdsByTab[id]?.length ?? 0
-                                : 0;
-                        const showTabBadge = tabBadgeCount > 0;
-                        const unseenForStatusTab =
-                          id === "pending"
-                            ? ordersTabBadgeIdsByTab.pending?.length ?? 0
-                            : id === "processing"
-                              ? ordersTabBadgeIdsByTab.processing?.length ?? 0
-                              : id === "completed"
-                                ? ordersTabBadgeIdsByTab.completed?.length ?? 0
-                                : id === "cancelled"
-                                  ? ordersTabBadgeIdsByTab.cancelled?.length ?? 0
-                                  : 0;
-                        /** Completed/Cancelled: rose only while unseen — no slate fallback when cleared. Pending/Processing: rose when unseen, else slate queue depth. */
-                        const badgeIsRose =
-                          id === "completed" || id === "cancelled"
-                            ? tabBadgeCount > 0
-                            : unseenForStatusTab > 0;
-                        const badgeCountDisplay = tabBadgeCount > 99 ? "99+" : tabBadgeCount;
-                        return (
-                        <button
-                          key={id}
-                          id={`commerce-flow-status-tab-${id}`}
-                          type="button"
-                          role="tab"
-                          tabIndex={selected ? 0 : -1}
-                          aria-selected={selected}
-                          aria-controls="commerce-flow-status-panel"
-                          title={hint}
-                          aria-label={
-                            showTabBadge
-                              ? `${label}, ${String(badgeCountDisplay).replace("+", " plus ")}`
-                              : label
-                          }
-                          className={`relative flex min-h-[3.25rem] min-w-0 flex-col items-center justify-center px-0.5 py-1.5 text-center transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 min-[380px]:px-1 ${
-                            selected
-                              ? ""
-                              : "hover:bg-neutral-50/90 dark:hover:bg-slate-900/70"
-                          }`}
-                          onClick={() => commitOrdersStatusTab(id)}
-                        >
-                          <span className="flex w-full min-w-0 flex-col items-center gap-1">
-                            <span className="relative inline-flex shrink-0">
-                              <OrderStatusTabGlyph
-                                tabId={id}
-                                selected={selected}
-                                selectedAccentClass={activityTabChrome.glyphSelected}
-                              />
-                              {showTabBadge ? (
-                                <span
-                                  className={
-                                    badgeIsRose ? ORDER_STATUS_TAB_BADGE_ON_GLYPH_ROSE : ORDER_STATUS_TAB_BADGE_ON_GLYPH_MUTED
-                                  }
-                                  aria-hidden
-                                >
-                                  {badgeCountDisplay}
-                                </span>
-                              ) : null}
-                            </span>
-                            <span
-                              className={`line-clamp-2 min-w-0 max-w-full px-0.5 text-[10px] font-medium leading-tight tracking-tight md:text-[11px] ${
-                                selected
-                                  ? activityTabChrome.labelSelected
-                                  : "text-neutral-500 dark:text-slate-500"
-                              }`}
-                            >
-                              {label}
-                            </span>
-                            <span
-                              className={`mt-0.5 h-[3px] w-9 shrink-0 rounded-full transition-opacity duration-150 ease-out motion-reduce:transition-none ${
-                                selected
-                                  ? `${activityTabChrome.barSelected} opacity-100`
-                                  : "opacity-0"
-                              }`}
-                              aria-hidden
-                            />
-                          </span>
-                        </button>
-                        );
-                      })}
-                    </div>
-                </div>
                 <div
                   id="commerce-flow-status-panel"
                   role="tabpanel"
@@ -11133,6 +11085,25 @@ function App() {
                       </div>
                     </div>
                   ) : null}
+                  {ordersRole === "seller" &&
+                  ordersStatusTab === "pending" &&
+                  selectedOrders.length > 0 &&
+                  selectedOrders.some((x) => String(x?.fulfillmentType || "") === "delivery") ? (
+                    <div className="mt-2 rounded-lg border border-neutral-200/80 bg-neutral-50/80 px-3 py-2.5 dark:border-slate-600/70 dark:bg-slate-900/50">
+                      <label className="block text-[11px] font-medium text-neutral-700 dark:text-slate-300">
+                        Seller add-on for delivery tip (₱, optional)
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className="mt-1 w-full max-w-[14rem] rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-xs text-neutral-900 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"
+                          placeholder="0"
+                          value={sellerAcceptCourierPesos}
+                          onChange={(e) => setSellerAcceptCourierPesos(e.target.value)}
+                          autoComplete="off"
+                        />
+                      </label>
+                    </div>
+                  ) : null}
                   {!ordersFetchError && !(ordersLoading && orders.length === 0) && orders.length > 0 && ordersForStatusTab.length === 0 ? (
               <ScreenEmpty
                 spacious={false}
@@ -11235,13 +11206,13 @@ function App() {
                     ? usernameLabel
                     : orderUsernameLabel
                       ? orderUsernameLabel
-                    : isCurrentUserParty && currentUserUsernameLabel
-                      ? currentUserUsernameLabel
-                    : listingPartyLabel && !looksLikeFallbackIdLabel
-                      ? listingPartyLabel
-                      : groupPartyId && groupPartyId !== "unknown"
-                        ? `${partyRoleLabel} ${groupPartyId.slice(0, 8)}`
-                        : `Unknown ${partyRoleLabel.toLowerCase()}`;
+                      : isCurrentUserParty && currentUserUsernameLabel
+                        ? currentUserUsernameLabel
+                      : listingPartyLabel && !looksLikeFallbackIdLabel
+                        ? listingPartyLabel
+                        : groupPartyId && groupPartyId !== "unknown"
+                          ? `${partyRoleLabel} ${groupPartyId.slice(0, 8)}`
+                          : `Unknown ${partyRoleLabel.toLowerCase()}`;
                   const shouldMergeBuyerRows =
                     ordersRole === "buyer" && !["completed", "cancelled"].includes(String(ordersStatusTab || ""));
                   const mergedSellerOrders =
@@ -11281,6 +11252,14 @@ function App() {
                               cardListing: { ...cardListing, quantity: clampedQty },
                               mergedGoodsCents: unitPriceCents * clampedQty,
                               mergedDeliveryCents: Math.max(0, Number(o.codDeliveryCents) || 0),
+                              mergedBuyerCourierCents: Math.max(
+                                0,
+                                Number(o.buyerCourierContributionCents ?? o.buyer_courier_contribution_cents) || 0,
+                              ),
+                              mergedSellerCourierCents: Math.max(
+                                0,
+                                Number(o.sellerCourierContributionCents ?? o.seller_courier_contribution_cents) || 0,
+                              ),
                             });
                             return acc;
                           }
@@ -11298,6 +11277,12 @@ function App() {
                           existing.cardListing = { ...existing.cardListing, quantity: clampedQty };
                           existing.mergedGoodsCents = unitPriceCents * clampedQty;
                           existing.mergedDeliveryCents += Math.max(0, Number(o.codDeliveryCents) || 0);
+                          existing.mergedBuyerCourierCents =
+                            Math.max(0, Number(existing.mergedBuyerCourierCents) || 0) +
+                            Math.max(0, Number(o.buyerCourierContributionCents ?? o.buyer_courier_contribution_cents) || 0);
+                          existing.mergedSellerCourierCents =
+                            Math.max(0, Number(existing.mergedSellerCourierCents) || 0) +
+                            Math.max(0, Number(o.sellerCourierContributionCents ?? o.seller_courier_contribution_cents) || 0);
                           return acc;
                         }, [])
                       : orderedSellerOrders.map((o) => {
@@ -11323,6 +11308,14 @@ function App() {
                             representativeOrder: o,
                             orderIds: [String(o.id || "")],
                             cardListing,
+                            mergedBuyerCourierCents: Math.max(
+                              0,
+                              Number(o.buyerCourierContributionCents ?? o.buyer_courier_contribution_cents) || 0,
+                            ),
+                            mergedSellerCourierCents: Math.max(
+                              0,
+                              Number(o.sellerCourierContributionCents ?? o.seller_courier_contribution_cents) || 0,
+                            ),
                           };
                         });
                   const sellerOrderIds = mergedSellerOrders.flatMap((entry) => entry.orderIds).filter(Boolean);
@@ -11331,7 +11324,7 @@ function App() {
                   const sellerSomeSelected = sellerSelectedCount > 0 && !sellerAllSelected;
                   return (
                     <div key={groupPartyId} className="flex flex-col gap-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex min-w-0 items-center gap-2.5">
                         {ordersStatusTab === "pending" ? (
                           <CartSellerSelectAllCheckbox
                             allChecked={sellerAllSelected}
@@ -11340,7 +11333,7 @@ function App() {
                             ariaLabel={`Select all orders for ${sellerLabel}`}
                           />
                         ) : null}
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-600 md:text-xs dark:text-slate-300">
+                        <p className="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-wide text-neutral-700 md:text-sm dark:text-slate-200">
                           {sellerLabel}
                         </p>
                       </div>
@@ -11357,9 +11350,9 @@ function App() {
                           const cfList = commerceFlowOrdersView === "list";
                           const cfCompact = commerceFlowOrdersView === "compact";
                           const multicolOrderCard = !cfList;
-                          /** Match cart line items + community feed card (`LazyCommunityShopListingCard` mobile grid). */
+                          /** List row: fluid thumb width so text column scales smoothly (grid uses full-width hero). */
                           const orderThumbList =
-                            "aspect-[4/3] w-[6.5rem] min-[400px]:aspect-square min-[400px]:h-[7.5rem] min-[400px]:w-[7.5rem] min-[400px]:max-h-[7.5rem] min-[400px]:max-w-[7.5rem] min-[400px]:shrink-0";
+                            "aspect-square w-[clamp(6rem,min(26vw,7.5rem),7.5rem)] max-w-[7.5rem] shrink-0";
                           const orderThumbGrid = "lm-product-card-media aspect-square w-full min-h-0";
                           const mergedVariantSig = pickMergedOrderVariantSignature(entry, orders);
                           const buyerCommentRaw = pickMergedOrderCommentForVariantChips(entry, orders);
@@ -11399,6 +11392,18 @@ function App() {
                             RECENT_ORDER_TAB_KEYS.includes(String(ordersStatusTab)) &&
                             entry.orderIds.some(orderIdNeedsAttention);
                           const rowAllSelected = entry.orderIds.length > 0 && entry.orderIds.every((id) => Boolean(orderSelection[id]));
+                          const buyerPoolCents = shouldMergeBuyerRows
+                            ? Math.max(0, Number(entry.mergedBuyerCourierCents) || 0)
+                            : Math.max(
+                                0,
+                                Number(o.buyerCourierContributionCents ?? o.buyer_courier_contribution_cents) || 0,
+                              );
+                          const sellerPoolCents = shouldMergeBuyerRows
+                            ? Math.max(0, Number(entry.mergedSellerCourierCents) || 0)
+                            : Math.max(
+                                0,
+                                Number(o.sellerCourierContributionCents ?? o.seller_courier_contribution_cents) || 0,
+                              );
                           const completedHistoryRow =
                             ordersStatusTab === "completed" && String(o.status || "") === "completed";
                           /** Avoid an empty footer shell in list view (stacked `gap` + `mt`/`pt` looked like a large dead zone). */
@@ -11466,7 +11471,7 @@ function App() {
                             });
                           };
                           const orderCardBody = (
-                            <div className="flex min-w-0 flex-col gap-1.5">
+                            <div className="flex min-w-0 flex-col gap-1">
                               {shouldHighlightRecent ? (
                                 <span className="inline-flex w-fit max-w-full shrink-0 self-start items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
                                   Recently updated
@@ -11475,7 +11480,9 @@ function App() {
                               <DeferredProductDetailStack
                                 variant="card"
                                 browseStackMode={cfList ? "listMobile" : null}
-                                compactListMeta={cfList}
+                                compactListMeta={false}
+                                uniformOrderDetailRows
+                                uniformOrderDetailCompact={cfCompact && !cfList}
                                 title={cardListing.title || "Product"}
                                 priceCents={cardListing.priceCents}
                                 description={cardListing.description}
@@ -11491,36 +11498,49 @@ function App() {
                                 listingMetaDensity="compact"
                               />
                               <div
-                                className={`space-y-1 leading-tight text-neutral-600 dark:text-slate-400 ${
-                                  cfCompact ? "text-[10px] md:text-[11px]" : "text-[11px] md:text-xs md:leading-snug"
-                                }`}
+                                className={
+                                  cfList
+                                    ? "space-y-1 leading-tight text-neutral-600 dark:text-slate-400 text-[11px] min-[400px]:text-xs md:leading-snug"
+                                    : `space-y-1 leading-tight text-neutral-600 dark:text-slate-400 ${
+                                        cfCompact ? "text-[10px] md:text-[11px]" : "text-[11px] md:text-xs md:leading-snug"
+                                      }`
+                                }
                               >
-                                <p className="text-pretty">
-                                  <span className="font-medium text-neutral-700 dark:text-slate-300">Quantity</span>{" "}
-                                  <span className="font-semibold tabular-nums text-neutral-600 dark:text-slate-400">
+                                <p className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1 text-pretty">
+                                  <span className="font-medium text-neutral-700 dark:text-slate-300">
+                                    Quantity
+                                    <span className="text-neutral-500 dark:text-slate-500">:</span>
+                                  </span>
+                                  <span className="min-w-0 font-semibold tabular-nums text-neutral-800 dark:text-slate-200">
                                     {Number(cardListing.quantity) || 1}
                                   </span>
                                 </p>
-                                <div className="space-y-0.5 text-pretty text-neutral-600 dark:text-slate-400">
-                                  <p>
-                                    <span className="font-medium text-neutral-600 dark:text-slate-300">Fulfillment</span>
-                                    <span className="text-neutral-500 dark:text-slate-500">: </span>
-                                    <span className="text-neutral-800 dark:text-slate-200">
-                                      {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"}
-                                    </span>
-                                  </p>
-                                  <p>
-                                    <span className="font-medium text-neutral-600 dark:text-slate-300">Total</span>
-                                    <span className="text-neutral-500 dark:text-slate-500">: </span>
-                                    <span className="tabular-nums font-semibold text-neutral-700 dark:text-slate-300">
-                                      {formatCents(
-                                        Math.max(0, Number(entry.mergedGoodsCents ?? o.codGoodsCents) || 0) +
-                                          Math.max(0, Number(entry.mergedDeliveryCents ?? o.codDeliveryCents) || 0),
-                                      )}
-                                    </span>
-                                  </p>
-                                </div>
-                                {orderCommentRow.show ? (
+                                <p className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1 text-pretty">
+                                  <span className="font-medium text-neutral-700 dark:text-slate-300">
+                                    Fulfillment
+                                    <span className="text-neutral-500 dark:text-slate-500">:</span>
+                                  </span>
+                                  <span className="min-w-0 font-semibold text-neutral-800 dark:text-slate-200">
+                                    {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"}
+                                  </span>
+                                </p>
+                                <p className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1 text-pretty">
+                                  <span className="font-medium text-neutral-700 dark:text-slate-300">
+                                    Total
+                                    <span className="text-neutral-500 dark:text-slate-500">:</span>
+                                  </span>
+                                  <span className="min-w-0 tabular-nums font-semibold text-neutral-800 dark:text-slate-200">
+                                    {formatCents(
+                                      Math.max(0, Number(entry.mergedGoodsCents ?? o.codGoodsCents) || 0) +
+                                        Math.max(0, Number(entry.mergedDeliveryCents ?? o.codDeliveryCents) || 0),
+                                    )}
+                                  </span>
+                                </p>
+                                {orderCommentRow.show &&
+                                !(
+                                  orderCommentRow.label === "Selection" &&
+                                  (String(cardListing.optionNameA || "").trim() || String(cardListing.optionNameB || "").trim())
+                                ) ? (
                                   <p className="line-clamp-2 text-pretty">
                                     <span className="font-medium text-neutral-700 dark:text-slate-300">
                                       {orderCommentRow.label === "Comment" ? "Buyer comment" : orderCommentRow.label}
@@ -11537,7 +11557,7 @@ function App() {
                               className={`transition duration-200 ease-in-out ${
                                 cfList
                                   ? `relative lm-card lm-list-card lm-product-card-list flex cursor-pointer flex-col gap-3 p-3 hover:bg-neutral-50/70 md:gap-3.5 dark:hover:bg-slate-800/35 ${orderCardHighlight}`
-                                  : `relative lm-card lm-grid-card lm-product-card lm-product-card--feed lm-commerce-order-card flex h-full min-h-0 flex-1 cursor-pointer flex-col overflow-hidden p-0 hover:bg-neutral-50/50 dark:hover:bg-slate-800/30 ${orderCardHighlight}`
+                                  : `relative lm-card lm-grid-card lm-product-card lm-product-card--feed lm-commerce-order-card flex h-full min-h-0 flex-1 cursor-pointer flex-col overflow-x-hidden !overflow-y-visible p-0 hover:bg-neutral-50/50 dark:hover:bg-slate-800/30 ${orderCardHighlight}`
                               }`}
                               onClick={openOrderProductInspect}
                             >
@@ -11546,7 +11566,7 @@ function App() {
                                   type="checkbox"
                                   className={`h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500 ${
                                     cfList
-                                      ? "absolute left-4 top-4 z-10 bg-white/90 dark:bg-slate-900/90"
+                                      ? "absolute left-2.5 top-2.5 z-10 bg-white/90 min-[400px]:left-4 min-[400px]:top-4 dark:bg-slate-900/90"
                                       : "absolute left-2 top-2 z-10 bg-white/90 dark:bg-slate-900/90"
                                   }`}
                                   checked={rowAllSelected}
@@ -11567,7 +11587,7 @@ function App() {
                                 />
                               ) : null}
                               {cfList ? (
-                                <div className="flex w-full min-w-0 items-start gap-3">
+                                <div className="flex w-full min-w-0 items-start gap-2.5 min-[400px]:gap-3">
                                   <div
                                     className={`lm-product-media lm-product-media--soft relative ${orderThumbList} shrink-0 overflow-hidden rounded-md transition hover:opacity-95`}
                                   >
@@ -11579,7 +11599,7 @@ function App() {
                                       sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
                                     />
                                   </div>
-                                  <div className="flex w-full min-w-0 flex-1 flex-col gap-1 rounded-lg text-left min-[400px]:min-w-0">
+                                  <div className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-lg text-left">
                                     {orderCardBody}
                                   </div>
                                 </div>
@@ -11601,9 +11621,48 @@ function App() {
                                   </div>
                                 </>
                               )}
+                              {o.fulfillmentType === "delivery" ? (
+                                <div
+                                  className={`relative z-10 w-full min-w-0 shrink-0 overflow-visible border-t border-neutral-200/70 pt-2 pb-2 text-[10px] leading-snug text-neutral-600 dark:border-slate-600/55 dark:text-slate-400 ${
+                                    cfList ? "mt-2" : "px-2 min-[400px]:px-2.5"
+                                  }`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                >
+                                  <p className="text-pretty text-neutral-700 dark:text-slate-300">
+                                    <span className="font-medium">Delivery tip</span>{" "}
+                                    <span className="tabular-nums font-semibold">
+                                      {formatCents(buyerPoolCents + sellerPoolCents)}
+                                    </span>
+                                    <span className="font-normal text-neutral-500 dark:text-slate-500">
+                                      {" "}
+                                      ({formatCents(buyerPoolCents)} buyer · {formatCents(sellerPoolCents)} seller) · cash at handoff
+                                    </span>
+                                  </p>
+                                  {token &&
+                                  entry.orderIds.length === 1 &&
+                                  canAdjustCourierPoolForViewer(o, ordersRole) ? (
+                                    <OrderCourierPoolAdjust
+                                      order={o}
+                                      viewerRole={ordersRole}
+                                      token={token}
+                                      onUpdated={async () => {
+                                        try {
+                                          const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+                                          setOrders(data.orders || []);
+                                          void refreshCourierHub();
+                                          pushMarketplaceToast("Delivery tip updated.");
+                                        } catch {
+                                          pushMarketplaceToast("Pool saved — refresh orders if amounts look stale.");
+                                        }
+                                      }}
+                                    />
+                                  ) : null}
+                                </div>
+                              ) : null}
                               {orderCardFooterHasChrome ? (
                               <div
-                                className={`text-sm ${
+                                className={`relative z-0 text-sm ${
                                   multicolOrderCard
                                     ? "mt-1.5 space-y-1 pt-1.5 md:mt-2 md:space-y-1.5 md:pt-2"
                                     : cfList
@@ -11703,6 +11762,21 @@ function App() {
                                     />
                                   </Suspense>
                                 ) : null}
+                                {ordersRole === "buyer" &&
+                                ordersStatusTab === "completed" &&
+                                String(o.status || "") === "completed" &&
+                                o.fulfillmentType === "delivery" &&
+                                Boolean(o.acceptedCourierAssignmentId || o.acceptedBidId) ? (
+                                  <Suspense fallback={null}>
+                                    <LazyCourierDeliveryReviewForm
+                                      orderId={o.id}
+                                      initialReview={o.buyerCourierReview}
+                                      onSubmit={submitCourierDeliveryReview}
+                                      disabled={!token}
+                                      compact={multicolOrderCard}
+                                    />
+                                  </Suspense>
+                                ) : null}
                                 {ordersRole === "seller" && ordersStatusTab === "completed" && o.buyerReview?.rating ? (
                                   <div
                                     className={`rounded-lg border border-neutral-200/80 bg-neutral-50/60 dark:border-slate-600 dark:bg-slate-900/40 ${
@@ -11715,6 +11789,33 @@ function App() {
                                     {o.buyerReview.reviewText ? (
                                       <p className="mt-1 whitespace-pre-wrap break-words text-pretty text-neutral-600 dark:text-slate-400">
                                         {o.buyerReview.reviewText}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                                {ordersRole === "seller" &&
+                                ordersStatusTab === "completed" &&
+                                o.fulfillmentType === "delivery" &&
+                                Boolean(o.acceptedCourierAssignmentId || o.acceptedBidId) &&
+                                o.buyerCourierReview?.rating ? (
+                                  <div
+                                    className={`rounded-lg border border-violet-200/70 bg-violet-50/40 dark:border-violet-800/50 dark:bg-violet-950/25 ${
+                                      multicolOrderCard ? "px-2 py-1.5 text-[11px]" : "px-3 py-2 text-xs"
+                                    }`}
+                                  >
+                                    <p className="font-medium text-violet-950 dark:text-violet-100">
+                                      Buyer rated the courier {o.buyerCourierReview.rating} / 5
+                                    </p>
+                                    {Array.isArray(o.buyerCourierReview.tags) && o.buyerCourierReview.tags.length > 0 ? (
+                                      <p className="mt-1 text-neutral-700 dark:text-slate-300">
+                                        Tags:{" "}
+                                        {o.buyerCourierReview.tags
+                                          .map((t) =>
+                                            String(t || "")
+                                              .trim()
+                                              .replace(/^\w/, (c) => c.toUpperCase()),
+                                          )
+                                          .join(", ")}
                                       </p>
                                     ) : null}
                                   </div>
@@ -11817,19 +11918,54 @@ function App() {
                                     </button>
                                   ) : null}
                                   {ordersRole === "buyer" && isDeliveryInTransit(o) ? (
-                                    <button
-                                      type="button"
-                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
-                                      onClick={() =>
-                                        patchOrderTransition(o.id, "mark_delivered", {
-                                          successMessage: "Marked as received. Enjoy your order!",
-                                        })
-                                      }
-                                    >
-                                      Mark as Received
-                                    </button>
+                                    <div className="flex w-full flex-col gap-1.5 md:flex-row md:items-center md:gap-3">
+                                      <button
+                                        type="button"
+                                        className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
+                                        onClick={() =>
+                                          patchOrderTransition(o.id, "mark_delivered", {
+                                            successMessage: "Marked as received. Enjoy your order!",
+                                          })
+                                        }
+                                      >
+                                        Mark as Received
+                                      </button>
+                                      <p className="text-[10px] leading-snug text-neutral-600 dark:text-slate-400">
+                                        Confirm you got the goods. Pay the seller and courier in cash as agreed — mark “paid to courier” in your own
+                                        notes if you need a paper trail; there is no wallet here.
+                                      </p>
+                                    </div>
                                   ) : null}
                                   </div>
+                                  {ordersStatusTab === "processing" &&
+                                  o.fulfillmentType === "delivery" &&
+                                  isDeliverySellerPreparing(o) ? (
+                                    <div
+                                      className={`mt-2 border-t border-neutral-200/70 pt-3 dark:border-slate-600/50 ${
+                                        multicolOrderCard ? "mt-1.5 pt-2" : ""
+                                      }`}
+                                    >
+                                      <CommunityCourierPanel
+                                        token={token}
+                                        communityId={String(
+                                          o.listingCommunityId || orderListingsById[String(o.listingId)]?.communityId || "",
+                                        ).trim()}
+                                        orderId={o.id}
+                                        compact={multicolOrderCard}
+                                        onAssigned={async () => {
+                                          await refreshCourierAndOrders();
+                                          pushMarketplaceToast(
+                                            ordersRole === "buyer"
+                                              ? "Invitation sent. The courier can accept or decline from Activity → Deliver."
+                                              : "Courier invited. They can accept or decline from Activity → Deliver.",
+                                          );
+                                        }}
+                                        {...(ordersRole === "buyer"
+                                          ? { heading: "Neighbor couriers", assignButtonLabel: "Suggest" }
+                                          : {})}
+                                      />
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
                               ) : null}
@@ -11857,7 +11993,7 @@ function App() {
                 className={activityTabChrome.emptySurface}
                 recoveryPrimaryClassName={activityTabChrome.recoveryPrimary}
                 title="Sign in to use Courier"
-                description="Open the menu to sign in, then return here for availability, open deliveries, and assigning community couriers."
+                description="Open the menu to sign in, then turn on availability and accept delivery tasks in your barangay."
                 primaryAction={{
                   label: "Sign in",
                   onClick: () => {
@@ -11869,234 +12005,35 @@ function App() {
               </div>
             ) : (
               <>
-                <div className={courierHubFooterStripClass()}>
-                  <div
-                    className="grid w-full min-w-0 grid-cols-3 gap-0"
-                    role="tablist"
-                    aria-label="Courier hub"
-                    onKeyDown={(e) => {
-                      const tabs = [COURIER_TABS.DELIVER, COURIER_TABS.BUY, COURIER_TABS.SELL];
-                      const { key } = e;
-                      if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
-                      e.preventDefault();
-                      const idx = tabs.indexOf(courierTab);
-                      let next = idx;
-                      if (key === "ArrowRight") next = Math.min(tabs.length - 1, idx + 1);
-                      else if (key === "ArrowLeft") next = Math.max(0, idx - 1);
-                      else if (key === "Home") next = 0;
-                      else if (key === "End") next = tabs.length - 1;
-                      if (next !== idx) {
-                        const nextId = tabs[next];
-                        setCourierTab(nextId);
-                        queueMicrotask(() => {
-                          document.getElementById(`courier-hub-tab-${nextId}`)?.focus();
-                        });
-                      }
-                    }}
-                  >
-                    {[
-                      {
-                        id: COURIER_TABS.DELIVER,
-                        label: "Deliver",
-                        count: courierOpenDeliveryCount,
-                        hint: "Community deliveries you can claim and your courier availability.",
-                      },
-                      {
-                        id: COURIER_TABS.BUY,
-                        label: "Buying",
-                        count: courierBuyerAssignOrders.length,
-                        hint: "Suggest a neighbor courier while the seller prepares delivery.",
-                      },
-                      {
-                        id: COURIER_TABS.SELL,
-                        label: "Selling",
-                        count: courierSellerAssignOrders.length,
-                        hint: "Assign a neighbor courier or self-deliver accepted delivery orders.",
-                      },
-                    ].map(({ id, label, count, hint }) => {
-                      const selected = courierTab === id;
-                      const showBadge = count > 0;
-                      const countDisplay = count > 99 ? "99+" : count;
-                      return (
-                        <button
-                          key={id}
-                          id={`courier-hub-tab-${id}`}
-                          type="button"
-                          role="tab"
-                          tabIndex={selected ? 0 : -1}
-                          aria-selected={selected}
-                          aria-controls="courier-hub-panel"
-                          aria-label={
-                            showBadge ? `${label}, ${String(countDisplay).replace("+", " plus ")}` : label
-                          }
-                          title={hint}
-                          className={`relative flex min-h-[3.25rem] min-w-0 flex-col items-center justify-center px-0.5 py-1.5 text-center transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 min-[380px]:px-1 ${
-                            selected ? "" : "hover:bg-neutral-50/90 dark:hover:bg-slate-900/70"
-                          }`}
-                          onClick={() => setCourierTab(id)}
-                        >
-                          <span className="flex w-full min-w-0 flex-col items-center gap-1">
-                            <span className="relative inline-flex shrink-0">
-                              <CourierHubTabGlyph
-                                tabId={id}
-                                selected={selected}
-                                selectedAccentClass={activityTabChrome.glyphSelected}
-                              />
-                              {showBadge ? (
-                                <span className={ORDER_STATUS_TAB_BADGE_ON_GLYPH_MUTED} aria-hidden>
-                                  {countDisplay}
-                                </span>
-                              ) : null}
-                            </span>
-                            <span
-                              className={`line-clamp-2 min-w-0 max-w-full px-0.5 text-center text-[10px] font-medium leading-tight tracking-tight md:text-[11px] ${
-                                selected
-                                  ? activityTabChrome.labelSelected
-                                  : "text-neutral-500 dark:text-slate-500"
-                              }`}
-                            >
-                              {label}
-                            </span>
-                            <span
-                              className={`mt-0.5 h-[3px] w-9 shrink-0 rounded-full transition-opacity duration-150 ease-out motion-reduce:transition-none ${
-                                selected
-                                  ? `${activityTabChrome.barSelected} opacity-100`
-                                  : "opacity-0"
-                              }`}
-                              aria-hidden
-                            />
-                          </span>
-                        </button>
-                      );
-                    })}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <h3 className="min-w-0 text-lg font-semibold tracking-tight text-neutral-900 md:text-xl dark:text-slate-100">
+                      Courier
+                    </h3>
+                    <p
+                      className="text-xs font-medium text-neutral-600 dark:text-slate-400"
+                      aria-label="Activity context"
+                    >
+                      <span className={activityTabChrome.labelSelected}>Courier</span>
+                      <span className="text-neutral-400 dark:text-slate-500" aria-hidden>
+                        {" "}
+                        ·{" "}
+                      </span>
+                      <span className="text-neutral-600 dark:text-slate-300">Find deliveries</span>
+                    </p>
                   </div>
                 </div>
                 <div
                   id="courier-hub-panel"
-                  role="tabpanel"
-                  aria-labelledby={`courier-hub-tab-${courierTab}`}
-                  className="space-y-6 pt-2 md:space-y-8"
+                  role="region"
+                  aria-label="Find deliveries"
+                  className="space-y-6 pt-1 md:space-y-8"
                 >
-                {courierTab === COURIER_TABS.DELIVER ? (
-                  <CourierPresenceControls
+                  <CourierRunnerHubPanel
                     token={token}
                     communityId={String(user?.communityId || joinedShopCommunityId || "").trim()}
                     onOrdersRefresh={refreshCourierAndOrders}
                   />
-                ) : null}
-                {courierTab === COURIER_TABS.SELL ? (
-                  <div className="space-y-3 rounded-xl border border-neutral-200/80 bg-white/60 p-4 dark:border-slate-600/70 dark:bg-slate-900/40 md:p-5">
-                    <div className="space-y-1">
-                      <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">Assign from your sales</h3>
-                      <p className="text-sm text-neutral-600 dark:text-slate-400">
-                        Pick a neighbor courier or mark yourself out for delivery. Same orders appear under Activity · Selling.
-                      </p>
-                    </div>
-                    {courierHubLoading ? (
-                      <ScreenLoading message="Loading…" />
-                    ) : courierSellerAssignOrders.length === 0 ? (
-                      <p className="text-sm text-neutral-600 dark:text-slate-400">
-                        Nothing waiting for a courier. When you accept a buyer&apos;s delivery order, it shows here until someone is assigned or you deliver yourself.
-                      </p>
-                    ) : (
-                      <ul className="space-y-4">
-                        {courierSellerAssignOrders.map((o) => (
-                          <li
-                            key={String(o.id)}
-                            className="rounded-lg border border-neutral-200/80 bg-neutral-50/70 p-3 dark:border-slate-600/60 dark:bg-slate-900/50"
-                          >
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">
-                                  {o.listingTitle || "Listing"}
-                                </p>
-                                <p className="text-[11px] text-neutral-600 dark:text-slate-400">
-                                  Total{" "}
-                                  <span className="tabular-nums font-medium">
-                                    {formatCents(Math.max(0, Number(o.codGoodsCents) || 0) + Math.max(0, Number(o.codDeliveryCents) || 0))}
-                                  </span>{" "}
-                                  · COD
-                                </p>
-                              </div>
-                              <button
-                                type="button"
-                                className="btn-secondary min-h-10 w-full shrink-0 touch-manipulation text-xs sm:w-auto sm:min-h-0"
-                                onClick={() =>
-                                  patchOrderTransition(o.id, "seller_self_out_for_delivery", {
-                                    successMessage: "Marked out for delivery.",
-                                  })
-                                }
-                              >
-                                I&apos;ll deliver myself
-                              </button>
-                            </div>
-                            <div className="mt-3 border-t border-neutral-200/70 pt-3 dark:border-slate-600/50">
-                              <CommunityCourierPanel
-                                token={token}
-                                communityId={String(
-                                  o.listingCommunityId || orderListingsById[String(o.listingId)]?.communityId || "",
-                                ).trim()}
-                                orderId={o.id}
-                                compact={false}
-                                onAssigned={refreshCourierAndOrders}
-                              />
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                ) : null}
-                {courierTab === COURIER_TABS.BUY ? (
-                  <div className="space-y-3 rounded-xl border border-neutral-200/80 bg-white/60 p-4 dark:border-slate-600/70 dark:bg-slate-900/40 md:p-5">
-                    <div className="space-y-1">
-                      <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">Suggest a courier on your purchases</h3>
-                      <p className="text-sm text-neutral-600 dark:text-slate-400">
-                        While the seller prepares, you can suggest a trusted neighbor. They may still assign someone else or deliver themselves — keep everyone in chat.
-                      </p>
-                    </div>
-                    {courierHubLoading ? (
-                      <ScreenLoading message="Loading…" />
-                    ) : courierBuyerAssignOrders.length === 0 ? (
-                      <p className="text-sm text-neutral-600 dark:text-slate-400">
-                        No purchases need a courier suggestion right now. After a seller accepts your delivery order, it appears here until a courier is assigned.
-                      </p>
-                    ) : (
-                      <ul className="space-y-4">
-                        {courierBuyerAssignOrders.map((o) => (
-                          <li
-                            key={String(o.id)}
-                            className="rounded-lg border border-neutral-200/80 bg-neutral-50/70 p-3 dark:border-slate-600/60 dark:bg-slate-900/50"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">{o.listingTitle || "Listing"}</p>
-                              <p className="text-[11px] text-neutral-600 dark:text-slate-400">
-                                Total{" "}
-                                <span className="tabular-nums font-medium">
-                                  {formatCents(Math.max(0, Number(o.codGoodsCents) || 0) + Math.max(0, Number(o.codDeliveryCents) || 0))}
-                                </span>{" "}
-                                · COD
-                              </p>
-                            </div>
-                            <div className="mt-3 border-t border-neutral-200/70 pt-3 dark:border-slate-600/50">
-                              <CommunityCourierPanel
-                                token={token}
-                                communityId={String(
-                                  o.listingCommunityId || orderListingsById[String(o.listingId)]?.communityId || "",
-                                ).trim()}
-                                orderId={o.id}
-                                compact={false}
-                                onAssigned={refreshCourierAndOrders}
-                                heading="Neighbor couriers"
-                                assignButtonLabel="Suggest"
-                              />
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                ) : null}
                 </div>
               </>
             )}

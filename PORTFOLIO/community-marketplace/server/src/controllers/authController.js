@@ -12,6 +12,13 @@ const isMissingProfilesCommunityColumn = (error) =>
   /community/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
 const isMissingProfilesCommunityIdColumn = (error) =>
   /community_id/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
+const isMissingProfilesCourierSuggestedColumn = (error) =>
+  /courier_suggested/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
+const isMissingProfilesNotifyCourierColumn = (error) =>
+  /notify_courier_open_tasks/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
+const isMissingProfilesPushTokenColumn = (error) =>
+  /push_notification_token|push_notification_platform/i.test(String(error?.message || "")) &&
+  /profiles|schema cache/i.test(String(error?.message || ""));
 const USERNAME_RULE = /^[a-z][a-z0-9._]{2,19}$/;
 const USERNAME_DUPLICATE_SEPARATOR_RULE = /(\.\.|__)/;
 
@@ -143,6 +150,15 @@ const profileToClient = (profile) =>
     facebookUrl: profile.facebook_url || "",
     twitterUrl: profile.twitter_url || "",
     instagramUrl: profile.instagram_url || "",
+    courierSuggestedCents:
+      profile.courier_suggested_cents != null && Number.isFinite(Number(profile.courier_suggested_cents))
+        ? Math.max(0, Math.floor(Number(profile.courier_suggested_cents)))
+        : null,
+    allowCourierTaskNotifications: profile.notify_courier_open_tasks !== false,
+    pushNotificationRegistered: Boolean(String(profile.push_notification_token || "").trim()),
+    pushNotificationPlatform: ["fcm", "apns"].includes(String(profile.push_notification_platform || "").toLowerCase())
+      ? String(profile.push_notification_platform).toLowerCase()
+      : null,
   });
 
 const authUserToClient = (authUser) =>
@@ -393,7 +409,27 @@ export const updateMe = async (req, res, next) => {
   try {
     const existingProfile = await getProfileById(req.user.id);
     const {
-      firstName, middleName, lastName, username, avatarUrl, email, phone, birthday, community, communityId, address, addressUrl, age, gender, facebookUrl, twitterUrl, instagramUrl,
+      firstName,
+      middleName,
+      lastName,
+      username,
+      avatarUrl,
+      email,
+      phone,
+      birthday,
+      community,
+      communityId,
+      address,
+      addressUrl,
+      age,
+      gender,
+      facebookUrl,
+      twitterUrl,
+      instagramUrl,
+      courierSuggestedCents,
+      allowCourierTaskNotifications,
+      pushNotificationToken,
+      pushNotificationPlatform,
     } = req.body || {};
 
     const updates = {};
@@ -411,6 +447,39 @@ export const updateMe = async (req, res, next) => {
     if (twitterUrl !== undefined) updates.twitter_url = String(twitterUrl).trim();
     if (instagramUrl !== undefined) updates.instagram_url = String(instagramUrl).trim();
     if (age !== undefined) updates.age = Number(age);
+    if (courierSuggestedCents !== undefined) {
+      if (courierSuggestedCents === null || courierSuggestedCents === "") {
+        updates.courier_suggested_cents = null;
+      } else {
+        const n = Math.floor(Number(courierSuggestedCents));
+        if (!Number.isFinite(n) || n < 0 || n > 10_000_000) {
+          throw new AppError(400, "courierSuggestedCents must be between 0 and 10000000 centavos, or null.");
+        }
+        updates.courier_suggested_cents = n;
+      }
+    }
+    if (allowCourierTaskNotifications !== undefined) {
+      updates.notify_courier_open_tasks = Boolean(allowCourierTaskNotifications);
+    }
+    if (pushNotificationToken !== undefined) {
+      const raw = String(pushNotificationToken ?? "").trim();
+      updates.push_notification_token = raw.length ? raw.slice(0, 512) : null;
+      if (!raw.length) updates.push_notification_platform = null;
+    }
+    if (pushNotificationPlatform !== undefined) {
+      const p = String(pushNotificationPlatform ?? "").trim().toLowerCase();
+      const effectiveTok =
+        updates.push_notification_token !== undefined
+          ? String(updates.push_notification_token ?? "").trim()
+          : String(existingProfile?.push_notification_token ?? "").trim();
+      if (!p || !effectiveTok) {
+        updates.push_notification_platform = null;
+      } else if (p === "fcm" || p === "apns") {
+        updates.push_notification_platform = p;
+      } else {
+        throw new AppError(400, "pushNotificationPlatform must be fcm or apns.");
+      }
+    }
 
     if (birthday !== undefined) {
       const raw = birthday === null || birthday === "" ? null : String(birthday).trim();
@@ -463,10 +532,23 @@ export const updateMe = async (req, res, next) => {
 
     if (existingProfile) {
       const { error } = await supabaseAdmin.from("profiles").update(updates).eq("id", req.user.id);
-      if (error && (isMissingProfilesCommunityColumn(error) || isMissingProfilesCommunityIdColumn(error))) {
+      if (
+        error &&
+        (isMissingProfilesCommunityColumn(error) ||
+          isMissingProfilesCommunityIdColumn(error) ||
+          isMissingProfilesCourierSuggestedColumn(error) ||
+          isMissingProfilesNotifyCourierColumn(error) ||
+          isMissingProfilesPushTokenColumn(error))
+      ) {
         const updatesWithoutMissingColumns = { ...updates };
         if (isMissingProfilesCommunityColumn(error)) delete updatesWithoutMissingColumns.community;
         if (isMissingProfilesCommunityIdColumn(error)) delete updatesWithoutMissingColumns.community_id;
+        if (isMissingProfilesCourierSuggestedColumn(error)) delete updatesWithoutMissingColumns.courier_suggested_cents;
+        if (isMissingProfilesNotifyCourierColumn(error)) delete updatesWithoutMissingColumns.notify_courier_open_tasks;
+        if (isMissingProfilesPushTokenColumn(error)) {
+          delete updatesWithoutMissingColumns.push_notification_token;
+          delete updatesWithoutMissingColumns.push_notification_platform;
+        }
         const retry = await supabaseAdmin.from("profiles").update(updatesWithoutMissingColumns).eq("id", req.user.id);
         if (retry.error) throw new AppError(500, retry.error.message || "Failed to update profile.");
       } else if (error) {

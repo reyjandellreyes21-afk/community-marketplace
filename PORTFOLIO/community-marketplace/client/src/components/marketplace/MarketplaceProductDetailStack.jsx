@@ -34,6 +34,8 @@ export function MarketplaceProductDetailStack({
   optionValuesB,
   listingMetaDensity = "card",
   compactListMeta = false,
+  uniformOrderDetailRows = false,
+  uniformOrderDetailCompact = false,
 }) {
   const saleMeta = parseSaleMetaFromDescription(description);
   const currentPesos = Math.floor((Number(priceCents) || 0) / 100);
@@ -202,6 +204,8 @@ export function MarketplaceProductDetailStack({
             optionNameB={optionNameB}
             optionValuesB={optionValuesB}
             density="compact"
+            uniformOrderDetailRows={uniformOrderDetailRows}
+            uniformOrderDetailCompact={uniformOrderDetailCompact}
           />
         </div>
       ) : (
@@ -213,6 +217,8 @@ export function MarketplaceProductDetailStack({
           optionNameB={optionNameB}
           optionValuesB={optionValuesB}
           density={!isCard ? "compact" : listingMetaDensity}
+          uniformOrderDetailRows={uniformOrderDetailRows}
+          uniformOrderDetailCompact={uniformOrderDetailCompact}
         />
       )}
       {quantityAfterDescription ? (

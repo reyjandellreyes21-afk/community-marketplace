@@ -18,6 +18,10 @@ export function ListingProductMetaExtras({
   truncateValueLists = true,
   /** When true, only variant name/value rows (hide ready-in / pre-order chips — parent shows those separately). */
   variantsOnly = false,
+  /** Align option rows with Activity order card detail lines (Color · Quantity · Fulfillment · Total). */
+  uniformOrderDetailRows = false,
+  /** Matches `cfCompact` on the order card so font sizes track Quantity/Fulfillment/Total. */
+  uniformOrderDetailCompact = false,
 }) {
   const ot = String(orderType || "in_stock").trim();
   const proc = String(processingTime || "").trim();
@@ -41,6 +45,15 @@ export function ListingProductMetaExtras({
     density === "compact"
       ? `${UI_KIT.chipMuted} py-px text-[10px] leading-tight`
       : `${UI_KIT.chipMuted} max-md:py-px max-md:text-[10px] max-md:leading-tight`;
+
+  const uniformDetailWrap = uniformOrderDetailRows
+    ? uniformOrderDetailCompact
+      ? "min-w-0 leading-tight text-neutral-600 dark:text-slate-400 text-[10px] md:text-[11px]"
+      : "min-w-0 leading-tight text-neutral-600 dark:text-slate-400 text-[11px] md:text-xs md:leading-snug"
+    : "";
+  const uniformDetailLabel = "font-medium text-neutral-700 dark:text-slate-300";
+  const uniformDetailColon = "text-neutral-500 dark:text-slate-500";
+  const uniformDetailValue = "font-semibold text-neutral-800 dark:text-slate-200";
   const timingChip =
     density === "compact"
       ? "inline-flex items-center rounded-sm border border-brand-primary/45 bg-brand-primary/12 px-2 py-px text-[10px] font-semibold leading-tight text-brand-primary dark:border-brand-accent/45 dark:bg-brand-accent/15 dark:text-slate-100"
@@ -77,15 +90,51 @@ export function ListingProductMetaExtras({
         </div>
       ) : null}
       {rowA ? (
-        <p className="min-w-0 text-[11px] leading-snug text-text-secondary min-[380px]:text-xs dark:text-slate-400">
-          <span className="font-semibold text-text-primary dark:text-slate-200">{nameA}:</span>{" "}
-          <span className="text-pretty text-text-primary/95 dark:text-slate-300">{formatValues(valsA)}</span>
+        <p
+          className={
+            uniformOrderDetailRows
+              ? `${uniformDetailWrap} grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1 text-pretty`
+              : "min-w-0 text-[11px] leading-snug text-text-secondary min-[380px]:text-xs dark:text-slate-400"
+          }
+        >
+          {uniformOrderDetailRows ? (
+            <>
+              <span className={uniformDetailLabel}>
+                {nameA}
+                <span className={uniformDetailColon}>:</span>
+              </span>
+              <span className={`min-w-0 break-words ${uniformDetailValue}`}>{formatValues(valsA)}</span>
+            </>
+          ) : (
+            <>
+              <span className="font-semibold text-text-primary dark:text-slate-200">{nameA}:</span>{" "}
+              <span className="text-pretty text-text-primary/95 dark:text-slate-300">{formatValues(valsA)}</span>
+            </>
+          )}
         </p>
       ) : null}
       {rowB ? (
-        <p className="min-w-0 text-[11px] leading-snug text-text-secondary min-[380px]:text-xs dark:text-slate-400">
-          <span className="font-semibold text-text-primary dark:text-slate-200">{nameB}:</span>{" "}
-          <span className="text-pretty text-text-primary/95 dark:text-slate-300">{formatValues(valsB)}</span>
+        <p
+          className={
+            uniformOrderDetailRows
+              ? `${uniformDetailWrap} grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1 text-pretty`
+              : "min-w-0 text-[11px] leading-snug text-text-secondary min-[380px]:text-xs dark:text-slate-400"
+          }
+        >
+          {uniformOrderDetailRows ? (
+            <>
+              <span className={uniformDetailLabel}>
+                {nameB}
+                <span className={uniformDetailColon}>:</span>
+              </span>
+              <span className={`min-w-0 break-words ${uniformDetailValue}`}>{formatValues(valsB)}</span>
+            </>
+          ) : (
+            <>
+              <span className="font-semibold text-text-primary dark:text-slate-200">{nameB}:</span>{" "}
+              <span className="text-pretty text-text-primary/95 dark:text-slate-300">{formatValues(valsB)}</span>
+            </>
+          )}
         </p>
       ) : null}
     </div>

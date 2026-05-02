@@ -47,6 +47,15 @@ export function userToClient(doc) {
     facebookUrl: o.facebookUrl ?? "",
     twitterUrl: o.twitterUrl ?? "",
     instagramUrl: o.instagramUrl ?? "",
+    courierSuggestedCents:
+      o.courierSuggestedCents != null && Number.isFinite(Number(o.courierSuggestedCents))
+        ? Math.max(0, Math.floor(Number(o.courierSuggestedCents)))
+        : null,
+    allowCourierTaskNotifications:
+      o.allowCourierTaskNotifications === undefined ? true : Boolean(o.allowCourierTaskNotifications),
+    pushNotificationRegistered: Boolean(o.pushNotificationRegistered),
+    pushNotificationPlatform:
+      o.pushNotificationPlatform === "fcm" || o.pushNotificationPlatform === "apns" ? o.pushNotificationPlatform : null,
   };
 }
 
