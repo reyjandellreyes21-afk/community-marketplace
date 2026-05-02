@@ -44,31 +44,32 @@ export function ActivityPrimaryTabs({
   ];
 
   return (
-    <div
-      className="app-shell-content-inset grid w-full min-w-0 grid-cols-3 gap-0 py-1.5 md:py-2"
-      role="tablist"
-      aria-label="Activity sections"
-      onKeyDown={(e) => {
-        const ids = [ACTIVITY_TABS.BUYING, ACTIVITY_TABS.SELLING, ACTIVITY_TABS.COURIER];
-        const { key } = e;
-        if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
-        e.preventDefault();
-        const idxRaw = ids.indexOf(activityTab);
-        const idx = idxRaw >= 0 ? idxRaw : 0;
-        let next = idx;
-        if (key === "ArrowRight") next = Math.min(ids.length - 1, idx + 1);
-        else if (key === "ArrowLeft") next = Math.max(0, idx - 1);
-        else if (key === "Home") next = 0;
-        else if (key === "End") next = ids.length - 1;
-        if (next !== idx) {
-          const nextId = ids[next];
-          goActivity(nextId);
-          queueMicrotask(() => {
-            document.getElementById(`activity-primary-tab-${nextId}`)?.focus();
-          });
-        }
-      }}
-    >
+    <div className="app-shell-content-inset flex w-full min-w-0 justify-center py-1.5 md:py-2.5">
+      <div
+        className="grid w-full min-w-0 grid-cols-3 gap-0 max-md:shadow-none md:w-auto md:min-w-[min(22rem,calc(100vw-2rem))] md:max-w-[26rem] md:gap-0.5 md:rounded-2xl md:border md:border-neutral-200/90 md:bg-white/95 md:p-1 md:shadow-[0_8px_30px_-14px_rgba(15,23,42,0.18)] md:dark:border-slate-600 md:dark:bg-slate-900/92 md:dark:shadow-[0_12px_36px_-16px_rgba(0,0,0,0.55)]"
+        role="tablist"
+        aria-label="Activity sections"
+        onKeyDown={(e) => {
+          const ids = [ACTIVITY_TABS.BUYING, ACTIVITY_TABS.SELLING, ACTIVITY_TABS.COURIER];
+          const { key } = e;
+          if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
+          e.preventDefault();
+          const idxRaw = ids.indexOf(activityTab);
+          const idx = idxRaw >= 0 ? idxRaw : 0;
+          let next = idx;
+          if (key === "ArrowRight") next = Math.min(ids.length - 1, idx + 1);
+          else if (key === "ArrowLeft") next = Math.max(0, idx - 1);
+          else if (key === "Home") next = 0;
+          else if (key === "End") next = ids.length - 1;
+          if (next !== idx) {
+            const nextId = ids[next];
+            goActivity(nextId);
+            queueMicrotask(() => {
+              document.getElementById(`activity-primary-tab-${nextId}`)?.focus();
+            });
+          }
+        }}
+      >
       {tabs.map(({ id, label, hint, badge }) => {
         const selected = activityTab === id;
         const chrome = getActivityTabChrome(id);
@@ -91,8 +92,10 @@ export function ActivityPrimaryTabs({
             aria-label={
               showBadge ? `${label}, ${String(countDisplay).replace("+", " plus ")}` : label
             }
-            className={`relative flex min-h-[3.25rem] min-w-0 flex-col items-center justify-center px-0.5 py-1 text-center transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 min-[380px]:px-1 ${
-              selected ? "" : "hover:bg-neutral-50/90 dark:hover:bg-slate-900/70"
+            className={`relative flex min-h-[3.25rem] min-w-0 flex-col items-center justify-center px-0.5 py-1 text-center transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 min-[380px]:px-1 md:rounded-xl ${
+              selected
+                ? `${chrome.segmentActiveMuted} max-md:!bg-transparent max-md:!shadow-none max-md:!ring-0`
+                : "hover:bg-neutral-50/90 dark:hover:bg-slate-900/70 md:hover:bg-neutral-100/85 dark:md:hover:bg-slate-800/75"
             }`}
             onClick={() => goActivity(id)}
           >
@@ -110,7 +113,7 @@ export function ActivityPrimaryTabs({
                 ) : null}
               </span>
               <span
-                className={`line-clamp-2 min-w-0 max-w-full px-0.5 text-center text-[10px] font-medium leading-tight tracking-tight md:text-[11px] ${
+                className={`line-clamp-2 min-w-0 max-w-full px-0.5 text-center text-[10px] font-semibold leading-tight tracking-tight md:text-xs ${
                   selected ? chrome.labelSelected : "text-neutral-500 dark:text-slate-500"
                 }`}
               >
@@ -126,6 +129,7 @@ export function ActivityPrimaryTabs({
           </button>
         );
       })}
+      </div>
     </div>
   );
 }

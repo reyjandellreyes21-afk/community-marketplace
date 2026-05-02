@@ -3625,13 +3625,13 @@ export const listUsersDirectory = async (req, res, next) => {
     const knownCommunities = communitiesErr ? [] : communityRows || [];
     ({ data, error } = await supabaseAdmin
       .from("profiles")
-      .select("id, username, first_name, middle_name, last_name, address, community, created_at")
+      .select("id, username, first_name, middle_name, last_name, address, community, avatar_url, created_at")
       .order("username", { ascending: true })
       .range(pageOffset, pageOffset + pageLimit - 1));
     if (error && (error.code === "PGRST204" || /community/i.test(String(error.message || "")))) {
       ({ data, error } = await supabaseAdmin
         .from("profiles")
-        .select("id, username, first_name, middle_name, last_name, address, created_at")
+        .select("id, username, first_name, middle_name, last_name, address, avatar_url, created_at")
         .order("username", { ascending: true })
         .range(pageOffset, pageOffset + pageLimit - 1));
     }
@@ -3648,6 +3648,7 @@ export const listUsersDirectory = async (req, res, next) => {
         lastName: String(p?.last_name || "").trim(),
         address: String(p?.address || "").trim(),
         community: String(p?.community || "").trim(),
+        avatarUrl: String(p?.avatar_url || "").trim(),
         joinedAt: p?.created_at || null,
       });
     }
@@ -3696,6 +3697,7 @@ export const listUsersDirectory = async (req, res, next) => {
         name: [p.firstName, p.middleName, p.lastName].filter(Boolean).join(" ").trim() || p.username || "Member",
         address: p.address || "",
         community: p.community || listingCommunityByUserId.get(String(p.id || "").trim()) || inferCommunityFromAddress(p.address),
+        avatarUrl: p.avatarUrl || "",
         joinedAt: p.joinedAt || null,
       }))
       .sort((a, b) =>

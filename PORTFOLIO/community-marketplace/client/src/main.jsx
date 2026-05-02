@@ -1,6 +1,9 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import { Capacitor } from "@capacitor/core";
+import { SplashScreen } from "@capacitor/splash-screen";
+import { StatusBar, Style } from "@capacitor/status-bar";
 import { registerSW } from "virtual:pwa-register";
 import "./index.css";
 import { ViewportProvider } from "./context/ViewportContext.jsx";
@@ -16,6 +19,11 @@ function routerBasename() {
 }
 
 registerSW({ immediate: true });
+
+if (Capacitor.isNativePlatform()) {
+  void SplashScreen.hide();
+  void StatusBar.setStyle({ style: Style.Light });
+}
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>

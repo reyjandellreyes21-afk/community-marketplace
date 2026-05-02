@@ -70,6 +70,7 @@ import { UI_KIT } from "./lib/appUiKit.js";
 import {
   formatDisplayName,
   getDisplayNameFromUser,
+  getAvatarInitialsFromUser,
   getProfileCardDisplayNameFromUser,
   PROFILE_GENDER_OPTIONS,
   computeAgeFromBirthday,
@@ -833,9 +834,9 @@ function App() {
   const activityCourier = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.COURIER;
   const activityTabChrome = useMemo(() => getActivityTabChrome(activityTab), [activityTab]);
   const mainContentScrollRef = useRef(null);
-  /** Activity primary tabs (Buying / Selling / Courier): hide on scroll down, show on scroll up (mobile + desktop). */
   const [activityPrimaryTabsScrollHidden, setActivityPrimaryTabsScrollHidden] = useState(false);
   const activityFooterScrollLastYRef = useRef(0);
+  /** Activity primary tabs (Buying / Selling / Courier): hide on scroll down, show on scroll up (mobile + desktop). */
   /** Last Activity Buying vs Selling before Courier — drives `ordersRole` for order lists and badges. */
   const lastBuyingSellingActivityTabRef = useRef(
     readInitialActivityTab() === ACTIVITY_TABS.SELLING ? ACTIVITY_TABS.SELLING : ACTIVITY_TABS.BUYING,
@@ -3357,6 +3358,7 @@ function App() {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, [activeView, activityTab]);
+
   useEffect(() => {
     if (!isMobileViewport) return undefined;
     if (!secondaryMobileNavOrder.includes(secondarySwipeNavView)) return undefined;
@@ -7926,6 +7928,10 @@ function App() {
             ? "!overflow-y-hidden !space-y-0 !pt-0 !pb-0 !scroll-pt-0 !scroll-pb-0 flex flex-col min-h-0"
             : ""
         } ${
+          isMobileViewport && activeView === VIEWS.MESSAGES && messagesMobilePane === "thread"
+            ? "!pb-0 !scroll-pb-0"
+            : ""
+        } ${
           isMobileViewport && !mobileSecondaryDragging ? mobileSecondarySlideClass : ""
         }`}
         style={
@@ -8963,13 +8969,22 @@ function App() {
                               aria-current={selected ? "true" : undefined}
                               onClick={() => openChatThread(thread.participantId)}
                             >
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-medium text-neutral-900 dark:text-slate-100">
-                                  {formatDisplayName(participant?.name || participant?.username || "Member")}
-                                </span>
-                                <span className="mt-0.5 block truncate text-xs text-neutral-500 dark:text-slate-400">
-                                  {communityLabelForUser(participant)}
-                                  {latest?.text ? ` · ${latest.text}` : " · No messages yet"}
+                              <span className="flex min-w-0 flex-1 items-center gap-3">
+                                <StableAvatar
+                                  src={String(participant?.avatarUrl || "").trim()}
+                                  alt=""
+                                  initials={getAvatarInitialsFromUser(participant || {})}
+                                  className="h-10 w-10 shrink-0 text-sm ring-1 ring-neutral-200/85 dark:ring-slate-600/90"
+                                  sizes="40px"
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-sm font-medium text-neutral-900 dark:text-slate-100">
+                                    {formatDisplayName(participant?.name || participant?.username || "Member")}
+                                  </span>
+                                  <span className="mt-0.5 block truncate text-xs text-neutral-500 dark:text-slate-400">
+                                    {communityLabelForUser(participant)}
+                                    {latest?.text ? ` · ${latest.text}` : " · No messages yet"}
+                                  </span>
                                 </span>
                               </span>
                               {thread.unread > 0 ? (
@@ -9061,13 +9076,22 @@ function App() {
                               className="flex w-full min-w-0 items-center justify-between rounded-lg px-3 py-2 text-left transition hover:bg-neutral-100 dark:hover:bg-slate-800"
                               onClick={() => openChatWithUser(u.id)}
                             >
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-medium text-neutral-900 dark:text-slate-100">
-                                  {formatDisplayName(u.name || u.username || "Member")}
-                                </span>
-                                <span className="block truncate text-[11px] text-neutral-500 dark:text-slate-400">
-                                  {communityLabelForUser(u)}
-                                  {u.joinedAt ? ` · Joined ${new Date(u.joinedAt).toLocaleDateString()}` : ""}
+                              <span className="flex min-w-0 flex-1 items-center gap-3">
+                                <StableAvatar
+                                  src={String(u.avatarUrl || "").trim()}
+                                  alt=""
+                                  initials={getAvatarInitialsFromUser(u)}
+                                  className="h-10 w-10 shrink-0 text-sm ring-1 ring-neutral-200/85 dark:ring-slate-600/90"
+                                  sizes="40px"
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-sm font-medium text-neutral-900 dark:text-slate-100">
+                                    {formatDisplayName(u.name || u.username || "Member")}
+                                  </span>
+                                  <span className="block truncate text-[11px] text-neutral-500 dark:text-slate-400">
+                                    {communityLabelForUser(u)}
+                                    {u.joinedAt ? ` · Joined ${new Date(u.joinedAt).toLocaleDateString()}` : ""}
+                                  </span>
                                 </span>
                               </span>
                               <span className="shrink-0 rounded-md border border-brand-primary/35 px-2 py-1 text-[11px] font-semibold text-brand-primary dark:border-brand-primary/45">
@@ -9124,7 +9148,7 @@ function App() {
                     </div>
                     <div
                       ref={chatThreadViewportRef}
-                      className="min-h-0 overflow-x-hidden overflow-y-auto p-4 md:flex-1"
+                      className="min-h-0 overflow-x-hidden overflow-y-auto p-4 max-md:pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] md:flex-1"
                     >
                       {activeChatThread.messages.length === 0 ? (
                         <p className="text-sm text-neutral-500 dark:text-slate-400">No messages yet. Send the first one.</p>
@@ -9151,10 +9175,10 @@ function App() {
                       )}
                     </div>
                     <div
-                      className={`border-t border-neutral-200 p-3 dark:border-slate-700 ${
+                      className={`border-t border-neutral-200 dark:border-slate-700 ${
                         messagesMobilePane === "thread"
-                          ? "mb-4 bg-white/95 backdrop-blur md:mb-0 md:bg-transparent md:backdrop-blur-0"
-                          : ""
+                          ? "max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-[52] max-md:border-x-0 max-md:border-b-0 max-md:bg-white/95 max-md:px-3.5 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] max-md:pt-3 max-md:shadow-[0_-10px_30px_-12px_rgba(15,23,42,0.12)] max-md:backdrop-blur-md dark:max-md:bg-slate-950/95 md:relative md:bg-transparent md:p-3 md:shadow-none md:backdrop-blur-0"
+                          : "bg-white/95 p-3 backdrop-blur md:bg-transparent md:backdrop-blur-0"
                       }`}
                     >
                       <div className="flex min-w-0 gap-2">

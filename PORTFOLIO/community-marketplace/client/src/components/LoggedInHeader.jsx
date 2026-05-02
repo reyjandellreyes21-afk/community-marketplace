@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { LinkMartLogo } from "./media/LinkMartLogo.jsx";
 import { StableAvatar } from "./media/StableMediaImage.jsx";
 import { activityPrimaryTabsFooterShellClass, getActivityTabChrome } from "../lib/activityTabTheme.js";
-import { ACTIVITY_TABS, VIEWS } from "../views.js";
 import { ActivityPrimaryTabs } from "./ActivityPrimaryTabs.jsx";
+import { ACTIVITY_TABS, VIEWS } from "../views.js";
 
 /** `matchMedia("(min-width: 768px)")` — desktop header path; mobile browse chrome uses scroll-collapse. */
 const MD_MIN_WIDTH_PX = 768;

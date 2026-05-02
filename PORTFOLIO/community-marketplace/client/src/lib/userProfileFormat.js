@@ -20,6 +20,21 @@ export const getDisplayNameFromUser = (user) => {
   return formatDisplayName(user.name || "");
 };
 
+/** Up to two letters for avatar fallback when no image URL (match lists / headers). */
+export function getAvatarInitialsFromUser(user) {
+  const dn =
+    getDisplayNameFromUser(user) ||
+    String(user?.name || "").trim() ||
+    String(user?.username || "").trim() ||
+    "?";
+  const parts = dn.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0].charAt(0)}${parts[parts.length - 1].charAt(0)}`.toUpperCase().slice(0, 2);
+  }
+  const one = parts[0] || "?";
+  return one.slice(0, 2).toUpperCase();
+}
+
 /** Read-only profile card: first + middle initial + last; edit form still uses full middle name. */
 export const getProfileCardDisplayNameFromUser = (user) => {
   if (!user || typeof user !== "object") return "";
