@@ -128,7 +128,7 @@ export function CommunityShopListingCard({
             ? /** Desktop / non-touch browse: flexible tile height. */
               "h-40 w-full min-[640px]:h-44 md:h-48"
             : mobileUx
-              ? "aspect-[4/3] w-full min-[400px]:aspect-square min-[400px]:h-[7.5rem] min-[400px]:w-[7.5rem] min-[400px]:max-h-[7.5rem] min-[400px]:max-w-[7.5rem] min-[400px]:shrink-0"
+              ? "aspect-[4/3] w-full min-[360px]:aspect-square min-[360px]:h-[7.5rem] min-[360px]:w-[7.5rem] min-[360px]:max-h-[7.5rem] min-[360px]:max-w-[7.5rem] min-[360px]:shrink-0"
               : "h-32 w-32";
   /** Outer shell dimensions; `ProductListingMedia` fills via `absolute inset-0` */
   const mainGap = gridMode && compactGrid ? "gap-2" : gridMode ? "gap-2.5" : "gap-3";
@@ -243,7 +243,7 @@ export function CommunityShopListingCard({
           gridMode
             ? `flex-1 flex-col ${mainGap}`
             : mobileUx
-              ? "flex flex-col gap-3 min-[400px]:flex-row min-[400px]:items-start min-[400px]:gap-3.5"
+              ? "flex flex-col gap-3 min-[360px]:flex-row min-[360px]:items-start min-[360px]:gap-3.5"
               : "flex-row items-start gap-3"
         }`}
       >
@@ -355,7 +355,7 @@ export function CommunityShopListingCard({
               : gridMode
                 ? `flex min-h-0 flex-col ${compactGrid ? "gap-1" : "gap-2"}`
                 : mobileUx
-                  ? "flex w-full min-w-0 flex-col gap-1.5 min-[400px]:min-w-0 min-[400px]:flex-1"
+                  ? "flex w-full min-w-0 flex-col gap-1.5 min-[360px]:min-w-0 min-[360px]:flex-1"
                   : "flex h-32 min-w-0 flex-col justify-between overflow-hidden"
           }`}
         >
@@ -407,7 +407,7 @@ export function CommunityShopListingCard({
         </div>
       </div>
       {showActions && !hideCardActionsOnMobile ? (
-        <div className={`flex flex-col gap-2 ${gridMode ? (useFeedLayout ? "mt-auto px-2 pb-2 pt-1.5 min-[400px]:px-2.5 min-[400px]:pb-2.5" : "mt-auto pt-3") : "mt-3"}`}>
+        <div className={`flex flex-col gap-2 ${gridMode ? (useFeedLayout ? "mt-auto px-2 pb-2 pt-1.5 min-[360px]:px-2.5 min-[360px]:pb-2.5" : "mt-auto pt-3") : "mt-3"}`}>
           {ownerGridOverflow ? (
             <div className="flex items-stretch gap-2">
               {onInspect ? (
@@ -672,7 +672,7 @@ export function CommunityShopListingCard({
         </div>
       ) : null}
       {showActions && !hideCardActionsOnMobile && isOwner && saleOpen ? (
-        <div className={gridMode ? (useFeedLayout ? "mt-2 shrink-0 px-2 pb-2 min-[400px]:px-2.5" : "mt-2 shrink-0") : "mt-2"}>
+        <div className={gridMode ? (useFeedLayout ? "mt-2 shrink-0 px-2 pb-2 min-[360px]:px-2.5" : "mt-2 shrink-0") : "mt-2"}>
           <div className="rounded-xl border border-rose-200/80 bg-rose-50/80 p-2 dark:border-rose-500/30 dark:bg-rose-500/10">
             <div className="flex flex-wrap items-center gap-2">
               <input

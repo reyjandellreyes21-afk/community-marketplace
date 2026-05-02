@@ -54,3 +54,9 @@ export const LazySellerBuyerFeedbackList = lazy(() =>
     default: m.SellerBuyerFeedbackList,
   })),
 );
+
+export const LazyCourierBuyerFeedbackList = lazy(() =>
+  import("./components/marketplace/CourierBuyerFeedbackList.jsx").then((m) => ({
+    default: m.CourierBuyerFeedbackList,
+  })),
+);

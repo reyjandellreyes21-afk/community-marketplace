@@ -463,9 +463,9 @@ const headerUtilityButtonActive =
 /** Desktop pills for Marketplace vs Cart — shop flow inside the shop segment. */
 function navPillShop(active, role) {
   const layout =
-    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition duration-200 ease-in-out md:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-offset-slate-900";
+    "inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold transition duration-200 ease-in-out md:min-h-[2.5rem] md:px-3.5 md:py-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-offset-slate-900";
   if (!active) {
-    return `${layout} text-text-primary/80 hover:bg-primary-soft/55 hover:text-text-primary focus-visible:ring-primary/35 dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100 dark:focus-visible:ring-primary/30`;
+    return `${layout} ring-1 ring-transparent text-text-primary/80 hover:bg-primary-soft/55 hover:text-text-primary focus-visible:ring-primary/35 dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100 dark:focus-visible:ring-primary/30`;
   }
   return `${layout} bg-primary-soft text-primary shadow-sm ring-1 ring-primary/35 focus-visible:ring-primary/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-primary/45`;
 }
@@ -473,9 +473,9 @@ function navPillShop(active, role) {
 /** Desktop pills for Buying vs Selling — distinct active colors inside the trade group. */
 function navPillTrade(active, role) {
   const layout =
-    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-semibold transition duration-200 ease-in-out md:px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-primary/35 dark:focus-visible:ring-offset-slate-900";
+    "inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold transition duration-200 ease-in-out md:min-h-[2.5rem] md:px-3.5 md:py-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-primary/35 dark:focus-visible:ring-offset-slate-900";
   if (!active) {
-    return `${layout} text-text-primary/80 hover:bg-primary-soft/55 hover:text-text-primary dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100`;
+    return `${layout} ring-1 ring-transparent text-text-primary/80 hover:bg-primary-soft/55 hover:text-text-primary dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100`;
   }
   return `${layout} bg-primary-soft text-primary shadow-sm ring-1 ring-primary/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-primary/45`;
 }
@@ -584,6 +584,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {number} [props.mobileSecondaryDragX] Horizontal drag offset for secondary nav swipe gestures.
  * @param {boolean} [props.hideNavigationChrome] Hide top nav/header chrome (content only).
  * @param {boolean} [props.liftChromeAboveOverlay] Raise header stacking above app-root overlays (e.g. quick-add sheet backdrop).
+ * @param {boolean} [props.activityPrimaryTabsScrollHidden] When true, slide the Activity primary tab bar off-screen (scroll-down autohide).
  */
 export function LoggedInHeader({
   user,
@@ -624,6 +625,7 @@ export function LoggedInHeader({
   mobileSecondaryDragX = 0,
   hideNavigationChrome = false,
   liftChromeAboveOverlay = false,
+  activityPrimaryTabsScrollHidden = false,
   activityHubChildStrip = null,
   children,
 }) {
@@ -636,20 +638,26 @@ export function LoggedInHeader({
 
   const courierRoseForHub = Math.min(99, Math.max(0, courierAttentionCount));
   const courierPipelineForHub = Math.min(99, Math.max(0, courierPipelineCount));
+  /** Inside Activity hub, bottom primary tabs already show courier counts — omit courier from top Activity badge to avoid duplicate “same number” badges. */
+  const includeCourierInActivityNavBadge = activeView !== VIEWS.ACTIVITY;
   /** Rose total = unseen orders (all status tabs) + courier open tasks / buyer coordinate attention; slate fallback = P+P volumes + full courier pipeline. */
   const activityAttentionCount = Math.min(
     99,
-    purchasesItemCount + ordersItemCount + courierRoseForHub,
+    purchasesItemCount +
+      ordersItemCount +
+      (includeCourierInActivityNavBadge ? courierRoseForHub : 0),
   );
   const activityTotalPipelineCount = Math.min(
     99,
-    totalPurchasesCount + totalOrdersCount + courierPipelineForHub,
+    totalPurchasesCount +
+      totalOrdersCount +
+      (includeCourierInActivityNavBadge ? courierPipelineForHub : 0),
   );
   const activityAttentionRose =
     activityAttentionCount > 0 &&
     (Boolean(purchasesItemCount && !purchasesAttentionMuted) ||
       Boolean(ordersItemCount && !ordersAttentionMuted) ||
-      courierRoseForHub > 0);
+      (includeCourierInActivityNavBadge && courierRoseForHub > 0));
 
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -1199,7 +1207,7 @@ export function LoggedInHeader({
 
         <nav className="mobile-app-secondary-nav shrink-0" role="navigation" aria-label="Main sections">
           <div
-            className="app-shell-content-inset flex min-h-[var(--ui-touch-target,44px)] w-full max-w-full items-stretch gap-0.5 py-1 min-[360px]:gap-1 min-[390px]:gap-1.5 min-[430px]:gap-2"
+            className="app-shell-content-inset flex min-h-[var(--ui-touch-target,44px)] w-full max-w-full items-stretch gap-0.5 py-1 min-[360px]:gap-2"
             role="tablist"
             aria-label="Home, cart, activity, notifications, and profile"
           >
@@ -1345,7 +1353,7 @@ export function LoggedInHeader({
         <div className="hidden min-w-0 flex-1 items-center justify-center overflow-x-auto md:flex">
           <nav className="flex min-w-0 max-w-full items-center justify-center" aria-label="Main">
             <div
-              className="flex max-w-full shrink-0 items-center gap-0.5 rounded-full p-0.5"
+              className="flex max-w-full shrink-0 items-center gap-1.5 rounded-full bg-neutral-100/60 p-1 dark:bg-slate-800/55 md:gap-2 md:p-1.5"
               role="group"
               aria-label="Home, cart, and activity"
             >
@@ -1650,11 +1658,15 @@ export function LoggedInHeader({
         </div>
       ) : null}
 
-    </header>
-
       {activeView === VIEWS.ACTIVITY ? (
         <div
-          className={`pointer-events-auto fixed inset-x-0 bottom-0 z-40 px-1 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 ${activityPrimaryTabsFooterShellClass(activityTab)}`}
+          className={`pointer-events-auto z-40 transition-transform duration-300 ease-out will-change-transform motion-reduce:duration-75 max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:px-1 max-md:pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] max-md:pt-2 ${activityPrimaryTabsFooterShellClass(
+            activityTab,
+          )} md:static md:w-full md:border-0 md:border-b md:border-neutral-200/70 md:bg-neutral-50/95 md:px-4 md:pb-2.5 md:pt-2 md:shadow-none md:backdrop-blur-none dark:md:border-slate-700/80 dark:md:bg-slate-950 ${
+            activityPrimaryTabsScrollHidden
+              ? "max-md:translate-y-[calc(100%+0.5rem)] max-md:pointer-events-none md:translate-y-0 md:pointer-events-auto"
+              : "max-md:translate-y-0"
+          }`}
         >
           <ActivityPrimaryTabs
             activityTab={activityTab}
@@ -1665,6 +1677,8 @@ export function LoggedInHeader({
           />
         </div>
       ) : null}
+
+    </header>
 
       {mobileMenuOpen ? (
         <>

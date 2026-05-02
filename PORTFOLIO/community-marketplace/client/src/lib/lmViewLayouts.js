@@ -60,7 +60,12 @@ export function commerceFlowLineItemsClass(view, ctx = {}) {
     return "lm-commerce-line-items--list-cart";
   }
 
-  if (variant === "orders" || variant === "cart") {
+  if (variant === "orders") {
+    if (view === "compact") return "lm-commerce-line-items--grid-compact";
+    return "lm-commerce-line-items--grid-orders";
+  }
+
+  if (variant === "cart") {
     if (view === "compact") return "lm-commerce-line-items--grid-compact";
     return "lm-commerce-line-items--grid";
   }

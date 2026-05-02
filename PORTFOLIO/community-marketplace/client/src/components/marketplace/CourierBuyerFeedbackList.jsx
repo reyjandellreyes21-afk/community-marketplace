@@ -14,6 +14,12 @@ function Stars({ rating }) {
   );
 }
 
+const TAG_LABEL = {
+  fast: "Fast",
+  late: "Late",
+  friendly: "Friendly",
+};
+
 function buyerInitials(displayName) {
   const s = String(displayName || "").trim();
   if (!s) return "?";
@@ -23,9 +29,10 @@ function buyerInitials(displayName) {
 }
 
 /**
- * Profile → Feedback: read-only list of buyer reviews (order_reviews) for this seller.
+ * Activity → Courier: read-only list of buyer ratings for this member’s delivery runs (`courier_delivery_reviews`).
+ * Layout matches {@link SellerBuyerFeedbackList} (listing, stars, content, buyer profile footer).
  */
-export function SellerBuyerFeedbackList({ token }) {
+export function CourierBuyerFeedbackList({ token }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -42,7 +49,7 @@ export function SellerBuyerFeedbackList({ token }) {
     setError("");
     (async () => {
       try {
-        const data = await apiRequest("/me/seller/buyer-feedback", { token });
+        const data = await apiRequest("/me/courier/buyer-feedback", { token });
         if (!cancelled) setItems(Array.isArray(data?.items) ? data.items : []);
       } catch (e) {
         if (!cancelled) {
@@ -61,7 +68,7 @@ export function SellerBuyerFeedbackList({ token }) {
   if (!token) {
     return (
       <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 text-sm text-neutral-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-400">
-        Sign in to see buyer feedback.
+        Sign in to see courier feedback.
       </div>
     );
   }
@@ -86,7 +93,8 @@ export function SellerBuyerFeedbackList({ token }) {
     return (
       <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 dark:border-slate-700 dark:bg-slate-900/40">
         <p className="text-sm text-neutral-600 dark:text-slate-400">
-          <span className="font-medium text-neutral-800 dark:text-slate-200">No buyer feedback yet.</span> Buyers can leave a rating or note after a completed sale.
+          <span className="font-medium text-neutral-800 dark:text-slate-200">No courier feedback yet.</span> Buyers can leave a rating after a completed
+          delivery.
         </p>
       </div>
     );
@@ -95,12 +103,12 @@ export function SellerBuyerFeedbackList({ token }) {
   return (
     <div className="space-y-3">
       <p className="text-xs leading-relaxed text-neutral-600 dark:text-slate-400">
-        Ratings and comments buyers left on completed orders (COD).
+        Ratings and tags buyers left on completed COD deliveries you fulfilled.
       </p>
       <ul className="space-y-3">
         {items.map((row) => (
           <li
-            key={row.orderId}
+            key={String(row.reviewId || row.orderId)}
             className="rounded-xl border border-neutral-200/90 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-slate-900/80"
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -117,10 +125,19 @@ export function SellerBuyerFeedbackList({ token }) {
               </div>
               <Stars rating={row.rating} />
             </div>
-            {row.reviewText ? (
-              <p className="mt-3 text-sm leading-relaxed text-neutral-700 dark:text-slate-300">{row.reviewText}</p>
+            {Array.isArray(row.tags) && row.tags.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {row.tags.map((t) => (
+                  <span
+                    key={t}
+                    className="rounded-full border border-neutral-200/90 bg-neutral-50 px-2 py-0.5 text-[10px] font-medium text-neutral-800 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-200"
+                  >
+                    {TAG_LABEL[t] || t}
+                  </span>
+                ))}
+              </div>
             ) : (
-              <p className="mt-3 text-sm italic text-neutral-500 dark:text-slate-500">No written comment.</p>
+              <p className="mt-3 text-sm italic text-neutral-500 dark:text-slate-500">No tags selected.</p>
             )}
             <div className="mt-4 flex items-center gap-3 border-t border-neutral-200/80 pt-4 dark:border-slate-600/80">
               <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-full bg-neutral-200 dark:bg-slate-700">

@@ -84,7 +84,7 @@ export function MarketplaceProductDetailStack({
         <p className="mt-1 line-clamp-4 text-pretty text-xs leading-relaxed text-amber-950 dark:text-amber-50">{descriptionPreview}</p>
       </div>
     ) : (
-      <p className="line-clamp-3 text-pretty text-xs leading-relaxed text-text-secondary min-[400px]:text-sm dark:text-slate-400">
+      <p className="line-clamp-3 text-pretty text-xs leading-relaxed text-text-secondary min-[360px]:text-sm dark:text-slate-400">
         {descriptionPreview}
       </p>
     )
@@ -126,13 +126,11 @@ export function MarketplaceProductDetailStack({
 
   const titleClass = isCard
     ? compactListMeta
-      ? "line-clamp-1 min-w-0 break-words text-[14px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[390px]:text-[15px]"
+      ? "line-clamp-1 min-w-0 break-words text-[14px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-[15px]"
       : browseStackMode === "gridMobile"
-      ? "lm-product-card-title"
-      : browseStackMode === "listMobile"
-        ? "product-card-title min-[420px]:text-base"
+        ? "lm-product-card-title"
         : "product-card-title"
-    : "truncate text-sm font-semibold leading-snug text-text-primary dark:text-slate-100 min-[400px]:text-[15px]";
+    : "truncate text-sm font-semibold leading-snug text-text-primary dark:text-slate-100 min-[360px]:text-[15px]";
 
   const priceMainClass = isCard
     ? compactListMeta
@@ -140,7 +138,7 @@ export function MarketplaceProductDetailStack({
       : browseStackMode === "gridMobile"
       ? "lm-product-card-price"
       : "product-price"
-    : "text-sm font-semibold tabular-nums text-text-primary dark:text-slate-200 min-[400px]:text-base";
+    : "text-sm font-semibold tabular-nums text-text-primary dark:text-slate-200 min-[360px]:text-base";
 
   const rootGap =
     compactListMeta

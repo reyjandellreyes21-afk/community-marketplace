@@ -10,19 +10,9 @@ import { buyerCommentDisplayForOrderCard } from "../../lib/listingSaleMeta.js";
 import { orderCodGrandTotalCents, orderLineUnitPriceCents } from "../../lib/orderLineCents.js";
 import { formatCents } from "../../marketplace/money.js";
 import { enrichListingSnapshotForOrderCard } from "../../lib/listingImageUrl.js";
+import { defaultClaimModeFromProfile, MODE_LABEL, MODE_ORDER } from "../../lib/courierTransportModes.js";
 
 const courierChrome = getActivityTabChrome(ACTIVITY_TABS.COURIER);
-
-/** Same default priority as server `resolveCourierAssignmentMode` when no explicit mode is chosen. */
-function defaultClaimModeFromProfile(modes) {
-  const m = Array.isArray(modes) ? modes : [];
-  if (m.includes("bike")) return "bike";
-  if (m.includes("run")) return "run";
-  return "walk";
-}
-
-const MODE_ORDER = ["walk", "run", "bike"];
-const MODE_LABEL = { walk: "Walk", run: "Run", bike: "Bike" };
 
 const RUN_STATUS_NOTE = {
   courier_assigned: "Assigned to you — coordinate pickup with the seller.",
@@ -30,8 +20,7 @@ const RUN_STATUS_NOTE = {
 };
 
 /** Matches Activity → Orders list view / Home → Community list row thumbnails (`App.jsx`). */
-const OPEN_TASK_THUMB =
-  "aspect-square w-[6.5rem] shrink-0 min-[400px]:w-[7.5rem]";
+const OPEN_TASK_THUMB = "aspect-square w-[7.5rem] shrink-0";
 
 /** @param {ReturnType<typeof enrichListingSnapshotForOrderCard>} enriched */
 function listingThumbFromEnriched(enriched) {
@@ -57,7 +46,7 @@ function activeRunStatusNote(statusRaw) {
 /**
  * Shared product row for open tasks and “current delivery”.
  *
- * @param {{ o: object, listing: object | null, courierChrome: { recoveryPrimary: string }, showAcceptButton: boolean, canClaimDeliveries: boolean, claimingId: string | null, onAccept?: () => void, onDecline?: () => void, showDeclineButton?: boolean, topMeta?: import("react").ReactNode }} props
+ * @param {{ o: object, listing: object | null, courierChrome: { recoveryPrimary: string }, showAcceptButton: boolean, canClaimDeliveries: boolean, claimingId: string | null, onAccept?: () => void, topMeta?: import("react").ReactNode }} props
  */
 function OpenDeliveryTaskRow({
   o,
@@ -67,8 +56,6 @@ function OpenDeliveryTaskRow({
   canClaimDeliveries,
   claimingId,
   onAccept,
-  onDecline,
-  showDeclineButton,
   topMeta,
 }) {
   const enriched = enrichListingSnapshotForOrderCard(o, listing);
@@ -150,12 +137,12 @@ function OpenDeliveryTaskRow({
             ) : null}
           </div>
           {showAcceptButton ? (
-            <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-end">
+            <div className="flex w-full flex-row flex-wrap items-stretch justify-end gap-2">
               <Button
                 type="button"
                 variant="primary"
                 className={cn(
-                  "min-h-10 w-full shrink-0 px-3 text-xs max-sm:min-h-11 sm:w-auto sm:self-end",
+                  "min-h-10 min-w-0 flex-1 px-3 text-xs sm:max-w-[14rem] sm:flex-none sm:min-w-[9rem]",
                   courierChrome.recoveryPrimary,
                 )}
                 loading={claimingId === o.id}
@@ -165,19 +152,6 @@ function OpenDeliveryTaskRow({
               >
                 Accept delivery
               </Button>
-              {showDeclineButton ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="min-h-10 w-full shrink-0 px-3 text-xs max-sm:min-h-11 sm:w-auto sm:self-end"
-                  loading={claimingId === o.id}
-                  loadingLabel="…"
-                  disabled={Boolean(claimingId)}
-                  onClick={onDecline}
-                >
-                  Decline
-                </Button>
-              ) : null}
             </div>
           ) : null}
         </div>
@@ -215,17 +189,31 @@ function OpenDeliveriesSkeleton() {
  * in-progress run from GET /delivery/active when the courier has claimed a task.
  * List rows match Home → Community product list layout on mobile.
  *
- * @param {{ token: string, communityId: string, courierStatus: string, onClaimed?: () => void | Promise<void>, viewerSuggestedCompensationCents?: number | null }} props
+ * @param {{
+ *   token: string,
+ *   communityId: string,
+ *   courierStatus: string,
+ *   onClaimed?: () => void | Promise<void>,
+ *   onDeliveriesLoaded?: () => void | Promise<void>,
+ *   viewerSuggestedCompensationCents?: number | null,
+ *   courierTransportState?: { claimMode: string, setClaimMode: (v: string | ((p: string) => string)) => void, profileModes: string[], modesLoaded: boolean } | null,
+ *   showInlineTransportPicker?: boolean,
+ *   headerTrailing?: import("react").ReactNode,
+ * }} props
  */
 export function CourierOpenDeliveries({
   token,
   communityId,
   courierStatus,
   onClaimed,
+  onDeliveriesLoaded,
   viewerSuggestedCompensationCents = null,
+  courierTransportState = null,
+  showInlineTransportPicker = true,
+  headerTrailing = null,
 }) {
   const [orders, setOrders] = useState([]);
-  /** Buyer/seller invited this courier; order still `seller_accepted` until accepted or declined. */
+  /** Buyer/seller invited this courier; order still `seller_accepted` until the courier accepts. */
   const [invitations, setInvitations] = useState(/** @type {{ assignmentId: string, order: object, assignmentMode: string | null }[]} */ ([]));
   /** In-progress run (`courier_assigned` / `out_for_delivery`) from GET /delivery/active — not included in open tasks. */
   const [activeOrder, setActiveOrder] = useState(/** @type {object | null} */ (null));
@@ -237,13 +225,16 @@ export function CourierOpenDeliveries({
   /** Same pattern as Activity orders: batch `/listings/:id` so thumbnails match Processing cards when the order snapshot is thin. */
   const [openListingsById, setOpenListingsById] = useState(/** @type {Record<string, object | null>} */ ({}));
   /** Transport mode for the next claim (`courier_assignments.mode`). */
-  const [claimMode, setClaimMode] = useState("walk");
-  const [profileModes, setProfileModes] = useState(/** @type {string[]} */ ([]));
-  const [modesLoaded, setModesLoaded] = useState(false);
-
-  /** Off = hidden; available/active/busy = hub is “on” (busy still loads tasks but cannot claim another). */
+  const [internalClaimMode, setInternalClaimMode] = useState("walk");
+  const [internalProfileModes, setInternalProfileModes] = useState(/** @type {string[]} */ ([]));
+  const [internalModesLoaded, setInternalModesLoaded] = useState(false);
+  const claimMode = courierTransportState ? courierTransportState.claimMode : internalClaimMode;
+  const setClaimMode = courierTransportState ? courierTransportState.setClaimMode : setInternalClaimMode;
+  const profileModes = courierTransportState ? courierTransportState.profileModes : internalProfileModes;
+  const modesLoaded = courierTransportState ? courierTransportState.modesLoaded : internalModesLoaded;
+  /** Off = hidden; available/active/busy = hub is “on”. Claims blocked only when GET `/delivery/active` returns an order (DB-backed run). */
   const hubActive = courierStatus !== "offline";
-  const canClaimDeliveries = courierStatus === "available" || courierStatus === "active";
+  const canClaimDeliveries = hubActive && !activeOrder;
 
   const selectableModes = useMemo(() => {
     if (profileModes.length > 0) return MODE_ORDER.filter((x) => profileModes.includes(x));
@@ -294,6 +285,7 @@ export function CourierOpenDeliveries({
           setError(e?.message || "Could not load open deliveries.");
         }
       }
+      if (typeof onDeliveriesLoaded === "function") await onDeliveriesLoaded();
     } catch (e) {
       setOrders([]);
       setInvitations([]);
@@ -307,16 +299,17 @@ export function CourierOpenDeliveries({
     } finally {
       setLoading(false);
     }
-  }, [token, communityId, hubActive]);
+  }, [token, communityId, hubActive, onDeliveriesLoaded]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
+    if (courierTransportState) return undefined;
     if (!token || !hubActive) {
-      setProfileModes([]);
-      setModesLoaded(false);
+      setInternalProfileModes([]);
+      setInternalModesLoaded(false);
       return undefined;
     }
     let cancelled = false;
@@ -325,22 +318,22 @@ export function CourierOpenDeliveries({
         const d = await apiRequest("/me/courier-modes", { token });
         const raw = Array.isArray(d?.modes) ? d.modes.map((x) => String(x || "").toLowerCase()).filter((x) => MODE_ORDER.includes(x)) : [];
         if (!cancelled) {
-          setProfileModes([...new Set(raw)]);
-          setClaimMode(defaultClaimModeFromProfile(raw));
-          setModesLoaded(true);
+          setInternalProfileModes([...new Set(raw)]);
+          setInternalClaimMode(defaultClaimModeFromProfile(raw));
+          setInternalModesLoaded(true);
         }
       } catch {
         if (!cancelled) {
-          setProfileModes([]);
-          setClaimMode("walk");
-          setModesLoaded(true);
+          setInternalProfileModes([]);
+          setInternalClaimMode("walk");
+          setInternalModesLoaded(true);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [token, hubActive]);
+  }, [token, hubActive, courierTransportState]);
 
   useEffect(() => {
     if (!hubActive || !token) return undefined;
@@ -430,7 +423,7 @@ export function CourierOpenDeliveries({
     }
   };
 
-  const respondInvitation = async (orderId, accept) => {
+  const respondInvitation = async (orderId) => {
     if (!token || !orderId) return;
     setClaimingId(orderId);
     setClaimBanner("");
@@ -438,18 +431,16 @@ export function CourierOpenDeliveries({
       await apiRequest(`/orders/${encodeURIComponent(orderId)}/courier/invitation/respond`, {
         method: "POST",
         token,
-        body: { accept, mode: claimMode },
+        body: { accept: true, mode: claimMode },
       });
       await load();
       if (typeof onClaimed === "function") await onClaimed();
-      if (accept) {
-        setClaimBanner(
-          "Run accepted — coordinate pickup with the seller and settle COD for goods + delivery tip at handoff (cash only).",
-        );
-        window.setTimeout(() => setClaimBanner(""), 8000);
-      }
+      setClaimBanner(
+        "Run accepted — coordinate pickup with the seller and settle COD for goods + delivery tip at handoff (cash only).",
+      );
+      window.setTimeout(() => setClaimBanner(""), 8000);
     } catch (e) {
-      setError(e?.message || (accept ? "Could not accept invitation." : "Could not decline invitation."));
+      setError(e?.message || "Could not accept invitation.");
     } finally {
       setClaimingId(null);
     }
@@ -458,17 +449,20 @@ export function CourierOpenDeliveries({
   if (!token || !communityId) return null;
   if (!hubActive) {
     return (
-      <div className="space-y-1">
-        <h4 className="text-xs font-semibold text-violet-950 dark:text-violet-100">Open tasks</h4>
+      <div className="space-y-2 border-t border-neutral-200/80 pt-4 mt-4 dark:border-slate-700/70">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
+          <h4 className="text-xs font-semibold text-violet-950 dark:text-violet-100">Open tasks</h4>
+          {headerTrailing}
+        </div>
         <p className="text-[11px] text-neutral-600 dark:text-slate-400">
-          Turn <span className="font-semibold text-violet-900 dark:text-violet-200">On</span> above to see deliveries you can accept.
+          Turn <span className="font-semibold text-violet-900 dark:text-violet-200">On</span> on the right to see deliveries you can accept.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 border-t border-neutral-200/80 pt-4 mt-4 dark:border-slate-700/70">
       {activeOrder ? (
         <section
           className="rounded-xl border border-amber-200/75 bg-amber-50/40 p-2.5 dark:border-amber-900/50 dark:bg-amber-950/30 md:p-3"
@@ -509,11 +503,28 @@ export function CourierOpenDeliveries({
           </ul>
         </section>
       ) : null}
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <h4 className="text-xs font-semibold text-violet-950 dark:text-violet-100">Open tasks</h4>
-          <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-slate-400">
-            First accept wins — settle courier COD in cash at handoff (no wallet). Buyer + seller pool amounts are shown per task.
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
+          <h4 className="min-w-0 text-xs font-semibold text-violet-950 dark:text-violet-100">Open tasks</h4>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {headerTrailing}
+            <Button
+              type="button"
+              variant="secondary"
+              size="compact"
+              className="min-h-9 px-2.5 text-[10px]"
+              disabled={loading}
+              loading={loading}
+              loadingLabel="…"
+              onClick={() => void load()}
+            >
+              Refresh
+            </Button>
+          </div>
+        </div>
+        <div className="min-w-0 space-y-0.5">
+          <p className="text-[11px] text-neutral-600 dark:text-slate-400">
+            First to accept gets the run. Cash only at handoff (no wallet). Pool amounts are on each task.
           </p>
           {viewerSuggestedCompensationCents != null &&
           Number.isFinite(Number(viewerSuggestedCompensationCents)) &&
@@ -526,28 +537,15 @@ export function CourierOpenDeliveries({
               — informational only, not auto-charged.
             </p>
           ) : null}
-          {courierStatus === "busy" && invitations.length === 0 ? (
+          {activeOrder && invitations.length === 0 ? (
             <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-200">
               You’re on a delivery — finish it before accepting another open task. Browse what’s waiting below.
             </p>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="compact"
-            className="min-h-9 px-2.5 text-[10px]"
-            disabled={loading}
-            loading={loading}
-            loadingLabel="…"
-            onClick={() => void load()}
-          >
-            Refresh
-          </Button>
-        </div>
       </div>
-      {modesLoaded && selectableModes.length > 0 ? (
+      <div className="space-y-2 border-t border-neutral-200/80 pt-3 mt-3 dark:border-slate-700/70">
+      {showInlineTransportPicker && modesLoaded && selectableModes.length > 0 ? (
         <div className="rounded-lg border border-violet-200/60 bg-violet-50/50 px-2.5 py-2 dark:border-violet-800/40 dark:bg-violet-950/30">
           <p className="text-[10px] font-medium text-neutral-700 dark:text-slate-300">Transport for this run</p>
           <div className="mt-1.5 flex flex-wrap gap-1.5" role="group" aria-label="Delivery transport mode">
@@ -578,7 +576,7 @@ export function CourierOpenDeliveries({
             Suggested to you
           </h4>
           <p className="text-[11px] text-neutral-600 dark:text-slate-400">
-            A buyer or seller picked you for this delivery. Accept to assign the run to yourself, or decline to free the order for others.
+            A buyer or seller picked you for this delivery. Accept delivery to assign the run to yourself.
           </p>
           <ul className="space-y-2">
             {invitations.map((inv) => {
@@ -593,11 +591,9 @@ export function CourierOpenDeliveries({
                   listing={openListingsById[String(o.listingId)] ?? null}
                   courierChrome={courierChrome}
                   showAcceptButton
-                  showDeclineButton
                   canClaimDeliveries={canClaimDeliveries}
                   claimingId={claimingId}
-                  onAccept={() => respondInvitation(oid, true)}
-                  onDecline={() => respondInvitation(oid, false)}
+                  onAccept={() => respondInvitation(oid)}
                   topMeta={
                     <p className="text-[11px] text-violet-800 dark:text-violet-200">
                       Suggested run
@@ -634,7 +630,13 @@ export function CourierOpenDeliveries({
           <p className="text-[11px] text-red-600 dark:text-red-400" role="alert">
             {error}
           </p>
-          <Button type="button" variant="secondary" size="compact" className="min-h-9 text-[11px]" onClick={() => void load()}>
+          <Button
+            type="button"
+            variant="secondary"
+            size="compact"
+            className="min-h-9 text-[11px]"
+            onClick={() => void load()}
+          >
             Try again
           </Button>
         </div>
@@ -642,11 +644,10 @@ export function CourierOpenDeliveries({
       {loading ? (
         <OpenDeliveriesSkeleton />
       ) : openTasksOrders.length === 0 && invitations.length === 0 ? (
-        <div className="mt-2 rounded-xl border border-dashed border-violet-300/70 bg-violet-50/40 px-3 py-2.5 dark:border-violet-700/45 dark:bg-violet-950/25">
+        <div className="space-y-1">
           <p className="text-[11px] font-medium text-neutral-800 dark:text-slate-200">Nothing open yet</p>
-          <p className="mt-1 text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
-            Tasks appear when a seller accepts a delivery order and the delivery tip meets the community minimum (if configured). Tap Refresh or try
-            again later.
+          <p className="text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
+            Tasks show after a seller accepts a delivery and any tip rules are met. Refresh or check back later.
           </p>
         </div>
       ) : openTasksOrders.length > 0 ? (
@@ -665,6 +666,7 @@ export function CourierOpenDeliveries({
           ))}
         </ul>
       ) : null}
+      </div>
     </div>
   );
 }

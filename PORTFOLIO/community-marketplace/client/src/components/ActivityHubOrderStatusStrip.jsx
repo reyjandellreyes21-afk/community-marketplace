@@ -33,29 +33,32 @@ export function ActivityHubOrderStatusStrip({
 
   return (
     <div
-      className="mt-2 grid w-full min-w-0 grid-cols-4 max-md:gap-1 md:mt-3 md:gap-0"
-      role="tablist"
-      aria-label={activityBuying ? "Purchase status" : "Order status"}
-      onKeyDown={(e) => {
-        const tabs = ORDERS_STATUS_TABS;
-        const { key } = e;
-        if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
-        e.preventDefault();
-        const idx = tabs.findIndex((t) => t.id === ordersStatusTab);
-        let next = idx;
-        if (key === "ArrowRight") next = Math.min(tabs.length - 1, idx + 1);
-        else if (key === "ArrowLeft") next = Math.max(0, idx - 1);
-        else if (key === "Home") next = 0;
-        else if (key === "End") next = tabs.length - 1;
-        if (next !== idx) {
-          const nextId = tabs[next].id;
-          commitOrdersStatusTab(nextId);
-          queueMicrotask(() => {
-            document.getElementById(`commerce-flow-status-tab-${nextId}`)?.focus();
-          });
-        }
-      }}
+      className="relative mt-2 md:mt-4 max-md:sticky max-md:z-30 max-md:border-t border-neutral-200/70 bg-neutral-50/95 pb-1 pt-1 shadow-[0_-6px_18px_-10px_rgba(15,23,42,0.08)] backdrop-blur-md dark:border-slate-700/70 dark:bg-slate-950/95 dark:shadow-[0_-6px_22px_-10px_rgba(0,0,0,0.35)] max-md:bottom-[calc(env(safe-area-inset-bottom,0px)+var(--activity-primary-footer,4.75rem)+0.25rem)] md:rounded-xl md:border md:border-neutral-200/75 md:bg-white md:px-2 md:pb-2 md:pt-2 md:shadow-sm md:shadow-slate-900/[0.04] md:backdrop-blur-none dark:md:border-slate-600/90 dark:md:bg-slate-900/85 dark:md:shadow-none"
     >
+      <div
+        className="grid w-full min-w-0 grid-cols-4 gap-1 md:mx-auto md:flex md:max-w-3xl md:flex-nowrap md:gap-1 lg:max-w-4xl"
+        role="tablist"
+        aria-label={activityBuying ? "Purchase status" : "Order status"}
+        onKeyDown={(e) => {
+          const tabs = ORDERS_STATUS_TABS;
+          const { key } = e;
+          if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
+          e.preventDefault();
+          const idx = tabs.findIndex((t) => t.id === ordersStatusTab);
+          let next = idx;
+          if (key === "ArrowRight") next = Math.min(tabs.length - 1, idx + 1);
+          else if (key === "ArrowLeft") next = Math.max(0, idx - 1);
+          else if (key === "Home") next = 0;
+          else if (key === "End") next = tabs.length - 1;
+          if (next !== idx) {
+            const nextId = tabs[next].id;
+            commitOrdersStatusTab(nextId);
+            queueMicrotask(() => {
+              document.getElementById(`commerce-flow-status-tab-${nextId}`)?.focus();
+            });
+          }
+        }}
+      >
       {ORDERS_STATUS_TABS.map(({ id, label, hint }) => {
           const selected = ordersStatusTab === id;
           const tabBadgeCount =
@@ -91,7 +94,7 @@ export function ActivityHubOrderStatusStrip({
           aria-controls="commerce-flow-status-panel"
           title={hint}
           aria-label={showTabBadge ? `${label}, ${String(badgeCountDisplay).replace("+", " plus ")}` : label}
-          className={`relative overflow-visible max-md:flex max-md:min-h-[2.25rem] max-md:w-full max-md:min-w-0 max-md:items-center max-md:justify-center max-md:rounded-none max-md:border max-md:px-1 max-md:py-1.5 max-md:transition-colors md:flex md:min-h-[2.75rem] md:w-full md:flex-col md:items-center md:justify-center md:rounded-none md:px-1 md:py-1.5 md:text-center md:transition-colors md:duration-150 md:ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 min-[380px]:md:px-1.5 ${
+          className={`relative overflow-visible max-md:flex max-md:min-h-[2.25rem] max-md:w-full max-md:min-w-0 max-md:items-center max-md:justify-center max-md:rounded-none max-md:border max-md:px-1 max-md:py-1.5 max-md:transition-colors md:flex md:min-h-[2.5rem] md:min-w-0 md:flex-1 md:flex-col md:items-center md:justify-center md:rounded-lg md:px-2 md:py-2 md:text-center md:transition-colors md:duration-150 md:ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 min-[380px]:md:px-2.5 ${
             selected
               ? `${chipSelected} md:border-0 md:bg-transparent`
               : `${chipUnselected} md:hover:bg-neutral-50/90 dark:md:hover:bg-slate-900/70`
@@ -105,7 +108,7 @@ export function ActivityHubOrderStatusStrip({
                   selected ? activityTabChrome.labelSelected : "text-neutral-600 dark:text-slate-400"
                 }`}
               >
-                {label}
+                <span className="max-md:inline md:inline">{label}</span>
               </span>
             </span>
             <span
@@ -128,6 +131,7 @@ export function ActivityHubOrderStatusStrip({
         </button>
           );
       })}
+      </div>
     </div>
   );
 }

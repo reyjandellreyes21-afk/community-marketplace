@@ -11,6 +11,12 @@ const isSchemaMissingError = (error) =>
   Boolean(error) &&
   (error.code === "PGRST205" || /schema cache/i.test(String(error.message || "")));
 
+const ORDER_REVIEWS_SETUP_HINT =
+  "Apply supabase/migrations/20260507130000_ensure_order_reviews.sql in the Supabase SQL Editor (or run `supabase db push`), then execute: NOTIFY pgrst, 'reload schema';";
+
+const COURIER_DELIVERY_REVIEWS_SETUP_HINT =
+  "Create table courier_delivery_reviews: in Supabase SQL Editor run supabase/migrations/20260507140000_ensure_courier_delivery_reviews.sql (includes NOTIFY). Or locally: set DATABASE_URL in server/.env then npm run db:apply-courier-reviews (from server/). Or supabase db push.";
+
 const isBuyerCommentMissingError = (error) => {
   if (!error) return false;
   const msg = String(error.message || "");
@@ -59,6 +65,14 @@ function fulfillmentTypeForCartApiRow(row, listing) {
     ft = modes.includes("pickup") ? "pickup" : modes[0];
   }
   return ft;
+}
+
+/** Public avatar URL from a `profiles` row (PostgREST uses snake_case; tolerate camelCase). */
+function profileAvatarUrlFromRow(p) {
+  if (!p || typeof p !== "object") return null;
+  const raw = p.avatar_url ?? p.avatarUrl;
+  const s = String(raw ?? "").trim();
+  return s || null;
 }
 
 /** Prefer stored column; fall back to parsing buyer_comment (matches cart_items.variant_signature semantics). */
@@ -144,6 +158,13 @@ function isMissingOrdersCompletedAtColumn(error) {
     (/orders/i.test(t) || /[`'"]orders[`'"]/i.test(t)) &&
     (/does not exist/i.test(t) || /schema cache/i.test(t) || /could not find/i.test(t))
   );
+}
+
+/** PostgREST / unmigrated DB: `cart_items.fulfillment_type` from `20260503130000_cart_items_fulfillment_type.sql`. */
+function isCartItemsMissingFulfillmentTypeColumnError(error) {
+  const t = postgrestErrorText(error);
+  if (!t) return false;
+  return /fulfillment_type/i.test(t) && /cart_items/i.test(t);
 }
 
 /** When `20260502120000_order_courier_contributions` has not been applied (or schema cache lags). */
@@ -1700,39 +1721,60 @@ export const addCartItem = async (req, res, next) => {
       comment: mergedComment,
       updated_at: now,
     };
+    const updatePayload = {
+      quantity: newQty,
+      comment: mergedComment,
+      fulfillment_type: fulfillmentType,
+      updated_at: now,
+    };
     // Explicit update/insert avoids PostgREST `upsert` requiring a matching UNIQUE/PK on exactly these columns
     // (partial migrations or stale PK on `(user_id, listing_id)` otherwise trigger ON CONFLICT errors).
     let uerr = null;
     if (existing) {
       ({ error: uerr } = await supabaseAdmin
         .from("cart_items")
-        .update({
-          quantity: newQty,
-          comment: mergedComment,
-          fulfillment_type: fulfillmentType,
-          updated_at: now,
-        })
+        .update(updatePayload)
         .eq("user_id", req.user.id)
         .eq("listing_id", listingId)
         .eq("variant_signature", variantSig));
+      if (isCartItemsMissingFulfillmentTypeColumnError(uerr)) {
+        const { fulfillment_type: _omitFt, ...updateWithoutFt } = updatePayload;
+        ({ error: uerr } = await supabaseAdmin
+          .from("cart_items")
+          .update(updateWithoutFt)
+          .eq("user_id", req.user.id)
+          .eq("listing_id", listingId)
+          .eq("variant_signature", variantSig));
+      }
     } else {
       ({ error: uerr } = await supabaseAdmin.from("cart_items").insert(rowPayload));
+      if (isCartItemsMissingFulfillmentTypeColumnError(uerr)) {
+        const { fulfillment_type: _omitFt2, ...rowWithoutFt } = rowPayload;
+        ({ error: uerr } = await supabaseAdmin.from("cart_items").insert(rowWithoutFt));
+      }
       if (
         uerr &&
-        /duplicate key|unique constraint/i.test(String(uerr.message || ""))
+        /duplicate key|unique constraint/i.test(postgrestErrorText(uerr))
       ) {
-        const { data: updatedRows, error: upErr } = await supabaseAdmin
+        let upErr = null;
+        let updatedRows = null;
+        ({ data: updatedRows, error: upErr } = await supabaseAdmin
           .from("cart_items")
-          .update({
-            quantity: newQty,
-            comment: mergedComment,
-            fulfillment_type: fulfillmentType,
-            updated_at: now,
-          })
+          .update(updatePayload)
           .eq("user_id", req.user.id)
           .eq("listing_id", listingId)
           .eq("variant_signature", variantSig)
-          .select("listing_id");
+          .select("listing_id"));
+        if (isCartItemsMissingFulfillmentTypeColumnError(upErr)) {
+          const { fulfillment_type: _omitFt3, ...updateWithoutFt } = updatePayload;
+          ({ data: updatedRows, error: upErr } = await supabaseAdmin
+            .from("cart_items")
+            .update(updateWithoutFt)
+            .eq("user_id", req.user.id)
+            .eq("listing_id", listingId)
+            .eq("variant_signature", variantSig)
+            .select("listing_id"));
+        }
         uerr = upErr;
         if (!upErr && (!updatedRows || updatedRows.length === 0)) {
           throw new AppError(
@@ -1809,12 +1851,21 @@ export const patchCartItem = async (req, res, next) => {
       patch.fulfillment_type = resolveBuyerFulfillmentForListing(listing, req.body.fulfillmentType);
     }
 
-    const { error: uerr } = await supabaseAdmin
+    let { error: uerr } = await supabaseAdmin
       .from("cart_items")
       .update(patch)
       .eq("user_id", req.user.id)
       .eq("listing_id", listingId)
       .eq("variant_signature", variantSig);
+    if (isCartItemsMissingFulfillmentTypeColumnError(uerr) && Object.prototype.hasOwnProperty.call(patch, "fulfillment_type")) {
+      const { fulfillment_type: _omitFt, ...patchWithoutFt } = patch;
+      ({ error: uerr } = await supabaseAdmin
+        .from("cart_items")
+        .update(patchWithoutFt)
+        .eq("user_id", req.user.id)
+        .eq("listing_id", listingId)
+        .eq("variant_signature", variantSig));
+    }
     if (uerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
     if (uerr) throw new AppError(400, uerr.message);
 
@@ -2097,15 +2148,25 @@ export const upsertOrderReview = async (req, res, next) => {
     if (order.status !== "completed") throw new AppError(400, "You can only review completed orders.");
 
     const now = new Date().toISOString();
-    const { data: existing } = await supabaseAdmin.from("order_reviews").select("id").eq("order_id", id).maybeSingle();
+    const { data: existing, error: exErr } = await supabaseAdmin.from("order_reviews").select("id").eq("order_id", id).maybeSingle();
+    if (isSchemaMissingError(exErr)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
+    if (exErr) throw new AppError(500, exErr.message);
     let reviewRow;
     if (existing?.id) {
       const { data: updated, error: uerr } = await supabaseAdmin
         .from("order_reviews")
-        .update({ rating, review_text: reviewText || null, updated_at: now })
+        .update({
+          rating,
+          review_text: reviewText || null,
+          updated_at: now,
+          buyer_id: order.buyer_id,
+          seller_id: order.seller_id,
+          listing_id: order.listing_id,
+        })
         .eq("order_id", id)
         .select("*")
         .single();
+      if (isSchemaMissingError(uerr)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
       if (uerr) throw new AppError(500, uerr.message);
       reviewRow = updated;
     } else {
@@ -2123,6 +2184,7 @@ export const upsertOrderReview = async (req, res, next) => {
         })
         .select("*")
         .single();
+      if (isSchemaMissingError(ierr)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
       if (ierr) throw new AppError(500, ierr.message);
       reviewRow = inserted;
     }
@@ -2147,6 +2209,45 @@ function normalizeCourierDeliveryReviewTags(raw) {
   return out;
 }
 
+/**
+ * Resolves the accepted `courier_assignments` row for this order. Prefer `orders.accepted_courier_assignment_id`
+ * when it points at an accepted assignment; otherwise fall back to lookup by `order_id` (handles missing/stale FK).
+ */
+async function resolveAcceptedCourierAssignmentForReview(order) {
+  const orderPk = order.id;
+  let assignment = null;
+
+  const fkId = order.accepted_courier_assignment_id ?? order.accepted_bid_id ?? null;
+  if (fkId) {
+    const { data: row, error: err } = await supabaseAdmin.from("courier_assignments").select("*").eq("id", fkId).maybeSingle();
+    if (isSchemaMissingError(err)) {
+      throw new AppError(500, "Courier assignments are unavailable (apply migrations / run NOTIFY pgrst, 'reload schema';).");
+    }
+    if (err) throw new AppError(500, err.message);
+    if (row && String(row.order_id) === String(orderPk) && String(row.status || "").toLowerCase() === "accepted") {
+      assignment = row;
+    }
+  }
+
+  if (!assignment) {
+    const { data: rows, error: err } = await supabaseAdmin
+      .from("courier_assignments")
+      .select("*")
+      .eq("order_id", orderPk)
+      .eq("status", "accepted")
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    if (isSchemaMissingError(err)) {
+      throw new AppError(500, "Courier assignments are unavailable (apply migrations / run NOTIFY pgrst, 'reload schema';).");
+    }
+    if (err) throw new AppError(500, err.message);
+    assignment = rows?.[0] ?? null;
+  }
+
+  const assignmentId = assignment?.id ?? null;
+  return { assignment, assignmentId };
+}
+
 export const upsertCourierDeliveryReview = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -2163,28 +2264,21 @@ export const upsertCourierDeliveryReview = async (req, res, next) => {
     if (order.status !== "completed") throw new AppError(400, "You can only review after the order is completed.");
     if (order.fulfillment_type !== "delivery") throw new AppError(400, "Courier reviews apply to delivery orders only.");
 
-    const assignmentId = order.accepted_courier_assignment_id ?? order.accepted_bid_id ?? null;
-    if (!assignmentId) throw new AppError(400, "This order did not use a community courier — there is no courier to rate.");
-
-    const { data: assignment, error: aerr } = await supabaseAdmin
-      .from("courier_assignments")
-      .select("*")
-      .eq("id", assignmentId)
-      .maybeSingle();
-    if (aerr) throw new AppError(500, aerr.message);
-    if (!assignment || String(assignment.order_id) !== String(id)) throw new AppError(400, "Courier assignment not found for this order.");
-    if (String(assignment.status || "").toLowerCase() !== "accepted") {
-      throw new AppError(400, "Invalid courier assignment for review.");
+    const { assignment, assignmentId } = await resolveAcceptedCourierAssignmentForReview(order);
+    if (!assignmentId || !assignment) {
+      throw new AppError(400, "This order did not use a community courier — there is no courier to rate.");
     }
 
     const courierId = assignment.courier_id;
     const now = new Date().toISOString();
 
-    const { data: existing } = await supabaseAdmin
+    const { data: existing, error: exErr } = await supabaseAdmin
       .from("courier_delivery_reviews")
       .select("*")
       .eq("courier_assignment_id", assignmentId)
       .maybeSingle();
+    if (isSchemaMissingError(exErr)) throw new AppError(500, `Courier reviews are not available (${COURIER_DELIVERY_REVIEWS_SETUP_HINT})`);
+    if (exErr) throw new AppError(500, exErr.message);
 
     let abuseReportedAt = existing?.abuse_reported_at ?? null;
     if (abuseNote) {
@@ -2205,9 +2299,7 @@ export const upsertCourierDeliveryReview = async (req, res, next) => {
         .eq("id", existing.id)
         .select("*")
         .single();
-      if (uerr?.code === "PGRST205" || /courier_delivery_reviews/i.test(String(uerr?.message || ""))) {
-        throw new AppError(500, "Run the courier_delivery_reviews migration to enable courier ratings.");
-      }
+      if (isSchemaMissingError(uerr)) throw new AppError(500, `Courier reviews are not available (${COURIER_DELIVERY_REVIEWS_SETUP_HINT})`);
       if (uerr) throw new AppError(500, uerr.message);
       reviewRow = updated;
     } else {
@@ -2227,9 +2319,7 @@ export const upsertCourierDeliveryReview = async (req, res, next) => {
         })
         .select("*")
         .single();
-      if (ierr?.code === "PGRST205" || /courier_delivery_reviews/i.test(String(ierr?.message || ""))) {
-        throw new AppError(500, "Run the courier_delivery_reviews migration to enable courier ratings.");
-      }
+      if (isSchemaMissingError(ierr)) throw new AppError(500, `Courier reviews are not available (${COURIER_DELIVERY_REVIEWS_SETUP_HINT})`);
       if (ierr) throw new AppError(500, ierr.message);
       reviewRow = inserted;
     }
@@ -2374,12 +2464,6 @@ export const patchOrder = async (req, res, next) => {
     const orderBeforePatch = order;
     const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(id, patch);
     if (uerr) throw new AppError(500, uerr.message);
-    if (transition === "mark_delivered" && patch.status === "completed") {
-      await clearCourierBusyForOrderRow(updated || orderBeforePatch);
-    }
-    if (transition === "cancel" && (orderBeforePatch.accepted_courier_assignment_id ?? orderBeforePatch.accepted_bid_id)) {
-      await clearCourierBusyForOrderRow(orderBeforePatch);
-    }
     if (patch.status === "completed") {
       const { data: listing } = await supabaseAdmin
         .from("listings")
@@ -2420,7 +2504,14 @@ export const patchOrder = async (req, res, next) => {
           preferredId: updated.id,
         })
       : updated;
-    res.json({ order: orderRowToApi(consolidated || updated) });
+    const finalOrder = consolidated || updated;
+    if (finalOrder && String(finalOrder.fulfillment_type || "") === "delivery") {
+      const st = String(finalOrder.status || "");
+      if (st === "completed" || st === "cancelled") {
+        await clearCourierBusyForOrderRow(finalOrder);
+      }
+    }
+    res.json({ order: orderRowToApi(finalOrder) });
   } catch (e) {
     next(e);
   }
@@ -2732,8 +2823,17 @@ async function buildCourierPresencePayload(userId) {
   const completedDeliveries = completedMap.get(userId) || 0;
   const badges = deriveCourierAchievementBadges({ completedDeliveries, optionalTags, modes });
   const onActiveRun = await courierHasInProgressDelivery(userId);
-  const stored = String(data.courier_status || "offline");
-  const courierStatus = onActiveRun ? "busy" : stored;
+  const storedLower = String(data.courier_status ?? "offline")
+    .trim()
+    .toLowerCase();
+  const ALLOWED_COURIER_PRESENCE = new Set(["offline", "available", "active", "busy"]);
+  const storedNormalized = ALLOWED_COURIER_PRESENCE.has(storedLower) ? storedLower : "offline";
+  /** DB edited out-of-band (e.g. Supabase) can leave profiles stuck `busy` with no active order; align with `clearCourierBusyForOrderRow`. */
+  let courierStatus = onActiveRun ? "busy" : storedNormalized;
+  if (!onActiveRun && storedNormalized === "busy") {
+    await setProfileCourierStatus(userId, "available");
+    courierStatus = "available";
+  }
   const rawSug = data.courier_suggested_cents;
   const suggestedCompensationCents =
     rawSug != null && Number.isFinite(Number(rawSug)) ? Math.max(0, Math.floor(Number(rawSug))) : null;
@@ -2892,25 +2992,33 @@ export const listCommunityCouriers = async (req, res, next) => {
     }
     const { data: rows, error } = await supabaseAdmin
       .from("profiles")
-      .select("id, username, first_name, last_name, avatar_url, courier_status, courier_optional_tags, courier_modes, created_at")
+      .select(
+        "id, username, first_name, last_name, avatar_url, courier_status, courier_optional_tags, courier_modes, courier_suggested_cents, created_at",
+      )
       .eq("community_id", communityId)
       .in("courier_status", ["available", "active"])
       .order("username", { ascending: true });
     if (error) {
-      if (error.code === "PGRST204" || /courier_status|courier_optional/i.test(String(error.message || ""))) {
+      if (error.code === "PGRST204" || /courier_status|courier_optional|courier_suggested/i.test(String(error.message || ""))) {
         return res.json({ couriers: [] });
       }
       throw new AppError(500, error.message);
     }
-    const base = (rows || []).map((p) => ({
-      id: p.id,
-      username: String(p.username || "").trim(),
-      displayName: [p.first_name, p.last_name].filter(Boolean).join(" ").trim() || String(p.username || "").trim(),
-      avatarUrl: String(p.avatar_url || "").trim() || null,
-      courierStatus: p.courier_status || "offline",
-      optionalTags: normalizeDbTextArray(p.courier_optional_tags),
-      modes: normalizeDbTextArray(p.courier_modes),
-    }));
+    const base = (rows || []).map((p) => {
+      const rawSug = p.courier_suggested_cents;
+      const suggestedCompensationCents =
+        rawSug != null && Number.isFinite(Number(rawSug)) ? Math.max(0, Math.floor(Number(rawSug))) : null;
+      return {
+        id: p.id,
+        username: String(p.username || "").trim(),
+        displayName: [p.first_name, p.last_name].filter(Boolean).join(" ").trim() || String(p.username || "").trim(),
+        avatarUrl: String(p.avatar_url || "").trim() || null,
+        courierStatus: p.courier_status || "offline",
+        optionalTags: normalizeDbTextArray(p.courier_optional_tags),
+        modes: normalizeDbTextArray(p.courier_modes),
+        suggestedCompensationCents,
+      };
+    });
     const idList = base.map((c) => String(c.id));
     const completedMap = await countCompletedDeliveriesForCourierIds(idList);
     const couriers = base
@@ -3342,35 +3450,55 @@ export const sellerSummary = async (req, res, next) => {
 /** Buyer star/text reviews left on completed orders — seller reads these in Profile → Feedback. */
 export const listSellerBuyerFeedback = async (req, res, next) => {
   try {
+    // Resolve via `orders` (source of truth). `order_reviews.seller_id` is denormalized and can be
+    // missing or stale; filtering only on that column hid valid reviews.
+    const { data: sellerOrders, error: oerr } = await supabaseAdmin
+      .from("orders")
+      .select("id, listing_id, created_at, buyer_id")
+      .eq("seller_id", req.user.id)
+      .eq("status", "completed");
+    if (oerr?.code === "PGRST205") return res.json({ items: [] });
+    if (oerr) throw new AppError(500, oerr.message);
+    const completedForSeller = sellerOrders || [];
+    if (completedForSeller.length === 0) return res.json({ items: [] });
+
+    const orderIds = completedForSeller.map((o) => o.id).filter(Boolean);
+    const orderById = new Map(completedForSeller.map((o) => [String(o.id), o]));
+
     const { data: reviews, error } = await supabaseAdmin
       .from("order_reviews")
       .select("*")
-      .eq("seller_id", req.user.id)
+      .in("order_id", orderIds)
       .order("created_at", { ascending: false });
-    if (error?.code === "PGRST205") return res.json({ items: [] });
+    if (isSchemaMissingError(error)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
     if (error) throw new AppError(500, error.message);
     const rows = reviews || [];
     if (rows.length === 0) return res.json({ items: [] });
 
-    const orderIds = [...new Set(rows.map((r) => r.order_id).filter(Boolean))];
-    const { data: orders } = await supabaseAdmin.from("orders").select("id, listing_id, created_at").in("id", orderIds);
-    const orderById = new Map((orders || []).map((o) => [o.id, o]));
-
-    const listingIds = [...new Set((orders || []).map((o) => o.listing_id).filter(Boolean))];
+    const listingIds = [...new Set(completedForSeller.map((o) => o.listing_id).filter(Boolean))];
     let listingById = new Map();
     if (listingIds.length > 0) {
       const { data: listings } = await supabaseAdmin.from("listings").select("id, title").in("id", listingIds);
-      listingById = new Map((listings || []).map((l) => [l.id, l]));
+      listingById = new Map((listings || []).map((l) => [String(l.id), l]));
     }
 
-    const buyerIds = [...new Set(rows.map((r) => r.buyer_id).filter(Boolean))];
+    const buyerIds = [
+      ...new Set(
+        rows
+          .map((r) => {
+            const ord = orderById.get(String(r.order_id));
+            return ord?.buyer_id ?? r.buyer_id;
+          })
+          .filter(Boolean),
+      ),
+    ];
     let profileById = new Map();
     if (buyerIds.length > 0) {
       const { data: profiles } = await supabaseAdmin
         .from("profiles")
-        .select("id, username, first_name, last_name")
+        .select("id, username, first_name, last_name, avatar_url")
         .in("id", buyerIds);
-      profileById = new Map((profiles || []).map((p) => [p.id, p]));
+      profileById = new Map((profiles || []).map((p) => [String(p.id), p]));
     }
 
     const displayName = (p) => {
@@ -3382,16 +3510,102 @@ export const listSellerBuyerFeedback = async (req, res, next) => {
     };
 
     const items = rows.map((rev) => {
-      const ord = orderById.get(rev.order_id);
-      const listing = ord ? listingById.get(ord.listing_id) : null;
-      const buyer = profileById.get(rev.buyer_id);
+      const ord = orderById.get(String(rev.order_id));
+      const canonicalBuyerId = ord?.buyer_id ?? rev.buyer_id;
+      const listing = ord ? listingById.get(String(ord.listing_id)) : null;
+      const buyer = profileById.get(String(canonicalBuyerId));
+      const username = buyer ? String(buyer.username || "").trim() : "";
       return {
         orderId: rev.order_id,
+        buyerId: canonicalBuyerId,
         listingTitle: listing?.title ? String(listing.title).trim() : "Listing",
         rating: Number(rev.rating) || 0,
         reviewText: String(rev.review_text ?? "").trim() || null,
         reviewedAt: rev.updated_at || rev.created_at,
         buyerDisplayName: displayName(buyer),
+        buyerUsername: username || null,
+        buyerAvatarUrl: profileAvatarUrlFromRow(buyer),
+      };
+    });
+
+    res.json({ items });
+  } catch (e) {
+    next(e);
+  }
+};
+
+/** Buyer star/tag reviews on completed courier runs — courier reads these in Activity → Courier (Deliver). */
+export const listCourierBuyerFeedback = async (req, res, next) => {
+  try {
+    const { data: reviews, error } = await supabaseAdmin
+      .from("courier_delivery_reviews")
+      .select("*")
+      .eq("courier_id", req.user.id)
+      .order("created_at", { ascending: false });
+    if (isSchemaMissingError(error)) throw new AppError(500, `Courier reviews are not available (${COURIER_DELIVERY_REVIEWS_SETUP_HINT})`);
+    if (error) throw new AppError(500, error.message);
+    const rows = reviews || [];
+    if (rows.length === 0) return res.json({ items: [] });
+
+    const orderIds = [...new Set(rows.map((r) => r.order_id).filter(Boolean))];
+    const { data: orders } = await supabaseAdmin.from("orders").select("id, listing_id, created_at, buyer_id").in("id", orderIds);
+    const orderById = new Map((orders || []).map((o) => [String(o.id), o]));
+
+    const listingIds = [...new Set((orders || []).map((o) => o.listing_id).filter(Boolean))];
+    let listingById = new Map();
+    if (listingIds.length > 0) {
+      const { data: listings } = await supabaseAdmin.from("listings").select("id, title").in("id", listingIds);
+      listingById = new Map((listings || []).map((l) => [String(l.id), l]));
+    }
+
+    /** Prefer `orders.buyer_id` so profile + avatar match seller flows even if `courier_delivery_reviews.buyer_id` drifted. */
+    const buyerIds = [
+      ...new Set(
+        rows
+          .map((r) => {
+            const ord = orderById.get(String(r.order_id));
+            return ord?.buyer_id ?? r.buyer_id;
+          })
+          .filter(Boolean),
+      ),
+    ];
+    let profileById = new Map();
+    if (buyerIds.length > 0) {
+      const { data: profiles } = await supabaseAdmin
+        .from("profiles")
+        .select("id, username, first_name, last_name, avatar_url")
+        .in("id", buyerIds);
+      profileById = new Map((profiles || []).map((p) => [String(p.id), p]));
+    }
+
+    const displayName = (p) => {
+      if (!p) return "Buyer";
+      const u = String(p.username || "").trim();
+      if (u) return u;
+      const fn = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
+      return fn || "Buyer";
+    };
+
+    const items = rows.map((rev) => {
+      const ord = orderById.get(String(rev.order_id));
+      const canonicalBuyerId = ord?.buyer_id ?? rev.buyer_id;
+      const listing = ord ? listingById.get(String(ord.listing_id)) : null;
+      const buyer = profileById.get(String(canonicalBuyerId));
+      const username = buyer ? String(buyer.username || "").trim() : "";
+      const tags = Array.isArray(rev.tags)
+        ? rev.tags.map((t) => String(t || "").trim().toLowerCase()).filter(Boolean)
+        : [];
+      return {
+        reviewId: rev.id,
+        orderId: rev.order_id,
+        buyerId: canonicalBuyerId,
+        listingTitle: listing?.title ? String(listing.title).trim() : "Order",
+        rating: Number(rev.rating) || 0,
+        tags,
+        reviewedAt: rev.updated_at || rev.created_at,
+        buyerDisplayName: displayName(buyer),
+        buyerUsername: username || null,
+        buyerAvatarUrl: profileAvatarUrlFromRow(buyer),
       };
     });
 

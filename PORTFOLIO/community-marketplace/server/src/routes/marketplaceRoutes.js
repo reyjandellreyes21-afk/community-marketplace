@@ -41,6 +41,7 @@ import {
   removeFavorite,
   removeCartItem,
   listSellerBuyerFeedback,
+  listCourierBuyerFeedback,
   sellerSummary,
   updateListing,
 } from "../controllers/marketplaceController.js";
@@ -212,6 +213,7 @@ marketplaceRouter.put("/me/order-attention", requireAuth, writeLimiter, putMeOrd
 
 marketplaceRouter.get("/me/seller/summary", requireAuth, sellerSummary);
 marketplaceRouter.get("/me/seller/buyer-feedback", requireAuth, listSellerBuyerFeedback);
+marketplaceRouter.get("/me/courier/buyer-feedback", requireAuth, listCourierBuyerFeedback);
 marketplaceRouter.get("/me/expenses", requireAuth, listExpenses);
 marketplaceRouter.post(
   "/me/expenses",

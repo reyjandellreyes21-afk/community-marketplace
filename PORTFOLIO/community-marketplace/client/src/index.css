@@ -34,8 +34,9 @@
     --mobile-bottom-nav: 4.25rem;
     /* Legacy height token (order-status strip was footer; primary tabs use footer now) */
     --commerce-order-status-footer: 3.5rem;
-    /* Fixed Activity Buying/Selling/Courier primary tabs — bottom padding for main scroll */
-    --activity-primary-footer: 3.5rem;
+    /* Fixed Activity Buying/Selling/Courier primary tabs — bottom padding for main scroll.
+       Must cover shell `pt-2` + grid `py-1.5` + tab `min-h-[3.25rem]` + two-line label + indicator + safe-area slack. */
+    --activity-primary-footer: 5.5rem;
     /* Safe-area + legacy bottom chrome estimate — sheets / fixed UI may reference this token */
     --mobile-nav-stack-bottom: calc(var(--mobile-bottom-nav) + env(safe-area-inset-bottom, 0px));
   }
@@ -203,7 +204,7 @@
 
   /** Title line — matches `.product-card-title` scale */
   .lm-card-title {
-    @apply line-clamp-2 min-w-0 break-words text-[15px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[390px]:text-base;
+    @apply line-clamp-2 min-w-0 break-words text-[15px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-base;
   }
 
   /** Bordered meta strip (stock, fulfillment, dense browse) */
@@ -297,6 +298,11 @@
 
   .lm-commerce-line-items--grid {
     @apply grid w-full min-w-0 grid-cols-1 items-stretch gap-2.5 md:grid-cols-2 md:gap-3;
+  }
+
+  /** Purchases / orders grid — scales columns on wide screens (web); cart keeps cozier 2-col default */
+  .lm-commerce-line-items--grid-orders {
+    @apply grid w-full min-w-0 grid-cols-2 items-stretch gap-2.5 md:grid-cols-3 md:gap-3 lg:grid-cols-4 xl:gap-4 2xl:grid-cols-5;
   }
 
   .lm-commerce-line-items--grid-compact {
@@ -399,11 +405,11 @@
   }
 
   .lm-product-card-body {
-    @apply flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 px-2 pb-2 pt-2 min-[400px]:gap-2 min-[400px]:px-2.5 min-[400px]:pb-2.5 min-[400px]:pt-2.5;
+    @apply flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 px-2 pb-2 pt-2 min-[360px]:gap-2 min-[360px]:px-2.5 min-[360px]:pb-2.5 min-[360px]:pt-2.5;
   }
 
   .lm-product-card-title {
-    @apply line-clamp-2 min-w-0 break-words text-[15px] font-bold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[390px]:text-base;
+    @apply line-clamp-2 min-w-0 break-words text-[15px] font-bold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-base;
   }
 
   .lm-product-card-price-row {
@@ -411,7 +417,7 @@
   }
 
   .lm-product-card-price {
-    @apply min-w-0 text-[1.1rem] font-extrabold tabular-nums tracking-tight text-primary min-[400px]:text-[1.18rem] dark:text-brand-accent;
+    @apply min-w-0 text-[1.1rem] font-extrabold tabular-nums tracking-tight text-primary min-[360px]:text-[1.18rem] dark:text-brand-accent;
   }
 
   .lm-product-card-pill {
@@ -439,7 +445,7 @@
 
   /* Component Card + legacy aliases — composed from `lm-card` */
   .app-card {
-    @apply lm-card bg-surface p-4 transition duration-200 ease-in-out min-[400px]:text-[15px] md:p-5 md:text-sm dark:bg-[#0f2234] md:shadow-sm md:shadow-slate-900/[0.05] dark:md:shadow-none md:dark:shadow-[0_1px_2px_rgba(0,0,0,0.2),0_8px_18px_rgba(0,0,0,0.18)];
+    @apply lm-card bg-surface p-4 transition duration-200 ease-in-out min-[360px]:text-[15px] md:p-5 md:text-sm dark:bg-[#0f2234] md:shadow-sm md:shadow-slate-900/[0.05] dark:md:shadow-none md:dark:shadow-[0_1px_2px_rgba(0,0,0,0.2),0_8px_18px_rgba(0,0,0,0.18)];
   }
 
   .app-card-interactive {
@@ -603,25 +609,25 @@
 
   /* Section title: 18px → 20px (min 400) on phone, large display from md */
   .ui-section-title {
-    @apply text-lg font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[400px]:text-xl md:text-[1.65rem] md:leading-tight;
+    @apply text-lg font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-xl md:text-[1.65rem] md:leading-tight;
   }
 
   .ui-section-subtitle {
-    @apply mt-1 text-sm leading-relaxed text-text-secondary dark:text-slate-400 min-[400px]:text-[15px] md:text-sm;
+    @apply mt-1 text-sm leading-relaxed text-text-secondary dark:text-slate-400 min-[360px]:text-[15px] md:text-sm;
   }
 
   /* Page / full-screen panel titles — 22px → 24px; use on main view `<h1>` / auth / key modals */
   .mobile-page-title {
-    @apply text-[1.375rem] font-bold leading-tight tracking-tight text-text-primary dark:text-slate-100 min-[400px]:text-2xl md:text-[1.65rem] md:font-semibold;
+    @apply text-[1.375rem] font-bold leading-tight tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-2xl md:text-[1.65rem] md:font-semibold;
   }
 
   /* Product & listing card — title / price / meta (browse grids, detail stack) */
   .product-card-title {
-    @apply line-clamp-2 min-w-0 break-words text-[15px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[390px]:text-base;
+    @apply line-clamp-2 min-w-0 break-words text-[15px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-base;
   }
 
   .product-price {
-    @apply text-[1rem] font-bold tabular-nums text-primary min-[400px]:text-xl dark:text-brand-accent;
+    @apply text-[1rem] font-bold tabular-nums text-primary min-[360px]:text-xl dark:text-brand-accent;
   }
 
   .product-meta-label {
@@ -629,15 +635,15 @@
   }
 
   .product-meta-value {
-    @apply text-sm font-semibold tabular-nums text-text-primary dark:text-slate-100 min-[400px]:text-[15px];
+    @apply text-sm font-semibold tabular-nums text-text-primary dark:text-slate-100 min-[360px]:text-[15px];
   }
 
   .product-meta-body {
-    @apply mt-0.5 text-sm font-medium leading-snug text-text-primary dark:text-slate-200 min-[400px]:text-[15px];
+    @apply mt-0.5 text-sm font-medium leading-snug text-text-primary dark:text-slate-200 min-[360px]:text-[15px];
   }
 
   .product-description-preview {
-    @apply text-pretty text-xs leading-relaxed text-text-secondary min-[400px]:text-sm dark:text-slate-300;
+    @apply text-pretty text-xs leading-relaxed text-text-secondary min-[360px]:text-sm dark:text-slate-300;
   }
 
   /* Mobile: stronger meta contrast (WCAG AA); md+ keeps lighter meta. */

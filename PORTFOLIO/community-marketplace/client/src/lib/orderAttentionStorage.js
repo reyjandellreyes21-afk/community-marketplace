@@ -113,21 +113,26 @@ export const ORDERS_STATUS_TABS = [
   {
     id: "pending",
     label: "Pending",
+    /** Visible under ~390px — four columns on 360–389 phones */
+    shortLabel: "Pend.",
     hint: "Waiting for the seller to accept, or for your next step.",
   },
   {
     id: "processing",
     label: "Processing",
+    shortLabel: "Proc.",
     hint: "In progress — preparing, courier assignment, pickup, or delivery.",
   },
   {
     id: "completed",
     label: "Completed",
+    shortLabel: "Done",
     hint: "Finished orders — picked up or delivered.",
   },
   {
     id: "cancelled",
     label: "Cancelled",
+    shortLabel: "Canc.",
     hint: "Declined or cancelled orders.",
   },
 ];

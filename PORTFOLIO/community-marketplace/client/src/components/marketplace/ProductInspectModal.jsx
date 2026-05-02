@@ -15,6 +15,110 @@ import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
 import { ListingProductMetaExtras } from "./ListingProductMetaExtras.jsx";
 import { OrderStatusMilestoneList } from "./OrderStatusMilestoneList.jsx";
 
+const COURIER_TAG_LABEL = {
+  fast: "Fast",
+  late: "Late",
+  friendly: "Friendly",
+};
+
+/** Buyer→seller and buyer→courier ratings when the order row includes reviews (same zone as order timeline). */
+function OrderTimelineFeedbackBlocks({ order, viewerRole }) {
+  if (!order) return null;
+  const sellerRating = Math.min(5, Math.max(0, Math.round(Number(order.buyerReview?.rating) || 0)));
+  const hasSellerReview = sellerRating >= 1;
+  const courierRating = Math.min(5, Math.max(0, Math.round(Number(order.buyerCourierReview?.rating) || 0)));
+  const hasCourierReview = courierRating >= 1;
+  const delivery = String(order.fulfillmentType || "") === "delivery";
+  if (!hasSellerReview && !(delivery && hasCourierReview)) return null;
+
+  const viewerIsBuyer = viewerRole === "buyer";
+  const cardClass =
+    "rounded-lg border border-neutral-200/80 bg-neutral-50/90 px-2.5 py-2 dark:border-slate-600 dark:bg-slate-900/50";
+  const courierTags = Array.isArray(order.buyerCourierReview?.tags)
+    ? order.buyerCourierReview.tags.map((t) => String(t || "").trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  return (
+    <div className="mt-2 space-y-2">
+      {hasSellerReview ? (
+        <div className={cardClass}>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+            {viewerIsBuyer ? "Your rating (seller & product)" : "Buyer feedback"}
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+            <span
+              className="inline-flex items-center gap-0.5 text-amber-500 dark:text-amber-400"
+              aria-label={`${sellerRating} out of 5 stars`}
+            >
+              {Array.from({ length: 5 }, (_, i) => (
+                <span
+                  key={i}
+                  className={
+                    i < sellerRating ? "text-amber-500 dark:text-amber-400" : "text-neutral-300 dark:text-slate-600"
+                  }
+                >
+                  ★
+                </span>
+              ))}
+            </span>
+            <span className="text-[11px] font-medium tabular-nums text-neutral-700 dark:text-slate-300">
+              {sellerRating} / 5
+            </span>
+          </div>
+          {order.buyerReview?.reviewText ? (
+            <p className="mt-2 text-pretty text-[11px] leading-relaxed text-neutral-700 dark:text-slate-300">
+              {order.buyerReview.reviewText}
+            </p>
+          ) : (
+            <p className="mt-2 text-[11px] italic text-neutral-500 dark:text-slate-500">No written comment.</p>
+          )}
+        </div>
+      ) : null}
+      {delivery && hasCourierReview ? (
+        <div className={cardClass}>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+            {viewerIsBuyer ? "Your courier rating" : "Courier feedback"}
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+            <span
+              className="inline-flex items-center gap-0.5 text-amber-500 dark:text-amber-400"
+              aria-label={`${courierRating} out of 5 stars`}
+            >
+              {Array.from({ length: 5 }, (_, i) => (
+                <span
+                  key={i}
+                  className={
+                    i < courierRating ? "text-amber-500 dark:text-amber-400" : "text-neutral-300 dark:text-slate-600"
+                  }
+                >
+                  ★
+                </span>
+              ))}
+            </span>
+            <span className="text-[11px] font-medium tabular-nums text-neutral-700 dark:text-slate-300">
+              {courierRating} / 5
+            </span>
+          </div>
+          {courierTags.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {courierTags.map((t) => (
+                <span
+                  key={t}
+                  className="rounded-full border border-neutral-200/90 bg-neutral-50 px-2 py-0.5 text-[10px] font-medium text-neutral-800 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-200"
+                >
+                  {COURIER_TAG_LABEL[t] || t}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-[11px] italic text-neutral-500 dark:text-slate-500">No tags selected.</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** Rubber-band: higher = closer to 1:1 drag at first/last slide (was 0.33 — felt like it wouldn’t pull far). */
 const GALLERY_DRAG_EDGE_RESISTANCE = 0.78;
 
@@ -577,7 +681,7 @@ export function ProductInspectModal({
             To dismiss without choosing an action, use the close control in the header, press Escape, or activate the dimmed area behind this dialog.
           </p>
         ) : null}
-        <div className="flex min-w-0 shrink-0 items-start justify-between gap-2.5 border-b border-neutral-200/80 px-3 pb-2 pt-2.5 min-[390px]:gap-3 min-[390px]:px-4 min-[390px]:pb-2.5 min-[390px]:pt-3 min-[430px]:px-5 dark:border-[#1f3c56]/85 md:px-5 md:pb-3 md:pt-4">
+        <div className="flex min-w-0 shrink-0 items-start justify-between gap-2.5 border-b border-neutral-200/80 px-3 pb-2 pt-2.5 min-[360px]:gap-3 min-[360px]:px-5 min-[360px]:pb-2.5 min-[360px]:pt-3 dark:border-[#1f3c56]/85 md:px-5 md:pb-3 md:pt-4">
           <button
             type="button"
             className="inline-flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-50 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
@@ -620,7 +724,7 @@ export function ProductInspectModal({
         </div>
 
         <div
-          className={`drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-2.5 min-[390px]:px-4 min-[390px]:py-3 min-[430px]:px-5 md:px-5 md:py-4 ${
+          className={`drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-2.5 min-[360px]:px-5 min-[360px]:py-3 md:px-5 md:py-4 ${
             fullScreen
               ? "max-md:pt-0 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] md:pb-5"
               : ""
@@ -630,7 +734,7 @@ export function ProductInspectModal({
             <div
               className={`mx-auto flex w-full shrink-0 flex-col ${
                 fullScreen
-                  ? "max-md:-mx-3 max-md:w-[calc(100%+1.5rem)] max-md:max-w-none min-[390px]:max-md:-mx-4 min-[390px]:max-md:w-[calc(100%+2rem)] min-[430px]:max-md:-mx-5 min-[430px]:max-md:w-[calc(100%+2.5rem)] md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
+                  ? "max-md:-mx-3 max-md:w-[calc(100%+1.5rem)] max-md:max-w-none min-[360px]:max-md:-mx-5 min-[360px]:max-md:w-[calc(100%+2.5rem)] md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
                   : "max-w-[12.5rem] md:mx-0 md:max-w-none"
               }`}
             >
@@ -686,7 +790,7 @@ export function ProductInspectModal({
                           style={{ touchAction: "none" }}
                         />
                         <p
-                          className="pointer-events-none absolute bottom-2 right-2 z-[6] rounded-full border border-white/30 bg-black/65 px-2.5 py-1 text-xs font-semibold tabular-nums text-white shadow-[0_2px_10px_rgba(0,0,0,0.45)] backdrop-blur-[2px] min-[390px]:bottom-2.5 min-[390px]:right-2.5 min-[390px]:text-[13px]"
+                          className="pointer-events-none absolute bottom-2 right-2 z-[6] rounded-full border border-white/30 bg-black/65 px-2.5 py-1 text-xs font-semibold tabular-nums text-white shadow-[0_2px_10px_rgba(0,0,0,0.45)] backdrop-blur-[2px] min-[360px]:bottom-2.5 min-[360px]:right-2.5 min-[360px]:text-[13px]"
                           aria-live="polite"
                         >
                           {galleryThumbIdx + 1}/{galleryUrls.length}
@@ -787,11 +891,11 @@ export function ProductInspectModal({
                 </div>
               ) : null}
             </div>
-            <div className="min-w-0 flex-1 space-y-1.5 min-[430px]:space-y-2 md:space-y-2">
+            <div className="min-w-0 flex-1 space-y-1.5 min-[360px]:space-y-2 md:space-y-2">
               <div className="min-w-0">
                 <h2
                   id="product-inspect-title"
-                  className="break-words text-pretty text-[1.12rem] font-bold leading-tight tracking-tight text-neutral-900 min-[390px]:text-xl dark:text-slate-100 md:text-2xl"
+                  className="break-words text-pretty text-[1.12rem] font-bold leading-tight tracking-tight text-neutral-900 min-[360px]:text-xl dark:text-slate-100 md:text-2xl"
                 >
                   {title || "Product"}
                 </h2>
@@ -800,7 +904,7 @@ export function ProductInspectModal({
                 ) : null}
               </div>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <p className="text-[1.06rem] font-bold tabular-nums text-brand-primary min-[390px]:text-lg dark:text-brand-accent md:text-xl">
+                <p className="text-[1.06rem] font-bold tabular-nums text-brand-primary min-[360px]:text-lg dark:text-brand-accent md:text-xl">
                   {formatPesoWhole(priceCents)}
                 </p>
                 {originalPesos != null && originalPesos > currentPesos ? (
@@ -880,12 +984,13 @@ export function ProductInspectModal({
                     viewerRole={orderTimelineViewerRole}
                     className="mt-2"
                   />
+                  <OrderTimelineFeedbackBlocks order={orderTimelineOrder} viewerRole={orderTimelineViewerRole} />
                 </>
               ) : null}
             </div>
           </div>
 
-          <div className="mt-3.5 space-y-2.5 min-[390px]:mt-4 min-[390px]:space-y-3 md:mt-5 md:space-y-4">
+          <div className="mt-3.5 space-y-2.5 min-[360px]:mt-4 min-[360px]:space-y-3 md:mt-5 md:space-y-4">
             <div className="space-y-2.5 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
               <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
                 Product variants
@@ -951,7 +1056,7 @@ export function ProductInspectModal({
             ) : null}
 
             {showCommentBlock && commentTrim && !/^n\/a$/i.test(commentTrim) ? (
-              <section className="rounded-xl border border-sky-200/80 bg-sky-50/80 p-2.5 min-[390px]:p-3 dark:border-sky-500/35 dark:bg-sky-950/25 md:p-3.5">
+              <section className="rounded-xl border border-sky-200/80 bg-sky-50/80 p-2.5 min-[360px]:p-3 dark:border-sky-500/35 dark:bg-sky-950/25 md:p-3.5">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wide text-sky-800 dark:text-sky-200">
                   {commentHeading}
                 </h3>
@@ -992,7 +1097,7 @@ export function ProductInspectModal({
           </div>
         </div>
 
-        <div className="sticky bottom-0 z-20 shrink-0 border-t border-neutral-200/80 bg-white/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/85 min-[390px]:px-4 min-[390px]:pt-2.5 min-[430px]:px-5 dark:border-[#1f3c56]/85 dark:bg-[#0f2234]/95 dark:shadow-none md:static md:bg-transparent md:px-5 md:pb-4 md:pt-3 md:shadow-none md:backdrop-blur-0">
+        <div className="sticky bottom-0 z-20 shrink-0 border-t border-neutral-200/80 bg-white/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/85 min-[360px]:px-5 min-[360px]:pt-2.5 dark:border-[#1f3c56]/85 dark:bg-[#0f2234]/95 dark:shadow-none md:static md:bg-transparent md:px-5 md:pb-4 md:pt-3 md:shadow-none md:backdrop-blur-0">
           {hasSellerHandlers ? (
             <div className="space-y-2">
               {salePickerOpen && typeof onSaleSelect === "function" ? (

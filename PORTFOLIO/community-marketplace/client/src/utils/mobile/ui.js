@@ -35,10 +35,10 @@ export const MOBILE_DESIGN_SYSTEM = {
     descriptionPreview: "product-description-preview",
     /** Large marketing / hero (use sparingly on phones) */
     display: "text-2xl font-bold leading-tight tracking-tight text-text-primary dark:text-slate-100 md:text-[1.75rem] md:font-semibold",
-    /** Default reading — follows global `body` (14px → 16px min-[400px]) */
-    body: "text-sm leading-relaxed text-text-primary dark:text-slate-100 min-[400px]:text-base",
+    /** Default reading — follows global `body` (14px → 16px from min-[360px]) */
+    body: "text-sm leading-relaxed text-text-primary dark:text-slate-100 min-[360px]:text-base",
     /** Secondary paragraphs */
-    bodySecondary: "text-sm leading-relaxed text-text-secondary dark:text-slate-400 min-[400px]:text-[15px]",
+    bodySecondary: "text-sm leading-relaxed text-text-secondary dark:text-slate-400 min-[360px]:text-[15px]",
     /** Captions / timestamps — avoid below 11px */
     caption: "text-xs leading-snug text-neutral-600 dark:text-slate-400",
     /** Dense metadata (11–13px) */
@@ -174,8 +174,8 @@ export const MOBILE_DESIGN_SYSTEM = {
   screen: {
     empty: {
       surface: UI_KIT.surfaceRaised,
-      title: "text-lg font-semibold text-neutral-900 dark:text-slate-100 min-[400px]:text-xl md:text-xl",
-      description: "mt-2 max-w-mobile-baseline text-sm leading-relaxed text-neutral-600 dark:text-slate-400 min-[400px]:text-[15px] md:max-w-md",
+      title: "text-lg font-semibold text-neutral-900 dark:text-slate-100 min-[360px]:text-xl md:text-xl",
+      description: "mt-2 max-w-mobile-baseline text-sm leading-relaxed text-neutral-600 dark:text-slate-400 min-[360px]:text-[15px] md:max-w-md",
     },
     loading: {
       /** Minimum height for main-pane loaders */
@@ -184,13 +184,13 @@ export const MOBILE_DESIGN_SYSTEM = {
       spinner:
         "h-9 w-9 shrink-0 animate-spin rounded-full border-2 border-brand-primary border-t-transparent motion-reduce:animate-none dark:border-brand-accent dark:border-t-transparent",
       message:
-        "max-w-mobile-baseline text-sm font-medium leading-relaxed text-neutral-700 dark:text-slate-300 min-[400px]:text-[15px]",
+        "max-w-mobile-baseline text-sm font-medium leading-relaxed text-neutral-700 dark:text-slate-300 min-[360px]:text-[15px]",
     },
     success: {
       surface: UI_KIT.stateSuccess,
-      title: "text-lg font-semibold text-emerald-900 dark:text-emerald-50 min-[400px]:text-xl md:text-xl",
+      title: "text-lg font-semibold text-emerald-900 dark:text-emerald-50 min-[360px]:text-xl md:text-xl",
       description:
-        "mt-2 max-w-mobile-baseline text-sm leading-relaxed text-emerald-900/90 dark:text-emerald-100/90 min-[400px]:text-[15px] md:max-w-md",
+        "mt-2 max-w-mobile-baseline text-sm leading-relaxed text-emerald-900/90 dark:text-emerald-100/90 min-[360px]:text-[15px] md:max-w-md",
     },
     error: {
       banner: "app-alert-error",
@@ -243,10 +243,10 @@ export const MOBILE_UI = {
   insetX: MOBILE_DESIGN_SYSTEM.spacing.insetX,
   stackGap: MOBILE_DESIGN_SYSTEM.spacing.gapLg,
   sectionStack: MOBILE_DESIGN_SYSTEM.spacing.sectionY,
-  textBody: "text-sm leading-relaxed min-[400px]:text-base",
+  textBody: "text-sm leading-relaxed min-[360px]:text-base",
   textLabel: "text-[13px] font-medium leading-snug text-neutral-700 dark:text-slate-300 md:text-sm",
   textTitle:
-    "text-[15px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[390px]:text-base",
+    "text-[15px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-base",
   screenStateMin: MOBILE_DESIGN_SYSTEM.screen.loading.minHeight,
   /** Pointer to grouped tokens */
   designSystem: MOBILE_DESIGN_SYSTEM,

@@ -1,14 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../../lib/appApi.js";
+import { COURIER_OPTIONAL_TAG_LABEL, formatCourierModesForDisplay } from "../../lib/courierPublicProfile.js";
 import { StableAvatar } from "../media/StableMediaImage.jsx";
 import { Button } from "../ui/Button.jsx";
-
-const TAG_LABEL = {
-  eco: "Eco",
-  bike: "Bike",
-  fast: "Fast",
-  helping: "Helping",
-};
+import { CourierPublicProfileModal } from "./CourierPublicProfileModal.jsx";
 
 function statusRank(s) {
   return s === "active" ? 0 : 1;
@@ -31,6 +26,7 @@ export function CommunityCourierPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [assigningId, setAssigningId] = useState(null);
+  const [profileCourier, setProfileCourier] = useState(null);
 
   const sorted = useMemo(() => {
     const list = Array.isArray(couriers) ? [...couriers] : [];
@@ -68,8 +64,9 @@ export function CommunityCourierPanel({
     };
   }, [token, communityId]);
 
+  /** @returns {Promise<boolean>} */
   const assign = async (courierId) => {
-    if (!token || !orderId || !courierId) return;
+    if (!token || !orderId || !courierId) return false;
     setAssigningId(courierId);
     setError("");
     try {
@@ -79,8 +76,10 @@ export function CommunityCourierPanel({
         body: { courierId },
       });
       if (typeof onAssigned === "function") await onAssigned();
+      return true;
     } catch (e) {
       setError(e?.message || "Could not assign courier.");
+      return false;
     } finally {
       setAssigningId(null);
     }
@@ -114,55 +113,63 @@ export function CommunityCourierPanel({
         </p>
       ) : (
         <ul className="flex max-h-56 flex-col gap-2 overflow-y-auto pr-0.5">
-          {sorted.map((c) => (
+          {sorted.map((c) => {
+            const modesLine = formatCourierModesForDisplay(c.modes);
+            return (
             <li
               key={String(c.id)}
               className="flex items-center gap-2 rounded-lg border border-neutral-200/80 bg-white/60 px-2 py-1.5 dark:border-slate-600/70 dark:bg-slate-900/40"
             >
-              <StableAvatar
-                src={c.avatarUrl || ""}
-                alt=""
-                initials={(String(c.displayName || c.username || "?").trim().charAt(0) || "?").toUpperCase()}
-                className="h-9 w-9 shrink-0 text-xs"
-                sizes="36px"
-              />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-semibold text-neutral-900 dark:text-slate-100">
-                  {c.displayName || c.username || "Member"}
-                </p>
-                <p className="truncate text-[10px] text-neutral-500 dark:text-slate-500">
-                  {c.courierStatus === "active" ? "Active — on the move" : "Available"}
-                  {typeof c.completedDeliveries === "number" && c.completedDeliveries > 0
-                    ? ` · ${c.completedDeliveries} completed`
-                    : ""}
-                  {Array.isArray(c.modes) && c.modes.length ? ` · ${c.modes.join(", ")}` : ""}
-                </p>
-                {Array.isArray(c.badges) && c.badges.length ? (
-                  <div className="mt-0.5 flex flex-wrap gap-1">
-                    {c.badges.map((b) => (
-                      <span
-                        key={b.id}
-                        className="rounded-full bg-amber-100/95 px-1.5 py-0.5 text-[9px] font-semibold text-amber-950 ring-1 ring-amber-300/60 dark:bg-amber-950/50 dark:text-amber-100 dark:ring-amber-700/50"
-                        title="Earned from completed deliveries"
-                      >
-                        {b.label}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-                {Array.isArray(c.optionalTags) && c.optionalTags.length ? (
-                  <div className="mt-0.5 flex flex-wrap gap-1">
-                    {c.optionalTags.map((t) => (
-                      <span
-                        key={t}
-                        className="rounded-full bg-emerald-100/90 px-1.5 py-0.5 text-[9px] font-medium text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
-                      >
-                        {TAG_LABEL[t] || t}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none ring-brand-primary/0 transition hover:bg-neutral-50/80 focus-visible:ring-2 dark:hover:bg-slate-800/50 dark:focus-visible:ring-brand-accent/40"
+                onClick={() => setProfileCourier(c)}
+              >
+                <StableAvatar
+                  src={c.avatarUrl || ""}
+                  alt=""
+                  initials={(String(c.displayName || c.username || "?").trim().charAt(0) || "?").toUpperCase()}
+                  className="h-9 w-9 shrink-0 text-xs"
+                  sizes="36px"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold text-neutral-900 dark:text-slate-100">
+                    {c.displayName || c.username || "Member"}
+                  </p>
+                  <p className="truncate text-[10px] text-neutral-500 dark:text-slate-500">
+                    {c.courierStatus === "active" ? "Active — on the move" : "Available"}
+                    {typeof c.completedDeliveries === "number" && c.completedDeliveries > 0
+                      ? ` · ${c.completedDeliveries} completed`
+                      : ""}
+                    {modesLine ? ` · ${modesLine}` : ""}
+                  </p>
+                  {Array.isArray(c.badges) && c.badges.length ? (
+                    <div className="mt-0.5 flex flex-wrap gap-1">
+                      {c.badges.map((b) => (
+                        <span
+                          key={b.id}
+                          className="rounded-full bg-amber-100/95 px-1.5 py-0.5 text-[9px] font-semibold text-amber-950 ring-1 ring-amber-300/60 dark:bg-amber-950/50 dark:text-amber-100 dark:ring-amber-700/50"
+                          title="Earned from completed deliveries"
+                        >
+                          {b.label}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {Array.isArray(c.optionalTags) && c.optionalTags.length ? (
+                    <div className="mt-0.5 flex flex-wrap gap-1">
+                      {c.optionalTags.map((t) => (
+                        <span
+                          key={t}
+                          className="rounded-full bg-emerald-100/90 px-1.5 py-0.5 text-[9px] font-medium text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
+                        >
+                          {COURIER_OPTIONAL_TAG_LABEL[t] || t}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </button>
               <Button
                 type="button"
                 variant="secondary"
@@ -170,14 +177,40 @@ export function CommunityCourierPanel({
                 loading={assigningId === c.id}
                 loadingLabel="…"
                 disabled={Boolean(assigningId)}
-                onClick={() => assign(c.id)}
+                onClick={() => void assign(c.id)}
               >
                 {assignButtonLabel}
               </Button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
+      <CourierPublicProfileModal
+        open={Boolean(profileCourier)}
+        courier={profileCourier}
+        onClose={() => setProfileCourier(null)}
+        footer={
+          profileCourier && orderId ? (
+            <Button
+              type="button"
+              variant="primary"
+              className="w-full"
+              loading={assigningId === profileCourier.id}
+              loadingLabel="…"
+              disabled={Boolean(assigningId)}
+              onClick={() => {
+                void (async () => {
+                  const ok = await assign(profileCourier.id);
+                  if (ok) setProfileCourier(null);
+                })();
+              }}
+            >
+              {assignButtonLabel}
+            </Button>
+          ) : null
+        }
+      />
     </div>
   );
 }

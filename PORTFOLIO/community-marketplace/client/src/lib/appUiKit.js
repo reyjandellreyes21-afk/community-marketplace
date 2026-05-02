@@ -12,9 +12,9 @@ export const UI_KIT = {
     "w-full border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:rounded-2xl md:border md:border-neutral-200/85 md:bg-surface md:p-5 md:shadow-sm md:dark:border-[#1f3c56] md:dark:bg-[#0f2234]",
   /** Mirrors `.ui-section-title` / `.ui-section-subtitle` (`index.css`) — use classes when possible */
   sectionTitle:
-    "text-lg font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[400px]:text-xl md:text-[1.65rem] md:leading-tight",
+    "text-lg font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-xl md:text-[1.65rem] md:leading-tight",
   sectionSubtitle:
-    "mt-1 text-sm leading-relaxed text-text-secondary dark:text-slate-400 min-[400px]:text-[15px] md:text-sm",
+    "mt-1 text-sm leading-relaxed text-text-secondary dark:text-slate-400 min-[360px]:text-[15px] md:text-sm",
   headerEyebrow: "text-[11px] font-semibold uppercase tracking-wide text-primary dark:text-brand-accent",
   /** Bordered card shell — see `.lm-card` in `index.css` */
   surfaceCard: "lm-card",

@@ -15,7 +15,7 @@ function SkeletonBlock({ className }) {
 function CommunityListRowSkeleton() {
   return (
     <div className={cn("group relative", listRowClass)}>
-      <div className="lm-product-media lm-product-media-list relative h-32 w-32 shrink-0">
+      <div className="lm-product-media lm-product-media-list relative h-[7.5rem] w-[7.5rem] max-h-[7.5rem] max-w-[7.5rem] shrink-0">
         <SkeletonBlock className="absolute inset-0 rounded-[var(--ui-radius-lg)]" />
       </div>
       <div className="min-w-0 flex-1 space-y-2 py-0.5">
@@ -83,7 +83,7 @@ function CommunityGridTileSkeleton({ compact, softBrowseChrome }) {
       <div
         className={cn(
           "mt-auto flex flex-col gap-2",
-          feedChrome ? "px-2 pb-2 pt-1.5 min-[400px]:px-2.5 min-[400px]:pb-2.5" : "pt-3",
+          feedChrome ? "px-2 pb-2 pt-1.5 min-[360px]:px-2.5 min-[360px]:pb-2.5" : "pt-3",
         )}
       >
         {!compact && !feedChrome ? <SkeletonBlock className="h-11 w-full rounded-xl" /> : null}

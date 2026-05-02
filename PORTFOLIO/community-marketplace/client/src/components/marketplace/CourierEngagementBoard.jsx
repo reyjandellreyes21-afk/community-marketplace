@@ -75,12 +75,13 @@ export function CourierEngagementBoard({ token, communityId }) {
   );
 
   return (
-    <div className="mt-3 space-y-3 rounded-xl border border-violet-200/60 bg-violet-50/40 p-3 dark:border-violet-800/40 dark:bg-violet-950/25">
+    <div className="mt-4 border-t border-neutral-200/80 pt-4 dark:border-slate-700/70">
+      <div className="space-y-3 rounded-xl border border-violet-200/65 bg-violet-50/45 p-3 shadow-[0_1px_0_rgba(15,23,42,0.04)] dark:border-violet-800/45 dark:bg-violet-950/30 md:p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h4 className="text-xs font-semibold text-violet-950 dark:text-violet-100">Neighborhood leaderboard</h4>
           <p className="mt-0.5 text-[10px] text-neutral-600 dark:text-slate-400">
-            Community runs only · Week starts Monday (UTC) · Cheap counts — no prizes wired yet.
+            This community · Weeks start Monday (UTC) · Informal stats only.
           </p>
         </div>
         <button
@@ -164,6 +165,7 @@ export function CourierEngagementBoard({ token, communityId }) {
       ) : loading ? (
         <div className="h-16 animate-pulse rounded-lg bg-violet-200/30 dark:bg-violet-900/40" aria-hidden />
       ) : null}
+      </div>
     </div>
   );
 }
