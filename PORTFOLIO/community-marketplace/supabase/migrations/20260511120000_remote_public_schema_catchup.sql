@@ -130,18 +130,20 @@ FOR DELETE TO authenticated
 USING (user_id = auth.uid());
 
 -- --- notification_preferences: recreate only if empty table exists without expected PK column ---
+-- Nested IFs so we never query a missing relation (AND does not short-circuit reliably here).
 DO $$
 BEGIN
-  IF to_regclass('public.notification_preferences') IS NOT NULL
-     AND NOT EXISTS (
-       SELECT 1 FROM information_schema.columns
-       WHERE table_schema = 'public'
-         AND table_name = 'notification_preferences'
-         AND column_name = 'user_id'
-     )
-     AND (SELECT COUNT(*) FROM public.notification_preferences) = 0
-  THEN
-    DROP TABLE public.notification_preferences;
+  IF to_regclass('public.notification_preferences') IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'notification_preferences'
+        AND column_name = 'user_id'
+    ) THEN
+      IF (SELECT COUNT(*) FROM public.notification_preferences) = 0 THEN
+        DROP TABLE public.notification_preferences;
+      END IF;
+    END IF;
   END IF;
 END $$;
 
