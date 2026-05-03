@@ -16,6 +16,11 @@ pnpm-debug.log*
 **/.env
 .env.local
 .env.*.local
+# Credentials / keys (never commit)
+*.pem
+*.key
+**/credentials.json
+secrets/
 .cursor/
 .vscode/
 .eslintcache

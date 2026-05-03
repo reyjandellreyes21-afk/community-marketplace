@@ -1,6 +1,8 @@
 import cors from "cors";
 import express from "express";
+import helmet from "helmet";
 import morgan from "morgan";
+import { config } from "./config/config.js";
 import { uploadMyAvatar } from "./controllers/authController.js";
 import { createCommunity, listCommunities } from "./controllers/marketplaceController.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandlers.js";
@@ -14,7 +16,21 @@ import { apiRouter } from "./routes/index.js";
 const app = express();
 app.set("trust proxy", 1);
 
-app.use(cors());
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }),
+);
+
+const corsOptions = {
+  origin:
+    config.corsOrigins && config.corsOrigins.length > 0
+      ? config.corsOrigins
+      : true,
+  credentials: true,
+};
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "12mb" }));
 app.use(assignRequestId);
 app.use(globalApiLimiter);
