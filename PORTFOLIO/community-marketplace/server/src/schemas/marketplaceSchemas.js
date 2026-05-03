@@ -16,6 +16,7 @@ export const listingsValidators = {
     query("radiusKm").optional().isFloat({ min: 0.5, max: 500 }),
     query("limit").optional().isInt({ min: 1, max: 60 }),
     query("offset").optional().isInt({ min: 0, max: 5000 }),
+    query("sellerId").optional().isUUID(),
   ],
   create: [
     body("title").isString().trim().isLength({ min: 2, max: 200 }),

@@ -494,8 +494,8 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
           </p>
         ) : null}
         {!loading && neighborPreviewCourier ? (
-          <div className="mt-3 rounded-xl border border-neutral-200/80 bg-white/85 px-3 py-3 shadow-sm dark:border-slate-600/55 dark:bg-slate-900/40 dark:shadow-none">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500">
+          <div className={cn("mt-3 shadow-sm dark:shadow-none", courierChrome.courierPanelSurface)}>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-800/90 dark:text-violet-200/90">
               How neighbors see you
             </p>
             <div className="mt-3 flex justify-end">
@@ -503,13 +503,13 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
                 type="button"
                 variant="secondary"
                 size="compact"
-                className="min-h-9 shrink-0 px-2.5 text-[10px] font-semibold"
+                className={cn("min-h-9 shrink-0 px-2.5 text-[10px] font-semibold", courierChrome.recoverySecondary)}
                 onClick={() => setNeighborSettingsOpen(true)}
               >
                 Edit
               </Button>
             </div>
-            <div className="mt-3 border-t border-neutral-100 pt-3 dark:border-slate-700/80">
+            <div className="mt-3 border-t border-violet-200/60 pt-3 dark:border-violet-800/35">
               <CourierPublicProfileContent courier={neighborPreviewCourier} variant="inline" />
             </div>
           </div>
@@ -538,7 +538,7 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
               </p>
             ) : null}
             {saveFeedback ? (
-              <p id={feedbackId} className="mt-1 text-center text-[11px] font-medium text-emerald-800 dark:text-emerald-200" aria-live="polite">
+              <p id={feedbackId} className="mt-1 text-center text-[11px] font-medium text-violet-800 dark:text-violet-200" aria-live="polite">
                 {saveFeedback}
               </p>
             ) : null}
@@ -602,7 +602,7 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
               </p>
               <button
                 type="button"
-                className="rounded-lg px-2 py-1 text-xs font-medium text-primary hover:bg-primary-soft/50 dark:text-brand-accent dark:hover:bg-slate-800"
+                className="rounded-lg px-2 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-100/70 dark:text-violet-300 dark:hover:bg-violet-950/55"
                 onClick={() => setNeighborSettingsOpen(false)}
               >
                 Close
@@ -679,7 +679,7 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
                     type="button"
                     variant="secondary"
                     size="compact"
-                    className="min-h-9 shrink-0"
+                    className={cn("min-h-9 shrink-0", courierChrome.recoverySecondary)}
                     disabled={savingSuggested || courierStatus === "busy"}
                     loading={savingSuggested}
                     loadingLabel="…"
@@ -702,7 +702,7 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
                         size="compact"
                         className={cn(
                           "min-h-8 px-2.5 text-[10px]",
-                          claimMode === m ? courierChrome.recoveryPrimary : "",
+                          claimMode === m ? courierChrome.recoveryPrimary : courierChrome.recoverySecondary,
                         )}
                         disabled={
                           availabilityLocked ||

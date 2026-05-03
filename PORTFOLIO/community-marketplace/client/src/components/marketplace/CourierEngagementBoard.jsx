@@ -3,6 +3,8 @@ import { apiRequest } from "../../lib/appApi.js";
 import { getActivityTabChrome } from "../../lib/activityTabTheme.js";
 import { ACTIVITY_TABS } from "../../views.js";
 import { StableAvatar } from "../media/StableMediaImage.jsx";
+import { Button } from "../ui/Button.jsx";
+import { cn } from "../../lib/cn.js";
 
 const courierChrome = getActivityTabChrome(ACTIVITY_TABS.COURIER);
 
@@ -84,14 +86,16 @@ export function CourierEngagementBoard({ token, communityId }) {
             This community · Weeks start Monday (UTC) · Informal stats only.
           </p>
         </div>
-        <button
+        <Button
           type="button"
-          className={`rounded-lg border border-violet-300/70 px-2 py-1 text-[10px] font-medium text-violet-900 hover:bg-white/80 dark:border-violet-700/50 dark:text-violet-100 dark:hover:bg-violet-900/40 ${courierChrome.recoveryPrimary}`}
+          variant="secondary"
+          size="compact"
+          className={cn("min-h-8 px-2.5 text-[10px] font-medium", courierChrome.recoverySecondary)}
           disabled={loading}
           onClick={() => void load()}
         >
           {loading ? "…" : "Refresh"}
-        </button>
+        </Button>
       </div>
 
       {error ? (

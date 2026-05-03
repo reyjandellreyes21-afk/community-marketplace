@@ -14,6 +14,8 @@ export const VIEWS = {
   /** Seller orders from buyers (legacy persistence — prefer ACTIVITY + selling tab). */
   ORDERS: "orders",
   ABOUT: "about",
+  /** Authenticated: submit app experience / product feedback (separate DB from order reviews). */
+  SEND_FEEDBACK: "send_feedback",
   TERMS: "terms",
   USERS: "users",
   /** Seller hub: products and feedback snapshot. */

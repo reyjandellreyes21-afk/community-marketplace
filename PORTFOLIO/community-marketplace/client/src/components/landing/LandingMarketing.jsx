@@ -63,8 +63,10 @@ function LandingFooterIconMapPin(props) {
   );
 }
 
-export function LandingSiteFooter() {
+export function LandingSiteFooter({ onOpenAbout, onOpenTerms, onOpenPrivacy }) {
   const accent = "text-teal-400 shrink-0";
+  const legalBtn =
+    "cursor-pointer border-0 bg-transparent p-0 text-left font-inherit text-inherit underline-offset-2 hover:underline";
   return (
     <footer className="landing-site-footer w-full" role="contentinfo">
       <svg className="block h-11 w-full shrink-0" viewBox="0 0 1440 48" preserveAspectRatio="none" aria-hidden>
@@ -123,9 +125,26 @@ export function LandingSiteFooter() {
               <p className="text-xs font-medium tracking-wide text-white/55">Local marketplace for every community</p>
             </div>
             <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-sm text-white/85" aria-label="Legal">
-              <a href="#">Privacy Policy</a>
+              {onOpenPrivacy ? (
+                <button type="button" className={legalBtn} onClick={onOpenPrivacy}>
+                  Privacy Policy
+                </button>
+              ) : (
+                <a href="#">Privacy Policy</a>
+              )}
               <a href="#">Copyright</a>
-              <a href="#">Terms of Service</a>
+              {onOpenTerms ? (
+                <button type="button" className={legalBtn} onClick={onOpenTerms}>
+                  Terms & conditions
+                </button>
+              ) : (
+                <a href="#">Terms & conditions</a>
+              )}
+              {onOpenAbout ? (
+                <button type="button" className={legalBtn} onClick={onOpenAbout}>
+                  About
+                </button>
+              ) : null}
             </nav>
             <div className="flex items-center justify-center gap-2 md:gap-3">
               <a href="#" className="landing-footer-social" aria-label="Facebook">

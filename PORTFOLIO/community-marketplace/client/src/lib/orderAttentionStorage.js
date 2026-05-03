@@ -1,3 +1,5 @@
+import { apiRequest } from "./appApi.js";
+
 export const PURCHASES_PENDING_BADGE_STORAGE_KEY = "lm_recent_pending_purchase_ids_v1";
 export const PURCHASES_RECENT_STATUS_HIGHLIGHT_STORAGE_KEY = "lm_recent_status_highlight_ids_by_tab_v1";
 export const PURCHASES_RECENT_STATUS_BADGE_STORAGE_KEY = "lm_recent_status_badge_ids_by_tab_v1";
@@ -155,3 +157,75 @@ export const orderStatusToTabId = (status) => {
   if (s === "cancelled") return "cancelled";
   return s ? "processing" : "";
 };
+
+/** Matches server `normalizeOrderIdList` cap — avoids oversized payloads on PUT /me/order-attention. */
+export const MAX_ORDER_ATTENTION_IDS_PER_LIST = 400;
+
+const clampOrderIdList = (arr) => {
+  const out = [];
+  const seen = new Set();
+  for (const x of arr || []) {
+    const id = String(x || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= MAX_ORDER_ATTENTION_IDS_PER_LIST) break;
+  }
+  return out;
+};
+
+/**
+ * Union dismissed (“seen”) order ids per tab — used when merging local cache with GET /me/order-attention.
+ */
+export const mergeDismissedIdsByTab = (a, b) => {
+  const out = emptyOrderAttentionByTab();
+  for (const t of RECENT_ORDER_TAB_KEYS) {
+    const set = new Set();
+    for (const id of [...(a?.[t] ?? []), ...(b?.[t] ?? [])]) {
+      const s = String(id || "").trim();
+      if (s) set.add(s);
+    }
+    out[t] = clampOrderIdList(Array.from(set));
+  }
+  return out;
+};
+
+/**
+ * Parses one side of GET /me/order-attention into dismissed ids per tab.
+ * Uses union of `badgeIdsByTab` and `highlightIdsByTab` so older rows remain compatible.
+ */
+export const attentionApiSideToDismissed = (side) => {
+  if (!side || typeof side !== "object") return emptyOrderAttentionByTab();
+  const badge = normalizeAttentionIdsByTabObject(side.badgeIdsByTab ?? side.badge_ids_by_tab);
+  const highlight = normalizeAttentionIdsByTabObject(side.highlightIdsByTab ?? side.highlight_ids_by_tab);
+  return mergeDismissedIdsByTab(badge, highlight);
+};
+
+/**
+ * Builds the JSON shape for PUT /me/order-attention (`buyer_attention` / `seller_attention` stored fields).
+ * `badgeIdsByTab` holds dismissed order ids per tab (same semantics as client localStorage).
+ */
+export const dismissedByTabToAttentionSidePayload = (dismissedByTab) => {
+  const badgeIdsByTab = emptyOrderAttentionByTab();
+  for (const t of RECENT_ORDER_TAB_KEYS) {
+    badgeIdsByTab[t] = clampOrderIdList(Array.isArray(dismissedByTab?.[t]) ? dismissedByTab[t] : []);
+  }
+  const pending = badgeIdsByTab.pending ?? [];
+  return {
+    badgeIdsByTab,
+    highlightIdsByTab: emptyOrderAttentionByTab(),
+    recentPendingIds: clampOrderIdList(pending),
+  };
+};
+
+export async function fetchOrderAttentionFromApi(token) {
+  return apiRequest("/me/order-attention", { token });
+}
+
+export async function putOrderAttentionToApi(token, buyerDismissedByTab, sellerDismissedByTab) {
+  const body = {
+    buyer: dismissedByTabToAttentionSidePayload(buyerDismissedByTab),
+    seller: dismissedByTabToAttentionSidePayload(sellerDismissedByTab),
+  };
+  await apiRequest("/me/order-attention", { method: "PUT", token, body });
+}

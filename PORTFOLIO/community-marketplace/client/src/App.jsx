@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import tabLogo from "./assets/new-icon-only.png";
-import landingFeaturesPicture from "./assets/new-auth-landing.png?w=360;480;640;768&format=avif;webp;png&quality=80&as=picture";
+import landingFeaturesArtworkPicture from "./assets/new-auth-landing.png?w=360;480;640;768&format=avif;webp;png&quality=80&as=picture";
 import { createSupabaseClient } from "./lib/supabaseClient";
 import {
   isLikelySameCommunityName,
@@ -12,7 +12,11 @@ import {
 import { formatBrowseLabel, getListingCategoryShortLabel, getVerticalById, VERTICALS } from "./categoryNav.js";
 import { gradientForId, initialsFromName } from "./communityUi.js";
 import { LoggedInHeader } from "./components/LoggedInHeader.jsx";
+import { SendFeedbackView } from "./components/SendFeedbackView.jsx";
+import { SecondaryScreenHeader } from "./components/SecondaryScreenHeader.jsx";
+import { AboutLinkMartBody, TermsLinkMartBody } from "./components/legal/LinkMartLegalContent.jsx";
 import { ActivityHubOrderStatusStrip } from "./components/ActivityHubOrderStatusStrip.jsx";
+import { ActivityPrimaryTabs } from "./components/ActivityPrimaryTabs.jsx";
 import { CommunityCourierPanel } from "./components/marketplace/CommunityCourierPanel.jsx";
 import {
   LazyPublicListingPage,
@@ -25,7 +29,7 @@ import {
   LazySellerBuyerFeedbackList,
   LazyCourierBuyerFeedbackList,
 } from "./appCodeSplit.jsx";
-import { ImagetoolsPicture } from "./components/media/ImagetoolsPicture.jsx";
+import { LandingArtworkCard } from "./components/landing/LandingArtworkCard.jsx";
 import { StableMediaImage, StableAvatar } from "./components/media/StableMediaImage.jsx";
 import { ProductListingMedia } from "./components/media/ProductListingMedia.jsx";
 import {
@@ -49,6 +53,7 @@ import {
   writeThemeMode,
 } from "./lib/appSession.js";
 import { apiRequest, isUnauthorizedApiError } from "./lib/appApi.js";
+import { useFocusTrap } from "./lib/useFocusTrap.js";
 import {
   migrateLegacyNotificationInboxStorage,
   mergeNotificationInboxLists,
@@ -66,6 +71,7 @@ import {
   deleteNotificationRemote,
   deleteAllNotificationsRemote,
 } from "./lib/marketplaceNotifications.js";
+import { CHAT_QUICK_EMOJIS } from "./lib/chatComposerEmojis.js";
 import { UI_KIT } from "./lib/appUiKit.js";
 import {
   formatDisplayName,
@@ -118,6 +124,10 @@ import {
   RECENT_ORDER_TAB_KEYS,
   ORDERS_STATUS_TABS,
   orderMatchesOrdersStatusTab,
+  mergeDismissedIdsByTab,
+  attentionApiSideToDismissed,
+  fetchOrderAttentionFromApi,
+  putOrderAttentionToApi,
 } from "./lib/orderAttentionStorage.js";
 import { getActivityTabChrome } from "./lib/activityTabTheme.js";
 import {
@@ -127,14 +137,17 @@ import {
   orderFulfillmentBannerText,
 } from "./lib/orderFulfillmentUi.js";
 import { ORDER_CANCELLATION_REASON_OPTIONS } from "./lib/orderCancellationReasons.js";
-import { computeMarketplaceFeedbackForText } from "./lib/marketplaceFeedbackToast.js";
 import {
   ensureImageFileUnderMaxBytes,
   MAX_AVATAR_IMAGE_BYTES,
   MAX_LISTING_COMMUNITY_IMAGE_BYTES,
 } from "./lib/compressImageFile.js";
 import { resolveListingImagesForSave } from "./lib/resolveListingImagesForSave.js";
-import { LANDING_DISCOVERY_SLIDES, BROWSE_QUICK_FILTERS } from "./lib/landingDiscoveryData.js";
+import {
+  LANDING_DISCOVERY_CARDS,
+  LANDING_DISCOVERY_SLIDES,
+  BROWSE_QUICK_FILTERS,
+} from "./lib/landingDiscoveryData.js";
 import { quickFilterIcon, categoryIcon } from "./components/browse/BrowseFilterIcons.jsx";
 import { SectionHeading } from "./components/marketplace/SectionHeading.jsx";
 import { FilterOptionButton } from "./components/marketplace/FilterOptionButton.jsx";
@@ -162,6 +175,7 @@ import { MobileFormActions } from "./components/ui/MobileFormActions.jsx";
 import { validateConfirmPassword, validateEmail, validatePasswordClient } from "./lib/formValidation.js";
 import { MobileAppShell } from "./layouts/MobileAppShell.jsx";
 import { useBodyScrollLock } from "./hooks/useBodyScrollLock.js";
+import { useVisualViewportBottomOverlap } from "./hooks/useVisualViewportBottomOverlap.js";
 import { useMobileViewport } from "./hooks/useMobileViewport.js";
 import { useMobilePullToRefresh } from "./hooks/useMobilePullToRefresh.js";
 import {
@@ -207,6 +221,42 @@ function writeJoinedShopCommunityId(userId, communityId) {
   } catch {
     /* ignore */
   }
+}
+
+/** Keep in sync with server `MAX_LISTINGS_LIMIT` in `listListings`. */
+const LISTINGS_API_PAGE_SIZE = 60;
+
+/**
+ * Fetches all pages of `GET /listings` for a given query (avoids the default 24-item cap).
+ * De-dupes by listing `id` across pages.
+ */
+async function fetchAllListingsPages(token, baseQs) {
+  const qsBase =
+    typeof baseQs === "string"
+      ? new URLSearchParams(baseQs)
+      : baseQs instanceof URLSearchParams
+        ? baseQs
+        : new URLSearchParams(baseQs);
+  const all = [];
+  const seen = new Set();
+  let offset = 0;
+  for (;;) {
+    const qs = new URLSearchParams(qsBase);
+    qs.set("limit", String(LISTINGS_API_PAGE_SIZE));
+    qs.set("offset", String(offset));
+    const data = await apiRequest(`/listings?${qs.toString()}`, { token });
+    const batch = Array.isArray(data?.listings) ? data.listings : [];
+    for (const row of batch) {
+      const id = String(row?.id ?? "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      all.push(row);
+    }
+    const pageHasMore = Boolean(data?.page?.hasMore);
+    if (!pageHasMore || batch.length === 0) break;
+    offset += batch.length;
+  }
+  return all;
 }
 
 function listingPriceCents(l) {
@@ -544,8 +594,69 @@ const COMMERCE_FLOW_SELLER_STORAGE_KEY = "linkmart_commerce_flow_seller_v1";
 /** Legacy single key — migrated once into buyer/seller keys. */
 const COMMERCE_FLOW_VIEW_STORAGE_KEY_LEGACY = "linkmart_commerce_flow_view_v1";
 const CHAT_THREADS_STORAGE_KEY = "linkmart_chat_threads_v1";
+const CHAT_DISMISSED_STORAGE_KEY = "linkmart_chat_dismissed_v1";
 const CHAT_MESSAGES_MAX_PER_THREAD = 250;
 const chatStorageKeyForUser = (userId) => `${CHAT_THREADS_STORAGE_KEY}:${String(userId || "").trim()}`;
+const chatDismissedStorageKeyForUser = (userId) => `${CHAT_DISMISSED_STORAGE_KEY}:${String(userId || "").trim()}`;
+
+function readDismissedChatKeysFromStorage(userId) {
+  if (typeof window === "undefined" || !userId) return [];
+  try {
+    const raw = window.localStorage.getItem(chatDismissedStorageKeyForUser(userId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((k) => String(k || "").trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function isThreadDismissed(thread, dismissedKeysSet) {
+  const cid = String(thread?.conversationId || "").trim();
+  const pid = String(thread?.participantId || "").trim();
+  if (cid && dismissedKeysSet.has(`conv:${cid}`)) return true;
+  if (pid && dismissedKeysSet.has(`user:${pid}`)) return true;
+  return false;
+}
+
+/** Short relative time for chat inbox rows (Messenger-style). */
+function formatChatListTimeLabel(tsMs) {
+  if (!Number.isFinite(tsMs) || tsMs <= 0) return "";
+  const d = new Date(tsMs);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = Date.now();
+  const dayMs = 86400000;
+  const diff = now - tsMs;
+  if (diff < 60 * 1000) return "now";
+  if (diff < 60 * 60 * 1000) return `${Math.max(1, Math.floor(diff / 60000))}m`;
+  if (diff < 24 * 60 * 60 * 1000) return `${Math.max(1, Math.floor(diff / 3600000))}h`;
+  const startToday = new Date();
+  startToday.setHours(0, 0, 0, 0);
+  if (tsMs >= startToday.getTime() - dayMs && tsMs < startToday.getTime()) return "Yesterday";
+  if (diff < 7 * dayMs) {
+    return d.toLocaleDateString(undefined, { weekday: "short" });
+  }
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Short timestamp inside message bubbles (today = time only). */
+function formatChatMessageTime(tsMs) {
+  if (!Number.isFinite(tsMs) || tsMs <= 0) return "";
+  const d = new Date(tsMs);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (isToday) {
+    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+  if (d.toDateString() === yesterday.toDateString()) {
+    return `Yesterday ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+  }
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
 
 function createChatMessageId() {
   return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -796,6 +907,11 @@ function App() {
     }
   });
   const [landingDiscoverySlide, setLandingDiscoverySlide] = useState(0);
+  /** Mobile landing carousel: one category card per step (desktop uses `landingDiscoverySlide` groups of 3). */
+  const [landingDiscoveryCardIndex, setLandingDiscoveryCardIndex] = useState(0);
+  /** Logged-out legal overlay: same copy as in-app About / Terms (`LinkMartLegalContent`). */
+  const [landingLegalView, setLandingLegalView] = useState(null);
+  const [landingTermsScrollPrivacy, setLandingTermsScrollPrivacy] = useState(false);
   const [usersList, setUsersList] = useState([]);
   const usersListRef = useRef([]);
   usersListRef.current = usersList;
@@ -808,8 +924,14 @@ function App() {
   const [chatDraftByUserId, setChatDraftByUserId] = useState({});
   const [messagesMobilePane, setMessagesMobilePane] = useState("list");
   const [messagesMobileListTab, setMessagesMobileListTab] = useState("conversations");
+  const [messagesThreadMenuOpen, setMessagesThreadMenuOpen] = useState(false);
+  const [chatEmojiPickerOpen, setChatEmojiPickerOpen] = useState(false);
+  const [dismissedChatKeys, setDismissedChatKeys] = useState([]);
+  const messagesThreadMenuWrapRef = useRef(null);
+  const chatEmojiPickerWrapRef = useRef(null);
   const chatThreadViewportRef = useRef(null);
   const chatComposerInputRef = useRef(null);
+  const chatScrollLockBottomRef = useRef(true);
   const [messagePeopleSearch, setMessagePeopleSearch] = useState("");
   const lastReadSyncKeyRef = useRef("");
   const [messagePeopleCommunityFilter, setMessagePeopleCommunityFilter] = useState("all");
@@ -828,6 +950,8 @@ function App() {
     }
     return VIEWS.BROWSE;
   });
+  /** Mobile header chrome title for Send feedback (Thank you vs form). Reset when leaving the view. */
+  const [sendFeedbackPhase, setSendFeedbackPhase] = useState("form");
   const [activityTab, setActivityTab] = useState(readInitialActivityTab);
   const activityBuying = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.BUYING;
   const activitySelling = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.SELLING;
@@ -912,7 +1036,9 @@ function App() {
       (activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP) &&
       prev !== VIEWS.BROWSE &&
       prev !== VIEWS.COMMUNITY_SHOP;
-    if (!enteredMarketplaceFeed) return;
+    const enteredAboutOrTerms =
+      (activeView === VIEWS.ABOUT || activeView === VIEWS.TERMS) && prev !== VIEWS.ABOUT && prev !== VIEWS.TERMS;
+    if (!enteredMarketplaceFeed && !enteredAboutOrTerms) return;
     if (typeof window === "undefined") return;
     window.requestAnimationFrame(() => {
       const main = document.getElementById("main-content");
@@ -932,6 +1058,11 @@ function App() {
   sellerListingsRef.current = sellerListings;
   const [sellerListingsLoading, setSellerListingsLoading] = useState(false);
   const [sellerListingsFetchError, setSellerListingsFetchError] = useState("");
+  /** Active listings when viewing another member's profile (GET /listings?sellerId=). */
+  const [sellerProfileShopListings, setSellerProfileShopListings] = useState([]);
+  const [sellerProfileShopLoading, setSellerProfileShopLoading] = useState(false);
+  const [sellerProfileShopError, setSellerProfileShopError] = useState("");
+  const [sellerProfileShopFetchKey, setSellerProfileShopFetchKey] = useState(0);
   const [listingsLoading, setListingsLoading] = useState(false);
   /** True while refetching listings when we already show rows (manual refresh / pull-to-refresh). */
   const [listingsRefreshing, setListingsRefreshing] = useState(false);
@@ -1036,6 +1167,72 @@ function App() {
       // ignore
     }
   }, [user?.id, sellerOrderDismissedIdsByTab]);
+
+  const orderAttentionSchemaMissingRef = useRef(false);
+  const orderAttentionPutTimerRef = useRef(null);
+  /** After first GET /me/order-attention attempt finishes — enables debounced PUT sync. */
+  const [orderAttentionRemoteReady, setOrderAttentionRemoteReady] = useState(false);
+
+  useEffect(() => {
+    if (!user?.id) {
+      orderAttentionSchemaMissingRef.current = false;
+      setOrderAttentionRemoteReady(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!token || !user?.id) return undefined;
+    let cancelled = false;
+    setOrderAttentionRemoteReady(false);
+    (async () => {
+      const localBuyer = readStoredRecentIdsByTab(buyerOrderDismissedStorageKey(user.id));
+      const localSeller = readStoredRecentIdsByTab(sellerOrderDismissedStorageKey(user.id));
+      try {
+        const data = await fetchOrderAttentionFromApi(token);
+        if (cancelled) return;
+        if (data?.schemaMissing) {
+          orderAttentionSchemaMissingRef.current = true;
+          setOrderAttentionRemoteReady(true);
+          return;
+        }
+        const buyerRemote = attentionApiSideToDismissed(data?.buyer);
+        const sellerRemote = attentionApiSideToDismissed(data?.seller);
+        setBuyerOrderDismissedIdsByTab(mergeDismissedIdsByTab(localBuyer, buyerRemote));
+        setSellerOrderDismissedIdsByTab(mergeDismissedIdsByTab(localSeller, sellerRemote));
+      } catch {
+        if (!cancelled) {
+          /* keep React state from localStorage hydrate */
+        }
+      } finally {
+        if (!cancelled) setOrderAttentionRemoteReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, user?.id]);
+
+  useEffect(() => {
+    if (!token || !user?.id || !orderAttentionRemoteReady || orderAttentionSchemaMissingRef.current) {
+      return undefined;
+    }
+    if (orderAttentionPutTimerRef.current) window.clearTimeout(orderAttentionPutTimerRef.current);
+    orderAttentionPutTimerRef.current = window.setTimeout(() => {
+      orderAttentionPutTimerRef.current = null;
+      void putOrderAttentionToApi(token, buyerOrderDismissedIdsByTab, sellerOrderDismissedIdsByTab).catch((err) => {
+        if (err?.status === 503) orderAttentionSchemaMissingRef.current = true;
+      });
+    }, 650);
+    return () => {
+      if (orderAttentionPutTimerRef.current) window.clearTimeout(orderAttentionPutTimerRef.current);
+    };
+  }, [
+    token,
+    user?.id,
+    orderAttentionRemoteReady,
+    buyerOrderDismissedIdsByTab,
+    sellerOrderDismissedIdsByTab,
+  ]);
 
   useEffect(() => {
     if (!completedRateModalOrderId) return;
@@ -1170,16 +1367,13 @@ function App() {
   const [listingSecondOptionOpen, setListingSecondOptionOpen] = useState(false);
   const [listingSaving, setListingSaving] = useState(false);
   const [listingEditOverlayOpen, setListingEditOverlayOpen] = useState(false);
-  /** Inline banner when publish/save listing fails (toast still fires). */
+  /** Inline banner when publish/save listing fails (a notification is still added for the same message). */
   const [listingPublishError, setListingPublishError] = useState("");
   const [listingFieldErrors, setListingFieldErrors] = useState({});
-  /** Stacked marketplace toasts (e.g. multiple “Order placed” while prior toasts are still visible). */
-  const [marketplaceToasts, setMarketplaceToasts] = useState([]);
   const [notificationInbox, setNotificationInbox] = useState(() =>
     mergeNotificationInboxLists([], readLocalSessionNotificationsFromStorage()),
   );
   const [notificationsSyncError, setNotificationsSyncError] = useState("");
-  const marketplaceToastTimeoutsRef = useRef({});
   const notificationsRealtimeTimerRef = useRef(null);
 
   const unreadNotificationCount = useMemo(
@@ -1273,31 +1467,18 @@ function App() {
     }
   }, [user?.id]);
 
-  const dismissMarketplaceToast = useCallback((id) => {
-    const tid = marketplaceToastTimeoutsRef.current[id];
-    if (tid) window.clearTimeout(tid);
-    delete marketplaceToastTimeoutsRef.current[id];
-    setMarketplaceToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
-  const clearMarketplaceToasts = useCallback(() => {
-    Object.values(marketplaceToastTimeoutsRef.current).forEach((tid) => window.clearTimeout(tid));
-    marketplaceToastTimeoutsRef.current = {};
-    setMarketplaceToasts([]);
-  }, []);
-  const pushMarketplaceToast = useCallback((raw) => {
-    const text = String(raw ?? "").trim();
-    if (!text) return;
-    const id =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `toast-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    setMarketplaceToasts((prev) => [...prev, { id, text }]);
-    addNotification(text);
-    const tid = window.setTimeout(() => {
-      delete marketplaceToastTimeoutsRef.current[id];
-      setMarketplaceToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 10000);
-    marketplaceToastTimeoutsRef.current[id] = tid;
+  /** Adds to the notification inbox only (no ephemeral on-screen toast stack). */
+  const pushMarketplaceToast = useCallback(
+    (raw) => {
+      const text = String(raw ?? "").trim();
+      if (!text) return;
+      addNotification(text);
+    },
+    [addNotification],
+  );
+
+  const notifyFeedbackSubmitted = useCallback(() => {
+    addNotification("Thanks — your feedback was sent.");
   }, [addNotification]);
 
   useEffect(() => {
@@ -1351,13 +1532,6 @@ function App() {
     }
   }, [activeView, unreadNotificationCount, markAllNotificationsRead]);
 
-  useEffect(
-    () => () => {
-      Object.values(marketplaceToastTimeoutsRef.current).forEach((t) => window.clearTimeout(t));
-      marketplaceToastTimeoutsRef.current = {};
-    },
-    [],
-  );
   const [communities, setCommunities] = useState([]);
   const communitiesRef = useRef([]);
   communitiesRef.current = communities;
@@ -1481,24 +1655,28 @@ function App() {
 
     return pickFromPool(communities);
   }, [communities, profileCityProvincePostal, profileCommunityName]);
-  /** Same membership signals as server counts: `profiles.community_id`, plus text/name fallback + explicit join + creator. */
+  /** True only when `profiles.community_id` matches the open shop — visiting/creator alone does not count as membership (prevents “Joined” when only viewing). */
   const isMemberOfOpenCommunity = useMemo(() => {
     if (!shopCommunityId) return false;
     const sid = String(shopCommunityId);
-    if (String(user?.communityId || "").trim() === sid) return true;
-    if (String(listingCommunityFromProfile.id || "") === sid) return true;
-    if (String(joinedShopCommunityId || "") === sid) return true;
+    return String(user?.communityId || "").trim() === sid;
+  }, [shopCommunityId, user?.communityId]);
+  /** Creator of the open community — Edit / add hero image; still shows Visitor/Not a member until `community_id` matches. */
+  const isOwnerOfOpenCommunity = useMemo(() => {
+    if (!shopCommunityId || !user?.id) return false;
+    const sid = String(shopCommunityId);
     const openCommunity = communities.find((c) => String(c.id || "") === sid);
-    if (openCommunity?.createdBy && String(openCommunity.createdBy) === String(user?.id || "")) return true;
-    return false;
-  }, [
-    communities,
-    joinedShopCommunityId,
-    listingCommunityFromProfile.id,
-    shopCommunityId,
-    user?.communityId,
-    user?.id,
-  ]);
+    return !!(openCommunity?.createdBy && String(openCommunity.createdBy) === String(user.id));
+  }, [communities, shopCommunityId, user?.id]);
+  /** Directory “Joined”: must match server `community_id` for that row (same rule as shop badge). */
+  const isMemberOfCommunityRow = useCallback(
+    (c) => {
+      const cid = String(c?.id || "").trim();
+      if (!cid) return false;
+      return String(user?.communityId || "").trim() === cid;
+    },
+    [user?.communityId],
+  );
   const getDisplayedMemberCount = useCallback((community) => {
     const raw = community?.memberCount ?? community?.member_count ?? 0;
     const count = Number(raw);
@@ -1531,7 +1709,6 @@ function App() {
   const communityShopListingsQueryKeyRef = useRef(null);
   /** Clear orders when `ordersRole` changes; keep rows when re-entering Orders with the same role. */
   const ordersDataQueryKeyRef = useRef(null);
-  const communityListingsSyncedRef = useRef(null);
   const skipAutoCommunityBrowseRef = useRef(false);
   const [quickAddModalOpen, setQuickAddModalOpen] = useState(false);
   const [quickAddListing, setQuickAddListing] = useState(null);
@@ -1918,26 +2095,9 @@ function App() {
           qs.set("verticalId", browseVerticalId);
           if (browseSubId && browseSubId !== "all") qs.set("subId", browseSubId);
         }
-        const data = await apiRequest(`/listings?${qs.toString()}`, { token });
+        const rows = await fetchAllListingsPages(token, qs);
         if (cancelledRef?.()) return;
-        const rows = Array.isArray(data.listings) ? data.listings : [];
-        let nextRows =
-          inCommunity && !isMemberOfOpenCommunity
-            ? rows.filter((row) => String(row.sellerId || "") !== String(user?.id || ""))
-            : rows;
-        const communityRow =
-          inCommunity && shopCommunityId
-            ? communitiesRef.current.find((x) => String(x.id) === String(shopCommunityId))
-            : null;
-        if (inCommunity && isMemberOfOpenCommunity && nextRows.length === 0 && communityRow?.id) {
-          await joinCommunityAndAttachListings(communityRow);
-          if (cancelledRef?.()) return;
-          const retry = await apiRequest(`/listings?communityId=${encodeURIComponent(String(shopCommunityId))}`, { token });
-          if (cancelledRef?.()) return;
-          const retriedRows = Array.isArray(retry?.listings) ? retry.listings : [];
-          nextRows = retriedRows;
-        }
-        setListings(nextRows);
+        setListings(rows);
       } catch (e) {
         if (cancelledRef?.()) return;
         if (!soft) {
@@ -1951,16 +2111,7 @@ function App() {
         setListingsRefreshing(false);
       }
     },
-    [
-      token,
-      activeView,
-      browseVerticalId,
-      browseSubId,
-      shopCommunityId,
-      user?.id,
-      isMemberOfOpenCommunity,
-      joinCommunityAndAttachListings,
-    ],
+    [token, activeView, browseVerticalId, browseSubId, shopCommunityId],
   );
 
   const refreshCommunityShopListings = useCallback(() => {
@@ -2061,6 +2212,7 @@ function App() {
   }, [token, user?.id, user?.community]);
 
   const [mobileCommunityFiltersOpen, setMobileCommunityFiltersOpen] = useState(false);
+  const [mobileCommunityActionsOpen, setMobileCommunityActionsOpen] = useState(false);
   const [mobileTopChromeCollapsed, setMobileTopChromeCollapsed] = useState(false);
   const [mobileBrowseCategoryQuery, setMobileBrowseCategoryQuery] = useState("");
   const browseVerticalsForMobileDrawer = useMemo(() => {
@@ -2371,6 +2523,8 @@ function App() {
   }, []);
 
   const googleBtnRef = useRef(null);
+  const authModalPanelRef = useRef(null);
+  const [googleAuthButtonWidth, setGoogleAuthButtonWidth] = useState(320);
 
   useEffect(() => {
     if (theme === "dark") document.documentElement.classList.add("dark");
@@ -2572,7 +2726,13 @@ function App() {
         },
       });
       googleBtnRef.current.innerHTML = "";
-      window.google.accounts.id.renderButton(googleBtnRef.current, { theme: "outline", size: "large", shape: "pill", text: authMode === "signup" ? "signup_with" : "signin_with", width: 320 });
+      window.google.accounts.id.renderButton(googleBtnRef.current, {
+        theme: "outline",
+        size: "large",
+        shape: "pill",
+        text: authMode === "signup" ? "signup_with" : "signin_with",
+        width: googleAuthButtonWidth,
+      });
     };
     if (window.google?.accounts?.id) return initGoogle();
     const script = document.createElement("script");
@@ -2581,7 +2741,7 @@ function App() {
     script.defer = true;
     script.onload = initGoogle;
     document.body.appendChild(script);
-  }, [authMode, user, authPanelVisible]);
+  }, [authMode, user, authPanelVisible, googleAuthButtonWidth]);
 
   const openAuthPanel = useCallback((mode) => {
     setAuthMode(mode);
@@ -2598,6 +2758,54 @@ function App() {
     setShowConfirmPassword(false);
   }, []);
 
+  const openLandingAbout = useCallback(() => {
+    closeAuthPanel();
+    setLandingTermsScrollPrivacy(false);
+    setLandingLegalView("about");
+  }, [closeAuthPanel]);
+
+  const openLandingTerms = useCallback(() => {
+    closeAuthPanel();
+    setLandingTermsScrollPrivacy(false);
+    setLandingLegalView("terms");
+  }, [closeAuthPanel]);
+
+  const openLandingPrivacy = useCallback(() => {
+    closeAuthPanel();
+    setLandingTermsScrollPrivacy(true);
+    setLandingLegalView("terms");
+  }, [closeAuthPanel]);
+
+  useEffect(() => {
+    if (!landingLegalView) return undefined;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setLandingLegalView(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [landingLegalView]);
+
+  useEffect(() => {
+    if (landingLegalView !== "terms" || !landingTermsScrollPrivacy) return undefined;
+    let cancelled = false;
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        document.getElementById("linkmart-privacy-policy")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        setLandingTermsScrollPrivacy(false);
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(id);
+    };
+  }, [landingLegalView, landingTermsScrollPrivacy]);
+
   useEffect(() => {
     if (!authPanelVisible || user) return undefined;
     const onKeyDown = (event) => {
@@ -2611,6 +2819,26 @@ function App() {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [authPanelVisible, user, closeAuthPanel]);
+
+  useFocusTrap(authPanelVisible && !user, authModalPanelRef, { initialFocusId: "auth-email" });
+
+  useEffect(() => {
+    if (!authPanelVisible || user || authMode === "signup" || !GOOGLE_CLIENT_ID) return undefined;
+    const el = googleBtnRef.current;
+    if (!el) return undefined;
+    const clamp = (w) => Math.max(200, Math.min(320, Math.floor(w)));
+    const apply = () => {
+      const w = el.getBoundingClientRect().width;
+      setGoogleAuthButtonWidth((prev) => {
+        const next = clamp(w || prev);
+        return prev === next ? prev : next;
+      });
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [authPanelVisible, user, authMode]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.PROFILE) return undefined;
@@ -2799,8 +3027,10 @@ function App() {
       setChatThreads([]);
       setActiveChatUserId("");
       setChatComposer("");
+      setDismissedChatKeys([]);
       return;
     }
+    setDismissedChatKeys(readDismissedChatKeysFromStorage(user.id));
     if (!token) return;
     let cancelled = false;
     (async () => {
@@ -2826,6 +3056,16 @@ function App() {
       // ignore
     }
   }, [chatThreads, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    try {
+      if (typeof window === "undefined") return;
+      window.localStorage.setItem(chatDismissedStorageKeyForUser(user.id), JSON.stringify(dismissedChatKeys));
+    } catch {
+      // ignore
+    }
+  }, [dismissedChatKeys, user?.id]);
 
   useEffect(() => {
     const supabase = createSupabaseClient();
@@ -2943,7 +3183,7 @@ function App() {
       if (!form.acceptedTerms) {
         setAuthInlineErrors((prev) => ({
           ...prev,
-          terms: "Check the box to accept the Terms of Use and Privacy Policy.",
+          terms: "Check the box to accept the Terms & conditions and Privacy Policy.",
         }));
         return;
       }
@@ -3206,6 +3446,11 @@ function App() {
   );
   const isViewingSellerProfile =
     Boolean(viewedProfileUser) && String(viewedProfileUser?.id || "") !== String(user?.id || "");
+  /** True when Profile shows another member’s shop column (not only when `usersById` has cached that user). */
+  const showSellerProfileShopAside = useMemo(() => {
+    const sid = String(profileViewUserId || "").trim();
+    return Boolean(sid) && sid !== String(user?.id || "");
+  }, [profileViewUserId, user?.id]);
   const profileRenderUser = useMemo(() => {
     if (!isViewingSellerProfile) return user;
     const v = viewedProfileUser || {};
@@ -3240,6 +3485,39 @@ function App() {
     if (isViewingSellerProfile && profileEditing) setProfileEditing(false);
   }, [isViewingSellerProfile, profileEditing]);
 
+  useEffect(() => {
+    const otherId = String(profileViewUserId || "").trim();
+    const viewingOtherProfile = Boolean(otherId) && otherId !== String(user?.id || "");
+    if (activeView !== VIEWS.PROFILE || !viewingOtherProfile) {
+      setSellerProfileShopListings([]);
+      setSellerProfileShopError("");
+      setSellerProfileShopLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setSellerProfileShopLoading(true);
+    setSellerProfileShopError("");
+    (async () => {
+      try {
+        const data = await apiRequest(`/listings?sellerId=${encodeURIComponent(otherId)}&limit=60`, {
+          ...(token ? { token } : {}),
+          cache: "no-store",
+        });
+        if (!cancelled) setSellerProfileShopListings(Array.isArray(data?.listings) ? data.listings : []);
+      } catch (e) {
+        if (!cancelled) {
+          setSellerProfileShopListings([]);
+          setSellerProfileShopError(e?.message || "Could not load their listings.");
+        }
+      } finally {
+        if (!cancelled) setSellerProfileShopLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView, profileViewUserId, user?.id, token, sellerProfileShopFetchKey]);
+
   const ensureDirectConversation = useCallback(
     async (targetId) => {
       if (!token || !user?.id) return null;
@@ -3271,6 +3549,7 @@ function App() {
   const openChatThread = useCallback((participantId) => {
     const targetId = String(participantId || "").trim();
     if (!targetId) return;
+    setDismissedChatKeys((prev) => prev.filter((k) => k !== `user:${targetId}`));
     setActiveChatUserId(targetId);
     setMessagesMobilePane("thread");
     setActiveView(VIEWS.MESSAGES);
@@ -3290,13 +3569,18 @@ function App() {
     [ensureDirectConversation, openChatThread, user?.id],
   );
 
+  const visibleChatThreads = useMemo(() => {
+    const dismissed = new Set(dismissedChatKeys);
+    return chatThreads.filter((t) => !isThreadDismissed(t, dismissed));
+  }, [chatThreads, dismissedChatKeys]);
+
   const sortedChatThreads = useMemo(() => {
-    return [...chatThreads].sort((a, b) => {
+    return [...visibleChatThreads].sort((a, b) => {
       const aLast = Array.isArray(a?.messages) && a.messages.length > 0 ? Number(a.messages[a.messages.length - 1].createdAt || 0) : 0;
       const bLast = Array.isArray(b?.messages) && b.messages.length > 0 ? Number(b.messages[b.messages.length - 1].createdAt || 0) : 0;
       return bLast - aLast;
     });
-  }, [chatThreads]);
+  }, [visibleChatThreads]);
 
   useEffect(() => {
     if (activeChatUserId) return;
@@ -3308,11 +3592,23 @@ function App() {
     if (activeView !== VIEWS.MESSAGES) {
       setMessagesMobilePane("list");
       setMessagesMobileListTab("conversations");
+      setChatEmojiPickerOpen(false);
     }
   }, [activeView]);
 
+  useEffect(() => {
+    if (activeView !== VIEWS.SEND_FEEDBACK) setSendFeedbackPhase("form");
+  }, [activeView]);
+
+  useEffect(() => {
+    setChatEmojiPickerOpen(false);
+  }, [activeChatUserId]);
+
   const { isMobile: isMobileViewport } = useMobileViewport();
   useBodyScrollLock(activeView === VIEWS.MESSAGES && messagesMobilePane === "thread" && isMobileViewport);
+  const messagesThreadKeyboardInsetPx = useVisualViewportBottomOverlap(
+    activeView === VIEWS.MESSAGES && messagesMobilePane === "thread" && isMobileViewport,
+  );
 
   useEffect(() => {
     if (activeView !== VIEWS.ACTIVITY) {
@@ -3411,7 +3707,11 @@ function App() {
         return;
       }
       const target = e.target;
-      if (target instanceof Element && target.closest("button,a,input,textarea,select,[role='button'],[data-no-swipe-nav]")) {
+      if (
+        target instanceof Element &&
+        !target.closest("[data-allow-tab-swipe]") &&
+        target.closest("button,a,input,textarea,select,[role='button'],[data-no-swipe-nav]")
+      ) {
         secondarySwipeRef.current = {
           x: 0, y: 0, dx: 0, dy: 0, t: 0, width: 0, tracking: false, horizontal: false, baseView: secondarySwipeNavView,
         };
@@ -3553,7 +3853,8 @@ function App() {
   /** Use a single active scroll surface while overlays are open (product detail on mobile, or edit overlay on any viewport). */
   const lockMainScrollForOverlay =
     (isMobileViewport && activeView === VIEWS.PRODUCT_DETAIL && Boolean(productInspect)) ||
-    listingEditOverlayOpen;
+    listingEditOverlayOpen ||
+    (isMobileViewport && activeView === VIEWS.MESSAGES && messagesMobilePane === "thread");
 
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
@@ -3573,10 +3874,60 @@ function App() {
   const activeChatUser = useMemo(() => usersById.get(String(activeChatUserId || "")) || null, [usersById, activeChatUserId]);
 
   useEffect(() => {
+    chatScrollLockBottomRef.current = true;
+  }, [activeChatUserId]);
+
+  const handleChatThreadScroll = useCallback(() => {
+    const el = chatThreadViewportRef.current;
+    if (!el) return;
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    const distFromBottom = scrollHeight - scrollTop - clientHeight;
+    chatScrollLockBottomRef.current = distFromBottom < 100;
+  }, []);
+
+  useEffect(() => {
     const viewport = chatThreadViewportRef.current;
     if (!viewport || activeView !== VIEWS.MESSAGES || !activeChatThread) return;
-    viewport.scrollTop = viewport.scrollHeight;
-  }, [activeView, activeChatUserId, activeChatThread?.messages?.length]);
+    if (!chatScrollLockBottomRef.current) return;
+    requestAnimationFrame(() => {
+      const el = chatThreadViewportRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }, [activeView, activeChatUserId, activeChatThread?.messages?.length, messagesThreadKeyboardInsetPx]);
+
+  useEffect(() => {
+    if (!messagesThreadMenuOpen) return undefined;
+    const onDoc = (e) => {
+      if (messagesThreadMenuWrapRef.current?.contains(e.target)) return;
+      setMessagesThreadMenuOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") setMessagesThreadMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [messagesThreadMenuOpen]);
+
+  useEffect(() => {
+    if (!chatEmojiPickerOpen) return undefined;
+    const onDoc = (e) => {
+      if (chatEmojiPickerWrapRef.current?.contains(e.target)) return;
+      setChatEmojiPickerOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") setChatEmojiPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [chatEmojiPickerOpen]);
 
   useEffect(() => {
     const key = String(activeChatUserId || "").trim();
@@ -3657,8 +4008,8 @@ function App() {
   }, [resolveUserCommunity]);
 
   const totalChatUnreadCount = useMemo(
-    () => chatThreads.reduce((sum, thread) => sum + Math.max(0, Number(thread?.unread || 0)), 0),
-    [chatThreads],
+    () => visibleChatThreads.reduce((sum, thread) => sum + Math.max(0, Number(thread?.unread || 0)), 0),
+    [visibleChatThreads],
   );
   const favoriteSeenSet = useMemo(
     () => new Set(favoriteSeenListingIds.map(String)),
@@ -3737,6 +4088,7 @@ function App() {
   }, [activeView, activeChatUserId, chatThreads, token]);
 
   const sendChatMessage = useCallback(async () => {
+    setChatEmojiPickerOpen(false);
     const senderId = String(user?.id || "").trim();
     const participantId = String(activeChatUserId || "").trim();
     const text = String(chatComposer || "").trim();
@@ -3747,6 +4099,7 @@ function App() {
     }
     setChatSendPending(true);
     try {
+      chatScrollLockBottomRef.current = true;
       const conversationId = await ensureDirectConversation(participantId);
       if (!conversationId) return;
       const data = await apiRequest(`/conversations/${conversationId}/messages`, {
@@ -3784,6 +4137,72 @@ function App() {
       setChatSendPending(false);
     }
   }, [user?.id, activeChatUserId, chatComposer, token, ensureDirectConversation]);
+
+  const insertEmojiIntoChatComposer = useCallback(
+    (emoji) => {
+      const draftKey = String(activeChatUserId || "").trim();
+      const input = chatComposerInputRef.current;
+      let start = chatComposer.length;
+      let end = chatComposer.length;
+      if (input && typeof input.selectionStart === "number") {
+        start = input.selectionStart;
+        end = typeof input.selectionEnd === "number" ? input.selectionEnd : start;
+      }
+      const before = chatComposer.slice(0, start);
+      const after = chatComposer.slice(end);
+      const nextValue = before + emoji + after;
+      const graphemes = Array.from(emoji);
+      const caret = start + graphemes.length;
+      setChatComposer(nextValue);
+      if (draftKey) {
+        setChatDraftByUserId((prev) => ({ ...prev, [draftKey]: nextValue }));
+      }
+      requestAnimationFrame(() => {
+        const el = chatComposerInputRef.current;
+        if (!el) return;
+        el.focus();
+        try {
+          el.setSelectionRange(caret, caret);
+        } catch {
+          el.setSelectionRange(nextValue.length, nextValue.length);
+        }
+      });
+    },
+    [activeChatUserId, chatComposer],
+  );
+
+  const clearCurrentThreadMessages = useCallback(() => {
+    const pid = String(activeChatUserId || "").trim();
+    if (!pid) return;
+    const ok =
+      typeof window === "undefined" ||
+      window.confirm("Clear all messages in this chat? This only removes them from your device until the next sync.");
+    if (!ok) return;
+    setChatThreads((prev) =>
+      prev.map((t) => (String(t.participantId) === pid ? { ...t, messages: [], messagesLoaded: true, unread: 0 } : t)),
+    );
+    setMessagesThreadMenuOpen(false);
+  }, [activeChatUserId]);
+
+  const deleteCurrentThread = useCallback(() => {
+    const pid = String(activeChatUserId || "").trim();
+    if (!pid) return;
+    const key = `user:${pid}`;
+    const ok =
+      typeof window === "undefined" ||
+      window.confirm("Delete this conversation from your inbox? You can start a new chat with this person from People.");
+    if (!ok) return;
+    setDismissedChatKeys((prev) => [...new Set([...prev, key])]);
+    setChatThreads((prev) => prev.filter((t) => String(t.participantId) !== pid));
+    setActiveChatUserId("");
+    setMessagesMobilePane("list");
+    setMessagesThreadMenuOpen(false);
+    setChatDraftByUserId((prev) => {
+      const next = { ...prev };
+      delete next[pid];
+      return next;
+    });
+  }, [activeChatUserId, chatThreads]);
 
   /** My purchases vs Sales inbox use separate saved list/grid preferences (compact maps to grid). */
   const commerceFlowOrdersView = activityBuying
@@ -4146,7 +4565,6 @@ function App() {
               method: "DELETE",
               token,
             });
-            clearMarketplaceToasts();
           } catch (e) {
             cancelCartItemFadeOut(lineKey);
             pushMarketplaceToast(e.message || "Could not remove item from cart.");
@@ -4170,7 +4588,6 @@ function App() {
           });
           const incoming = Array.isArray(d?.items) ? d.items : [];
           setCartItems((prev) => mergeCartItemsPreservingOrder(prev, incoming));
-          clearMarketplaceToasts();
         } catch (e) {
           pushMarketplaceToast(e.message || "Could not update quantity.");
         } finally {
@@ -4403,7 +4820,6 @@ function App() {
         pushMarketplaceToast("Please sign in to update orders.");
         return;
       }
-      clearMarketplaceToasts();
       setOrdersBulkActionLoadingTransition(transitionNorm);
       try {
         let successCount = 0;
@@ -4532,7 +4948,6 @@ function App() {
   useEffect(() => {
     if (!shopCommunityId) {
       prevShopCommunityIdRef.current = null;
-      communityListingsSyncedRef.current = null;
       return undefined;
     }
     if (shopCommunityId !== prevShopCommunityIdRef.current) {
@@ -4551,15 +4966,6 @@ function App() {
   useEffect(() => {
     if (activeView !== VIEWS.COMMUNITY_SHOP && activeView !== VIEWS.FAVORITES) setMobileCommunityFiltersOpen(false);
   }, [activeView]);
-
-  useEffect(() => {
-    if (!token || activeView !== VIEWS.COMMUNITY_SHOP || !isMemberOfOpenCommunity || !activeCommunity?.id) return undefined;
-    const key = `${user?.id || "anon"}:${activeCommunity.id}`;
-    if (communityListingsSyncedRef.current === key) return undefined;
-    communityListingsSyncedRef.current = key;
-    void joinCommunityAndAttachListings(activeCommunity);
-    return undefined;
-  }, [token, activeView, isMemberOfOpenCommunity, activeCommunity, user?.id, joinCommunityAndAttachListings]);
 
   /** Old bookmarked `/c/:id` or `/c/:id/shop` URLs → same in-app state, then clean path. */
   useEffect(() => {
@@ -4593,8 +4999,7 @@ function App() {
   useEffect(() => {
     if (!token || activeView !== VIEWS.COMMUNITY_SHOP) return undefined;
     const inCommunity = !!shopCommunityId;
-    const hasVertical = browseVerticalId != null;
-    const queryKey = `${inCommunity ? shopCommunityId : "global"}|${browseVerticalId ?? ""}|${browseSubId ?? ""}|${isMemberOfOpenCommunity ? "m" : "v"}`;
+    const queryKey = `${inCommunity ? shopCommunityId : "global"}|${browseVerticalId ?? ""}|${browseSubId ?? ""}`;
     if (communityShopListingsQueryKeyRef.current !== queryKey) {
       communityShopListingsQueryKeyRef.current = queryKey;
       setListings([]);
@@ -4604,16 +5009,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [
-    token,
-    activeView,
-    browseVerticalId,
-    browseSubId,
-    shopCommunityId,
-    user?.id,
-    isMemberOfOpenCommunity,
-    loadCommunityShopListings,
-  ]);
+  }, [token, activeView, browseVerticalId, browseSubId, shopCommunityId, loadCommunityShopListings]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.FAVORITES) return undefined;
@@ -5041,7 +5437,9 @@ function App() {
         activeView === VIEWS.FAVORITES ||
         activeView === VIEWS.MESSAGES ||
         activeView === VIEWS.NOTIFICATIONS ||
-        activeView === VIEWS.PROFILE),
+        activeView === VIEWS.PROFILE ||
+        activeView === VIEWS.ABOUT ||
+        activeView === VIEWS.TERMS),
     isBusy: listingsBusyRef.current || favoritesLoading || ordersLoading || sellerListingsLoading || cartCheckoutSubmitting,
     onRefresh: refreshMobileViewAndNavigation,
     onError: (error) => {
@@ -5120,7 +5518,6 @@ function App() {
     });
     setCommunityProvinceSuggestOpen(false);
     setCommunityCitySuggestOpen(false);
-    clearMarketplaceToasts();
     setCommunityFormOpen(true);
   }, [profileCityProvincePostal.city, profileCityProvincePostal.postalCode, profileCityProvincePostal.province, profileCommunityName]);
 
@@ -5137,7 +5534,6 @@ function App() {
     setCommunityCitySuggestOpen(false);
     setCommunityImageFile(null);
     if (communityImageInputRef.current) communityImageInputRef.current.value = "";
-    clearMarketplaceToasts();
     setCommunityFormOpen(true);
   }, []);
 
@@ -5175,7 +5571,6 @@ function App() {
     const provinceDraft = String(communityForm.province || "").trim();
     const postalDraft = String(communityForm.postalCode || "").trim();
     setCommunitySaving(true);
-    clearMarketplaceToasts();
     try {
       const fd = new FormData();
       fd.append("name", communityName);
@@ -5209,7 +5604,6 @@ function App() {
 
   const toggleFavorite = async (listingId, makeFavorite) => {
     if (!token) return;
-    clearMarketplaceToasts();
     const id = String(listingId || "");
     const candidate =
       listings.find((x) => String(x.id) === id) ||
@@ -5379,7 +5773,6 @@ function App() {
   const patchOrderTransition = async (orderId, transition, options = {}) => {
     const { orderIds, successMessage } = options;
     const transitionNorm = String(transition ?? "").trim();
-    clearMarketplaceToasts();
     try {
       const batchTransitions = new Set(["buyer_ack_receipt", "mark_ready_for_pickup"]);
       const ids =
@@ -5404,7 +5797,6 @@ function App() {
     String(o?.fulfillmentType || "") === "delivery" && !o?.buyerCourierReview?.rating;
 
   const submitOrderReview = async (orderId, rating, reviewText) => {
-    clearMarketplaceToasts();
     try {
       await apiRequest(`/orders/${orderId}/review`, { method: "PUT", token, body: { rating, reviewText } });
       const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
@@ -5421,7 +5813,6 @@ function App() {
   };
 
   const submitCourierDeliveryReview = async (orderId, rating, tags, abuseNote) => {
-    clearMarketplaceToasts();
     try {
       await apiRequest(`/orders/${orderId}/courier-review`, {
         method: "PUT",
@@ -5444,7 +5835,6 @@ function App() {
       pushMarketplaceToast("Invalid expense amount.");
       return;
     }
-    clearMarketplaceToasts();
     try {
       await apiRequest("/me/expenses", {
         method: "POST",
@@ -5556,8 +5946,8 @@ function App() {
       setSellerListings(refreshed.listings || []);
       if (shopCommunityId) {
         const qs = new URLSearchParams({ communityId: String(shopCommunityId) });
-        const shopData = await apiRequest(`/listings?${qs.toString()}`, { token });
-        setListings(shopData.listings || []);
+        const shopRows = await fetchAllListingsPages(token, qs);
+        setListings(shopRows);
       }
       pushMarketplaceToast(`Applied ${pct}% discount.`);
     } catch (e) {
@@ -5759,6 +6149,9 @@ function App() {
         listingLike.cityLabel ??
         ""
     ).trim();
+    const sellerAvatarUrl = String(
+      extra.sellerAvatarUrl ?? listingLike.sellerAvatarUrl ?? sellerFromDirectory?.avatarUrl ?? "",
+    ).trim();
     const openGallery = resolveListingGalleryUrls(listingLike);
     setProductInspect({
       listingId: String(listingLike.id || ""),
@@ -5770,6 +6163,7 @@ function App() {
       description: String(listingLike.description || ""),
       sellerUsername,
       sellerAddressLine: sellerAddressLine || sellerAddressFallback,
+      sellerAvatarUrl,
       onViewSellerProfile:
         sellerId && String(sellerId) !== String(user?.id || "")
           ? () => {
@@ -5782,6 +6176,17 @@ function App() {
                   window.scrollTo(0, 0);
                 });
               }
+            }
+          : undefined,
+      onContactSeller:
+        sellerId && String(sellerId) !== String(user?.id || "")
+          ? () => {
+              if (!token || !user?.id) {
+                pushMarketplaceToast("Please sign in to contact the seller.");
+                return;
+              }
+              closeProductInspect();
+              void openChatWithUser(sellerId);
             }
           : undefined,
       comment: String(extra.comment ?? "").trim(),
@@ -5904,6 +6309,7 @@ function App() {
               optionValuesA: fresh.optionValuesA ?? prev.optionValuesA,
               optionNameB: fresh.optionNameB ?? prev.optionNameB,
               optionValuesB: fresh.optionValuesB ?? prev.optionValuesB,
+              sellerAvatarUrl: String(fresh.sellerAvatarUrl || "").trim() || prev.sellerAvatarUrl,
               listingStockQty: qtyFresh != null ? qtyFresh : prev.listingStockQty,
               listingSoldQty: soldFresh != null ? soldFresh : prev.listingSoldQty,
               quantity:
@@ -5921,7 +6327,18 @@ function App() {
         }
       })();
     }
-  }, [activeView, closeProductInspect, user?.id, usersById, favoriteIds, toggleFavorite, shopCommunityId, token]);
+  }, [
+    activeView,
+    closeProductInspect,
+    user?.id,
+    usersById,
+    favoriteIds,
+    toggleFavorite,
+    shopCommunityId,
+    token,
+    openChatWithUser,
+    pushMarketplaceToast,
+  ]);
 
   useEffect(() => {
     if (!productInspect) return;
@@ -6232,7 +6649,6 @@ function App() {
       String(listing.orderType || "in_stock").trim() === "pre_order" ||
         Boolean(String(listing.processingTime || "").trim()),
     );
-    clearMarketplaceToasts();
     if (launchedFromProductFlow) {
       if (activeView === VIEWS.PRODUCT_DETAIL && productInspect) {
         closeProductInspect();
@@ -6306,7 +6722,6 @@ function App() {
     }
     if (Object.keys(nextErrors).length > 0) {
       setListingFieldErrors(nextErrors);
-      clearMarketplaceToasts();
       return;
     }
     setListingFieldErrors({});
@@ -6344,11 +6759,9 @@ function App() {
         ...prev,
         fulfillment: "Turn on Pick-up and/or COD Delivery so buyers know how to receive the item.",
       }));
-      clearMarketplaceToasts();
       return;
     }
     setListingSaving(true);
-    clearMarketplaceToasts();
     try {
       const imageUrls = await resolveListingImagesForSave(
         token,
@@ -6377,6 +6790,12 @@ function App() {
         listingForm.subId && String(listingForm.subId).trim() !== "" && listingForm.subId !== "all"
           ? String(listingForm.subId).trim()
           : null;
+      const shopScopedCommunityId =
+        shopCommunityId && (isMemberOfOpenCommunity || isOwnerOfOpenCommunity)
+          ? String(shopCommunityId).trim()
+          : "";
+      const profileCommunityId = String(user?.communityId || "").trim();
+      const listingCommunityId = shopScopedCommunityId || profileCommunityId;
       const payload = {
         title: listingForm.title.trim(),
         description: listingForm.description.trim(),
@@ -6396,7 +6815,7 @@ function App() {
         variants: variantsPayload,
         orderType,
         processingTime,
-        ...(shopCommunityId && isMemberOfOpenCommunity ? { communityId: String(shopCommunityId) } : {}),
+        ...(listingCommunityId ? { communityId: listingCommunityId } : {}),
       };
       const createRes = editingListingId
         ? await apiRequest(`/me/listings/${editingListingId}`, {
@@ -6443,7 +6862,6 @@ function App() {
       setListingSecondOptionOpen(false);
       setEditingListingId(null);
       setListingEditOverlayOpen(false);
-      clearMarketplaceToasts();
       setPublishFlash("");
       setSellerTab(SELLER_TABS.PRODUCTS);
       const origin = productFlowOriginRef.current || {};
@@ -6803,19 +7221,11 @@ function App() {
           if (skippedDup > 0) pushMarketplaceToast("Each photo must be unique. Duplicate images were skipped.");
           return;
         }
-        if (skippedDup === 0) clearMarketplaceToasts();
-        else pushMarketplaceToast("Each photo must be unique. Duplicate images were skipped.");
+        if (skippedDup > 0) pushMarketplaceToast("Each photo must be unique. Duplicate images were skipped.");
         setListingCropQueue((prev) => [...prev, ...accepted]);
       })();
     },
-    [
-      clearMarketplaceToasts,
-      listingCoverContentHash,
-      listingCropQueue,
-      listingExtraImages,
-      listingImageFile,
-      pushMarketplaceToast,
-    ],
+    [listingCoverContentHash, listingCropQueue, listingExtraImages, listingImageFile, pushMarketplaceToast],
   );
 
   useEffect(() => {
@@ -7252,8 +7662,8 @@ function App() {
             qs.set("verticalId", browseVerticalId);
             if (browseSubId && browseSubId !== "all") qs.set("subId", browseSubId);
           }
-          const shopData = await apiRequest(`/listings?${qs.toString()}`, { token: listToken });
-          setListings(shopData.listings || []);
+          const shopRows = await fetchAllListingsPages(listToken, qs);
+          setListings(shopRows);
         } catch {
           /* ignore */
         }
@@ -7294,11 +7704,21 @@ function App() {
     return (
       <div className="landing-shell">
         <header className="landing-nav">
-          <div className="app-container flex h-[4.25rem] max-w-full items-center justify-between gap-4 pl-[max(1.5rem,env(safe-area-inset-left,0px))] pr-[max(1.5rem,env(safe-area-inset-right,0px))] md:pl-[max(2rem,env(safe-area-inset-left,0px))] md:pr-[max(2rem,env(safe-area-inset-right,0px))] lg:pl-[max(2.5rem,env(safe-area-inset-left,0px))] lg:pr-[max(2.5rem,env(safe-area-inset-right,0px))]">
-            <div className="flex min-w-0 items-center">
-              <LinkMartLogo className="h-10 w-auto max-w-full shrink-0 object-contain md:h-11 md:max-w-[min(14rem,100%)]" />
-            </div>
-            <nav className="flex shrink-0 items-center gap-3 md:gap-4" aria-label="Sign in">
+          <div className="app-container flex h-14 min-[430px]:h-[4.25rem] w-full max-w-full items-center justify-between gap-2 px-4 min-[360px]:gap-2.5 min-[360px]:px-5 min-[390px]:gap-3 min-[390px]:px-6 md:h-[4.25rem] md:justify-start md:gap-3 md:px-8 lg:px-12">
+            <button
+              type="button"
+              className="min-w-0 shrink rounded-xl px-0.5 py-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950 [&_picture]:block [&_picture]:leading-none"
+              aria-label="LinkMart — scroll to top"
+              onClick={() => {
+                const reduce =
+                  typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+                window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+              }}
+            >
+              <LinkMartLogo className="h-8 w-auto max-w-[min(40vw,8.5rem)] shrink-0 object-contain min-[360px]:max-w-[min(42vw,9.25rem)] min-[390px]:h-9 min-[390px]:max-w-[min(44vw,9.75rem)] min-[430px]:max-w-[min(46vw,10.25rem)] md:h-10 md:max-w-[min(10.5rem,100%)]" />
+            </button>
+            <div className="hidden min-h-0 min-w-0 flex-1 md:block" aria-hidden />
+            <nav className="flex shrink-0 items-center gap-1.5 min-[360px]:gap-2 min-[390px]:gap-2.5 min-[430px]:gap-3 md:gap-3" aria-label="Log in or sign up">
               <button type="button" className="landing-btn-nav-text" onClick={() => openAuthPanel("login")}>
                 Log in
               </button>
@@ -7313,8 +7733,8 @@ function App() {
           <div className="landing-hero-band">
             <div className="app-container px-6 md:px-8 lg:px-12">
               <div className="relative mx-auto w-full max-w-6xl">
-                <section className="relative grid min-h-[calc(100svh-4.25rem-env(safe-area-inset-top,0px))] grid-cols-1 items-start gap-10 pb-28 pt-[200px] md:min-h-[calc(100svh-4.25rem-env(safe-area-inset-top,0px))] md:gap-12 md:pb-32 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:gap-x-12 lg:gap-y-8 lg:pb-36 xl:gap-x-16">
-              <div className="flex max-w-xl flex-col items-center gap-7 text-center md:gap-8 lg:max-w-none lg:items-start lg:text-left">
+                <section className="relative grid min-h-[calc(100svh-3.5rem-env(safe-area-inset-top,0px))] min-[430px]:min-h-[calc(100svh-4.25rem-env(safe-area-inset-top,0px))] grid-cols-1 items-start gap-10 pb-28 pt-6 min-[430px]:pt-8 md:gap-12 md:pb-32 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:gap-x-12 lg:gap-y-8 lg:pb-36 lg:pt-[200px] xl:gap-x-16">
+              <div className="order-2 flex max-w-xl flex-col items-center gap-7 text-center md:gap-8 lg:order-1 lg:max-w-none lg:items-start lg:text-left">
                 <div className="flex w-full flex-col gap-5 md:gap-6">
                   <h1 className="text-balance text-[2rem] font-extrabold leading-[1.12] tracking-tight text-neutral-900 md:text-5xl md:leading-[1.08] dark:text-slate-50">
                     A marketplace built for <span className="text-brand-primary dark:text-brand-accent">your local community</span>
@@ -7347,7 +7767,7 @@ function App() {
                   </div>
                 </div>
               </div>
-              <div className="flex justify-center lg:justify-end lg:self-start">
+              <div className="order-1 flex justify-center lg:order-2 lg:justify-end lg:self-start">
                 <div className="w-full max-w-mobile-baseline md:max-w-lg lg:max-w-xl xl:max-w-2xl">
                   <Suspense
                     fallback={
@@ -7361,7 +7781,7 @@ function App() {
                   </Suspense>
                 </div>
               </div>
-              <div className="col-span-full flex justify-center pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] pt-8 md:pb-[calc(2rem+env(safe-area-inset-bottom,0px))] md:pt-10">
+              <div className="col-span-full order-3 flex justify-center pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] pt-8 md:pb-[calc(2rem+env(safe-area-inset-bottom,0px))] md:pt-10">
                 <button
                   type="button"
                   className="a11y-focus-ring flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white/95 text-neutral-600 shadow-md backdrop-blur-sm transition motion-reduce:transition-none hover:border-neutral-300 hover:bg-white hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-900/95 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-white"
@@ -7394,15 +7814,19 @@ function App() {
                 <button
                   type="button"
                   className="a11y-focus-ring relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-600 shadow-sm transition motion-reduce:transition-none hover:border-neutral-300 hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500 md:absolute md:left-1 md:top-[42%] md:z-10 md:-translate-y-1/2 lg:left-2"
-                  aria-label="Previous categories"
-                  onClick={() =>
-                    setLandingDiscoverySlide((s) => (s - 1 + LANDING_DISCOVERY_SLIDES.length) % LANDING_DISCOVERY_SLIDES.length)
-                  }
+                  aria-label={isMobileViewport ? "Previous category" : "Previous categories"}
+                  onClick={() => {
+                    if (isMobileViewport) {
+                      setLandingDiscoveryCardIndex((i) => (i - 1 + LANDING_DISCOVERY_CARDS.length) % LANDING_DISCOVERY_CARDS.length);
+                    } else {
+                      setLandingDiscoverySlide((s) => (s - 1 + LANDING_DISCOVERY_SLIDES.length) % LANDING_DISCOVERY_SLIDES.length);
+                    }
+                  }}
                 >
                   <ChevronLeftIcon className="h-5 w-5" />
                 </button>
                 <div className="mx-auto grid min-w-0 flex-1 grid-cols-1 justify-items-center gap-12 px-2 md:grid-cols-3 md:gap-x-8 md:gap-y-0 md:gap-x-12 md:px-4 lg:px-6">
-                  {LANDING_DISCOVERY_SLIDES[landingDiscoverySlide].map((card) => (
+                  {(isMobileViewport ? [LANDING_DISCOVERY_CARDS[landingDiscoveryCardIndex]] : LANDING_DISCOVERY_SLIDES[landingDiscoverySlide]).map((card) => (
                     <div key={card.title} className="flex w-full max-w-xs flex-col items-center gap-3 text-center md:max-w-none">
                       {card.logo ? (
                         <div className="relative size-16 shrink-0 overflow-hidden rounded-2xl p-2 md:size-[4.25rem]">
@@ -7429,21 +7853,30 @@ function App() {
                 <button
                   type="button"
                   className="a11y-focus-ring relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-white text-neutral-600 shadow-sm transition motion-reduce:transition-none hover:border-neutral-300 hover:text-neutral-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500 md:absolute md:right-1 md:top-[42%] md:z-10 md:-translate-y-1/2 lg:right-2"
-                  aria-label="Next categories"
-                  onClick={() => setLandingDiscoverySlide((s) => (s + 1) % LANDING_DISCOVERY_SLIDES.length)}
+                  aria-label={isMobileViewport ? "Next category" : "Next categories"}
+                  onClick={() => {
+                    if (isMobileViewport) {
+                      setLandingDiscoveryCardIndex((i) => (i + 1) % LANDING_DISCOVERY_CARDS.length);
+                    } else {
+                      setLandingDiscoverySlide((s) => (s + 1) % LANDING_DISCOVERY_SLIDES.length);
+                    }
+                  }}
                 >
                   <ChevronRightIcon className="h-5 w-5" />
                 </button>
               </div>
-              <div className="mt-10 flex justify-center gap-2.5">
-                {LANDING_DISCOVERY_SLIDES.map((_, i) => (
+              <div className="mt-10 flex flex-wrap justify-center gap-2.5">
+                {(isMobileViewport ? LANDING_DISCOVERY_CARDS : LANDING_DISCOVERY_SLIDES).map((_, i) => (
                   <button
-                    key={i}
+                    key={isMobileViewport ? `card-${i}` : `slide-${i}`}
                     type="button"
-                    className={`h-2 w-2 rounded-full transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-900 ${i === landingDiscoverySlide ? "bg-neutral-700 dark:bg-slate-200" : "bg-neutral-300 dark:bg-slate-600"}`}
-                    aria-label={`Category slide ${i + 1}`}
-                    aria-current={i === landingDiscoverySlide}
-                    onClick={() => setLandingDiscoverySlide(i)}
+                    className={`h-2 w-2 rounded-full transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-900 ${isMobileViewport ? (i === landingDiscoveryCardIndex ? "bg-neutral-700 dark:bg-slate-200" : "bg-neutral-300 dark:bg-slate-600") : i === landingDiscoverySlide ? "bg-neutral-700 dark:bg-slate-200" : "bg-neutral-300 dark:bg-slate-600"}`}
+                    aria-label={isMobileViewport ? `Category ${i + 1} of ${LANDING_DISCOVERY_CARDS.length}` : `Category slide ${i + 1}`}
+                    aria-current={isMobileViewport ? i === landingDiscoveryCardIndex : i === landingDiscoverySlide}
+                    onClick={() => {
+                      if (isMobileViewport) setLandingDiscoveryCardIndex(i);
+                      else setLandingDiscoverySlide(i);
+                    }}
                   />
                 ))}
               </div>
@@ -7454,24 +7887,20 @@ function App() {
             <h2 className="mx-auto max-w-3xl text-center text-2xl font-bold tracking-tight text-neutral-900 dark:text-slate-100 md:text-3xl">
               The easiest way to trade inside your community
             </h2>
-            <div className="mt-12 grid grid-cols-1 gap-12 lg:mt-14 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center lg:gap-8 xl:gap-14">
-              <div className="order-2 flex max-w-lg flex-col gap-12 justify-self-center lg:order-1 lg:justify-self-end">
+            <div className="mt-12 grid grid-cols-1 gap-10 lg:mt-14 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:items-center lg:gap-10 xl:gap-14">
+              <div className="order-2 mx-auto flex w-full max-w-lg flex-col gap-10 self-center lg:order-1 lg:mx-0 lg:max-w-none lg:justify-self-stretch lg:gap-12">
                 <LandingFeatureRow {...LANDING_FEATURE_ROWS[0]} />
                 <LandingFeatureRow {...LANDING_FEATURE_ROWS[1]} />
-              </div>
-              <div className="order-1 flex justify-center px-4 lg:order-2 lg:px-2">
-                <ImagetoolsPicture
-                  picture={landingFeaturesPicture}
-                  alt="Marketplace platform features"
-                  className="h-auto w-full max-w-xs object-contain drop-shadow-lg md:max-w-sm lg:max-w-md"
-                  pictureClassName="block w-full max-w-xs md:max-w-sm lg:max-w-md"
-                  sizes="(max-width: 768px) min(100vw - 2rem, 20rem), (max-width: 1024px) 24rem, 28rem"
-                  loading="lazy"
-                  decoding="async"
-                />
-              </div>
-              <div className="order-3 flex max-w-lg flex-col gap-12 justify-self-center lg:justify-self-start">
                 <LandingFeatureRow {...LANDING_FEATURE_ROWS[2]} />
+              </div>
+              <div className="order-1 flex w-full justify-center px-4 lg:order-2 lg:justify-end lg:px-2 lg:pl-4">
+                <LandingArtworkCard
+                  picture={landingFeaturesArtworkPicture}
+                  alt="Marketplace platform features"
+                  className="w-full max-w-xs md:max-w-sm lg:max-w-none lg:max-w-[min(100%,28rem)]"
+                  objectPosition="object-right"
+                  sizes="(max-width: 1023px) min(100vw - 2rem, 24rem), min(28rem, 45vw)"
+                />
               </div>
             </div>
           </section>
@@ -7492,7 +7921,7 @@ function App() {
           </section>
           </div>
 
-          <LandingSiteFooter />
+          <LandingSiteFooter onOpenAbout={openLandingAbout} onOpenTerms={openLandingTerms} onOpenPrivacy={openLandingPrivacy} />
         </main>
 
         {authPanelVisible && (
@@ -7504,11 +7933,16 @@ function App() {
           >
             <button
               type="button"
+              tabIndex={-1}
               className="landing-auth-modal-backdrop absolute inset-0 bg-neutral-900/45 backdrop-blur-[3px] dark:bg-black/55"
               aria-label="Close sign-in dialog"
               onClick={closeAuthPanel}
             />
-            <div className="landing-auth-panel relative z-10 w-full max-w-md" onClick={(event) => event.stopPropagation()}>
+            <div
+              ref={authModalPanelRef}
+              className="landing-auth-panel relative z-10 w-full max-w-md"
+              onClick={(event) => event.stopPropagation()}
+            >
               <div className="landing-card relative max-h-[min(90dvh,44rem)] overflow-y-auto overflow-x-hidden overscroll-contain">
                 <button type="button" className="landing-auth-close" onClick={closeAuthPanel} aria-label="Close">
                   <span aria-hidden="true">×</span>
@@ -7663,13 +8097,21 @@ function App() {
                         />
                         <span>
                           I accept the{" "}
-                          <a href="#" className="font-semibold text-neutral-900 underline dark:text-slate-100">
-                            Terms of Use
-                          </a>{" "}
+                          <button
+                            type="button"
+                            className="inline font-semibold text-neutral-900 underline decoration-neutral-900/80 underline-offset-2 transition hover:text-neutral-950 dark:text-slate-100 dark:decoration-slate-100/80 dark:hover:text-white"
+                            onClick={openLandingTerms}
+                          >
+                            Terms & conditions
+                          </button>{" "}
                           and{" "}
-                          <a href="#" className="font-semibold text-neutral-900 underline dark:text-slate-100">
+                          <button
+                            type="button"
+                            className="inline font-semibold text-neutral-900 underline decoration-neutral-900/80 underline-offset-2 transition hover:text-neutral-950 dark:text-slate-100 dark:decoration-slate-100/80 dark:hover:text-white"
+                            onClick={openLandingPrivacy}
+                          >
                             Privacy Policy
-                          </a>
+                          </button>
                           .
                         </span>
                       </label>
@@ -7777,6 +8219,25 @@ function App() {
             </div>
           </div>
         )}
+
+        {landingLegalView ? (
+          <div
+            className="fixed inset-0 z-[110] flex min-h-0 flex-col bg-white dark:bg-slate-950"
+            role="dialog"
+            aria-modal="true"
+            aria-label={landingLegalView === "about" ? "About LinkMart" : "Terms and conditions"}
+          >
+            <SecondaryScreenHeader
+              title={landingLegalView === "about" ? "About LinkMart" : "Terms & conditions"}
+              onBack={() => setLandingLegalView(null)}
+            />
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] pt-2 [-webkit-overflow-scrolling:touch] md:px-8">
+              <div className="mx-auto w-full max-w-3xl">
+                {landingLegalView === "about" ? <AboutLinkMartBody /> : <TermsLinkMartBody />}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -7821,48 +8282,6 @@ function App() {
       <MobileAppShell
         className={activeView === VIEWS.ACTIVITY ? activityTabChrome.activityShellWrap : undefined}
       >
-      {marketplaceToasts.length > 0 ? (
-        <div
-          className={`pointer-events-none fixed safe-fixed-x z-[70] flex max-h-[min(52vh,calc(100dvh-env(safe-area-inset-top,0px)-9rem))] flex-col gap-2 overflow-y-auto top-[max(0.5rem,calc(env(safe-area-inset-top,0px)+4.25rem+3.25rem+0.5rem))] md:top-auto md:max-h-[min(70vh,calc(100dvh-10rem))] md:left-auto md:right-6 md:w-[24rem] ${
-            activeView === VIEWS.ACTIVITY
-              ? activityPrimaryTabsScrollHidden
-                ? "md:bottom-[max(1rem,calc(env(safe-area-inset-bottom,0px)+1rem))]"
-                : "md:bottom-[calc(env(safe-area-inset-bottom,0px)+var(--activity-primary-footer)+1.5rem)]"
-              : "md:bottom-6"
-          }`}
-          role="region"
-          aria-label="Notifications"
-          aria-live="polite"
-        >
-          {marketplaceToasts.map((t) => {
-            const fb = computeMarketplaceFeedbackForText(t.text);
-            return (
-              <div
-                key={t.id}
-                className={`pointer-events-auto flex items-start justify-between gap-2 rounded-2xl border px-3.5 py-2.5 text-sm shadow-lg backdrop-blur ${fb.className}`}
-                role={fb.role}
-                aria-live={fb.live}
-              >
-                <span className="inline-flex min-w-0 items-start gap-2">
-                  <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-current/30 text-[11px] font-bold">
-                    {fb.icon}
-                  </span>
-                  <span className="leading-relaxed">{fb.text}</span>
-                </span>
-                <button
-                  type="button"
-                  className={`inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg px-2 text-base leading-none transition hover:bg-black/5 dark:hover:bg-white/10 md:min-h-0 md:min-w-0 md:rounded-md md:px-1.5 md:py-0.5 ${fb.dismissClass}`}
-                  aria-label="Dismiss notification"
-                  onClick={() => dismissMarketplaceToast(t.id)}
-                >
-                  ×
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-
       <LoggedInHeader
         user={user}
         activeView={activeView}
@@ -7900,6 +8319,7 @@ function App() {
         hideNavigationChrome={activeView === VIEWS.PRODUCT_DETAIL || listingEditOverlayOpen}
         liftChromeAboveOverlay={quickAddModalOpen}
         activityPrimaryTabsScrollHidden={activityPrimaryTabsScrollHidden}
+        sendFeedbackPhase={sendFeedbackPhase}
       >
       {isMobileViewport && mobilePullRefreshing ? (
         <div
@@ -7913,7 +8333,19 @@ function App() {
       <main
         ref={mainContentScrollRef}
         id="main-content"
-        className={`${UI_KIT.mobileMainScroll} app-container scroll-pt-2 scroll-pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] space-y-5 pt-4 pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] md:scroll-pb-0 md:scroll-pt-0 md:space-y-6 md:py-8 md:pb-12 ${
+        className={`${UI_KIT.mobileMainScroll} app-container scroll-pt-2 scroll-pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] space-y-5 pt-4 pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] md:scroll-pb-0 md:scroll-pt-0 ${
+          activeView === VIEWS.ABOUT || activeView === VIEWS.TERMS || activeView === VIEWS.SEND_FEEDBACK
+            ? "max-md:!pt-1 max-md:scroll-pt-0"
+            : ""
+        } ${
+          !isMobileViewport &&
+          (activeView === VIEWS.MESSAGES ||
+            activeView === VIEWS.ABOUT ||
+            activeView === VIEWS.TERMS ||
+            activeView === VIEWS.SEND_FEEDBACK)
+            ? "md:space-y-0 md:py-3 md:pb-4"
+            : "md:space-y-6 md:py-8 md:pb-12"
+        } ${
           activeView === VIEWS.ACTIVITY
             ? activityTabChrome.activityMainSurface
             : "bg-white dark:bg-slate-950 md:bg-transparent md:dark:bg-transparent"
@@ -7929,7 +8361,7 @@ function App() {
             : ""
         } ${
           isMobileViewport && activeView === VIEWS.MESSAGES && messagesMobilePane === "thread"
-            ? "!pb-0 !scroll-pb-0"
+            ? "!space-y-0 !pt-0 !pb-0 !scroll-pt-0 !scroll-pb-0"
             : ""
         } ${
           isMobileViewport && !mobileSecondaryDragging ? mobileSecondarySlideClass : ""
@@ -7968,69 +8400,74 @@ function App() {
         {isBrowseLikeView && activeView !== VIEWS.FAVORITES && (
           <section
             className={`${UI_KIT.viewSection} ${
-              activeView === VIEWS.COMMUNITY_SHOP ? "space-y-0 md:space-y-6" : "space-y-4 md:space-y-6"
+              activeView === VIEWS.COMMUNITY_SHOP ? "space-y-3 md:space-y-6" : "space-y-4 md:space-y-6"
             }`}
           >
             <div className="space-y-4">
               {activeView === VIEWS.COMMUNITY_SHOP ? (
                 <>
                 <div
-                  className={`relative overflow-hidden border transition-opacity duration-200 max-lg:rounded-xl max-lg:border-neutral-200/70 max-lg:bg-white max-lg:p-2.5 max-lg:shadow-sm max-lg:dark:border-slate-700 max-lg:dark:bg-slate-900 border-[#7cded9]/60 bg-gradient-to-r from-[#e6fbfb] via-[#edf8ff] to-[#eaf2ff] p-3 md:p-4 lg:p-5 dark:border-[#1f3c56] dark:bg-gradient-to-r dark:from-[#0f2234] dark:via-[#11283d] dark:to-[#16324a] max-lg:bg-none ${
+                  className={`relative overflow-hidden border border-sky-200/50 bg-gradient-to-br from-[#f0fdfa] via-[#f8fafc] to-[#eff6ff] p-4 shadow-[0_10px_36px_-16px_rgba(15,23,42,0.14),0_2px_8px_-4px_rgba(15,23,42,0.05)] transition-opacity duration-200 max-lg:rounded-2xl dark:border-[#1f3c56] dark:bg-gradient-to-br dark:from-[#0f172a] dark:via-[#0c1323] dark:to-[#111827] dark:shadow-[0_16px_44px_-20px_rgba(0,0,0,0.55)] md:p-5 lg:border lg:border-sky-200/45 lg:p-6 lg:shadow-[0_12px_40px_-18px_rgba(15,23,42,0.15),0_2px_8px_-4px_rgba(15,23,42,0.06)] lg:dark:border-slate-600/70 lg:dark:shadow-[0_20px_50px_-24px_rgba(0,0,0,0.55)] ${
                     mobileCommunityFiltersOpen ? "pointer-events-none opacity-40 lg:pointer-events-auto lg:opacity-100" : ""
                   }`}
                 >
-                  <div className="relative z-10 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
-                    <div className="flex min-w-0 flex-1 flex-col gap-2 md:flex-row md:items-start md:gap-4 lg:gap-5">
-                      <div className="min-w-0 flex-1 space-y-2 md:space-y-2">
-                        <div className="flex items-start justify-between gap-2 lg:flex-col lg:items-stretch lg:justify-start lg:gap-2">
-                          <div className="min-w-0 flex-1 space-y-1.5 lg:flex-none lg:space-y-2">
-                            <div className="flex items-start justify-between gap-2">
-                              <h2 className="line-clamp-3 break-words text-pretty text-lg font-semibold tracking-tight text-neutral-900 max-lg:leading-snug dark:text-slate-100 lg:line-clamp-none lg:text-xl lg:text-[#123a5f] lg:dark:text-[#e9f7ff] lg:text-2xl">
+                  <div
+                    className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_100%_-10%,rgba(56,189,248,0.12),transparent)] opacity-90 dark:bg-[radial-gradient(ellipse_70%_50%_at_90%_0%,rgba(56,189,248,0.08),transparent)]"
+                    aria-hidden
+                  />
+                  <div className="relative z-10 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between lg:gap-8">
+                    <div className="min-w-0 flex-1">
+                      <div className="space-y-2 lg:space-y-3">
+                        <div className="flex flex-col gap-3">
+                          <div className="min-w-0 space-y-1.5 lg:space-y-2">
+                            <div className="flex items-start gap-2">
+                              <h2 className="line-clamp-3 break-words text-pretty text-xl font-semibold leading-snug tracking-tight text-[#0f3557] dark:text-slate-100 lg:line-clamp-none lg:text-2xl lg:leading-tight lg:tracking-tight lg:dark:text-[#f1f5f9] xl:text-[1.65rem]">
                                 {toTitleCase(activeCommunity?.name?.trim()) || "Community"}
                               </h2>
-                              <div className="lg:hidden">
-                                {isMemberOfOpenCommunity ? (
-                                  <span className="inline-flex items-center rounded-md border border-emerald-200/90 bg-emerald-50/90 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300">
-                                    Joined
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 rounded-md border border-neutral-200/80 bg-neutral-50/80 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400">
-                                    Visitor
-                                  </span>
-                                )}
-                              </div>
                             </div>
                             {activeCommunityLocaleLine ? (
-                              <p className="line-clamp-2 text-xs text-neutral-500 dark:text-slate-400 lg:line-clamp-none lg:text-sm lg:text-[#2a597f] lg:dark:text-[#9fc3d9]">
+                              <p className="line-clamp-2 text-xs font-medium text-sky-900/85 dark:text-slate-400 lg:line-clamp-none lg:text-sm lg:text-[#2563ab]/90 lg:dark:text-[#93c5fd]/95">
                                 {activeCommunityLocaleLine}
                               </p>
                             ) : null}
                           </div>
-                          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 self-start pt-0.5 max-lg:justify-start lg:w-full lg:justify-start lg:gap-2 lg:self-auto lg:pt-0">
+                          <div className="flex shrink-0 flex-wrap items-center gap-2 self-start pt-1 max-lg:justify-start lg:w-full lg:justify-start lg:pt-0">
                             <button
                               type="button"
-                              className="hidden lg:inline-flex items-center rounded-md border border-sky-200/90 bg-sky-50/90 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300 dark:hover:border-sky-400/45 dark:hover:bg-sky-500/20"
+                              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-sky-200/80 bg-white/95 px-3.5 text-[11px] font-semibold tracking-wide text-sky-900 shadow-[0_1px_2px_rgba(15,23,42,0.05)] ring-1 ring-sky-950/[0.04] transition hover:border-sky-300 hover:bg-white hover:shadow-[0_4px_14px_-4px_rgba(14,116,144,0.25)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500/40 dark:border-sky-500/25 dark:bg-slate-900/70 dark:text-sky-100 dark:ring-white/[0.06] dark:hover:border-sky-400/40 dark:hover:bg-slate-800/90"
                               onClick={() => leaveCommunityToGlobalMarketplace()}
                             >
-                              Communities
+                              <svg className="h-3.5 w-3.5 shrink-0 opacity-80" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                <path
+                                  d="M4 6h16M4 12h10M4 18h16"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                />
+                              </svg>
+                              All communities
                             </button>
                             {isMemberOfOpenCommunity ? (
-                              <span className="hidden lg:inline-flex items-center rounded-md border border-emerald-200/90 bg-emerald-50/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800 max-lg:normal-case max-lg:tracking-normal dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300 lg:gap-1 lg:rounded-full lg:border-emerald-300/80 lg:px-2.5 lg:py-1 lg:text-xs lg:normal-case lg:tracking-normal">
-                                <span className="max-lg:hidden">● Joined member</span>
-                                <span className="lg:hidden">Joined</span>
+                              <span className="inline-flex h-8 items-center gap-2 rounded-full border border-emerald-200/80 bg-gradient-to-b from-emerald-50/98 to-emerald-50/85 px-3.5 text-[11px] font-semibold text-emerald-900 shadow-[0_1px_2px_rgba(5,46,22,0.06)] ring-1 ring-emerald-800/[0.05] dark:border-emerald-500/30 dark:from-emerald-950/55 dark:to-emerald-950/40 dark:text-emerald-100 dark:ring-emerald-400/10">
+                                <span
+                                  className="inline-flex h-2 w-2 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_2px_rgba(255,255,255,0.95)] dark:bg-emerald-400 dark:shadow-[0_0_0_2px_rgba(15,23,42,0.9)]"
+                                  aria-hidden
+                                />
+                                Joined member
                               </span>
                             ) : (
-                              <span className="hidden lg:inline-flex items-center gap-1 rounded-md border border-neutral-200/80 bg-neutral-50/80 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600 max-lg:normal-case dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400 lg:rounded-full lg:border-neutral-300/80 lg:bg-white lg:px-2.5 lg:py-1 lg:text-xs lg:text-neutral-700 dark:lg:text-slate-300">
-                                <span className="max-lg:hidden">○ Not a member yet</span>
-                                <span className="lg:hidden">Visitor</span>
+                              <span className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/90 px-3.5 text-[11px] font-semibold text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.04)] ring-1 ring-slate-900/[0.04] dark:border-slate-600/70 dark:from-slate-800/80 dark:to-slate-900/70 dark:text-slate-300 dark:ring-white/[0.05]">
+                                <span
+                                  className="inline-flex h-2 w-2 shrink-0 rounded-full border-2 border-slate-300 bg-white dark:border-slate-500 dark:bg-slate-800"
+                                  aria-hidden
+                                />
+                                Not a member yet
                               </span>
                             )}
-                            {activeCommunity?.createdBy &&
-                            String(activeCommunity.createdBy) === String(user?.id || "") &&
-                            !activeCommunity?.imageUrl ? (
+                            {isMemberOfOpenCommunity && isOwnerOfOpenCommunity && !activeCommunity?.imageUrl ? (
                               <button
                                 type="button"
-                                className="inline-flex min-h-8 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                                className="inline-flex h-8 shrink-0 items-center justify-center rounded-full border border-slate-200/90 bg-white/95 px-3 text-[11px] font-semibold text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.05)] ring-1 ring-slate-950/[0.04] transition hover:border-slate-300 hover:shadow-sm dark:border-slate-600 dark:bg-slate-800/90 dark:text-slate-200 dark:ring-white/[0.05] dark:hover:border-slate-500"
                                 onClick={() => openEditCommunityModal(activeCommunity)}
                               >
                                 Add image
@@ -8038,101 +8475,75 @@ function App() {
                             ) : null}
                           </div>
                         </div>
-                        {/* Mobile: compact actions below "How this shop works" */}
-                        <div className="flex flex-col gap-1.5 lg:hidden">
-                          <div className="flex flex-row items-center gap-2">
-                            {!isMemberOfOpenCommunity ? (
+                        {/* Mobile: collapsible actions — edit + leave (desktop column unchanged). */}
+                        <div className="mt-4 flex flex-col gap-2.5 border-t border-slate-200/55 pt-4 dark:border-slate-600/55 lg:hidden">
+                          {isMemberOfOpenCommunity ? (
+                            <>
                               <button
                                 type="button"
-                                title="Join community"
-                                className="inline-flex min-h-9 min-w-0 flex-1 shrink-0 items-center justify-center truncate whitespace-nowrap rounded-full bg-brand-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
-                                onClick={() => {
-                                  void joinCommunityAndAttachListings(activeCommunity, { notifySuccess: true });
-                                  setShopCommunityId(activeCommunity?.id || null);
-                                  setActiveView(VIEWS.COMMUNITY_SHOP);
-                                  navigate("/", { replace: true });
-                                }}
+                                className="flex min-h-[44px] w-full items-center justify-between gap-2 rounded-lg px-0.5 py-1 text-left transition hover:bg-slate-50/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500/40 dark:hover:bg-slate-800/50 dark:focus-visible:outline-sky-500/45"
+                                onClick={() => setMobileCommunityActionsOpen((prev) => !prev)}
+                                aria-expanded={mobileCommunityActionsOpen}
+                                aria-controls="mobile-community-actions-panel"
                               >
-                                Join community
+                                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500/95 dark:text-slate-400">
+                                  Community actions
+                                </span>
+                                <ChevronDownIcon
+                                  className={`h-4 w-4 shrink-0 text-slate-500 transition-transform dark:text-slate-400 ${mobileCommunityActionsOpen ? "rotate-180" : ""}`}
+                                  aria-hidden
+                                />
                               </button>
-                            ) : null}
-                          </div>
-                          {isMemberOfOpenCommunity && activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "") ? (
-                            <div className="grid grid-cols-1 gap-1.5">
-                              <button
-                                type="button"
-                                className="inline-flex min-h-9 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-2 py-1.5 text-[11px] font-medium leading-tight text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
-                                onClick={() => openEditCommunityModal(activeCommunity)}
-                              >
-                                Edit community
-                              </button>
-                            </div>
+                              {mobileCommunityActionsOpen ? (
+                                <div id="mobile-community-actions-panel" className="flex flex-col gap-2.5">
+                                  {isOwnerOfOpenCommunity ? (
+                                    <button
+                                      type="button"
+                                      className="inline-flex min-h-[40px] w-full items-center justify-center rounded-full border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/95 px-4 text-sm font-semibold text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.06)] ring-1 ring-slate-950/[0.04] transition active:scale-[0.99] hover:border-slate-300 hover:shadow-[0_4px_16px_-6px_rgba(15,23,42,0.18)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400/40 dark:border-slate-600 dark:from-slate-800/95 dark:to-slate-900/90 dark:text-slate-100 dark:ring-white/[0.06] dark:hover:border-slate-500"
+                                      onClick={() => openEditCommunityModal(activeCommunity)}
+                                    >
+                                      Edit community
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="inline-flex min-h-[40px] w-full items-center justify-center rounded-full border border-rose-200/75 bg-gradient-to-b from-rose-50/98 to-rose-50/85 px-4 text-sm font-semibold text-rose-900/95 shadow-[0_1px_2px_rgba(190,24,93,0.08)] ring-1 ring-rose-900/[0.05] transition active:scale-[0.99] hover:border-rose-300/90 hover:from-rose-100 hover:to-rose-50 hover:shadow-[0_4px_16px_-6px_rgba(190,24,93,0.22)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400/50 dark:border-rose-500/30 dark:from-rose-950/55 dark:to-rose-950/35 dark:text-rose-100 dark:hover:border-rose-400/45"
+                                    onClick={requestLeaveCommunityConfirmation}
+                                  >
+                                    Leave community
+                                  </button>
+                                </div>
+                              ) : null}
+                            </>
                           ) : null}
                         </div>
                       </div>
                     </div>
-                    <div className="hidden w-full flex-wrap items-center gap-2 lg:mt-0.5 lg:flex lg:w-auto lg:max-w-[20rem] lg:shrink-0 lg:justify-end">
-                      <span className="w-full text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-                        Community actions
-                      </span>
-                      {activeCommunity?.createdBy && String(activeCommunity.createdBy) === String(user?.id || "") ? (
-                        <button
-                          type="button"
-                          className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-neutral-300/80 bg-white px-3 py-2.5 text-xs font-medium text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 md:min-h-0 md:flex-none md:px-4 md:py-2 md:text-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
-                          onClick={() => openEditCommunityModal(activeCommunity)}
-                        >
-                          Edit community
-                        </button>
+                    <div className="hidden w-full lg:mt-0 lg:flex lg:w-auto lg:max-w-[15rem] lg:shrink-0 lg:flex-col lg:items-stretch lg:justify-center lg:gap-2.5 lg:border-l lg:border-slate-200/55 lg:pl-7 lg:dark:border-slate-600/55">
+                      {isMemberOfOpenCommunity ? (
+                        <>
+                          <span className="text-right text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500/95 dark:text-slate-400">
+                            Community actions
+                          </span>
+                          {isOwnerOfOpenCommunity ? (
+                            <button
+                              type="button"
+                              className="inline-flex min-h-[40px] w-full items-center justify-center rounded-full border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/95 px-4 text-sm font-semibold text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.06)] ring-1 ring-slate-950/[0.04] transition hover:border-slate-300 hover:shadow-[0_4px_16px_-6px_rgba(15,23,42,0.18)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400/40 dark:border-slate-600 dark:from-slate-800/95 dark:to-slate-900/90 dark:text-slate-100 dark:ring-white/[0.06] dark:hover:border-slate-500"
+                              onClick={() => openEditCommunityModal(activeCommunity)}
+                            >
+                              Edit community
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="inline-flex min-h-[40px] w-full items-center justify-center rounded-full border border-rose-200/75 bg-gradient-to-b from-rose-50/98 to-rose-50/85 px-4 text-sm font-semibold text-rose-900/95 shadow-[0_1px_2px_rgba(190,24,93,0.08)] ring-1 ring-rose-900/[0.05] transition hover:border-rose-300/90 hover:from-rose-100 hover:to-rose-50 hover:shadow-[0_4px_16px_-6px_rgba(190,24,93,0.22)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400/50 dark:border-rose-500/30 dark:from-rose-950/55 dark:to-rose-950/35 dark:text-rose-100 dark:hover:border-rose-400/45"
+                            onClick={requestLeaveCommunityConfirmation}
+                          >
+                            Leave community
+                          </button>
+                        </>
                       ) : null}
-                      {!isMemberOfOpenCommunity ? (
-                        <button
-                          type="button"
-                          className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-brand-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-primary/90 md:min-h-0 md:flex-none md:py-2 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
-                          onClick={() => {
-                            void joinCommunityAndAttachListings(activeCommunity, { notifySuccess: true });
-                            setShopCommunityId(activeCommunity?.id || null);
-                            setActiveView(VIEWS.COMMUNITY_SHOP);
-                            navigate("/", { replace: true });
-                          }}
-                        >
-                          Join community
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="inline-flex min-h-[36px] items-center justify-center rounded-lg border border-rose-200/85 bg-transparent px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50/90 md:flex-none dark:border-rose-500/35 dark:text-rose-300 dark:hover:border-rose-400/45 dark:hover:bg-rose-500/10"
-                          onClick={requestLeaveCommunityConfirmation}
-                        >
-                          Leave community
-                        </button>
-                      )}
                     </div>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2 border-t border-neutral-200/80 bg-neutral-50/40 py-2.5 dark:border-t-slate-700/70 dark:bg-slate-900/30 lg:hidden">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-                    Community actions
-                  </span>
-                  <div className="flex min-w-0 flex-row items-stretch gap-2">
-                  <button
-                    type="button"
-                    className={`inline-flex min-h-[44px] min-w-0 touch-manipulation items-center justify-center rounded-xl border border-sky-200/90 bg-sky-50/90 px-2.5 py-2.5 text-xs font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100 active:scale-[0.99] dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300 dark:hover:border-sky-400/45 dark:hover:bg-sky-500/20 ${
-                      isMemberOfOpenCommunity ? "flex-1" : "w-full"
-                    }`}
-                    onClick={() => leaveCommunityToGlobalMarketplace()}
-                  >
-                    Communities
-                  </button>
-                  {isMemberOfOpenCommunity ? (
-                    <button
-                      type="button"
-                      aria-label="Leave this community"
-                      className="inline-flex min-h-[44px] min-w-0 flex-1 touch-manipulation items-center justify-center rounded-xl border border-rose-200/85 bg-transparent px-2.5 py-2.5 text-xs font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50/90 active:scale-[0.99] dark:border-rose-500/35 dark:text-rose-300 dark:hover:border-rose-400/45 dark:hover:bg-rose-500/10"
-                      onClick={requestLeaveCommunityConfirmation}
-                    >
-                      Leave community
-                    </button>
-                  ) : null}
                   </div>
                 </div>
                 </>
@@ -8241,24 +8652,33 @@ function App() {
                   {directoryCommunities.map((c) => {
                     const g = gradientForId(c.id);
                     const initials = initialsFromName(c.name);
+                    const communityTitle = toTitleCase(String(c.name || "").trim()) || "Community";
+                    const openThisCommunityShop = () => {
+                      setShopCommunityId(c.id);
+                      setActiveView(VIEWS.COMMUNITY_SHOP);
+                      navigate("/", { replace: true });
+                    };
                     return (
                       <li key={c.id} className="min-w-0">
-                        <div className="flex h-full min-h-0 flex-col rounded-xl border border-neutral-200/90 bg-neutral-50/40 p-2.5 dark:border-slate-600 dark:bg-slate-800/50 md:p-3">
-                          <button
-                            type="button"
-                            className="group flex min-h-0 flex-1 flex-col gap-2 text-left transition hover:opacity-95"
-                            onClick={() => {
-                              setShopCommunityId(c.id);
-                              setActiveView(VIEWS.COMMUNITY_SHOP);
-                              navigate("/", { replace: true });
-                            }}
-                          >
-                            <div className="relative aspect-[16/9] max-h-[9.5rem] w-full shrink-0 overflow-hidden rounded-lg shadow-inner ring-1 ring-black/5 transition group-hover:ring-brand-primary/30 dark:ring-white/10 md:max-h-[10rem]">
+                        <div
+                          tabIndex={0}
+                          aria-label={`Open ${communityTitle}`}
+                          className="flex h-full min-h-0 cursor-pointer flex-col overflow-hidden rounded-2xl border border-neutral-200/80 bg-white p-0 outline-none shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-8px_rgba(15,23,42,0.08)] ring-1 ring-neutral-950/[0.03] transition hover:border-neutral-300/95 hover:shadow-[0_4px_20px_-6px_rgba(15,23,42,0.12)] focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 dark:border-slate-700/90 dark:bg-slate-900 dark:shadow-[0_1px_2px_rgba(0,0,0,0.2),0_12px_40px_-16px_rgba(0,0,0,0.45)] dark:ring-white/[0.04] dark:hover:border-slate-600 dark:focus-visible:ring-brand-accent/50 dark:focus-visible:ring-offset-slate-950"
+                          onClick={openThisCommunityShop}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              openThisCommunityShop();
+                            }
+                          }}
+                        >
+                          <div className="group flex min-h-0 flex-1 flex-col gap-0 text-left">
+                            <div className="relative aspect-[16/9] max-h-[9.5rem] w-full shrink-0 overflow-hidden rounded-t-2xl shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ring-1 ring-black/[0.06] transition group-hover:ring-brand-primary/25 dark:ring-white/[0.08] dark:group-hover:ring-brand-accent/30 md:max-h-[10rem]">
                               {c.imageUrl ? (
                                 <StableMediaImage
                                   src={c.imageUrl}
                                   alt=""
-                                  className="absolute inset-0 h-full w-full"
+                                  className="pointer-events-none absolute inset-0 h-full w-full"
                                   loading="lazy"
                                   decoding="async"
                                   sizes="(max-width: 768px) 28vw, 120px"
@@ -8273,31 +8693,39 @@ function App() {
                                 </div>
                               )}
                             </div>
-                            <div className="min-w-0 flex-1 px-0.5">
-                              <p className="line-clamp-2 break-words text-sm font-semibold text-neutral-900 dark:text-slate-100 md:text-base">
-                                {toTitleCase(String(c.name || "").trim())}
+                            <div className="min-w-0 flex-1 space-y-1.5 px-3 pb-3 pt-3 md:px-3.5 md:pb-3.5 md:pt-3.5">
+                              <p className="line-clamp-2 break-words text-[0.9375rem] font-semibold leading-snug tracking-tight text-neutral-900 dark:text-slate-50 md:text-base">
+                                {communityTitle}
                               </p>
-                              <p className="mt-0.5 line-clamp-2 text-xs text-neutral-600 dark:text-slate-400 md:text-sm">
+                              <p className="line-clamp-2 text-xs leading-relaxed text-neutral-600 dark:text-slate-400 md:text-[13px]">
                                 {formatCommunityMarketplaceSubtitle(c)}
                               </p>
-                              <p className="mt-0.5 text-xs text-neutral-600 dark:text-slate-400 md:text-sm">
-                                Members:{" "}
-                                <span className="font-medium text-neutral-800 dark:text-slate-200">
+                              <p className="text-xs text-neutral-500 dark:text-slate-500 md:text-[13px]">
+                                <span className="font-medium text-neutral-600 dark:text-slate-400">Members</span>
+                                <span className="mx-1.5 text-neutral-300 dark:text-slate-600" aria-hidden>
+                                  ·
+                                </span>
+                                <span className="tabular-nums font-semibold text-neutral-800 dark:text-slate-200">
                                   {getDisplayedMemberCount(c)}
                                 </span>
                               </p>
                             </div>
-                          </button>
-                          <div className="mt-auto flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-neutral-200/80 pt-2 dark:border-slate-600/80">
-                            {String(listingCommunityFromProfile.id || "") === String(c.id) ? (
-                              <span className="inline-flex items-center rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300">
-                                Joined
+                          </div>
+                          <div className="mt-auto flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-neutral-100 bg-neutral-50/50 px-3 py-2.5 dark:border-slate-700/80 dark:bg-slate-800/40 md:px-3.5 md:py-3">
+                            {isMemberOfCommunityRow(c) ? (
+                              <span className="pointer-events-none inline-flex items-center gap-1.5 rounded-full border border-emerald-200/90 bg-gradient-to-b from-emerald-50 to-emerald-50/80 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-900 shadow-[0_1px_0_rgba(255,255,255,0.7)_inset] ring-1 ring-emerald-900/[0.04] dark:border-emerald-500/25 dark:from-emerald-950/80 dark:to-emerald-950/50 dark:text-emerald-100 dark:shadow-none dark:ring-emerald-400/10">
+                                <span
+                                  className="inline-flex size-1.5 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_1px_rgba(255,255,255,0.85)] dark:bg-emerald-400 dark:shadow-[0_0_0_1px_rgba(15,23,42,0.9)]"
+                                  aria-hidden
+                                />
+                                Member
                               </span>
                             ) : (
                               <button
                                 type="button"
-                                className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                                onClick={() => {
+                                className="inline-flex min-h-9 min-w-[5.5rem] shrink-0 items-center justify-center rounded-full bg-brand-primary px-4 py-2 text-xs font-semibold text-white shadow-[0_1px_2px_rgba(15,23,42,0.08)] ring-1 ring-brand-primary/20 transition hover:bg-brand-primary/92 hover:shadow-[0_4px_14px_-4px_rgba(45,106,79,0.35)] active:scale-[0.98] dark:bg-brand-accent dark:text-slate-900 dark:ring-brand-accent/25 dark:hover:bg-brand-accent/92"
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   void joinCommunityAndAttachListings(c, { notifySuccess: true });
                                   setShopCommunityId(c.id);
                                   setActiveView(VIEWS.COMMUNITY_SHOP);
@@ -8307,24 +8735,14 @@ function App() {
                                 Join
                               </button>
                             )}
-                            <button
-                              type="button"
-                              className="rounded-md bg-brand-primary px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-brand-primary/90 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90"
-                              onClick={() => {
-                                setShopCommunityId(c.id);
-                                setActiveView(VIEWS.COMMUNITY_SHOP);
-                                navigate("/", { replace: true });
-                              }}
-                            >
-                              View
-                            </button>
                           </div>
                           {c.googleUrl ? (
                             <a
                               href={c.googleUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="mt-1 px-0.5 text-right text-xs font-medium text-brand-primary underline decoration-brand-primary/35 underline-offset-2 hover:text-brand-primary/80"
+                              className="border-t border-neutral-100 bg-white px-3 py-2 text-right text-[11px] font-medium text-brand-primary decoration-brand-primary/30 underline-offset-2 transition hover:bg-neutral-50/80 hover:text-brand-primary/90 dark:border-slate-700/80 dark:bg-slate-900 dark:text-brand-accent dark:hover:bg-slate-800/60"
+                              onClick={(e) => e.stopPropagation()}
                             >
                               Open in Google Maps
                             </a>
@@ -8340,29 +8758,29 @@ function App() {
             </div>
             {(activeView === VIEWS.COMMUNITY_SHOP || activeView === VIEWS.FAVORITES) ? (
             <div
-              className={`flex flex-col lg:grid lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)] lg:items-start lg:gap-6 ${
-                activeView === VIEWS.COMMUNITY_SHOP ? "gap-0" : "gap-4"
+              className={`flex flex-col lg:grid lg:grid-cols-1 lg:items-start lg:gap-6 ${
+                activeView === VIEWS.COMMUNITY_SHOP ? "gap-3" : "gap-4"
               }`}
             >
               {mobileCommunityFiltersOpen ? (
                 <button
                   type="button"
-                  className="fixed inset-0 z-[100] bg-neutral-950/60 backdrop-blur-[3px] motion-reduce:backdrop-blur-none lg:hidden"
+                  className="fixed inset-0 z-[100] bg-neutral-950/60 backdrop-blur-[3px] motion-reduce:backdrop-blur-none"
                   aria-label="Close filters"
                   onClick={() => setMobileCommunityFiltersOpen(false)}
                 />
               ) : null}
               <aside
-                className={`order-1 shadow-sm transition-[opacity,transform] duration-300 ease-out fixed inset-0 z-[110] flex flex-col items-stretch justify-center bg-transparent p-3 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] pointer-events-none space-y-3 md:space-y-4 lg:sticky lg:inset-auto lg:top-24 lg:order-none lg:z-auto lg:flex lg:block lg:max-h-[calc(100dvh-6rem)] lg:w-auto lg:max-w-none lg:translate-x-0 lg:translate-y-0 lg:flex-col lg:items-stretch lg:justify-start lg:rounded-2xl lg:border lg:border-neutral-200/80 lg:bg-neutral-50/40 lg:p-3 lg:shadow-sm lg:transition-none lg:overflow-y-auto lg:overflow-x-visible lg:overscroll-y-contain lg:pr-0.5 lg:pointer-events-auto drawer-scroll dark:lg:border-slate-600 dark:lg:bg-slate-900/50 ${
+                className={`order-1 shadow-sm transition-[opacity,transform] duration-300 ease-out fixed inset-0 z-[110] flex flex-col items-stretch justify-center bg-transparent p-3 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] pointer-events-none space-y-3 md:space-y-4 drawer-scroll ${
                   mobileCommunityFiltersOpen
                     ? "visible scale-100 opacity-100"
-                    : "invisible scale-[0.98] opacity-0"
-                } lg:visible lg:scale-100 lg:opacity-100`}
+                    : "invisible scale-[0.98] opacity-0 lg:hidden"
+                }`}
               >
-                <div className="flex min-h-0 min-w-0 flex-1 max-h-full items-center justify-center lg:contents lg:max-h-none">
-                  <div className="flex min-h-0 w-full max-w-mobile-baseline flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-[0_24px_64px_-12px_rgba(15,23,42,0.45)] ring-1 ring-black/[0.04] pointer-events-auto max-h-[min(88dvh,40rem)] dark:border-slate-600 dark:bg-slate-900 dark:ring-white/[0.06] md:max-w-md lg:contents lg:max-h-none lg:max-w-none lg:rounded-none lg:border-0 lg:bg-transparent lg:shadow-none lg:ring-0">
-                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:contents">
-                  <div className="shrink-0 border-b border-neutral-100 bg-neutral-50/80 px-3 pb-3 pt-2.5 dark:border-slate-700/80 dark:bg-slate-800/40 lg:hidden lg:border-0 lg:bg-transparent lg:p-0">
+                <div className="flex min-h-0 min-w-0 flex-1 max-h-full items-center justify-center">
+                  <div className="flex min-h-0 w-full max-w-mobile-baseline flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-[0_24px_64px_-12px_rgba(15,23,42,0.45)] ring-1 ring-black/[0.04] pointer-events-auto max-h-[min(88dvh,40rem)] dark:border-slate-600 dark:bg-slate-900 dark:ring-white/[0.06] md:max-w-md">
+                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                  <div className="shrink-0 border-b border-neutral-100 bg-neutral-50/80 px-3 pb-3 pt-2.5 dark:border-slate-700/80 dark:bg-slate-800/40">
                     <div className="mb-3 flex items-start justify-between gap-2">
                       <div className="min-w-0 pt-0.5">
                         <p className="text-base font-bold tracking-tight text-neutral-900 dark:text-slate-50">Filters</p>
@@ -8395,8 +8813,8 @@ function App() {
                       className="input-base border-neutral-200/90 bg-white py-2.5 pl-3 pr-9 text-sm shadow-sm dark:border-slate-600 dark:bg-slate-950"
                     />
                   </div>
-                  <div className="drawer-scroll min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-y-contain px-3 py-3 md:space-y-5 lg:max-h-none lg:flex-none lg:space-y-3 lg:overflow-visible lg:px-0 lg:py-0">
-                  <div className="rounded-xl bg-neutral-50/90 p-2.5 ring-1 ring-neutral-200/60 dark:bg-slate-800/35 dark:ring-slate-600/50 lg:bg-transparent lg:p-0 lg:ring-0">
+                  <div className="drawer-scroll min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-y-contain px-3 py-3 md:space-y-5">
+                  <div className="rounded-xl bg-neutral-50/90 p-2.5 ring-1 ring-neutral-200/60 dark:bg-slate-800/35 dark:ring-slate-600/50">
                     <p className="mb-2 flex items-center gap-2 px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-400 dark:text-slate-500">
                       <svg className="h-3.5 w-3.5 text-brand-primary dark:text-brand-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h10M4 18h7" />
@@ -8416,14 +8834,14 @@ function App() {
                       ))}
                     </select>
                   </div>
-                  <div className="rounded-xl bg-neutral-50/90 p-2.5 ring-1 ring-neutral-200/60 dark:bg-slate-800/35 dark:ring-slate-600/50 lg:bg-transparent lg:p-0 lg:ring-0">
+                  <div className="rounded-xl bg-neutral-50/90 p-2.5 ring-1 ring-neutral-200/60 dark:bg-slate-800/35 dark:ring-slate-600/50">
                     <p className="mb-2 flex items-center gap-2 px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-400 dark:text-slate-500">
                       <svg className="h-3.5 w-3.5 text-brand-primary dark:text-brand-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 5h7v6H3zM14 5h7v6h-7zM14 14h7v6h-7zM3 14h7v6H3z" />
                       </svg>
                       Quick picks
                     </p>
-                    <div className="grid grid-cols-1 gap-2 lg:flex lg:flex-col lg:gap-1.5">
+                    <div className="flex flex-col gap-2">
                     {BROWSE_QUICK_FILTERS.map((filter) => (
                       <FilterOptionButton
                         key={filter.id}
@@ -8457,7 +8875,7 @@ function App() {
                       </svg>
                       Categories
                     </p>
-                    <div className="flex flex-col gap-2 lg:gap-1">
+                    <div className="flex flex-col gap-2">
                     {browseVerticalsForMobileDrawer.length === 0 ? (
                       <p className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50 px-3 py-3 text-center text-sm text-neutral-600 dark:border-slate-600 dark:bg-slate-800/50 dark:text-slate-400">
                         No categories match your search.
@@ -8490,21 +8908,6 @@ function App() {
               <div className="order-2 min-w-0 space-y-3 md:space-y-4 lg:order-none">
                 {activeView === VIEWS.FAVORITES ? (
                   <h2 className="break-words text-2xl font-semibold text-neutral-900 dark:text-slate-100">Favorites</h2>
-                ) : null}
-                {!(activeView === VIEWS.COMMUNITY_SHOP && isMobileViewport) ? (
-                <div className="lg:hidden">
-                  <button
-                    type="button"
-                    className="inline-flex min-h-[44px] w-full touch-manipulation items-center justify-center gap-2 rounded-xl border border-neutral-300/90 bg-white px-3.5 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 active:scale-[0.98] motion-reduce:active:scale-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                    onClick={() => setMobileCommunityFiltersOpen(true)}
-                  >
-                    <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M7 12h10M10 18h4" />
-                    </svg>
-                    <span className="md:hidden">{"Browse & filter"}</span>
-                    <span className="hidden md:inline">{"Browse & Categories"}</span>
-                  </button>
-                </div>
                 ) : null}
                 {activeBrowseFilterSummary.length > 0 ? (
                   <div className={`${UI_KIT.surfaceMuted} flex flex-wrap items-center justify-between gap-2 px-3 py-2`}>
@@ -8598,7 +9001,7 @@ function App() {
                     className={
                       activeView === VIEWS.COMMUNITY_SHOP
                         ? `flex flex-col pb-3 ${
-                            isMobileViewport && !listingsRefreshing ? "gap-0" : "gap-3"
+                            isMobileViewport && !listingsRefreshing ? "gap-2" : "gap-3"
                           } lg:gap-3 lg:rounded-xl lg:border lg:border-neutral-200/75 lg:bg-neutral-50/80 lg:p-3 lg:shadow-sm lg:shadow-slate-900/[0.03] dark:lg:border-slate-600/90 dark:lg:bg-slate-900/55 dark:lg:shadow-none ${
                             isMobileViewport
                               ? "z-20 bg-white shadow-sm dark:bg-slate-950"
@@ -8617,12 +9020,12 @@ function App() {
                     <div
                       className={
                         activeView === VIEWS.COMMUNITY_SHOP
-                          ? "flex w-full min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:gap-4"
+                          ? "flex w-full min-w-0 flex-col gap-2.5 lg:flex-row lg:items-center lg:gap-4"
                           : "flex shrink-0 flex-wrap items-center gap-2"
                       }
                     >
                       {activeView === VIEWS.COMMUNITY_SHOP ? (
-                        <div className="input-base flex min-h-[44px] w-full min-w-0 items-center gap-1.5 rounded-xl border-neutral-200/90 bg-white px-2.5 dark:border-slate-600 dark:bg-slate-900 lg:min-h-10 lg:flex-1 lg:bg-white dark:lg:bg-slate-950">
+                        <div className="flex h-9 w-full min-w-0 items-center gap-1.5 rounded-lg border border-neutral-200/65 bg-white px-2.5 shadow-[0_1px_3px_rgba(15,23,42,0.045)] dark:border-slate-600/85 dark:bg-slate-900 lg:h-auto lg:min-h-10 lg:flex-1 lg:rounded-xl lg:bg-white lg:shadow-none dark:lg:bg-slate-950">
                           <input
                             id="community-listings-search"
                             type="search"
@@ -8650,7 +9053,7 @@ function App() {
                       <div
                         className={
                           activeView === VIEWS.COMMUNITY_SHOP
-                            ? "flex min-w-0 w-full flex-wrap items-center gap-2 max-lg:justify-between lg:w-auto lg:flex-nowrap lg:justify-end lg:gap-3 lg:shrink-0"
+                            ? "flex min-w-0 w-full flex-wrap items-center gap-2 max-lg:flex-nowrap max-lg:items-center max-lg:gap-2 max-lg:justify-start lg:w-auto lg:flex-nowrap lg:justify-end lg:gap-3 lg:shrink-0"
                             : "contents"
                         }
                       >
@@ -8685,9 +9088,9 @@ function App() {
                       {activeView === VIEWS.COMMUNITY_SHOP && isMobileViewport ? (
                         <button
                           type="button"
-                          className="inline-flex min-h-[44px] flex-1 touch-manipulation items-center justify-center gap-1.5 rounded-xl border border-neutral-200/90 bg-white px-3 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 active:scale-[0.98] dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                          className="inline-flex h-9 min-h-9 min-w-0 flex-1 basis-0 touch-manipulation items-center justify-center gap-1.5 rounded-lg border border-neutral-200/70 bg-white px-2.5 text-xs font-semibold text-neutral-800 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:bg-neutral-50 active:scale-[0.98] dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
                           onClick={() => setMobileCommunityFiltersOpen(true)}
-                          aria-label="Browse and filter listings"
+                          aria-label="Open filters"
                         >
                           <svg className="h-4 w-4 shrink-0 text-brand-primary dark:text-brand-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M7 12h10M10 18h4" />
@@ -8700,11 +9103,39 @@ function App() {
                           ) : null}
                         </button>
                       ) : null}
-                      <ProductViewDensityToggle
-                        value={activeView === VIEWS.FAVORITES ? favoriteProductsView : communityProductsView}
-                        onChange={activeView === VIEWS.FAVORITES ? setFavoriteProductsView : setCommunityProductsView}
-                        variant={isMobileViewport ? "minimal" : "default"}
-                      />
+                      {activeView === VIEWS.FAVORITES ||
+                      (activeView === VIEWS.COMMUNITY_SHOP && !isMobileViewport) ? (
+                        <button
+                          type="button"
+                          className="inline-flex min-h-[44px] shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl border border-neutral-200/90 bg-white px-3 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 active:scale-[0.98] dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-10 md:px-3.5 md:text-sm"
+                          onClick={() => setMobileCommunityFiltersOpen(true)}
+                          aria-label="Open filters"
+                        >
+                          <svg
+                            className="h-4 w-4 shrink-0 text-brand-primary dark:text-brand-accent"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            aria-hidden
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M7 12h10M10 18h4" />
+                          </svg>
+                          <span className="truncate">Filters</span>
+                          {activeBrowseFilterSummary.length > 0 ? (
+                            <span className="inline-flex min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-1 py-[2px] text-[10px] font-bold leading-none text-white dark:bg-rose-500">
+                              {activeBrowseFilterSummary.length > 99 ? "99+" : activeBrowseFilterSummary.length}
+                            </span>
+                          ) : null}
+                        </button>
+                      ) : null}
+                      <div className="shrink-0">
+                        <ProductViewDensityToggle
+                          value={activeView === VIEWS.FAVORITES ? favoriteProductsView : communityProductsView}
+                          onChange={activeView === VIEWS.FAVORITES ? setFavoriteProductsView : setCommunityProductsView}
+                          variant={isMobileViewport ? "minimal" : "default"}
+                        />
+                      </div>
                       </div>
                     </div>
                   </div>
@@ -8893,102 +9324,171 @@ function App() {
 
         {activeView === VIEWS.MESSAGES && (
           <section
-            className={`flex min-h-[calc(100dvh-8.5rem-env(safe-area-inset-bottom,0px))] flex-col ${
+            className={`flex w-full flex-col ${
               messagesMobilePane === "thread"
-                ? "-mx-3 h-[calc(100dvh-8.5rem-env(safe-area-inset-bottom,0px))] space-y-0 overflow-hidden rounded-none border-0 bg-transparent p-0 shadow-none ring-0"
-                : `${UI_KIT.viewSection} space-y-4`
-            } md:mx-0 md:min-h-0 md:space-y-6`}
+                ? "max-md:min-h-0 max-md:min-w-0 max-md:!ml-[calc(50%-50vw)] max-md:!w-[min(100vw,100dvw)] max-md:!max-w-[min(100vw,100dvw)] flex-1 space-y-0 overflow-x-clip overflow-y-hidden rounded-none border-0 bg-transparent p-0 shadow-none ring-0 md:!ml-0 md:!w-full md:!max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))]"
+                : "min-h-[calc(100dvh-8.5rem-env(safe-area-inset-bottom,0px))] w-full space-y-3 border-0 bg-transparent p-0 shadow-none ring-0 md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:space-y-0"
+            } md:mx-0`}
           >
-            {messagesMobilePane !== "thread" ? (
-              <div>
-                <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Messages</h2>
+            {messagesMobilePane !== "thread" && isMobileViewport ? (
+              <div className="px-0.5">
+                <h2 className="text-[var(--ui-text-page)] font-bold tracking-tight text-neutral-900 dark:text-slate-100">
+                  Chats
+                </h2>
               </div>
             ) : null}
             <div
-              className={`grid md:h-auto md:min-h-0 md:grid-cols-[minmax(14rem,20rem)_1fr] ${
+              className={`messenger-shell grid min-w-0 w-full overflow-hidden max-md:grid-cols-1 md:grid-cols-[minmax(17.5rem,22rem)_1fr] md:rounded-2xl md:bg-[#f0f2f5] md:shadow-[0_8px_30px_-12px_rgba(15,23,42,0.12)] md:ring-1 md:ring-neutral-200/80 dark:md:bg-slate-950 dark:md:ring-slate-700/90 ${
                 messagesMobilePane === "thread"
-                  ? "h-full min-h-0 gap-0 overflow-hidden"
-                  : "h-[calc(100dvh-15rem-env(safe-area-inset-bottom,0px))] min-h-[28rem] gap-3"
+                  ? "min-h-0 flex-1 gap-0 md:h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:min-h-0 md:flex-none md:gap-0"
+                  : "h-[calc(100dvh-15rem-env(safe-area-inset-bottom,0px))] min-h-[28rem] gap-0 md:h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:min-h-0 md:gap-0"
               }`}
             >
               <aside
-                className={`${UI_KIT.surfaceRaised} no-scrollbar h-full space-y-3 overflow-y-auto p-2 md:max-h-[70vh] ${
-                  messagesMobilePane === "thread" ? "hidden md:block" : ""
+                className={`no-scrollbar flex h-full min-h-0 flex-col overflow-y-auto bg-white md:bg-[#f0f2f5] md:p-2.5 md:pt-3 dark:bg-slate-950 md:dark:bg-slate-900/85 ${
+                  messagesMobilePane === "thread" ? "hidden md:flex" : ""
                 }`}
               >
-                <div className="grid grid-cols-2 gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-1 md:hidden dark:border-slate-700 dark:bg-slate-900/70">
+                <div className="mb-2.5 grid grid-cols-2 gap-1 rounded-[13px] border border-neutral-200/80 bg-[#f0f2f5] p-0.5 md:hidden dark:border-slate-700 dark:bg-slate-900/90">
                   <button
                     type="button"
-                    className={`rounded-md px-2 py-1.5 text-xs font-semibold transition ${
+                    className={`rounded-[11px] px-2 py-2.5 text-[13px] font-semibold transition ${
                       messagesMobileListTab === "conversations"
-                        ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-800 dark:text-slate-100"
-                        : "text-neutral-600 hover:bg-white/70 dark:text-slate-300 dark:hover:bg-slate-800/70"
+                        ? "bg-white text-neutral-900 shadow-sm ring-1 ring-black/[0.06] dark:bg-slate-800 dark:text-slate-100 dark:ring-white/10"
+                        : "text-neutral-600 hover:bg-white/80 dark:text-slate-300 dark:hover:bg-slate-800/70"
                     }`}
                     onClick={() => setMessagesMobileListTab("conversations")}
                   >
-                    Conversations
+                    Chats
                   </button>
                   <button
                     type="button"
-                    className={`rounded-md px-2 py-1.5 text-xs font-semibold transition ${
+                    className={`rounded-[11px] px-2 py-2.5 text-[13px] font-semibold transition ${
                       messagesMobileListTab === "people"
-                        ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-800 dark:text-slate-100"
-                        : "text-neutral-600 hover:bg-white/70 dark:text-slate-300 dark:hover:bg-slate-800/70"
+                        ? "bg-white text-neutral-900 shadow-sm ring-1 ring-black/[0.06] dark:bg-slate-800 dark:text-slate-100 dark:ring-white/10"
+                        : "text-neutral-600 hover:bg-white/80 dark:text-slate-300 dark:hover:bg-slate-800/70"
                     }`}
                     onClick={() => setMessagesMobileListTab("people")}
                   >
                     People
                   </button>
                 </div>
-                <div>
+                <div className="mb-2 hidden items-center justify-between gap-2 px-1 md:flex">
+                  <h2 className="text-lg font-bold tracking-tight text-neutral-900 dark:text-slate-100">Chats</h2>
+                </div>
+                <div className="relative mb-2 hidden md:block">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 dark:text-slate-500" aria-hidden>
+                    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="11" cy="11" r="7" />
+                      <path strokeLinecap="round" d="M20 20l-3-3" />
+                    </svg>
+                  </span>
+                  <input
+                    type="search"
+                    inputMode="search"
+                    enterKeyHint="search"
+                    autoComplete="off"
+                    value={messagePeopleSearch}
+                    onChange={(e) => setMessagePeopleSearch(e.target.value)}
+                    className="input-base h-9 w-full rounded-full border-neutral-200/90 bg-white py-2 pl-9 pr-3 text-sm shadow-sm dark:border-slate-600 dark:bg-slate-800/90"
+                    placeholder="Search people"
+                    aria-label="Search people"
+                  />
+                </div>
+                <div className="mb-2 hidden gap-2 md:grid md:grid-cols-2">
+                  <select
+                    value={messagePeopleCommunityFilter}
+                    onChange={(e) => setMessagePeopleCommunityFilter(e.target.value)}
+                    className="input-base h-9 w-full rounded-xl border-neutral-200/90 bg-white text-xs shadow-sm dark:border-slate-600 dark:bg-slate-800/90"
+                    aria-label="Filter by community"
+                  >
+                    <option value="all">All communities</option>
+                    <option value="none">No community set</option>
+                    {messageCommunityFilterOptions.map((name) => (
+                      <option key={`community-filter-${name}`} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={messagePeopleSort}
+                    onChange={(e) => setMessagePeopleSort(e.target.value)}
+                    className="input-base h-9 w-full rounded-xl border-neutral-200/90 bg-white text-xs shadow-sm dark:border-slate-600 dark:bg-slate-800/90"
+                    aria-label="Sort people"
+                  >
+                    <option value="name_asc">Name A–Z</option>
+                    <option value="name_desc">Name Z–A</option>
+                    <option value="joined_desc">Newest joined</option>
+                    <option value="joined_asc">Oldest joined</option>
+                  </select>
+                </div>
+                <div
+                  className={`min-h-0 md:flex-1 ${
+                    messagesMobileListTab === "people" ? "max-md:flex-none" : "flex-1"
+                  }`}
+                >
                   <p
-                    className={`px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400 ${
+                    className={`px-2 pb-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-neutral-400 dark:text-slate-500 ${
                       messagesMobileListTab === "people" ? "hidden md:block" : ""
                     }`}
                   >
-                    Conversations
+                    Recent
                   </p>
                   <div className={messagesMobileListTab === "people" ? "hidden md:block" : ""}>
                   {sortedChatThreads.length === 0 ? (
-                    <p className="px-2 py-3 text-sm text-neutral-600 dark:text-slate-400">No chats yet. Start one from People below.</p>
+                    <p className="rounded-xl bg-white/60 px-3 py-3 text-sm text-neutral-600 dark:bg-slate-800/40 dark:text-slate-400 md:bg-white/80 md:dark:bg-slate-800/50">
+                      No chats yet. Find someone under People below.
+                    </p>
                   ) : (
-                    <ul className="space-y-1.5">
+                    <ul className="divide-y divide-neutral-100 dark:divide-slate-800/90 md:divide-y-0 md:space-y-1">
                       {sortedChatThreads.map((thread) => {
                         const participant = usersById.get(String(thread.participantId || ""));
                         const latest = Array.isArray(thread.messages) && thread.messages.length > 0 ? thread.messages[thread.messages.length - 1] : null;
                         const selected = String(activeChatUserId) === String(thread.participantId);
+                        const timeLabel = formatChatListTimeLabel(latest?.createdAt);
                         return (
-                          <li key={thread.participantId}>
+                          <li key={thread.participantId} className="md:rounded-xl md:first:pt-0">
                             <button
                               type="button"
-                              className={`flex w-full min-w-0 items-center justify-between rounded-lg px-3 py-2 text-left transition ${
+                              className={`flex w-full min-w-0 items-center gap-3 px-1 py-3 text-left transition active:bg-black/[0.04] md:gap-3 md:rounded-xl md:px-2.5 md:py-2.5 md:active:scale-[0.99] ${
                                 selected
-                                  ? "bg-brand-soft text-brand-primary dark:bg-slate-800/80 dark:text-slate-100"
-                                  : "hover:bg-neutral-100 dark:hover:bg-slate-800"
+                                  ? "bg-[#e7f3ff] dark:bg-slate-800/90 md:bg-white md:shadow-sm md:ring-1 md:ring-neutral-200/90 md:dark:bg-slate-800 md:dark:ring-slate-600/80"
+                                  : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04] md:hover:bg-black/[0.04] md:dark:hover:bg-white/[0.06]"
                               }`}
                               aria-current={selected ? "true" : undefined}
                               onClick={() => openChatThread(thread.participantId)}
                             >
-                              <span className="flex min-w-0 flex-1 items-center gap-3">
-                                <StableAvatar
-                                  src={String(participant?.avatarUrl || "").trim()}
-                                  alt=""
-                                  initials={getAvatarInitialsFromUser(participant || {})}
-                                  className="h-10 w-10 shrink-0 text-sm ring-1 ring-neutral-200/85 dark:ring-slate-600/90"
-                                  sizes="40px"
-                                />
-                                <span className="min-w-0 flex-1">
-                                  <span className="block truncate text-sm font-medium text-neutral-900 dark:text-slate-100">
+                              <StableAvatar
+                                src={String(participant?.avatarUrl || "").trim()}
+                                alt=""
+                                initials={getAvatarInitialsFromUser(participant || {})}
+                                className="h-14 w-14 shrink-0 text-[15px] ring-2 ring-white dark:ring-slate-800 md:h-10 md:w-10 md:text-[13px]"
+                                sizes="(max-width: 768px) 56px, 40px"
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-baseline justify-between gap-2">
+                                  <span className="truncate text-[17px] font-bold tracking-tight text-neutral-900 dark:text-slate-100 md:text-[14px] md:font-semibold">
                                     {formatDisplayName(participant?.name || participant?.username || "Member")}
                                   </span>
-                                  <span className="mt-0.5 block truncate text-xs text-neutral-500 dark:text-slate-400">
-                                    {communityLabelForUser(participant)}
-                                    {latest?.text ? ` · ${latest.text}` : " · No messages yet"}
-                                  </span>
+                                  {timeLabel ? (
+                                    <span className="shrink-0 text-[12px] font-medium tabular-nums text-neutral-400 dark:text-slate-500">
+                                      {timeLabel}
+                                    </span>
+                                  ) : null}
+                                </span>
+                                <span className="mt-0.5 line-clamp-2 text-[15px] leading-snug text-neutral-500 dark:text-slate-400 md:text-[13px]">
+                                  {latest?.text ? (
+                                    <>
+                                      <span className="font-medium text-neutral-400 dark:text-slate-500">{communityLabelForUser(participant)} · </span>
+                                      {latest.text}
+                                    </>
+                                  ) : (
+                                    <span className="italic text-neutral-400 dark:text-slate-500">Tap to say hi</span>
+                                  )}
                                 </span>
                               </span>
                               {thread.unread > 0 ? (
-                                <span className="ml-2 inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-brand-primary px-1.5 py-0.5 text-[10px] font-bold text-white">
+                                <span className="flex min-w-[1.25rem] shrink-0 items-center justify-center rounded-full bg-brand-primary px-1.5 text-[10px] font-bold leading-none text-white">
                                   {thread.unread > 99 ? "99+" : thread.unread}
                                 </span>
                               ) : null}
@@ -9001,54 +9501,64 @@ function App() {
                   </div>
                 </div>
                 <div
-                  className={`border-t border-neutral-200/90 pt-2 dark:border-slate-700/80 ${
+                  className={`mt-1 border-t border-neutral-200/80 pt-2 dark:border-slate-700/80 ${
                     messagesMobileListTab === "conversations" ? "hidden md:block" : ""
                   }`}
                 >
-                  <div className="space-y-2 px-2 pb-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">People</p>
-                      <span className="text-[11px] text-neutral-500 dark:text-slate-400">
+                  <div className="space-y-2 px-0 pb-2 md:px-0">
+                    <div className="flex items-center justify-between gap-2 px-2 md:px-0.5">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-neutral-400 dark:text-slate-500">People</p>
+                      <span className="text-[11px] text-neutral-400 dark:text-slate-500">
                         {filteredMessagePeople.length} result{filteredMessagePeople.length === 1 ? "" : "s"}
                       </span>
                     </div>
-                    <input
-                      type="search"
-                      inputMode="search"
-                      enterKeyHint="search"
-                      autoComplete="off"
-                      value={messagePeopleSearch}
-                      onChange={(e) => setMessagePeopleSearch(e.target.value)}
-                      className="input-base h-9 w-full text-xs"
-                      placeholder="Search name, username, or community"
-                      aria-label="Search people"
-                    />
-                    <div className="grid grid-cols-1 gap-1.5">
-                      <select
-                        value={messagePeopleCommunityFilter}
-                        onChange={(e) => setMessagePeopleCommunityFilter(e.target.value)}
-                        className="input-base h-9 w-full text-xs"
-                        aria-label="Filter by community"
-                      >
-                        <option value="all">All communities</option>
-                        <option value="none">No community set</option>
-                        {messageCommunityFilterOptions.map((name) => (
-                          <option key={`community-filter-${name}`} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={messagePeopleSort}
-                        onChange={(e) => setMessagePeopleSort(e.target.value)}
-                        className="input-base h-9 w-full text-xs"
-                        aria-label="Sort people"
-                      >
-                        <option value="name_asc">Sort: Name A-Z</option>
-                        <option value="name_desc">Sort: Name Z-A</option>
-                        <option value="joined_desc">Sort: Newest joined</option>
-                        <option value="joined_asc">Sort: Oldest joined</option>
-                      </select>
+                    <div className="md:hidden">
+                      <div className="relative px-2">
+                        <span className="pointer-events-none absolute left-5 top-1/2 -translate-y-1/2 text-neutral-400" aria-hidden>
+                          <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <circle cx="11" cy="11" r="7" />
+                            <path strokeLinecap="round" d="M20 20l-3-3" />
+                          </svg>
+                        </span>
+                        <input
+                          type="search"
+                          inputMode="search"
+                          enterKeyHint="search"
+                          autoComplete="off"
+                          value={messagePeopleSearch}
+                          onChange={(e) => setMessagePeopleSearch(e.target.value)}
+                          className="input-base h-9 w-full rounded-full border-neutral-200/90 py-2 pl-9 pr-3 text-xs"
+                          placeholder="Search name, username, or community"
+                          aria-label="Search people"
+                        />
+                      </div>
+                      <div className="mt-2 grid grid-cols-1 gap-1.5 px-2">
+                        <select
+                          value={messagePeopleCommunityFilter}
+                          onChange={(e) => setMessagePeopleCommunityFilter(e.target.value)}
+                          className="input-base h-9 w-full rounded-xl text-xs"
+                          aria-label="Filter by community"
+                        >
+                          <option value="all">All communities</option>
+                          <option value="none">No community set</option>
+                          {messageCommunityFilterOptions.map((name) => (
+                            <option key={`community-filter-${name}`} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={messagePeopleSort}
+                          onChange={(e) => setMessagePeopleSort(e.target.value)}
+                          className="input-base h-9 w-full rounded-xl text-xs"
+                          aria-label="Sort people"
+                        >
+                          <option value="name_asc">Sort: Name A-Z</option>
+                          <option value="name_desc">Sort: Name Z-A</option>
+                          <option value="joined_desc">Sort: Newest joined</option>
+                          <option value="joined_asc">Sort: Oldest joined</option>
+                        </select>
+                      </div>
                     </div>
                   </div>
                   {usersLoading && usersList.length === 0 ? (
@@ -9068,24 +9578,24 @@ function App() {
                     </div>
                   ) : null}
                   {!usersError ? (
-                    <ul className="space-y-1">
+                    <ul className="divide-y divide-neutral-100 dark:divide-slate-800/90 md:divide-y-0 md:space-y-1">
                       {filteredMessagePeople.map((u) => (
                           <li key={`messages-user-${u.id}`}>
                             <button
                               type="button"
-                              className="flex w-full min-w-0 items-center justify-between rounded-lg px-3 py-2 text-left transition hover:bg-neutral-100 dark:hover:bg-slate-800"
+                              className="flex w-full min-w-0 items-center justify-between px-2 py-3 text-left transition hover:bg-black/[0.04] active:bg-black/[0.03] dark:hover:bg-white/[0.06] md:rounded-xl md:px-2.5 md:py-2 md:active:scale-[0.99]"
                               onClick={() => openChatWithUser(u.id)}
                             >
-                              <span className="flex min-w-0 flex-1 items-center gap-3">
+                              <span className="flex min-w-0 flex-1 items-center gap-2.5 md:gap-3">
                                 <StableAvatar
                                   src={String(u.avatarUrl || "").trim()}
                                   alt=""
                                   initials={getAvatarInitialsFromUser(u)}
-                                  className="h-10 w-10 shrink-0 text-sm ring-1 ring-neutral-200/85 dark:ring-slate-600/90"
+                                  className="h-10 w-10 shrink-0 text-sm ring-2 ring-white dark:ring-slate-800"
                                   sizes="40px"
                                 />
                                 <span className="min-w-0 flex-1">
-                                  <span className="block truncate text-sm font-medium text-neutral-900 dark:text-slate-100">
+                                  <span className="block truncate text-[14px] font-semibold text-neutral-900 dark:text-slate-100">
                                     {formatDisplayName(u.name || u.username || "Member")}
                                   </span>
                                   <span className="block truncate text-[11px] text-neutral-500 dark:text-slate-400">
@@ -9094,8 +9604,8 @@ function App() {
                                   </span>
                                 </span>
                               </span>
-                              <span className="shrink-0 rounded-md border border-brand-primary/35 px-2 py-1 text-[11px] font-semibold text-brand-primary dark:border-brand-primary/45">
-                                Chat
+                              <span className="shrink-0 rounded-full bg-brand-primary/12 px-3 py-1 text-[11px] font-semibold text-brand-primary dark:bg-brand-primary/20">
+                                Message
                               </span>
                             </button>
                           </li>
@@ -9110,17 +9620,17 @@ function App() {
                 </div>
               </aside>
               <div
-                className={`${UI_KIT.surfaceRaised} min-h-[24rem] flex-col ${
+                className={`flex min-h-[24rem] min-w-0 flex-col bg-white dark:bg-slate-950 ${
                   messagesMobilePane === "list"
                     ? "hidden md:flex"
-                    : "grid h-[calc(100dvh-8.5rem-env(safe-area-inset-bottom,0px))] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-none border-x-0 border-b-0 shadow-none ring-0 md:flex md:h-full md:rounded-2xl md:border md:shadow-sm md:ring-1"
-                } h-full`}
+                    : "grid min-h-0 min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-none border-0 shadow-none ring-0 md:flex md:h-full md:min-h-[24rem] md:rounded-r-2xl md:border-0 md:shadow-none"
+                } h-full w-full`}
               >
                 {!activeChatThread ? (
                   <div className="flex flex-1 items-center justify-center p-4 md:p-6">
                     <ScreenEmpty
                       title="No conversation selected"
-                      description="Choose someone under Conversations or People to start messaging."
+                      description="Pick a chat in the list or find someone under People to start messaging."
                       primaryAction={
                         messagesMobilePane === "thread"
                           ? { label: "Back to list", onClick: () => setMessagesMobilePane("list") }
@@ -9130,61 +9640,202 @@ function App() {
                   </div>
                 ) : (
                   <>
-                    <div className="min-w-0 border-b border-neutral-200 px-4 py-2 dark:border-slate-700 md:py-3">
-                      <button
-                        type="button"
-                        className="inline-flex max-w-full items-center gap-1 text-xs font-semibold text-brand-primary md:hidden"
-                        onClick={() => setMessagesMobilePane("list")}
-                      >
-                        <span aria-hidden>←</span>
-                        <span className="truncate">Back to chats</span>
-                      </button>
-                      <p className="break-words text-sm font-semibold text-neutral-900 dark:text-slate-100">
-                        {formatDisplayName(activeChatUser?.name || activeChatUser?.username || "Member")}
-                      </p>
-                      <p className="mt-0.5 line-clamp-2 break-words text-xs text-neutral-500 dark:text-slate-400">
-                        {communityLabelForUser(activeChatUser)}
-                      </p>
+                    <div className="relative z-[1] min-w-0 border-b border-neutral-200/80 bg-white/95 px-2 py-1.5 shadow-[0_1px_0_rgba(15,23,42,0.05)] backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/95 md:bg-white md:px-4 md:py-2.5 md:shadow-[0_1px_0_rgba(15,23,42,0.06)] md:backdrop-blur-0">
+                      <div className="flex min-w-0 items-center gap-2 md:gap-3">
+                        <button
+                          type="button"
+                          className="flex size-10 shrink-0 items-center justify-center rounded-full text-neutral-700 transition hover:bg-neutral-100 md:hidden dark:text-slate-200 dark:hover:bg-slate-800"
+                          aria-label="Back to conversations"
+                          onClick={() => {
+                            setMessagesMobilePane("list");
+                            setMessagesThreadMenuOpen(false);
+                          }}
+                        >
+                          <svg className="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
+                          </svg>
+                        </button>
+                        <StableAvatar
+                          src={String(activeChatUser?.avatarUrl || "").trim()}
+                          alt=""
+                          initials={getAvatarInitialsFromUser(activeChatUser || {})}
+                          className="h-11 w-11 shrink-0 text-base ring-2 ring-neutral-200/90 dark:ring-slate-600/90"
+                          sizes="44px"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[15px] font-semibold leading-tight text-neutral-900 dark:text-slate-100">
+                            {formatDisplayName(activeChatUser?.name || activeChatUser?.username || "Member")}
+                          </p>
+                          <p className="mt-0.5 truncate text-xs text-neutral-500 dark:text-slate-400">{communityLabelForUser(activeChatUser)}</p>
+                        </div>
+                        <div className="relative shrink-0" ref={messagesThreadMenuWrapRef}>
+                          <button
+                            type="button"
+                            className="flex size-10 items-center justify-center rounded-full text-neutral-600 transition hover:bg-neutral-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                            aria-expanded={messagesThreadMenuOpen}
+                            aria-haspopup="menu"
+                            aria-label="Conversation options"
+                            onClick={() => setMessagesThreadMenuOpen((o) => !o)}
+                          >
+                            <svg className="size-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                              <circle cx="12" cy="6" r="1.65" />
+                              <circle cx="12" cy="12" r="1.65" />
+                              <circle cx="12" cy="18" r="1.65" />
+                            </svg>
+                          </button>
+                          {messagesThreadMenuOpen ? (
+                            <div
+                              role="menu"
+                              className="absolute right-0 top-full z-[60] mt-1.5 min-w-[11.5rem] overflow-hidden rounded-xl border border-neutral-200/95 bg-white py-1 shadow-lg dark:border-slate-600 dark:bg-slate-900"
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="flex w-full px-3 py-2.5 text-left text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:text-slate-100 dark:hover:bg-slate-800"
+                                onClick={() => clearCurrentThreadMessages()}
+                              >
+                                Clear messages
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="flex w-full px-3 py-2.5 text-left text-sm font-semibold text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                                onClick={() => deleteCurrentThread()}
+                              >
+                                Delete conversation
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
                     </div>
                     <div
                       ref={chatThreadViewportRef}
-                      className="min-h-0 overflow-x-hidden overflow-y-auto p-4 max-md:pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] md:flex-1"
+                      onScroll={handleChatThreadScroll}
+                      className="min-h-0 flex flex-col overflow-x-hidden overflow-y-auto bg-[#e5e5e5] p-2.5 dark:bg-slate-900/70 max-md:pb-2 md:flex-1 md:p-4"
                     >
-                      {activeChatThread.messages.length === 0 ? (
-                        <p className="text-sm text-neutral-500 dark:text-slate-400">No messages yet. Send the first one.</p>
-                      ) : (
-                        activeChatThread.messages.map((m) => {
-                          const mine = String(m.senderId) === String(user?.id || "");
-                          return (
-                            <div key={m.id} className={`mt-2 flex ${mine ? "justify-end" : "justify-start"}`}>
-                              <div
-                                className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
-                                  mine
-                                    ? "bg-brand-primary text-white"
-                                    : "bg-neutral-100 text-neutral-900 dark:bg-slate-800 dark:text-slate-100"
-                                }`}
-                              >
-                                <p className="whitespace-pre-wrap break-words">{m.text}</p>
-                                <p className={`mt-1 text-[10px] ${mine ? "text-white/80" : "text-neutral-500 dark:text-slate-400"}`}>
-                                  {new Date(m.createdAt).toLocaleString()}
-                                </p>
+                      <div className="mt-auto flex min-h-0 w-full flex-col">
+                        {activeChatThread.messages.length === 0 ? (
+                          <p className="rounded-2xl bg-white/90 px-4 py-6 text-center text-sm text-neutral-500 shadow-sm dark:bg-slate-800/80 dark:text-slate-400">
+                            No messages yet — say hello below.
+                          </p>
+                        ) : (
+                          activeChatThread.messages.map((m, idx, arr) => {
+                            const mine = String(m.senderId) === String(user?.id || "");
+                            const prev = idx > 0 ? arr[idx - 1] : null;
+                            const next = idx < arr.length - 1 ? arr[idx + 1] : null;
+                            const samePrev = prev && String(prev.senderId) === String(m.senderId);
+                            const sameNext = next && String(next.senderId) === String(m.senderId);
+                            const timeStr = formatChatMessageTime(m.createdAt);
+                            const showTimestamp = !sameNext;
+                            const gapClass = samePrev ? "mt-0.5" : "mt-2";
+                            const bubbleRadius = mine
+                              ? samePrev
+                                ? "rounded-[4px] rounded-br-[4px]"
+                                : "rounded-[18px] rounded-br-[4px]"
+                              : samePrev
+                                ? "rounded-[4px] rounded-bl-[4px]"
+                                : "rounded-[18px] rounded-bl-[4px]";
+                            return (
+                              <div key={m.id} className={`flex ${gapClass} ${mine ? "justify-end" : "justify-start"}`}>
+                                <div
+                                  className={`max-w-[min(88%,20rem)] ${bubbleRadius} px-3 py-1.5 text-[15px] leading-[1.35] shadow-[0_1px_0.5px_rgba(15,23,42,0.07)] md:max-w-[min(85%,26rem)] md:px-3.5 md:py-2 ${
+                                    mine
+                                      ? "bg-[#0084ff] text-white dark:bg-brand-primary"
+                                      : "bg-white text-neutral-900 dark:bg-slate-800 dark:text-slate-100"
+                                  }`}
+                                >
+                                  <p className="whitespace-pre-wrap break-words">{m.text}</p>
+                                  {showTimestamp ? (
+                                    <p
+                                      className={`mt-0.5 text-right text-[11px] tabular-nums leading-none ${
+                                        mine ? "text-white/70" : "text-neutral-400 dark:text-slate-500"
+                                      }`}
+                                    >
+                                      {timeStr}
+                                    </p>
+                                  ) : null}
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })
-                      )}
+                            );
+                          })
+                        )}
+                      </div>
                     </div>
                     <div
-                      className={`border-t border-neutral-200 dark:border-slate-700 ${
+                      className={`border-t border-neutral-200/90 bg-[#f0f2f5] dark:border-slate-800 dark:bg-slate-900/90 ${
                         messagesMobilePane === "thread"
-                          ? "max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-[52] max-md:border-x-0 max-md:border-b-0 max-md:bg-white/95 max-md:px-3.5 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] max-md:pt-3 max-md:shadow-[0_-10px_30px_-12px_rgba(15,23,42,0.12)] max-md:backdrop-blur-md dark:max-md:bg-slate-950/95 md:relative md:bg-transparent md:p-3 md:shadow-none md:backdrop-blur-0"
-                          : "bg-white/95 p-3 backdrop-blur md:bg-transparent md:backdrop-blur-0"
+                          ? "shrink-0 max-md:border-x-0 max-md:bg-[#f0f2f5]/96 max-md:px-2 max-md:pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] max-md:pt-2 max-md:shadow-[0_-4px_24px_-8px_rgba(15,23,42,0.14)] max-md:backdrop-blur-lg dark:max-md:bg-slate-950/96 md:relative md:p-3 md:shadow-none md:backdrop-blur-0"
+                          : "p-3 md:bg-[#f0f2f5] md:dark:bg-slate-900/90"
                       }`}
+                      style={
+                        messagesMobilePane === "thread" && messagesThreadKeyboardInsetPx > 0
+                          ? {
+                              paddingBottom: `calc(max(0.5rem, env(safe-area-inset-bottom, 0px)) + ${messagesThreadKeyboardInsetPx}px)`,
+                            }
+                          : undefined
+                      }
                     >
-                      <div className="flex min-w-0 gap-2">
+                      <div className="flex min-w-0 items-end gap-1 md:gap-2">
+                        <div className="flex shrink-0 items-center gap-0 pb-1 md:gap-0.5 md:pb-2">
+                          <div className="relative" ref={chatEmojiPickerWrapRef}>
+                            <button
+                              type="button"
+                              className={`flex size-10 items-center justify-center rounded-full text-neutral-500 transition hover:bg-black/[0.06] active:scale-95 dark:text-slate-400 dark:hover:bg-white/[0.08] md:size-9 ${
+                                chatEmojiPickerOpen ? "bg-black/[0.06] dark:bg-white/[0.08]" : ""
+                              }`}
+                              aria-label="Emoji"
+                              aria-expanded={chatEmojiPickerOpen}
+                              aria-haspopup="dialog"
+                              aria-controls="chat-emoji-panel"
+                              onClick={() => setChatEmojiPickerOpen((o) => !o)}
+                            >
+                              <svg className="size-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+                                <circle cx="12" cy="12" r="9" />
+                                <path strokeLinecap="round" d="M8.5 14.5c1.2 1.5 3.3 2.3 5.5 1.8" />
+                                <circle cx="9" cy="10" r="0.9" fill="currentColor" stroke="none" />
+                                <circle cx="15" cy="10" r="0.9" fill="currentColor" stroke="none" />
+                              </svg>
+                            </button>
+                            {chatEmojiPickerOpen ? (
+                              <div
+                                id="chat-emoji-panel"
+                                role="dialog"
+                                aria-label="Choose emoji"
+                                className="absolute bottom-full left-0 z-[80] mb-2 w-[min(calc(100vw-1rem),18rem)] rounded-2xl border border-neutral-200/95 bg-white p-2 shadow-xl dark:border-slate-600 dark:bg-slate-900"
+                              >
+                                <div className="max-h-[min(40dvh,12.5rem)] overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
+                                  <div className="grid grid-cols-8 gap-px sm:grid-cols-8">
+                                    {CHAT_QUICK_EMOJIS.map((emoji, idx) => (
+                                      <button
+                                        key={`${idx}-${emoji}`}
+                                        type="button"
+                                        className="flex size-9 max-w-[2.25rem] items-center justify-center rounded-lg text-[1.35rem] leading-none transition hover:bg-neutral-100 active:scale-95 dark:hover:bg-slate-800"
+                                        onClick={() => insertEmojiIntoChatComposer(emoji)}
+                                      >
+                                        <span aria-hidden>{emoji}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                          <button
+                            type="button"
+                            className="hidden size-9 items-center justify-center rounded-full text-neutral-500 transition hover:bg-black/[0.06] dark:text-slate-400 dark:hover:bg-white/[0.08] sm:flex"
+                            aria-label="Attach file (coming soon)"
+                            disabled
+                          >
+                            <svg className="size-[21px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+                            </svg>
+                          </button>
+                        </div>
                         <input
                           ref={chatComposerInputRef}
                           type="text"
+                          enterKeyHint="send"
                           value={chatComposer}
                           onChange={(e) => {
                             const nextValue = e.target.value;
@@ -9200,18 +9851,22 @@ function App() {
                               sendChatMessage();
                             }
                           }}
-                          placeholder={`Message ${formatDisplayName(activeChatUser?.name || activeChatUser?.username || "member")}...`}
-                          className="input-base h-11 min-w-0 flex-1"
+                          placeholder={`Message…`}
+                          className="input-base mb-0 min-h-[44px] min-w-0 flex-1 rounded-[22px] border-0 bg-white py-2.5 pl-4 pr-3 text-[16px] shadow-inner ring-1 ring-neutral-200/90 focus:ring-2 focus:ring-brand-primary/30 dark:bg-slate-800 dark:ring-slate-600/80 md:min-h-11 md:text-[15px]"
                         />
                         <Button
                           type="button"
                           variant="primary"
-                          className="h-11 min-h-11 shrink-0 px-4"
+                          iconOnly
+                          aria-label={chatSendPending ? "Sending message" : "Send message"}
+                          className="mb-0.5 size-10 min-h-10 shrink-0 rounded-full px-0 shadow-md [&_span]:gap-0 md:mb-px md:size-11 md:min-h-11"
                           onClick={sendChatMessage}
                           loading={chatSendPending}
-                          loadingLabel="Sending…"
+                          loadingLabel=""
                         >
-                          Send
+                          <svg className="size-[22px] md:size-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                          </svg>
                         </Button>
                       </div>
                     </div>
@@ -10667,7 +11322,6 @@ function App() {
                       setListingSecondOptionOpen(false);
                       setEditingListingId(null);
                       setListingEditOverlayOpen(false);
-                      clearMarketplaceToasts();
                       setSellerTab(SELLER_TABS.PRODUCTS);
                       if (listingEditOverlayOpen) {
                         const origin = productFlowOriginRef.current || {};
@@ -10729,11 +11383,53 @@ function App() {
                     value={commerceFlowViewBuyer}
                     onChange={setCommerceFlowViewBuyer}
                     groupAriaLabel="Cart line layout"
-                    gridTitle="Grid — two columns for readable cart cards"
+                    gridTitle="Grid — marketplace columns on wider screens; two columns on phone"
                     compactTitle="Dense — three columns for a compact overview"
                   />
                 </div>
-              <div className="space-y-3 max-md:pb-[max(6.5rem,calc(5.5rem+env(safe-area-inset-bottom,0px)))] md:space-y-4 md:pb-6 lg:pb-8">
+                <div className="max-md:fixed max-md:bottom-[max(1rem,calc(3rem+env(safe-area-inset-bottom,0px)))] max-md:right-[max(1rem,env(safe-area-inset-right,0px))] max-md:z-50 md:static md:mt-3 md:flex md:w-full md:justify-end">
+                  <div
+                    role="region"
+                    aria-label="Cart total and checkout"
+                    className="flex max-w-[min(100vw-2rem,22rem)] touch-manipulation overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-xl ring-1 ring-black/[0.04] dark:border-slate-600 dark:bg-slate-900 dark:ring-white/[0.06] md:max-w-[min(100%,28rem)]"
+                  >
+                    {selectedCartItems.length > 0 ? (
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 border-r border-neutral-200/90 px-3 py-2.5 text-sm dark:border-slate-600">
+                        <span className="font-semibold tabular-nums text-neutral-800 dark:text-slate-200">
+                          {formatCents(selectedCartTotals.currentTotalCents)}
+                        </span>
+                        {selectedCartTotals.originalTotalCents > selectedCartTotals.currentTotalCents ? (
+                          <>
+                            <span className="text-xs font-medium tabular-nums text-neutral-500 line-through dark:text-slate-400">
+                              {formatCents(selectedCartTotals.originalTotalCents)}
+                            </span>
+                            {selectedCartTotals.discountPercent > 0 ? (
+                              <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                                -{selectedCartTotals.discountPercent}%
+                              </span>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="primary"
+                      className={`text-sm !rounded-none px-4 py-3 md:min-h-11 ${
+                        selectedCartItems.length > 0 ? "!rounded-r-2xl md:!rounded-r-xl" : "!rounded-2xl md:!rounded-xl"
+                      } ${selectedCartItems.length === 0 ? "min-w-[min(100%,11rem)] flex-1" : "shrink-0"}`}
+                      disabled={selectedCartItems.length === 0}
+                      loading={cartCheckoutSubmitting}
+                      loadingLabel="Checking out…"
+                      onClick={() => {
+                        void checkoutSelectedCartItems();
+                      }}
+                    >
+                      {`Check out${selectedCartItems.length > 0 ? ` (${selectedCartItems.length})` : ""}`}
+                    </Button>
+                  </div>
+                </div>
+              <div className="space-y-3 max-md:pb-[max(9.5rem,calc(9.5rem+env(safe-area-inset-bottom,0px)))] md:space-y-4 md:pb-6 lg:pb-8">
                 {Object.entries(
                   cartItems.reduce((acc, item) => {
                     const key = String(item.sellerId || "unknown");
@@ -10772,7 +11468,7 @@ function App() {
                       <div
                         className={`${commerceFlowLineItemsClass(effectiveCommerceFlowViewBuyer, { variant: "cart" })} ${lmBrowseViewShellClass(
                           effectiveCommerceFlowViewBuyer === "list" ? "list" : "grid",
-                        )} ${effectiveCommerceFlowViewBuyer === "list" ? "" : "grid-cols-2"}`}
+                        )}`}
                       >
                         {orderedItems.map((item) => {
                           const lid = String(item.listingId);
@@ -10824,55 +11520,108 @@ function App() {
                                 ? "pickup"
                                 : cartModesList[0] || "pickup";
                           const cartFulfillmentModesForLabel = [cartFtResolved];
+                          const cartLineCheckbox = (
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
+                              checked={Boolean(cartItemSelection[lineKey])}
+                              onChange={() => toggleCartListingSelected(lineKey)}
+                              aria-label={`Select ${item.title || "product"}`}
+                            />
+                          );
+                          /** List layout: checkbox column beside card. Grid (all viewports): checkbox over image. */
+                          const showCartCheckboxBesideCard = cfList;
                           return (
                             <div
                               key={lineKey}
-                              className={`transition-opacity duration-[2000ms] ${
-                                cfList
-                                  ? "relative lm-card lm-list-card lm-product-card-list flex items-start gap-3 p-3 md:gap-3.5"
-                                  : "relative lm-card lm-grid-card lm-product-card lm-product-card--feed h-full min-h-0 flex-1 p-0"
-                              } ${
-                                isCartLineUnseen ? "bg-primary-soft dark:bg-primary/15" : ""
-                              } ${
-                                isRemoving ? "pointer-events-none opacity-0" : "opacity-100"
-                              }`}
+                              className={`flex min-w-0 items-start ${showCartCheckboxBesideCard ? "gap-2 md:gap-2.5" : ""}`}
                             >
-                              <input
-                                type="checkbox"
-                                className={`h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500 ${
-                                  cfList
-                                    ? "absolute left-4 top-4 z-10 bg-white/90 dark:bg-slate-900/90"
-                                    : "absolute left-2 top-2 z-10 bg-white/90 dark:bg-slate-900/90"
-                                }`}
-                                checked={Boolean(cartItemSelection[lineKey])}
-                                onChange={() => toggleCartListingSelected(lineKey)}
-                                aria-label={`Select ${item.title || "product"}`}
-                              />
-                              <button
-                                type="button"
-                                className={
-                                  cfList
-                                    ? `lm-product-media lm-product-media--soft relative ${thumbClass} shrink-0 overflow-hidden cursor-pointer`
-                                    : `${thumbClass} lm-product-card--tap`
-                                }
-                                aria-label={`View details: ${item.title || "product"}`}
-                                onClick={openCartItemInspect}
-                              >
-                                <ProductListingMedia
-                                  listing={item}
-                                  variant={cfList ? "list" : "grid"}
-                                  className="absolute inset-0 min-h-0"
-                                  loading="lazy"
-                                  sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
-                                />
-                              </button>
+                              {showCartCheckboxBesideCard ? (
+                                <div className="flex shrink-0 items-center self-center pt-0.5">{cartLineCheckbox}</div>
+                              ) : null}
                               <div
-                                className={
+                                className={`min-w-0 flex-1 transition-opacity duration-[2000ms] ${
                                   cfList
-                                    ? "flex w-full min-w-0 flex-1 flex-col gap-1"
-                                    : "lm-product-card-body"
-                                }
+                                    ? "relative lm-card lm-list-card lm-product-card-list flex items-start gap-3 p-3 md:gap-3.5"
+                                    : "relative lm-card lm-grid-card lm-product-card lm-product-card--feed flex h-full min-h-0 flex-col p-0"
+                                } ${
+                                  isCartLineUnseen ? "bg-primary-soft dark:bg-primary/15" : ""
+                                } ${
+                                  isRemoving ? "pointer-events-none opacity-0" : "opacity-100"
+                                }`}
                               >
+                              {cfList ? (
+                                <>
+                                  {isMobileViewport ? (
+                                    <div className="flex shrink-0 flex-col items-stretch gap-2">
+                                      <button
+                                        type="button"
+                                        className={`lm-product-media lm-product-media--soft relative ${thumbClass} shrink-0 overflow-hidden cursor-pointer`}
+                                        aria-label={`View details: ${item.title || "product"}`}
+                                        onClick={openCartItemInspect}
+                                      >
+                                        <ProductListingMedia
+                                          listing={item}
+                                          variant="list"
+                                          className="absolute inset-0 min-h-0"
+                                          loading="lazy"
+                                          sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
+                                        />
+                                      </button>
+                                      <div className="flex w-full items-center justify-center gap-0.5">
+                                        <button
+                                          type="button"
+                                          className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                          aria-label="Decrease quantity"
+                                          disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            setCartQtyEdit({ id: null, str: "" });
+                                            void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1, vSig);
+                                          }}
+                                        >
+                                          −
+                                        </button>
+                                        <span
+                                          className="inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
+                                          aria-label={`Quantity for ${item.title || "product"}`}
+                                        >
+                                          {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                          aria-label="Increase quantity"
+                                          disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) >= maxAvailableQty}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            setCartQtyEdit({ id: null, str: "" });
+                                            void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1, vSig);
+                                          }}
+                                        >
+                                          +
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className={`lm-product-media lm-product-media--soft relative ${thumbClass} shrink-0 overflow-hidden cursor-pointer`}
+                                      aria-label={`View details: ${item.title || "product"}`}
+                                      onClick={openCartItemInspect}
+                                    >
+                                      <ProductListingMedia
+                                        listing={item}
+                                        variant="list"
+                                        className="absolute inset-0 min-h-0"
+                                        loading="lazy"
+                                        sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
+                                      />
+                                    </button>
+                                  )}
+                                  <div className="flex w-full min-w-0 flex-1 flex-col gap-1">
                                 <div
                                   className="w-full min-w-0 text-left touch-manipulation"
                                   role="button"
@@ -10895,7 +11644,7 @@ function App() {
                                     variant="card"
                                     title={item.title || "Product"}
                                     titleEnd={
-                                      cfList ? (
+                                      cfList && !isMobileViewport ? (
                                         <div className="flex items-center gap-0.5">
                                           <button
                                             type="button"
@@ -10962,47 +11711,159 @@ function App() {
                                     listingMetaDensity="compact"
                                   />
                                 </div>
-                                <div className={`mt-1.5 ${cfList ? "hidden" : "flex items-center justify-between gap-2"}`}>
-                                  <span className="text-[11px] font-medium text-text-secondary dark:text-slate-400">
-                                    Quantity
-                                  </span>
-                                  <div className="flex items-center gap-0.5">
-                                    <button
-                                      type="button"
-                                      className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                      aria-label="Decrease quantity"
-                                      disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
-                                      onClick={() => {
-                                        setCartQtyEdit({ id: null, str: "" });
-                                        void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1, vSig);
-                                      }}
-                                    >
-                                      −
-                                    </button>
-                                    <span
-                                      className="inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
-                                      aria-label={`Quantity for ${item.title || "product"}`}
-                                    >
-                                      {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                      aria-label="Increase quantity"
-                                      disabled={
-                                        cartQtySavingId === lineKey ||
-                                        (Number(item.quantity) || 0) >= maxAvailableQty
-                                      }
-                                      onClick={() => {
-                                        setCartQtyEdit({ id: null, str: "" });
-                                        void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1, vSig);
-                                      }}
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-                                </div>
                               </div>
+                                </>
+                              ) : (
+                                <div className="flex min-h-0 w-full flex-1 flex-col px-2 pt-2">
+                                    <div className="relative w-full shrink-0">
+                                      <label
+                                        className="pointer-events-auto absolute left-2 top-2 z-20 inline-flex cursor-pointer items-center justify-center"
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        {cartLineCheckbox}
+                                      </label>
+                                      <button
+                                        type="button"
+                                        className={`${thumbClass} lm-product-card--tap`}
+                                        aria-label={`View details: ${item.title || "product"}`}
+                                        onClick={openCartItemInspect}
+                                      >
+                                        <ProductListingMedia
+                                          listing={item}
+                                          variant="grid"
+                                          className="absolute inset-0 min-h-0"
+                                          loading="lazy"
+                                          sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
+                                        />
+                                      </button>
+                                    </div>
+                                    {isMobileViewport ? (
+                                      <div className="mt-2 flex w-full items-center justify-center gap-0.5 px-0.5">
+                                        <button
+                                          type="button"
+                                          className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                          aria-label="Decrease quantity"
+                                          disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            setCartQtyEdit({ id: null, str: "" });
+                                            void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1, vSig);
+                                          }}
+                                        >
+                                          −
+                                        </button>
+                                        <span
+                                          className="inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
+                                          aria-label={`Quantity for ${item.title || "product"}`}
+                                        >
+                                          {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                          aria-label="Increase quantity"
+                                          disabled={
+                                            cartQtySavingId === lineKey ||
+                                            (Number(item.quantity) || 0) >= maxAvailableQty
+                                          }
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            setCartQtyEdit({ id: null, str: "" });
+                                            void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1, vSig);
+                                          }}
+                                        >
+                                          +
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                    <div className="lm-product-card-body">
+                                      <div
+                                        className="w-full min-w-0 text-left touch-manipulation"
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label={`View details: ${item.title || "product"}`}
+                                        onClick={openCartItemInspect}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter" || e.key === " ") {
+                                            e.preventDefault();
+                                            openCartItemInspect();
+                                          }
+                                        }}
+                                      >
+                                        {isCartLineUnseen ? (
+                                          <span className="mb-1 inline-flex w-fit max-w-full shrink-0 self-start items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
+                                            Recently updated
+                                          </span>
+                                        ) : null}
+                                        <DeferredProductDetailStack
+                                          variant="card"
+                                          title={item.title || "Product"}
+                                          titleEnd={null}
+                                          priceCents={item.unitPriceCents}
+                                          description={item.description}
+                                          hideDescription
+                                          fulfillmentModes={cartFulfillmentModesForLabel}
+                                          orderType={item.orderType}
+                                          processingTime={item.processingTime}
+                                          optionNameA={item.optionNameA}
+                                          optionValuesA={cartLineVariantPick.optionValuesA}
+                                          optionNameB={item.optionNameB}
+                                          optionValuesB={cartLineVariantPick.optionValuesB}
+                                          browseStackMode={null}
+                                          compactListMeta={false}
+                                          quantityRow={null}
+                                          listingMetaDensity="compact"
+                                        />
+                                      </div>
+                                      {!isMobileViewport ? (
+                                        <div className="mt-1.5 flex items-center justify-between gap-2">
+                                          <span className="text-[11px] font-medium text-text-secondary dark:text-slate-400">
+                                            Quantity
+                                          </span>
+                                          <div className="flex items-center gap-0.5">
+                                            <button
+                                              type="button"
+                                              className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                              aria-label="Decrease quantity"
+                                              disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
+                                              onClick={() => {
+                                                setCartQtyEdit({ id: null, str: "" });
+                                                void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1, vSig);
+                                              }}
+                                            >
+                                              −
+                                            </button>
+                                            <span
+                                              className="inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
+                                              aria-label={`Quantity for ${item.title || "product"}`}
+                                            >
+                                              {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                              aria-label="Increase quantity"
+                                              disabled={
+                                                cartQtySavingId === lineKey ||
+                                                (Number(item.quantity) || 0) >= maxAvailableQty
+                                              }
+                                              onClick={() => {
+                                                setCartQtyEdit({ id: null, str: "" });
+                                                void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1, vSig);
+                                              }}
+                                            >
+                                              +
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                </div>
+                              )}
+                            </div>
                             </div>
                           );
                         })}
@@ -11011,56 +11872,50 @@ function App() {
                   );
                 })}
               </div>
-              <div
-                role="region"
-                aria-label="Cart total and checkout"
-                className="fixed bottom-[max(1rem,calc(env(safe-area-inset-bottom,0px)+1rem))] right-[max(1rem,env(safe-area-inset-right,0px))] z-50 flex max-w-[min(100vw-2rem,22rem)] touch-manipulation overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-xl ring-1 ring-black/[0.04] dark:border-slate-600 dark:bg-slate-900 dark:ring-white/[0.06] md:bottom-8 md:right-8 md:max-w-none"
-              >
-                {selectedCartItems.length > 0 ? (
-                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 border-r border-neutral-200/90 px-3 py-2.5 text-sm dark:border-slate-600">
-                    <span className="font-semibold tabular-nums text-neutral-800 dark:text-slate-200">
-                      {formatCents(selectedCartTotals.currentTotalCents)}
-                    </span>
-                    {selectedCartTotals.originalTotalCents > selectedCartTotals.currentTotalCents ? (
-                      <>
-                        <span className="text-xs font-medium tabular-nums text-neutral-500 line-through dark:text-slate-400">
-                          {formatCents(selectedCartTotals.originalTotalCents)}
-                        </span>
-                        {selectedCartTotals.discountPercent > 0 ? (
-                          <span className="rounded-full border border-amber-300/90 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-                            -{selectedCartTotals.discountPercent}%
-                          </span>
-                        ) : null}
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="primary"
-                  className={`text-sm !rounded-none px-4 py-3 md:min-h-11 ${
-                    selectedCartItems.length > 0 ? "!rounded-r-2xl md:!rounded-r-xl" : "!rounded-2xl md:!rounded-xl"
-                  } ${selectedCartItems.length === 0 ? "min-w-[min(100%,11rem)] flex-1" : "shrink-0"}`}
-                  disabled={selectedCartItems.length === 0}
-                  loading={cartCheckoutSubmitting}
-                  loadingLabel="Checking out…"
-                  onClick={() => {
-                    void checkoutSelectedCartItems();
-                  }}
-                >
-                  {`Check out${selectedCartItems.length > 0 ? ` (${selectedCartItems.length})` : ""}`}
-                </Button>
-              </div>
               </>
             )}
           </section>
         )}
 
         {activeView === VIEWS.ACTIVITY && (
-          <section id="activity-hub-panel" className={activityTabChrome.activityViewSection}>
+          <section
+            id="activity-hub-panel"
+            className={`${activityTabChrome.activityViewSection} md:grid md:min-w-0 md:grid-cols-[minmax(10rem,11.5rem)_1fr] md:items-start md:gap-6`}
+          >
+            <aside
+              className="hidden min-h-0 w-full shrink-0 border-neutral-200/70 dark:border-slate-700/70 md:flex md:flex-col md:border-r md:pr-4"
+              aria-label="Activity hub sections"
+            >
+              <ActivityPrimaryTabs
+                desktopSidebar
+                activityTab={activityTab}
+                goActivity={goActivity}
+                buyingBadge={activityPrimaryBuyingBadge}
+                sellingBadge={activityPrimarySellingBadge}
+                courierBadge={activityPrimaryCourierBadge}
+              />
+            </aside>
+            <div className="min-w-0 space-y-4 md:min-w-0">
+            {(activityBuying || activitySelling) && !isMobileViewport ? (
+              !ordersFetchError ? (
+                <div className="border-b border-neutral-200/70 pb-3 dark:border-slate-700/70">
+                  <ActivityHubOrderStatusStrip
+                    variant="desktopMerged"
+                    desktopRowJustify="start"
+                    activityBuying={activityBuying}
+                    activityTab={activityTab}
+                    ordersStatusTab={ordersStatusTab}
+                    commitOrdersStatusTab={commitOrdersStatusTab}
+                    pendingTabBadgeDisplayCount={pendingTabBadgeDisplayCount}
+                    processingTabBadgeDisplayCount={processingTabBadgeDisplayCount}
+                    ordersTabBadgeIdsByTab={ordersTabBadgeIdsByTab}
+                  />
+                </div>
+              ) : null
+            ) : null}
             {(activityBuying || activitySelling) && (
               <>
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 md:border-b md:border-neutral-200/70 md:pb-3 md:pt-3 dark:md:border-slate-700/70">
               <div className="min-w-0 flex-1 space-y-0.5">
                 <h3 className="min-w-0 text-lg font-semibold tracking-tight text-neutral-900 md:text-xl dark:text-slate-100">
                   {activityBuying ? "Purchases" : "Orders"}
@@ -11089,7 +11944,7 @@ function App() {
                     groupAriaLabel={
                       activityBuying ? "Purchases line layout" : "Orders line layout"
                     }
-                    gridTitle="Grid — two columns for readable order cards"
+                    gridTitle="Grid — marketplace columns on wider screens; two columns on phone"
                     compactTitle="Dense — three columns for a compact overview"
                     segmentActiveClassName={activityTabChrome.segmentActive}
                     segmentActiveMutedClassName={activityTabChrome.segmentActiveMuted}
@@ -11097,7 +11952,7 @@ function App() {
                 </div>
               ) : null}
             </div>
-            {!ordersFetchError ? (
+            {!ordersFetchError && isMobileViewport ? (
               <ActivityHubOrderStatusStrip
                 activityBuying={activityBuying}
                 activityTab={activityTab}
@@ -11123,7 +11978,11 @@ function App() {
                   id="commerce-flow-status-panel"
                   role="tabpanel"
                   aria-labelledby={`commerce-flow-status-tab-${ordersStatusTab}`}
-                  className="flex max-w-full flex-col gap-3 max-md:pt-2 max-md:pb-14 md:max-w-none md:pb-0"
+                  className={`flex max-w-full flex-col gap-2 max-md:pt-2 md:max-w-none md:gap-3 md:pb-0 md:pt-3 ${
+                    ordersStatusTab === "pending" && selectedOrders.length > 0
+                      ? "max-md:pb-[max(11.5rem,calc(11.5rem+env(safe-area-inset-bottom,0px)))]"
+                      : "max-md:pb-14"
+                  }`}
                 >
                   {ordersLoading && orders.length === 0 ? (
                     <ScreenLoading message="Loading orders…" />
@@ -11148,7 +12007,7 @@ function App() {
                   ) : (
                   <>
                   {ordersStatusTab === "pending" && ordersForStatusTab.length > 0 && selectedOrders.length > 0 ? (
-                    <div className="flex w-full min-w-0 items-stretch overflow-hidden rounded-xl border border-neutral-200/90 bg-white shadow-sm dark:border-slate-600 dark:bg-slate-900/85 dark:shadow-none">
+                    <div className="hidden w-full min-w-0 items-stretch overflow-hidden rounded-xl border border-neutral-200/90 bg-white shadow-sm dark:border-slate-600 dark:bg-slate-900/85 dark:shadow-none md:flex">
                       <div className="flex min-w-0 flex-1 items-center px-3 py-2.5 sm:px-4">
                         <span
                           className="min-w-0 truncate text-xs font-medium leading-snug text-neutral-700 dark:text-slate-200"
@@ -11565,7 +12424,6 @@ function App() {
                               String(o.status || "") === "seller_accepted" &&
                               o.fulfillmentType === "pickup") ||
                             isDeliveryInTransit(o);
-                          const orderCardHighlight = shouldHighlightRecent ? "bg-primary-soft dark:bg-primary/15" : "";
                           const orderListingForProductOpen =
                             orderListingsById[String(o.listingId)] ||
                             (cardListing?.id ? cardListing : null);
@@ -11687,42 +12545,40 @@ function App() {
                             </div>
                           );
                           return (
-                            <div
-                              key={`${groupPartyId}:${entry.mergeKey}`}
-                              className={`transition duration-200 ease-in-out ${
-                                cfList
-                                  ? `relative lm-card lm-list-card lm-product-card-list flex cursor-pointer flex-col gap-3 p-3 hover:bg-neutral-50/70 md:gap-3.5 dark:hover:bg-slate-800/35 ${orderCardHighlight}`
-                                  : `relative lm-card lm-grid-card lm-product-card lm-product-card--feed lm-commerce-order-card flex h-full min-h-0 flex-1 cursor-pointer flex-col overflow-x-hidden !overflow-y-visible p-0 hover:bg-neutral-50/50 dark:hover:bg-slate-800/30 ${orderCardHighlight}`
-                              }`}
-                              onClick={openOrderProductInspect}
-                            >
+                            <div key={`${groupPartyId}:${entry.mergeKey}`} className="flex min-w-0 items-start gap-2 md:gap-2.5">
                               {ordersStatusTab === "pending" ? (
-                                <input
-                                  type="checkbox"
-                                  className={`h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500 ${
-                                    cfList
-                                      ? "absolute left-4 top-4 z-10 bg-white/90 dark:bg-slate-900/90"
-                                      : "absolute left-2 top-2 z-10 bg-white/90 dark:bg-slate-900/90"
-                                  }`}
-                                  checked={rowAllSelected}
-                                  onClick={(e) => e.stopPropagation()}
-                                  onChange={() => {
-                                    const nextChecked = !rowAllSelected;
-                                    setOrderSelection((prev) => {
-                                      const next = { ...prev };
-                                      for (const id of entry.orderIds) {
-                                        if (!id) continue;
-                                        if (nextChecked) next[id] = true;
-                                        else delete next[id];
-                                      }
-                                      return next;
-                                    });
-                                  }}
-                                  aria-label={`Select order ${orderId}${entry.orderIds.length > 1 ? " group" : ""}`}
-                                />
+                                <div className="flex shrink-0 items-center self-center pt-0.5">
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
+                                    checked={rowAllSelected}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={() => {
+                                      const nextChecked = !rowAllSelected;
+                                      setOrderSelection((prev) => {
+                                        const next = { ...prev };
+                                        for (const id of entry.orderIds) {
+                                          if (!id) continue;
+                                          if (nextChecked) next[id] = true;
+                                          else delete next[id];
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                    aria-label={`Select order ${orderId}${entry.orderIds.length > 1 ? " group" : ""}`}
+                                  />
+                                </div>
                               ) : null}
+                              <div
+                                className={`min-w-0 flex-1 cursor-pointer transition duration-200 ease-in-out ${
+                                  cfList
+                                    ? "relative lm-card lm-list-card lm-product-card-list flex flex-col gap-3 p-3 md:gap-3.5"
+                                    : "relative lm-card lm-grid-card lm-product-card lm-product-card--feed lm-commerce-order-card flex h-full min-h-0 flex-1 flex-col overflow-x-hidden !overflow-y-visible p-0"
+                                }`}
+                                onClick={openOrderProductInspect}
+                              >
                               {cfList ? (
-                                <div className="flex w-full min-w-0 items-start gap-3">
+                                <div className="flex w-full min-w-0 items-start gap-3 rounded-xl transition-colors duration-200 ease-in-out hover:bg-neutral-50/70 dark:hover:bg-slate-800/35">
                                   <div
                                     className={`lm-product-media lm-product-media--soft relative ${orderThumbList} shrink-0 overflow-hidden rounded-md transition hover:opacity-95`}
                                   >
@@ -11751,7 +12607,7 @@ function App() {
                                       sizes="(max-width: 768px) 45vw, min(240px, 22vw)"
                                     />
                                   </div>
-                                  <div className="lm-product-card-body flex w-full flex-col border-0 bg-transparent text-left">
+                                  <div className="lm-product-card-body flex w-full flex-col border-0 bg-transparent text-left transition-colors duration-200 ease-in-out hover:bg-neutral-50/50 dark:hover:bg-slate-800/25">
                                     {orderCardBody}
                                   </div>
                                 </>
@@ -11805,6 +12661,7 @@ function App() {
                                       : "mt-2 space-y-1.5 pt-1.5 md:mt-3 md:space-y-2 md:pt-2"
                                 } ${cfList ? "" : "px-2.5 pb-2.5"}`}
                                 onClick={(e) => e.stopPropagation()}
+                                onPointerDown={(e) => e.stopPropagation()}
                               >
                                 {ordersRole === "buyer" && ordersStatusTab === "completed" && String(o.status || "") === "completed" ? (
                                   <div
@@ -11825,7 +12682,7 @@ function App() {
                                       className={
                                         multicolOrderCard
                                           ? "flex flex-col gap-1 md:flex-row md:flex-wrap md:justify-end md:gap-1.5"
-                                          : "-mx-0.5 flex gap-2 overflow-x-auto pb-0.5 md:mx-0 md:flex-wrap md:justify-end md:overflow-visible md:pb-0"
+                                          : "flex flex-col gap-2 md:flex-row md:flex-wrap md:justify-end md:gap-2"
                                       }
                                     >
                                       {(() => {
@@ -11856,8 +12713,8 @@ function App() {
                                             : "min-h-10 shrink-0 px-3 text-xs md:min-h-0"
                                         }`}
                                         onClick={() => {
-                                          setActiveView(VIEWS.MESSAGES);
-                                          pushMarketplaceToast("Messaging is coming soon — you will reach the seller from here.");
+                                          const sellerId = String(o?.sellerId ?? "").trim();
+                                          if (sellerId) void openChatWithUser(sellerId);
                                         }}
                                       >
                                         Message seller
@@ -11950,8 +12807,8 @@ function App() {
                                         multicolOrderCard ? "min-h-9 px-2.5 py-1.5 text-[11px]" : ""
                                       }`}
                                       onClick={() => {
-                                        setActiveView(VIEWS.MESSAGES);
-                                        pushMarketplaceToast("Messaging is coming soon — you will reach the buyer from here.");
+                                        const buyerId = String(o?.buyerId ?? "").trim();
+                                        if (buyerId) void openChatWithUser(buyerId);
                                       }}
                                     >
                                       Message buyer
@@ -12057,6 +12914,7 @@ function App() {
                               </div>
                               ) : null}
                             </div>
+                            </div>
                           );
                         })}
                       </div>
@@ -12068,12 +12926,95 @@ function App() {
                   </>
                   )}
           </div>
+          {isMobileViewport &&
+          ordersStatusTab === "pending" &&
+          ordersForStatusTab.length > 0 &&
+          selectedOrders.length > 0 ? (
+            <div
+              role="region"
+              aria-label="Bulk order actions"
+              className="fixed bottom-[max(1rem,calc(6rem+env(safe-area-inset-bottom,0px)))] right-[max(1rem,env(safe-area-inset-right,0px))] z-50 flex max-w-[min(100vw-2rem,28rem)] touch-manipulation overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-xl ring-1 ring-black/[0.04] dark:border-slate-600 dark:bg-slate-900 dark:ring-white/[0.06]"
+            >
+              <div className="flex min-w-0 flex-1 items-center border-r border-neutral-200/90 px-3 py-2.5 dark:border-slate-600 sm:px-4">
+                <span
+                  className="min-w-0 truncate text-xs font-medium leading-snug text-neutral-700 dark:text-slate-200"
+                  title={
+                    selectedOrders.length === 1
+                      ? "1 order selected"
+                      : `${selectedOrders.length} orders selected`
+                  }
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  {selectedOrders.length === 1
+                    ? "1 order selected"
+                    : `${selectedOrders.length} orders selected`}
+                </span>
+              </div>
+              <div className="flex min-w-0 shrink-0 divide-x divide-neutral-200/90 border-l border-neutral-200/90 dark:divide-slate-600 dark:border-slate-600 [&_button]:!rounded-none [&_button]:!shadow-none [&_button]:min-h-11 [&_button]:shrink-0 [&_button]:border-0 [&_button]:gap-1.5 [&_button]:px-3 [&_button]:text-sm sm:[&_button]:min-h-10 sm:[&_button]:gap-2 sm:[&_button]:px-4">
+                {ordersRole === "seller" ? (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    disabled={!ordersAcceptEnabled}
+                    loading={ordersBulkActionLoadingTransition === "seller_accept"}
+                    loadingLabel="Working…"
+                    onClick={() => {
+                      void applyTransitionToSelectedOrders("seller_accept", "Accepted");
+                    }}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4 shrink-0 opacity-95"
+                      aria-hidden
+                    >
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
+                    Accept
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="danger"
+                  disabled={!ordersDeclineEnabled}
+                  loading={ordersBulkActionLoadingTransition === "cancel"}
+                  loadingLabel="Working…"
+                  onClick={() => {
+                    setOrderCancelReasonId("");
+                    setOrderCancelNote("");
+                    setOrderCancelReasonModalOpen(true);
+                  }}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-4 w-4 shrink-0 opacity-95"
+                    aria-hidden
+                  >
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </>
       ) : null}
               </>
             )}
             {activityCourier && (
-              <div className="max-w-3xl">
+              <div className="mx-auto w-full max-w-3xl md:mx-0 md:max-w-none">
             {!token ? (
               <div className="pt-2">
               <ScreenEmpty
@@ -12092,7 +13033,7 @@ function App() {
               </div>
             ) : (
               <>
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 md:border-b md:border-neutral-200/70 md:pb-3 md:pt-2 dark:md:border-slate-700/70">
                   <div className="min-w-0 flex-1 space-y-0.5">
                     <h3 className="min-w-0 text-lg font-semibold tracking-tight text-neutral-900 md:text-xl dark:text-slate-100">
                       Find deliveries
@@ -12114,7 +13055,7 @@ function App() {
                   id="courier-hub-panel"
                   role="region"
                   aria-label="Find deliveries"
-                  className="space-y-6 pt-1 md:space-y-8"
+                  className="space-y-4 pt-3 md:space-y-6 md:pt-4"
                 >
                   <CourierRunnerHubPanel
                     token={token}
@@ -12146,60 +13087,40 @@ function App() {
             )}
               </div>
             )}
+            </div>
           </section>
         )}
 
+        {activeView === VIEWS.SEND_FEEDBACK && (
+          <SendFeedbackView
+            token={token}
+            onSuccess={() => {
+              notifyFeedbackSubmitted();
+              setSendFeedbackPhase("thanks");
+            }}
+            onBack={goBrowse}
+          />
+        )}
+
         {activeView === VIEWS.ABOUT && (
-          <section className={`${UI_KIT.viewSection} max-w-3xl space-y-4 md:space-y-6`}>
-            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">About LinkMart</h2>
-            <p className="text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
-              LinkMart is a community marketplace for discovering what is available near you. Commerce is cash-on-delivery or cash at pickup — we do not operate
-              an in-app wallet. Delivery can be fulfilled by neighbors who walk, run, or bike; delivery fees are agreed directly between parties. Sellers stay organized
-              with stock, expenses, and profit views tied to real orders.
-            </p>
-            <p className="text-sm leading-relaxed text-neutral-600 dark:text-slate-400">
-              For support or partnerships, use the contact options on the public landing page.
-            </p>
+          <section
+            className={`${UI_KIT.viewSection} mx-auto w-full max-w-3xl pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] [-webkit-overflow-scrolling:touch] md:mx-0 md:w-full md:max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:flex md:flex-col`}
+          >
+            <div className="hidden md:block">
+              <SecondaryScreenHeader title="About LinkMart" onBack={goBrowse} />
+            </div>
+            <AboutLinkMartBody />
           </section>
         )}
 
         {activeView === VIEWS.TERMS && (
-          <section className={`${UI_KIT.viewSection} max-w-3xl space-y-6 text-sm leading-relaxed text-neutral-700 dark:text-slate-300`}>
-            <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">Terms & conditions (summary)</h2>
-            <p className="text-xs text-neutral-500 dark:text-slate-400">This is a plain-language outline, not legal advice. Have counsel review before production launch.</p>
-            <div>
-              <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">1. No wallet; COD</h3>
-              <p className="mt-1 text-neutral-600 dark:text-slate-400">
-                LinkMart does not hold buyer or seller funds. Payment for goods and any agreed delivery fee is settled directly between parties (typically cash on
-                delivery or at pickup). You are responsible for confirming payment at handoff.
-              </p>
+          <section
+            className={`${UI_KIT.viewSection} mx-auto w-full max-w-3xl pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] [-webkit-overflow-scrolling:touch] md:mx-0 md:w-full md:max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:flex md:flex-col`}
+          >
+            <div className="hidden md:block">
+              <SecondaryScreenHeader title="Terms & conditions" onBack={goBrowse} />
             </div>
-            <div>
-              <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">2. Pickup and delivery</h3>
-              <p className="mt-1 text-neutral-600 dark:text-slate-400">
-                Listings may offer pickup, delivery, or both. Any delivery fee is agreed outside the platform (typically at handoff). The platform coordinates
-                information; it does not guarantee delivery times or service quality.
-              </p>
-            </div>
-            <div>
-              <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">3. Couriers</h3>
-              <p className="mt-1 text-neutral-600 dark:text-slate-400">
-                Couriers using the marketplace are independent of LinkMart unless separately contracted. They must follow local laws and safe handoff practices.
-              </p>
-            </div>
-            <div>
-              <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">4. Disputes</h3>
-              <p className="mt-1 text-neutral-600 dark:text-slate-400">
-                Because the platform does not hold funds, disputes over quality, non-payment, or failed delivery should first be resolved between users. LinkMart may
-                offer reporting tools but does not arbitrate cash transactions.
-              </p>
-            </div>
-            <div>
-              <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">5. Accounts</h3>
-              <p className="mt-1 text-neutral-600 dark:text-slate-400">
-                You agree to provide accurate profile information and to comply with these rules when using messaging, listings, and delivery features.
-              </p>
-            </div>
+            <TermsLinkMartBody />
           </section>
         )}
 
@@ -12207,40 +13128,33 @@ function App() {
           <section className="w-full min-w-0 max-w-none space-y-6 md:space-y-6 lg:space-y-8">
             <div className="grid w-full min-w-0 max-w-none gap-6 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start lg:gap-8">
               <div className="min-w-0 space-y-6 bg-transparent p-0 md:space-y-6 lg:rounded-2xl lg:border lg:border-neutral-200/60 lg:bg-white lg:p-5 lg:shadow-sm dark:lg:border-slate-600 dark:lg:bg-slate-900/80">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    {!isViewingSellerProfile ? (
-                      <button
-                        type="button"
-                        className="inline-flex h-10 w-10 items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-100 md:hidden"
-                        aria-label="Open menu"
-                        onClick={() => document.getElementById("mobile-menu-toggle")?.click()}
-                      >
-                        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                          <line x1="4" x2="20" y1="6" y2="6" />
-                          <line x1="4" x2="20" y1="12" y2="12" />
-                          <line x1="4" x2="20" y1="18" y2="18" />
-                        </svg>
-                      </button>
-                    ) : null}
-                    <h2 className="text-2xl font-semibold text-neutral-900 dark:text-slate-100">
-                      {isViewingSellerProfile ? "Seller profile" : "Profile"}
-                    </h2>
-                  </div>
-                  {isViewingSellerProfile ? (
-                    <button type="button" className="btn-secondary shrink-0" onClick={goBackFromSellerProfile}>
-                      ← Back
-                    </button>
-                  ) : null}
-                  {profileRenderUser && !profileEditing && !isViewingSellerProfile ? (
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  {!isViewingSellerProfile ? (
                     <button
                       type="button"
-                      className="btn-secondary hidden min-w-0 shrink-0 md:inline-flex md:w-auto"
-                      onClick={openProfileEdit}
+                      className="inline-flex h-10 w-10 items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-100 md:hidden"
+                      aria-label="Open menu"
+                      onClick={() => document.getElementById("mobile-menu-toggle")?.click()}
                     >
-                      Edit profile
+                      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                        <line x1="4" x2="20" y1="6" y2="6" />
+                        <line x1="4" x2="20" y1="12" y2="12" />
+                        <line x1="4" x2="20" y1="18" y2="18" />
+                      </svg>
                     </button>
-                  ) : null}
+                  ) : (
+                    <button
+                      type="button"
+                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-neutral-700 transition hover:bg-neutral-100 hover:text-neutral-900 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                      aria-label="Back"
+                      onClick={goBackFromSellerProfile}
+                    >
+                      <ChevronLeftIcon className="h-5 w-5" aria-hidden />
+                    </button>
+                  )}
+                  <h2 className="min-w-0 text-2xl font-semibold text-neutral-900 dark:text-slate-100">
+                    {isViewingSellerProfile ? "Seller profile" : "Profile"}
+                  </h2>
                 </div>
                 {profileRenderUser &&
                 !profileEditing &&
@@ -12268,7 +13182,6 @@ function App() {
                   <div className={`grid grid-cols-1 items-end gap-4 p-5 md:grid-cols-[minmax(12rem,1fr)_minmax(14rem,1fr)] ${UI_KIT.surfaceRaised}`}>
                     <div className="relative isolate mx-auto h-32 w-32 shrink-0 md:col-span-2 md:self-center">
                       <StableAvatar
-                        square
                         src={profileDraft.avatarUrl}
                         alt="Profile avatar preview"
                         initials={(
@@ -13290,13 +14203,12 @@ function App() {
                 <div className="space-y-6">
                   <div className="flex flex-col items-center gap-4 border-b border-neutral-200/35 pb-8 text-center dark:border-slate-700/35 md:rounded-xl md:border md:border-neutral-200/50 md:bg-white md:p-5 md:pb-5 md:shadow-sm dark:md:border-slate-700/60 dark:md:bg-slate-900/50">
                     <StableAvatar
-                      square
                       src={profileRenderUser.avatarUrl}
                       alt="Profile avatar"
                       initials={(String(profileRenderUser?.username || "").trim().charAt(0) || "?").toUpperCase()}
-                      className="h-20 w-20 shrink-0 text-2xl"
-                      textClassName="text-2xl"
-                      sizes="80px"
+                      className="h-32 w-32 shrink-0 text-3xl"
+                      textClassName="text-3xl"
+                      sizes="128px"
                     />
                     <div className="w-full">
                       <p className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">
@@ -13381,9 +14293,16 @@ function App() {
                       {!profileEditing && !isViewingSellerProfile ? (
                         <button
                           type="button"
-                          className="btn-secondary mx-auto mt-5 w-full max-w-sm md:hidden"
+                          className="btn-secondary mx-auto mt-5 inline-flex min-h-[44px] w-full max-w-sm items-center justify-center gap-2"
                           onClick={openProfileEdit}
                         >
+                          <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
+                            />
+                          </svg>
                           Edit profile
                         </button>
                       ) : null}
@@ -13435,8 +14354,8 @@ function App() {
               <p className="app-alert-danger-text text-sm">Could not load your profile. Try signing in again.</p>
             )}
               </div>
-              {!isViewingSellerProfile ? (
-              <aside className="min-w-0 space-y-4 border-t border-neutral-200/35 pt-8 dark:border-slate-700/35 lg:rounded-2xl lg:border lg:border-neutral-200/70 lg:bg-white lg:p-5 lg:pt-5 lg:shadow-sm dark:lg:border-slate-600 dark:lg:bg-slate-900/80">
+              {!showSellerProfileShopAside ? (
+              <aside className="min-w-0 space-y-4 pt-8 lg:rounded-2xl lg:border lg:border-neutral-200/70 lg:bg-white lg:p-5 lg:pt-5 lg:shadow-sm dark:lg:border-slate-600 dark:lg:bg-slate-900/80">
                 <div className="flex flex-wrap gap-2" role="tablist" aria-label="Seller hub: products and buyer feedback">
                   {[
                     { id: SELLER_TABS.PRODUCTS, label: "Products" },
@@ -13616,7 +14535,157 @@ function App() {
                   </Suspense>
                 )}
               </aside>
-              ) : null}
+              ) : (
+              <aside className="min-w-0 space-y-4 pt-8 lg:rounded-2xl lg:border lg:border-neutral-200/70 lg:bg-white lg:p-5 lg:pt-5 lg:shadow-sm dark:lg:border-slate-600 dark:lg:bg-slate-900/80">
+                <div className="flex flex-wrap gap-2" role="tablist" aria-label="Seller shop: products">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected
+                    className={UI_KIT.tabActive}
+                  >
+                    Products
+                  </button>
+                </div>
+                <div className={`space-y-3 p-4 ${UI_KIT.surfaceCard}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">
+                      {profileRenderUser?.username ? `@${String(profileRenderUser.username || "").replace(/^@/, "")}` : "Products"}
+                    </p>
+                    <ProductViewDensityToggle
+                      value={sellerProductsView}
+                      onChange={setSellerProductsView}
+                      gridTitle="Grid — large photos, full details on each card"
+                      compactTitle="Dense — small tiles; use View for long descriptions"
+                    />
+                  </div>
+                  {sellerProfileShopLoading && sellerProfileShopListings.length === 0 ? (
+                    <div className="mt-3">
+                      {isMobileViewport ? (
+                        <BrowseGridSkeleton
+                          gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                          variant={
+                            effectiveSellerProductsView === "list"
+                              ? "list"
+                              : effectiveSellerProductsView === "compact"
+                                ? "compact"
+                                : "grid"
+                          }
+                          softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
+                          count={effectiveSellerProductsView === "list" ? 3 : effectiveSellerProductsView === "compact" ? 8 : 4}
+                          className="min-h-[6rem] w-full min-w-0"
+                          ariaLabel="Loading listings"
+                        />
+                      ) : (
+                        <ScreenLoading message="Loading listings…" minHeight={false} className="min-h-[6rem] py-6" />
+                      )}
+                    </div>
+                  ) : null}
+                  {sellerProfileShopError ? (
+                    <div className="mt-3">
+                      <ScreenError
+                        title="Couldn’t load listings"
+                        message={sellerProfileShopError}
+                        onRetry={() => setSellerProfileShopFetchKey((k) => k + 1)}
+                        spacious={false}
+                      />
+                    </div>
+                  ) : null}
+                  {sellerProfileShopListings.length ? (
+                    <Suspense
+                      fallback={
+                        <BrowseGridSkeleton
+                          gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                          variant={
+                            effectiveSellerProductsView === "list"
+                              ? "list"
+                              : effectiveSellerProductsView === "compact"
+                                ? "compact"
+                                : "grid"
+                          }
+                          softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
+                          count={4}
+                          className="min-h-[8rem] w-full min-w-0"
+                          ariaLabel="Loading listings"
+                        />
+                      }
+                    >
+                      <div
+                        className={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                      >
+                        {sellerProfileShopListings.map((l) => {
+                          const isOwn = String(l.sellerId || "") === String(user?.id || "");
+                          return (
+                            <LazyCommunityShopListingCard
+                              key={l.id}
+                              listing={l}
+                              gridMode={effectiveSellerProductsView !== "list"}
+                              compactGrid={effectiveSellerProductsView === "compact"}
+                              mobileOwnerActionsInMenu={isMobileViewport && effectiveSellerProductsView !== "list"}
+                              disableGallerySwipe={false}
+                              softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
+                              browseSummaryGrid={isMobileViewport && effectiveSellerProductsView === "grid"}
+                              mobileCardUx={isMobileViewport}
+                              isFavorite={favoriteIds.has(l.id)}
+                              showActions
+                              currentUserId={user?.id || ""}
+                              buyNowDisabled={!isOwn && buyNowBlocked}
+                              buyNowDisabledReason={!isOwn ? buyNowBlockedReason : ""}
+                              onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
+                              onEdit={() => beginEditSellerListing(l)}
+                              onBuy={() => openQuickAddModal(l, "buy")}
+                              onAdd={() => openQuickAddModal(l, "cart")}
+                              onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
+                              onInspect={() => {
+                                const stockListed = Math.max(0, Number(l.quantity) || 0);
+                                openProductInspect(l, {
+                                  quantity: stockListed,
+                                  quantityLabel: "Stock listed",
+                                  subtitle: "",
+                                  listingStockQty: stockListed,
+                                  showBuyerCommerceActions: !isOwn,
+                                  showSellerCommerceActions: isOwn,
+                                  onAddToCart: isOwn
+                                    ? undefined
+                                    : () => {
+                                        openQuickAddModal(l, "cart");
+                                      },
+                                  onBuyNow: isOwn
+                                    ? undefined
+                                    : () => {
+                                        openQuickAddModal(l, "buy");
+                                      },
+                                  buyNowDisabled: !isOwn && buyNowBlocked,
+                                  buyNowDisabledReason: !isOwn ? buyNowBlockedReason : "",
+                                  onEditListing: isOwn
+                                    ? () => {
+                                        beginEditSellerListing(l);
+                                      }
+                                    : undefined,
+                                  onSaleSelect: isOwn
+                                    ? (pct) => {
+                                        closeProductInspect();
+                                        void applySellerListingDiscount(l, pct);
+                                      }
+                                    : undefined,
+                                });
+                              }}
+                            />
+                          );
+                        })}
+                      </div>
+                    </Suspense>
+                  ) : !(sellerProfileShopLoading && sellerProfileShopListings.length === 0) && !sellerProfileShopError ? (
+                    <ScreenEmpty
+                      className="mt-3"
+                      title="No active listings"
+                      description="This seller doesn’t have any products listed right now."
+                      secondaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
+                    />
+                  ) : null}
+                </div>
+              </aside>
+              )}
             </div>
           </section>
         )}

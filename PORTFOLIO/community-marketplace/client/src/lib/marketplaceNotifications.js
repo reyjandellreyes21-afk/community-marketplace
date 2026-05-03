@@ -1,5 +1,5 @@
 /**
- * Marketplace notification inbox: API mapping, local session toasts, realtime helpers.
+ * Marketplace notification inbox: API mapping, local session items, realtime helpers.
  */
 
 import { apiRequest } from "./appApi.js";

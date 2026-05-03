@@ -618,7 +618,7 @@ async function enrichListingsWithSellerProfile(rows) {
   if (sellerIds.length > 0) {
     const { data: profiles, error } = await supabaseAdmin
       .from("profiles")
-      .select("id,username,address")
+      .select("id,username,address,avatar_url")
       .in("id", sellerIds);
     if (!error) {
       profileById = new Map(
@@ -627,6 +627,7 @@ async function enrichListingsWithSellerProfile(rows) {
           {
             username: String(p?.username || "").trim(),
             address: String(p?.address || "").trim(),
+            avatarUrl: String(p?.avatar_url || "").trim(),
           },
         ]),
       );
@@ -639,6 +640,7 @@ async function enrichListingsWithSellerProfile(rows) {
       ...base,
       sellerUsername: seller?.username || "",
       sellerAddress: seller?.address || "",
+      sellerAvatarUrl: seller?.avatarUrl || "",
     };
   });
 }
@@ -1251,7 +1253,19 @@ function parsePositiveInt(value, fallback, maxCap) {
 
 export const listListings = async (req, res, next) => {
   try {
-    const { categories, verticalId, subId, communityId, lat, lng, radiusKm, q: textQuery, limit, offset } = req.query;
+    const {
+      categories,
+      verticalId,
+      subId,
+      communityId,
+      lat,
+      lng,
+      radiusKm,
+      q: textQuery,
+      limit,
+      offset,
+      sellerId: sellerIdQuery,
+    } = req.query;
     const pageLimit = parsePositiveInt(limit, DEFAULT_LISTINGS_LIMIT, MAX_LISTINGS_LIMIT);
     const pageOffset = Math.max(0, Math.floor(Number(offset) || 0));
     let q = supabaseAdmin
@@ -1260,6 +1274,8 @@ export const listListings = async (req, res, next) => {
       .eq("status", "active")
       .order("created_at", { ascending: false })
       .range(pageOffset, pageOffset + pageLimit - 1);
+    const sellerFilter = String(sellerIdQuery || "").trim();
+    if (sellerFilter) q = q.eq("seller_id", sellerFilter);
     const categoryFilter = String(categories || verticalId || "").trim();
     if (categoryFilter) q = q.eq("vertical_id", categoryFilter);
     if (subId && subId !== "all") q = q.eq("sub_id", String(subId));
@@ -1502,6 +1518,14 @@ export const updateListing = async (req, res, next) => {
         throw new AppError(400, "Invalid listing status.");
       }
       patch.status = nextStatus;
+    }
+    // Completing an order sets status "sold" when stock hits 0 (`patchOrder`). Restocking must return the listing to browse (`GET /listings` is active-only) unless the seller chose another status.
+    if (req.body.status == null && String(existing.status || "").toLowerCase() === "sold") {
+      const effectiveQty =
+        patch.quantity !== undefined ? Number(patch.quantity) : Math.max(0, Number(existing.quantity) || 0);
+      if (Number.isFinite(effectiveQty) && effectiveQty > 0) {
+        patch.status = "active";
+      }
     }
     patch.updated_at = new Date().toISOString();
     let { data, error } = await supabaseAdmin.from("listings").update(patch).eq("id", id).select("*").single();

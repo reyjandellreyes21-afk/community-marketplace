@@ -50,7 +50,8 @@ export function sellerListingsGridClass(view) {
 }
 
 /**
- * Cart / orders seller cards: inner line-item stacks.Tweak variants via `ctx.variant`.
+ * Cart / orders line-item grids: list stacks vs grid tiles.
+ * Grid modes mirror community browse comfortable / compact auto-fill from `md` up (`index.css`).
  */
 export function commerceFlowLineItemsClass(view, ctx = {}) {
   const variant = ctx.variant ?? "cart";

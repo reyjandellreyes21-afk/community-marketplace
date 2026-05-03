@@ -33,7 +33,7 @@ export const ACTIVITY_TAB_CHROME = {
     activityShellWrap:
       "!bg-neutral-50 dark:!bg-slate-950 md:!bg-transparent md:!dark:bg-transparent",
     activityViewSection:
-      "w-full space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-6 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-5 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
+      "w-full space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-4 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-4 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
     /** Density toggle selected segment — replaces `lm-btn-segment-active` */
     segmentActive:
       "!bg-emerald-100 !text-emerald-900 shadow-none !ring-1 !ring-inset !ring-emerald-300/45 dark:!bg-emerald-950/55 dark:!text-emerald-100 dark:!ring-emerald-600/35",
@@ -65,7 +65,7 @@ export const ACTIVITY_TAB_CHROME = {
     activityShellWrap:
       "!bg-neutral-50 dark:!bg-slate-950 md:!bg-transparent md:!dark:bg-transparent",
     activityViewSection:
-      "w-full space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-6 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-5 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
+      "w-full space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-4 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-4 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
     segmentActive:
       "!bg-amber-100 !text-amber-950 shadow-none !ring-1 !ring-inset !ring-amber-300/45 dark:!bg-amber-950/55 dark:!text-amber-100 dark:!ring-amber-600/35",
     segmentActiveMuted:
@@ -96,7 +96,7 @@ export const ACTIVITY_TAB_CHROME = {
     activityShellWrap:
       "!bg-neutral-50 dark:!bg-slate-950 md:!bg-transparent md:!dark:bg-transparent",
     activityViewSection:
-      "w-full space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-6 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-5 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
+      "w-full space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-4 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-4 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
     segmentActive:
       "!bg-violet-100 !text-violet-950 shadow-none !ring-1 !ring-inset !ring-violet-300/45 dark:!bg-violet-950/55 dark:!text-violet-100 dark:!ring-violet-600/35",
     segmentActiveMuted:

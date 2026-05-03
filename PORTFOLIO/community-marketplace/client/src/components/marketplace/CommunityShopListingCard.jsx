@@ -139,6 +139,8 @@ export function CommunityShopListingCard({
     ? "grid w-full grid-cols-2 gap-2"
     : "flex w-full flex-col gap-2 md:flex-row md:items-stretch";
   const isListMode = !gridMode;
+  /** Web/desktop list: compact action strip — mobile list keeps full-width stacked/grid buttons. */
+  const listDesktopCompactActions = isListMode && !mobileUx;
   const ownerGridOverflow =
     Boolean(mobileOwnerActionsInMenu) && isOwner && gridMode && !isListMode && showActions;
 
@@ -244,10 +246,10 @@ export function CommunityShopListingCard({
             ? `flex-1 flex-col ${mainGap}`
             : mobileUx
               ? "flex flex-col gap-3 min-[360px]:flex-row min-[360px]:items-start min-[360px]:gap-3.5"
-              : "flex-row items-start gap-3"
+              : "flex-row items-start gap-3 md:gap-4"
         }`}
       >
-        <div className={`relative ${imgBox}`}>
+        <div className={`${!gridMode && !mobileUx ? "shrink-0 " : ""}relative ${imgBox}`}>
           {favoriteOverlayOnImage ? (
             <button
               type="button"
@@ -282,6 +284,7 @@ export function CommunityShopListingCard({
           {imageOpensInspect ? (
             <button
               type="button"
+              data-allow-tab-swipe
               className={imageInspectBtnClass}
               aria-label={
                 canSwipeGallery
@@ -356,7 +359,7 @@ export function CommunityShopListingCard({
                 ? `flex min-h-0 flex-col ${compactGrid ? "gap-1" : "gap-2"}`
                 : mobileUx
                   ? "flex w-full min-w-0 flex-col gap-1.5 min-[360px]:min-w-0 min-[360px]:flex-1"
-                  : "flex h-32 min-w-0 flex-col justify-between overflow-hidden"
+                  : "flex min-w-0 flex-1 flex-col gap-2"
           }`}
         >
           {unseenAttention ? (
@@ -407,7 +410,9 @@ export function CommunityShopListingCard({
         </div>
       </div>
       {showActions && !hideCardActionsOnMobile ? (
-        <div className={`flex flex-col gap-2 ${gridMode ? (useFeedLayout ? "mt-auto px-2 pb-2 pt-1.5 min-[360px]:px-2.5 min-[360px]:pb-2.5" : "mt-auto pt-3") : "mt-3"}`}>
+        <div
+          className={`flex flex-col gap-2 ${gridMode ? (useFeedLayout ? "mt-auto px-2 pb-2 pt-1.5 min-[360px]:px-2.5 min-[360px]:pb-2.5" : "mt-auto pt-3") : listDesktopCompactActions ? "mt-3 border-t border-neutral-200/70 pt-3 dark:border-slate-600/55" : "mt-3"}`}
+        >
           {ownerGridOverflow ? (
             <div className="flex items-stretch gap-2">
               {onInspect ? (
@@ -516,8 +521,12 @@ export function CommunityShopListingCard({
               className={
                 isListMode
                   ? onDelete
-                    ? "grid w-full grid-cols-2 gap-2 md:grid-cols-4"
-                    : "grid w-full grid-cols-3 gap-2"
+                    ? listDesktopCompactActions
+                      ? "flex w-full flex-wrap items-center justify-end gap-2"
+                      : "grid w-full grid-cols-2 gap-2 md:grid-cols-4"
+                    : listDesktopCompactActions
+                      ? "flex w-full flex-wrap items-center justify-end gap-2"
+                      : "grid w-full grid-cols-3 gap-2"
                   : onDelete
                     ? compactGrid
                       ? "grid w-full grid-cols-3 gap-2"
@@ -528,7 +537,9 @@ export function CommunityShopListingCard({
               {isListMode && onInspect ? (
                 <button
                   type="button"
-                  className="h-10 w-full rounded-xl border border-primary px-3 text-xs font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                  className={`rounded-xl border border-primary px-3 text-xs font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 ${
+                    listDesktopCompactActions ? "inline-flex h-9 min-h-0 min-w-[7rem] shrink-0 items-center justify-center px-4" : "h-10 w-full"
+                  }`}
                   title="Read full description and details"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -546,7 +557,11 @@ export function CommunityShopListingCard({
                         isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
                       }`
                     : `rounded-xl bg-primary font-semibold text-white hover:bg-primary-hover dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90 ${
-                        isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                        listDesktopCompactActions
+                          ? "inline-flex h-9 min-h-0 min-w-[7rem] shrink-0 items-center justify-center px-4 text-xs"
+                          : isListMode
+                            ? "h-10 w-full px-3 text-xs"
+                            : `w-full flex-1 ${compactActionBtnClass}`
                       }`
                 }`}
                 title="Edit title, price, photos, and stock"
@@ -566,7 +581,11 @@ export function CommunityShopListingCard({
                         isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
                       }`
                     : `rounded-xl bg-accent font-semibold text-white hover:bg-accent-hover dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400 ${
-                        isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                        listDesktopCompactActions
+                          ? "inline-flex h-9 min-h-0 min-w-[7rem] shrink-0 items-center justify-center px-4 text-xs"
+                          : isListMode
+                            ? "h-10 w-full px-3 text-xs"
+                            : `w-full flex-1 ${compactActionBtnClass}`
                       }`
                 } ${
                   saleOpen ? "ring-2 ring-rose-400/45 ring-offset-1 ring-offset-white dark:ring-rose-400/35 dark:ring-offset-slate-900" : ""
@@ -591,7 +610,11 @@ export function CommunityShopListingCard({
                 <button
                   type="button"
                   className={`rounded-xl border border-danger bg-danger font-semibold text-white shadow-none transition duration-200 ease-in-out hover:bg-danger-hover dark:border-rose-500/55 dark:bg-rose-950/45 dark:text-rose-100 dark:hover:bg-rose-950/60 ${
-                    isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
+                    listDesktopCompactActions
+                      ? "inline-flex h-9 min-h-0 min-w-[7rem] shrink-0 items-center justify-center px-4 text-xs"
+                      : isListMode
+                        ? "h-10 w-full px-3 text-xs"
+                        : `w-full flex-1 ${compactActionBtnClass}`
                   }`}
                   aria-label={`Delete listing: ${listing.title || "product"}`}
                   onClick={(e) => {
@@ -607,14 +630,18 @@ export function CommunityShopListingCard({
             <div
               className={
                 isListMode
-                  ? `grid w-full grid-cols-3 ${mobileUx ? "gap-2.5" : "gap-2"}`
+                  ? listDesktopCompactActions
+                    ? "flex w-full flex-wrap items-center justify-end gap-2"
+                    : `grid w-full grid-cols-3 ${mobileUx ? "gap-2.5" : "gap-2"}`
                   : compactActionRowClass
               }
             >
               {isListMode && onInspect ? (
                 <button
                   type="button"
-                  className="h-10 w-full rounded-xl border border-primary px-3 text-xs font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                  className={`rounded-xl border border-primary px-3 text-xs font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 ${
+                    listDesktopCompactActions ? "inline-flex h-9 min-h-0 min-w-[7rem] shrink-0 items-center justify-center px-4" : "h-10 w-full"
+                  }`}
                   title="Read full description and details"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -630,7 +657,11 @@ export function CommunityShopListingCard({
                 className={`rounded-xl border border-primary font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-brand-accent dark:text-brand-accent dark:hover:bg-slate-800/80 max-md:border-2 ${
                   mobileUx && isListMode ? "shadow-sm" : ""
                 } ${
-                  isListMode ? "h-10 w-full px-3 text-xs" : `flex-1 ${compactActionBtnClass}`
+                  listDesktopCompactActions
+                    ? "inline-flex h-9 min-h-0 min-w-[7.5rem] shrink-0 items-center justify-center px-4 text-xs"
+                    : isListMode
+                      ? "h-10 w-full px-3 text-xs"
+                      : `flex-1 ${compactActionBtnClass}`
                 }`}
                 disabled={isOutOfStock}
                 onClick={(e) => {
@@ -651,7 +682,11 @@ export function CommunityShopListingCard({
                 }
                 aria-label={isOutOfStock ? "Out of stock" : "Buy now"}
                 className={`rounded-xl bg-primary font-bold text-white shadow-sm transition duration-200 ease-in-out dark:bg-brand-accent dark:text-slate-900 ${
-                  isListMode ? "h-10 w-full px-3 text-xs" : `flex-1 ${compactActionBtnClass}`
+                  listDesktopCompactActions
+                    ? "inline-flex h-9 min-h-0 min-w-[7.5rem] shrink-0 items-center justify-center px-4 text-xs"
+                    : isListMode
+                      ? "h-10 w-full px-3 text-xs"
+                      : `flex-1 ${compactActionBtnClass}`
                 } ${
                   isOutOfStock
                     ? "cursor-not-allowed opacity-50"

@@ -512,7 +512,7 @@ export function CourierOpenDeliveries({
               type="button"
               variant="secondary"
               size="compact"
-              className="min-h-9 px-2.5 text-[10px]"
+              className={cn("min-h-9 px-2.5 text-[10px]", courierChrome.recoverySecondary)}
               disabled={loading}
               loading={loading}
               loadingLabel="…"
@@ -555,7 +555,10 @@ export function CourierOpenDeliveries({
                 type="button"
                 variant={claimMode === m ? "primary" : "secondary"}
                 size="compact"
-                className={cn("min-h-8 px-2.5 text-[10px]", claimMode === m ? courierChrome.recoveryPrimary : "")}
+                className={cn(
+                  "min-h-8 px-2.5 text-[10px]",
+                  claimMode === m ? courierChrome.recoveryPrimary : courierChrome.recoverySecondary,
+                )}
                 disabled={Boolean(claimingId) || !canClaimDeliveries}
                 onClick={() => setClaimMode(m)}
               >
@@ -621,7 +624,7 @@ export function CourierOpenDeliveries({
         </section>
       ) : null}
       {claimBanner ? (
-        <p className="mt-2 rounded-lg bg-emerald-50 px-2.5 py-2 text-[11px] text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-100">
+        <p className="mt-2 rounded-lg border border-violet-200/70 bg-violet-50/90 px-2.5 py-2 text-[11px] text-violet-950 dark:border-violet-800/45 dark:bg-violet-950/40 dark:text-violet-100">
           {claimBanner}
         </p>
       ) : null}
@@ -634,7 +637,7 @@ export function CourierOpenDeliveries({
             type="button"
             variant="secondary"
             size="compact"
-            className="min-h-9 text-[11px]"
+            className={cn("min-h-9 text-[11px]", courierChrome.recoverySecondary)}
             onClick={() => void load()}
           >
             Try again

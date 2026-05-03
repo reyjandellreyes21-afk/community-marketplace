@@ -123,7 +123,13 @@
 
   /* Light divider under icon-only secondary tabs (mobile). */
   .mobile-app-secondary-nav {
-    @apply shrink-0 border-b border-neutral-200/50 bg-white/95 backdrop-blur-md dark:border-slate-700/50 dark:bg-slate-900/95;
+    @apply shrink-0 border-b border-neutral-200/50 bg-white/95 backdrop-blur-md;
+  }
+  /* Brand panel tokens — cannot use arbitrary hex/opacity inside `@apply` in this Tailwind setup */
+  .dark .mobile-app-secondary-nav {
+    border-bottom-color: rgb(61 109 143 / 0.45);
+    background-color: rgb(15 34 52 / 0.96);
+    backdrop-filter: blur(12px);
   }
 
   @keyframes lm-view-slide-left {
@@ -296,17 +302,30 @@
     @apply flex w-full min-w-0 flex-col gap-2 px-1 md:gap-2.5 md:px-1.5;
   }
 
+  /**
+   * Cart grid — mobile: 2 columns (aligned with community shop mobile browse).
+   * Web (md+): same comfortable auto-fill as `.lm-grid-layout--browse-auto` (~4 tiles on wide viewports).
+   */
   .lm-commerce-line-items--grid {
-    @apply grid w-full min-w-0 grid-cols-1 items-stretch gap-2.5 md:grid-cols-2 md:gap-3;
+    @apply grid w-full min-w-0 items-stretch gap-2.5 md:gap-4 lg:gap-5;
+    @apply grid-cols-2;
+    @apply md:[grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))];
   }
 
-  /** Purchases / orders grid — scales columns on wide screens (web); cart keeps cozier 2-col default */
+  /**
+   * Purchases / orders grid — mobile: 2 columns; web (md+): comfortable auto-fill like community browse
+   * (replaces fixed md/lg/xl column steps).
+   */
   .lm-commerce-line-items--grid-orders {
-    @apply grid w-full min-w-0 grid-cols-2 items-stretch gap-2.5 md:grid-cols-3 md:gap-3 lg:grid-cols-4 xl:gap-4 2xl:grid-cols-5;
+    @apply grid w-full min-w-0 items-stretch gap-2.5 md:gap-4 lg:gap-5;
+    @apply grid-cols-2;
+    @apply md:[grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))];
   }
 
+  /** Dense commerce grid — mobile: single column; web (md+): matches `.lm-grid-layout--browse-compact` auto-fill */
   .lm-commerce-line-items--grid-compact {
-    @apply grid w-full min-w-0 grid-cols-1 items-stretch gap-2 md:grid-cols-2 md:gap-2.5 lg:grid-cols-3;
+    @apply grid w-full min-w-0 grid-cols-1 items-stretch gap-2 md:gap-3;
+    @apply md:[grid-template-columns:repeat(auto-fill,minmax(min(100%,10.25rem),1fr))];
   }
 
   /**
@@ -440,6 +459,15 @@
 
   .lm-view-toggle--default {
     @apply bg-neutral-100/40 dark:bg-slate-800/50 md:rounded-xl md:border md:border-neutral-200/85 md:bg-white md:p-1 md:shadow-sm dark:md:border-slate-600 dark:md:bg-slate-900;
+  }
+
+  /** Phone toolbar — matches compact Filters row height (overrides 44px segment min on small screens) */
+  .lm-view-toggle--minimal {
+    @apply rounded-lg border border-neutral-200/75 bg-neutral-100/70 p-0.5 shadow-[0_1px_2px_rgba(15,23,42,0.06)] dark:border-slate-600/75 dark:bg-slate-800/70 dark:shadow-[0_1px_2px_rgba(0,0,0,0.25)];
+  }
+
+  .lm-view-toggle--minimal .lm-btn-segment {
+    @apply h-9 min-h-9 min-w-9 max-h-9 rounded-md px-2 py-1;
   }
 
 
@@ -586,7 +614,7 @@
 
   /* Inputs: 44px min height on small screens; dense layouts can override with h-9 etc. */
   .input-base {
-    @apply box-border min-h-[44px] w-full touch-manipulation rounded-[var(--ui-radius)] border border-neutral-200/95 bg-white px-3 py-2.5 text-base leading-snug text-neutral-900 outline-none placeholder:text-neutral-500 focus-visible:border-brand-primary focus-visible:ring-1 focus-visible:ring-brand-primary/35 disabled:cursor-not-allowed disabled:opacity-65 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-400 md:min-h-10 md:text-sm;
+    @apply box-border min-h-[44px] w-full touch-manipulation rounded-[var(--ui-radius)] border border-neutral-200/95 bg-white px-3 py-2.5 text-base leading-snug text-neutral-900 outline-none placeholder:text-neutral-500 focus-visible:border-brand-primary focus-visible:ring-1 focus-visible:ring-brand-primary/35 disabled:cursor-not-allowed disabled:opacity-65 dark:border-[#3d6d8f]/45 dark:bg-[#0f2234] dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus-visible:border-brand-accent dark:focus-visible:ring-brand-accent/30 md:min-h-10 md:text-sm;
   }
 
   .textarea-base {
@@ -696,11 +724,11 @@
   }
 
   .landing-btn-nav-text {
-    @apply px-1 text-sm font-medium text-neutral-900 transition hover:text-neutral-600 dark:text-slate-100 dark:hover:text-slate-300;
+    @apply inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg px-2 text-xs font-medium text-neutral-900 transition hover:bg-neutral-100 hover:text-neutral-700 dark:text-slate-100 dark:hover:bg-slate-800 dark:hover:text-slate-200 min-[360px]:px-2.5 min-[390px]:px-3 min-[390px]:text-sm min-[430px]:px-3 md:text-sm;
   }
 
   .landing-btn-nav-primary {
-    @apply inline-flex h-10 items-center justify-center rounded-full bg-brand-primary px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover;
+    @apply inline-flex h-9 min-h-[44px] items-center justify-center rounded-full bg-brand-primary px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-hover min-[360px]:px-3.5 min-[390px]:h-10 min-[390px]:px-4 min-[390px]:text-sm min-[430px]:px-[1.125rem] md:h-11 md:px-5 md:text-sm;
   }
 
   .landing-auth-close {

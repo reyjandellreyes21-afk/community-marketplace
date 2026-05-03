@@ -21,6 +21,14 @@ const COURIER_TAG_LABEL = {
   friendly: "Friendly",
 };
 
+function initialsFromUsername(username) {
+  const u = String(username || "")
+    .replace(/^@/, "")
+    .trim();
+  if (!u) return "?";
+  return u.slice(0, 2).toUpperCase();
+}
+
 /** Buyer→seller and buyer→courier ratings when the order row includes reviews (same zone as order timeline). */
 function OrderTimelineFeedbackBlocks({ order, viewerRole }) {
   if (!order) return null;
@@ -147,6 +155,7 @@ export function ProductInspectModal({
   description = "",
   sellerUsername = "",
   sellerAddressLine = "",
+  sellerAvatarUrl = "",
   comment = "",
   /** When true, show the note section even if empty (e.g. cart / orders). */
   commentSectionRequired = false,
@@ -166,6 +175,7 @@ export function ProductInspectModal({
   onEditListing,
   onSaleSelect,
   onViewSellerProfile,
+  onContactSeller,
   buyNowDisabled = false,
   buyNowDisabledReason = "",
   orderType,
@@ -210,6 +220,7 @@ export function ProductInspectModal({
   const [heroStripDragging, setHeroStripDragging] = useState(false);
   const [lightboxDragPx, setLightboxDragPx] = useState(0);
   const [lightboxStripDragging, setLightboxStripDragging] = useState(false);
+  const [sellerAvatarBroken, setSellerAvatarBroken] = useState(false);
 
   const imageUrlsSignature = useMemo(
     () =>
@@ -271,6 +282,10 @@ export function ProductInspectModal({
     if (!open) return;
     setGalleryThumbIdx(0);
   }, [open, galleryUrlsKey]);
+
+  useEffect(() => {
+    setSellerAvatarBroken(false);
+  }, [open, sellerAvatarUrl]);
 
   useEffect(() => {
     galleryThumbIdxRef.current = galleryThumbIdx;
@@ -466,7 +481,14 @@ export function ProductInspectModal({
   const descPlain = removeSaleMetaLines(description);
   const sellerUsernameTrim = String(sellerUsername || "").trim();
   const sellerAddressLineTrim = String(sellerAddressLine || "").trim();
-  const hasSellerDetails = sellerUsernameTrim.length > 0 || sellerAddressLineTrim.length > 0;
+  const sellerAvatarTrim = String(sellerAvatarUrl || "").trim();
+  const hasSellerDetails =
+    sellerUsernameTrim.length > 0 ||
+    sellerAddressLineTrim.length > 0 ||
+    sellerAvatarTrim.length > 0 ||
+    typeof onViewSellerProfile === "function" ||
+    typeof onContactSeller === "function";
+  const sellerInitials = initialsFromUsername(sellerUsernameTrim);
   const commentTrim = String(comment || "").trim();
   const showCommentBlock = commentSectionRequired || commentTrim.length > 0;
   const stock =
@@ -1067,30 +1089,64 @@ export function ProductInspectModal({
             ) : null}
 
             {hasSellerDetails ? (
-              <div className="space-y-1.5 border-t border-neutral-200/70 pt-2.5 text-sm leading-relaxed dark:border-slate-700/70">
+              <div className="space-y-2 border-t border-neutral-200/70 pt-2.5 text-sm leading-relaxed dark:border-slate-700/70">
                 <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
                   Seller details
                 </h3>
-                {sellerUsernameTrim ? (
-                  <p className="break-words text-neutral-800 dark:text-slate-200">
-                    <span className="font-semibold text-neutral-700 dark:text-slate-300">Username:</span>{" "}
-                    {sellerUsernameTrim.startsWith("@") ? sellerUsernameTrim : `@${sellerUsernameTrim}`}
-                  </p>
-                ) : null}
-                {sellerAddressLineTrim ? (
-                  <p className="break-words text-neutral-800 dark:text-slate-200">
-                    <span className="font-semibold text-neutral-700 dark:text-slate-300">Address:</span>{" "}
-                    {sellerAddressLineTrim}
-                  </p>
-                ) : null}
-                {typeof onViewSellerProfile === "function" ? (
-                  <button
-                    type="button"
-                    className="inline-flex min-h-8 items-center justify-center rounded-lg border border-neutral-300/90 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
-                    onClick={() => onViewSellerProfile()}
+                <div className="flex gap-3">
+                  <div
+                    className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full border border-neutral-200/90 bg-neutral-100 dark:border-slate-600 dark:bg-slate-800"
+                    aria-label={sellerUsernameTrim ? `Seller avatar for ${sellerUsernameTrim}` : "Seller avatar"}
                   >
-                    View profile
-                  </button>
+                    {sellerAvatarTrim && !sellerAvatarBroken ? (
+                      <img
+                        src={sellerAvatarTrim}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        onError={() => setSellerAvatarBroken(true)}
+                      />
+                    ) : (
+                      <span className="flex h-full w-full items-center justify-center text-xs font-semibold text-neutral-600 dark:text-slate-300">
+                        {sellerInitials}
+                      </span>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    {sellerUsernameTrim ? (
+                      <p className="break-words text-neutral-800 dark:text-slate-200">
+                        <span className="font-semibold text-neutral-700 dark:text-slate-300">Username:</span>{" "}
+                        {sellerUsernameTrim.startsWith("@") ? sellerUsernameTrim : `@${sellerUsernameTrim}`}
+                      </p>
+                    ) : null}
+                    {sellerAddressLineTrim ? (
+                      <p className="break-words text-neutral-800 dark:text-slate-200">
+                        <span className="font-semibold text-neutral-700 dark:text-slate-300">Address:</span>{" "}
+                        {sellerAddressLineTrim}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                {typeof onContactSeller === "function" || typeof onViewSellerProfile === "function" ? (
+                  <div className="flex flex-wrap gap-2">
+                    {typeof onContactSeller === "function" ? (
+                      <button
+                        type="button"
+                        className="inline-flex min-h-8 min-w-[7.5rem] flex-1 items-center justify-center rounded-lg border border-neutral-300/90 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 sm:flex-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                        onClick={() => onContactSeller()}
+                      >
+                        Contact seller
+                      </button>
+                    ) : null}
+                    {typeof onViewSellerProfile === "function" ? (
+                      <button
+                        type="button"
+                        className="inline-flex min-h-8 min-w-[7.5rem] flex-1 items-center justify-center rounded-lg border border-neutral-300/90 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 sm:flex-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                        onClick={() => onViewSellerProfile()}
+                      >
+                        View profile
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             ) : null}

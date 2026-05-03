@@ -585,6 +585,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {boolean} [props.hideNavigationChrome] Hide top nav/header chrome (content only).
  * @param {boolean} [props.liftChromeAboveOverlay] Raise header stacking above app-root overlays (e.g. quick-add sheet backdrop).
  * @param {boolean} [props.activityPrimaryTabsScrollHidden] When true, slide the Activity primary tab bar off-screen (scroll-down autohide).
+ * @param {"form"|"thanks"} [props.sendFeedbackPhase] Send feedback screen: form vs thank-you (drives mobile secondary chrome title only).
  */
 export function LoggedInHeader({
   user,
@@ -627,8 +628,24 @@ export function LoggedInHeader({
   liftChromeAboveOverlay = false,
   activityPrimaryTabsScrollHidden = false,
   activityHubChildStrip = null,
+  sendFeedbackPhase = "form",
   children,
 }) {
+  const mobileSecondaryScreenChrome = useMemo(() => {
+    if (activeView === VIEWS.ABOUT) {
+      return { title: "About LinkMart", aria: "About" };
+    }
+    if (activeView === VIEWS.TERMS) {
+      return { title: "Terms & conditions", aria: "Terms and conditions" };
+    }
+    if (activeView === VIEWS.SEND_FEEDBACK) {
+      return sendFeedbackPhase === "thanks"
+        ? { title: "Thank you", aria: "Thank you" }
+        : { title: "Send feedback", aria: "Send feedback" };
+    }
+    return null;
+  }, [activeView, sendFeedbackPhase]);
+
   const openActivity =
     typeof goActivity === "function"
       ? goActivity
@@ -938,7 +955,9 @@ export function LoggedInHeader({
     activeView === VIEWS.ACTIVITY ||
     activeView === VIEWS.SELLER ||
     activeView === VIEWS.MY_LISTINGS;
-  /** Mobile: hide top utility row (logo, favorites, messages) on secondary tabs — same treatment for Cart as Activity/Inbox (bottom tab strip stays). */
+  /** Bottom-nav profile tab; send feedback is a separate screen and does not select this tab. */
+  const mobileProfileZoneTabActive = activeView === VIEWS.PROFILE;
+  /** Mobile: hide top utility row (logo, favorites, messages) on secondary tabs — bottom tab strip stays. Send feedback keeps full chrome (primary + tab row). */
   const hideMobilePrimaryRow =
     activeView === VIEWS.CART ||
     activeView === VIEWS.ACTIVITY ||
@@ -1315,9 +1334,9 @@ export function LoggedInHeader({
             <button
               type="button"
               role="tab"
-              aria-selected={activeView === VIEWS.PROFILE}
-              aria-current={activeView === VIEWS.PROFILE ? "page" : undefined}
-              className={mobileIconTabClass(activeView === VIEWS.PROFILE)}
+              aria-selected={mobileProfileZoneTabActive}
+              aria-current={mobileProfileZoneTabActive ? "page" : undefined}
+              className={mobileIconTabClass(mobileProfileZoneTabActive)}
               aria-label="Profile"
               onClick={() => {
                 goOwnProfile();
@@ -1325,11 +1344,35 @@ export function LoggedInHeader({
               }}
             >
               <span className="mobile-nav-tab-icon relative inline-flex size-6 shrink-0 items-center justify-center" aria-hidden>
-                <MobileNavProfileIcon filled={activeView === VIEWS.PROFILE} className="h-6 w-6 shrink-0" aria-hidden />
+                <MobileNavProfileIcon filled={mobileProfileZoneTabActive} className="h-6 w-6 shrink-0" aria-hidden />
               </span>
             </button>
           </div>
         </nav>
+
+            {mobileSecondaryScreenChrome ? (
+              <div
+                className="md:hidden shrink-0 border-t border-neutral-200/80 bg-white/95 backdrop-blur-md supports-[backdrop-filter]:bg-white/80 dark:border-[#1f3c56]/70 dark:bg-[#0f2234]/98 dark:supports-[backdrop-filter]:bg-[#0f2234]/92"
+                role="region"
+                aria-label={mobileSecondaryScreenChrome.aria}
+              >
+                <div className="app-shell-content-inset flex min-h-[3.25rem] items-center gap-3 py-2 max-[360px]:px-2.5">
+                  <button
+                    type="button"
+                    className="inline-flex size-12 shrink-0 items-center justify-center rounded-full text-neutral-700 transition hover:bg-neutral-100 active:bg-neutral-100 dark:text-slate-100 dark:hover:bg-white/[0.08] dark:active:bg-white/[0.12]"
+                    aria-label="Back to marketplace"
+                    onClick={() => goBrowse?.()}
+                  >
+                    <svg className="size-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" aria-hidden>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
+                    </svg>
+                  </button>
+                  <h2 className="min-w-0 flex-1 text-xl font-semibold leading-snug tracking-tight text-neutral-900 max-[360px]:text-lg dark:text-slate-50">
+                    {mobileSecondaryScreenChrome.title}
+                  </h2>
+                </div>
+              </div>
+            ) : null}
 
             {mobileSecondaryNav ? (
               <div className="border-t border-neutral-200/35 bg-white/90 py-2.5 dark:border-slate-700/45 dark:bg-slate-900/90">
@@ -1526,7 +1569,11 @@ export function LoggedInHeader({
               } ${accountMenuOpen ? headerUtilityButtonActive : ""}`}
               aria-expanded={accountMenuOpen}
               aria-haspopup="menu"
-              aria-label={activeView === VIEWS.PROFILE ? "Account menu (viewing profile)" : "Account menu"}
+              aria-label={
+                activeView === VIEWS.PROFILE
+                  ? "Account menu (viewing profile or account page)"
+                  : "Account menu"
+              }
               onClick={openAccount}
             >
               <StableAvatar
@@ -1569,6 +1616,20 @@ export function LoggedInHeader({
                     <MenuTruckIcon />
                   </span>
                   Courier
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={accountMenuItemBase}
+                  onClick={() => {
+                    setActiveView(VIEWS.SEND_FEEDBACK);
+                    closeAllMenus();
+                  }}
+                >
+                  <span className={accountMenuIconWrap} aria-hidden>
+                    <MenuFeedbackIcon />
+                  </span>
+                  Send Feedback
                 </button>
                 <div role="none" className="mx-1 my-1.5 border-t border-neutral-200/90 dark:border-slate-700/90" />
                 <div className="relative">
@@ -1629,7 +1690,7 @@ export function LoggedInHeader({
                   <span className={accountMenuIconWrap} aria-hidden>
                     <MenuFileIcon />
                   </span>
-                  Terms & Conditions
+                  Terms & conditions
                 </button>
                 <div role="none" className="mx-1 my-1.5 border-t border-neutral-200/90 dark:border-slate-700/90" />
                 <button
@@ -1660,11 +1721,11 @@ export function LoggedInHeader({
 
       {activeView === VIEWS.ACTIVITY ? (
         <div
-          className={`pointer-events-auto z-40 transition-transform duration-300 ease-out will-change-transform motion-reduce:duration-75 max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:px-1 max-md:pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] max-md:pt-2 ${activityPrimaryTabsFooterShellClass(
+          className={`md:hidden pointer-events-auto z-40 transition-transform duration-300 ease-out will-change-transform motion-reduce:duration-75 max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:px-1 max-md:pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] max-md:pt-2 ${activityPrimaryTabsFooterShellClass(
             activityTab,
-          )} md:static md:w-full md:border-0 md:border-b md:border-neutral-200/70 md:bg-neutral-50/95 md:px-4 md:pb-2.5 md:pt-2 md:shadow-none md:backdrop-blur-none dark:md:border-slate-700/80 dark:md:bg-slate-950 ${
+          )} ${
             activityPrimaryTabsScrollHidden
-              ? "max-md:translate-y-[calc(100%+0.5rem)] max-md:pointer-events-none md:translate-y-0 md:pointer-events-auto"
+              ? "max-md:translate-y-[calc(100%+0.5rem)] max-md:pointer-events-none"
               : "max-md:translate-y-0"
           }`}
         >
@@ -1737,8 +1798,14 @@ export function LoggedInHeader({
                     finalizeMobileSheetClose();
                   }}
                 >
-                  <span className={mobileDrawerIconPlain} aria-hidden>
-                    <MenuUserIcon />
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center" aria-hidden>
+                    <StableAvatar
+                      src={user?.avatarUrl}
+                      alt=""
+                      initials={(String(user?.username || "").trim().charAt(0) || "?").toUpperCase()}
+                      className="h-10 w-10 shrink-0 text-xs ring-1 ring-neutral-200/80 dark:ring-slate-600"
+                      sizes="40px"
+                    />
                   </span>
                   Profile
                 </button>
@@ -1759,14 +1826,14 @@ export function LoggedInHeader({
                   type="button"
                   className={mobileSheetMenuItem}
                   onClick={() => {
-                    setActiveView(VIEWS.SELLER);
+                    setActiveView(VIEWS.SEND_FEEDBACK);
                     finalizeMobileSheetClose();
                   }}
                 >
                   <span className={mobileDrawerIconPlain} aria-hidden>
                     <MenuFeedbackIcon />
                   </span>
-                  Feedback
+                  Send Feedback
                 </button>
                 <button
                   type="button"
@@ -1801,7 +1868,7 @@ export function LoggedInHeader({
                   className={mobileSheetMenuItem}
                   onClick={() => {
                     setActiveView(VIEWS.ABOUT);
-                    finalizeMobileSheetClose();
+                    closeMobileSheetAnimated();
                   }}
                 >
                   <span className={mobileDrawerIconPlain} aria-hidden>
@@ -1814,13 +1881,13 @@ export function LoggedInHeader({
                   className={mobileSheetMenuItem}
                   onClick={() => {
                     setActiveView(VIEWS.TERMS);
-                    finalizeMobileSheetClose();
+                    closeMobileSheetAnimated();
                   }}
                 >
                   <span className={mobileDrawerIconPlain} aria-hidden>
                     <MenuFileIcon />
                   </span>
-                  Terms and Conditions
+                  Terms & conditions
                 </button>
                 <button
                   type="button"

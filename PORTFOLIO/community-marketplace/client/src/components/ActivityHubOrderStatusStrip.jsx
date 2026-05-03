@@ -10,9 +10,10 @@ const ORDER_STATUS_BADGE_CORNER =
   "pointer-events-none absolute right-0.5 top-0.5 z-[1] max-md:right-px max-md:top-px md:right-1 md:top-1";
 const ORDER_STATUS_BADGE_MOBILE =
   "max-md:min-h-[1rem] max-md:min-w-[1rem] max-md:px-[3px] max-md:text-[8px]";
-
 /**
- * Pending–Cancelled status filters, placed directly under the Purchases/Orders title row.
+ * Pending–Cancelled status filters.
+ * @param {'default'|'desktopMerged'} [props.variant] `desktopMerged` = minimal outer shell (row sits inside unified Activity toolbar on md+)
+ * @param {'center'|'start'} [props.desktopRowJustify] Horizontal alignment for `desktopMerged` status tabs (web sidebar layout uses `start`)
  */
 export function ActivityHubOrderStatusStrip({
   activityBuying,
@@ -22,6 +23,8 @@ export function ActivityHubOrderStatusStrip({
   pendingTabBadgeDisplayCount,
   processingTabBadgeDisplayCount,
   ordersTabBadgeIdsByTab,
+  variant = "default",
+  desktopRowJustify = "center",
 }) {
   const activityTabChrome = getActivityTabChrome(activityTab);
   const sellingChrome = activityTab === ACTIVITY_TABS.SELLING;
@@ -31,12 +34,31 @@ export function ActivityHubOrderStatusStrip({
   const chipUnselected =
     "max-md:border-neutral-200/80 max-md:bg-neutral-50 max-md:text-neutral-600 dark:max-md:border-slate-600/80 dark:max-md:bg-slate-900/60 dark:max-md:text-slate-300";
 
+  const stripOuterClass =
+    variant === "desktopMerged"
+      ? "relative w-full min-w-0"
+      : "relative mt-2 md:mt-4 max-md:sticky max-md:z-30 max-md:border-t border-neutral-200/70 bg-neutral-50/95 pb-1 pt-1 shadow-[0_-6px_18px_-10px_rgba(15,23,42,0.08)] backdrop-blur-md dark:border-slate-700/70 dark:bg-slate-950/95 dark:shadow-[0_-6px_22px_-10px_rgba(0,0,0,0.35)] max-md:bottom-[calc(env(safe-area-inset-bottom,0px)+var(--activity-primary-footer,4.75rem)+0.25rem)] md:rounded-xl md:border md:border-neutral-200/75 md:bg-white md:px-2 md:pb-2 md:pt-2 md:shadow-sm md:shadow-slate-900/[0.04] md:backdrop-blur-none dark:md:border-slate-600/90 dark:md:bg-slate-900/85 dark:md:shadow-none";
+
+  const mergedJustify =
+    variant === "desktopMerged"
+      ? desktopRowJustify === "start"
+        ? "justify-start"
+        : "justify-center"
+      : "";
+  const statusTabListClass =
+    variant === "desktopMerged"
+      ? `mx-auto flex w-full min-w-0 flex-wrap gap-2 md:flex-nowrap md:gap-2 md:px-0 ${mergedJustify}`
+      : "mx-auto grid w-full min-w-0 grid-cols-4 gap-1 md:flex md:w-fit md:max-w-full md:flex-nowrap md:justify-center md:gap-2 md:px-1";
+
+  const statusTabMdSizing =
+    variant === "desktopMerged"
+      ? "md:flex md:min-h-[2.5rem] md:min-w-[5.25rem] md:max-w-[9rem] md:flex-none md:flex-col md:items-center md:justify-center md:rounded-lg md:px-3 md:py-2 md:text-center md:transition-colors md:duration-150 md:ease-out min-[380px]:md:px-3.5"
+      : "md:flex md:min-h-[2.5rem] md:min-w-[5.25rem] md:max-w-[9rem] md:flex-none md:flex-col md:items-center md:justify-center md:rounded-lg md:px-3 md:py-2 md:text-center md:transition-colors md:duration-150 md:ease-out min-[380px]:md:px-3.5";
+
   return (
-    <div
-      className="relative mt-2 md:mt-4 max-md:sticky max-md:z-30 max-md:border-t border-neutral-200/70 bg-neutral-50/95 pb-1 pt-1 shadow-[0_-6px_18px_-10px_rgba(15,23,42,0.08)] backdrop-blur-md dark:border-slate-700/70 dark:bg-slate-950/95 dark:shadow-[0_-6px_22px_-10px_rgba(0,0,0,0.35)] max-md:bottom-[calc(env(safe-area-inset-bottom,0px)+var(--activity-primary-footer,4.75rem)+0.25rem)] md:rounded-xl md:border md:border-neutral-200/75 md:bg-white md:px-2 md:pb-2 md:pt-2 md:shadow-sm md:shadow-slate-900/[0.04] md:backdrop-blur-none dark:md:border-slate-600/90 dark:md:bg-slate-900/85 dark:md:shadow-none"
-    >
+    <div className={stripOuterClass}>
       <div
-        className="mx-auto grid w-full min-w-0 grid-cols-4 gap-1 md:flex md:w-fit md:max-w-full md:flex-nowrap md:justify-center md:gap-2 md:px-1"
+        className={statusTabListClass}
         role="tablist"
         aria-label={activityBuying ? "Purchase status" : "Order status"}
         onKeyDown={(e) => {
@@ -94,7 +116,7 @@ export function ActivityHubOrderStatusStrip({
           aria-controls="commerce-flow-status-panel"
           title={hint}
           aria-label={showTabBadge ? `${label}, ${String(badgeCountDisplay).replace("+", " plus ")}` : label}
-          className={`relative overflow-visible max-md:flex max-md:min-h-[2.25rem] max-md:w-full max-md:min-w-0 max-md:items-center max-md:justify-center max-md:rounded-none max-md:border max-md:px-1 max-md:py-1.5 max-md:transition-colors md:flex md:min-h-[2.5rem] md:min-w-[5.25rem] md:max-w-[9rem] md:flex-none md:flex-col md:items-center md:justify-center md:rounded-lg md:px-3 md:py-2 md:text-center md:transition-colors md:duration-150 md:ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 min-[380px]:md:px-3.5 ${
+          className={`relative overflow-visible max-md:flex max-md:min-h-[2.25rem] max-md:w-full max-md:min-w-0 max-md:items-center max-md:justify-center max-md:rounded-none max-md:border max-md:px-1 max-md:py-1.5 max-md:transition-colors ${statusTabMdSizing} focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 ${
             selected
               ? `${chipSelected} md:border-0 md:bg-transparent`
               : `${chipUnselected} md:hover:bg-neutral-50/90 dark:md:hover:bg-slate-900/70`
@@ -104,9 +126,9 @@ export function ActivityHubOrderStatusStrip({
           <span className="flex w-full min-w-0 flex-col items-center justify-center gap-1">
             <span className="flex w-full min-w-0 max-w-full items-center justify-center px-0.5 max-md:px-0">
               <span
-                className={`w-full min-w-0 truncate text-center max-md:text-[10px] max-md:font-medium max-md:leading-none md:text-[11px] md:font-semibold md:leading-tight ${
-                  selected ? activityTabChrome.labelSelected : "text-neutral-600 dark:text-slate-400"
-                }`}
+                className={`min-w-0 text-center max-md:truncate max-md:text-[10px] max-md:font-medium max-md:leading-none md:text-[11px] md:font-semibold md:leading-tight md:whitespace-nowrap ${
+                  variant === "desktopMerged" ? "" : "w-full truncate"
+                } ${selected ? activityTabChrome.labelSelected : "text-neutral-600 dark:text-slate-400"}`}
               >
                 <span className="max-md:inline md:inline">{label}</span>
               </span>
