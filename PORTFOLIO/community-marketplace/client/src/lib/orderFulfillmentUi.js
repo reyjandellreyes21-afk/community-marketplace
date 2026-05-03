@@ -36,6 +36,23 @@ export function isDeliveryInTransit(order) {
 }
 
 /**
+ * Visual bucket for the order-card fulfillment banner (pill + icon on Activity orders).
+ * Aligns with {@link orderFulfillmentBannerText}; returns `null` when there is no banner.
+ *
+ * @returns {"preparing" | "ready_pickup" | "out_delivery" | null}
+ */
+export function orderFulfillmentBannerKind(order) {
+  const status = String(order?.status || "").toLowerCase();
+  const ft = order?.fulfillmentType === "delivery" ? "delivery" : "pickup";
+
+  if (status === "seller_accepted" && ft === "pickup") return "preparing";
+  if (isDeliverySellerPreparing(order) || isDeliveryCourierAssigned(order)) return "preparing";
+  if (status === "ready_for_pickup" && ft === "pickup") return "ready_pickup";
+  if (isDeliveryInTransit(order)) return "out_delivery";
+  return null;
+}
+
+/**
  * @param {"buyer" | "seller"} viewerRole
  */
 export function orderFulfillmentBannerText(order, viewerRole) {

@@ -134,6 +134,7 @@ import {
   isDeliveryCourierAssigned,
   isDeliveryInTransit,
   isDeliverySellerPreparing,
+  orderFulfillmentBannerKind,
   orderFulfillmentBannerText,
 } from "./lib/orderFulfillmentUi.js";
 import { ORDER_CANCELLATION_REASON_OPTIONS } from "./lib/orderCancellationReasons.js";
@@ -12377,6 +12378,7 @@ function App() {
                             );
                           });
                           const fulfillmentBanner = orderFulfillmentBannerText(o, ordersRole);
+                          const fulfillmentBannerKind = orderFulfillmentBannerKind(o);
                           const unseenIdsForTab = ordersTabBadgeIdsByTab[ordersStatusTab] || [];
                           const orderIdNeedsAttention = (oid) => {
                             const sid = String(oid || "");
@@ -12544,30 +12546,37 @@ function App() {
                               </div>
                             </div>
                           );
+                          /** List: checkbox column beside card. Grid (all viewports): checkbox over image — matches cart grid. */
+                          const showOrderCheckboxBesideCard = ordersStatusTab === "pending" && cfList;
+                          const orderSelectCheckbox =
+                            ordersStatusTab === "pending" ? (
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
+                                checked={rowAllSelected}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={() => {
+                                  const nextChecked = !rowAllSelected;
+                                  setOrderSelection((prev) => {
+                                    const next = { ...prev };
+                                    for (const id of entry.orderIds) {
+                                      if (!id) continue;
+                                      if (nextChecked) next[id] = true;
+                                      else delete next[id];
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                aria-label={`Select order ${orderId}${entry.orderIds.length > 1 ? " group" : ""}`}
+                              />
+                            ) : null;
                           return (
-                            <div key={`${groupPartyId}:${entry.mergeKey}`} className="flex min-w-0 items-start gap-2 md:gap-2.5">
-                              {ordersStatusTab === "pending" ? (
-                                <div className="flex shrink-0 items-center self-center pt-0.5">
-                                  <input
-                                    type="checkbox"
-                                    className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
-                                    checked={rowAllSelected}
-                                    onClick={(e) => e.stopPropagation()}
-                                    onChange={() => {
-                                      const nextChecked = !rowAllSelected;
-                                      setOrderSelection((prev) => {
-                                        const next = { ...prev };
-                                        for (const id of entry.orderIds) {
-                                          if (!id) continue;
-                                          if (nextChecked) next[id] = true;
-                                          else delete next[id];
-                                        }
-                                        return next;
-                                      });
-                                    }}
-                                    aria-label={`Select order ${orderId}${entry.orderIds.length > 1 ? " group" : ""}`}
-                                  />
-                                </div>
+                            <div
+                              key={`${groupPartyId}:${entry.mergeKey}`}
+                              className={`flex min-w-0 items-start ${showOrderCheckboxBesideCard ? "gap-2 md:gap-2.5" : ""}`}
+                            >
+                              {showOrderCheckboxBesideCard ? (
+                                <div className="flex shrink-0 items-center self-center pt-0.5">{orderSelectCheckbox}</div>
                               ) : null}
                               <div
                                 className={`min-w-0 flex-1 cursor-pointer transition duration-200 ease-in-out ${
@@ -12596,16 +12605,27 @@ function App() {
                                 </div>
                               ) : (
                                 <>
-                                  <div
-                                    className={`${orderThumbGrid} lm-product-card--tap relative block w-full overflow-hidden rounded-none border-0 bg-transparent p-0`}
-                                  >
-                                    <ProductListingMedia
-                                      listing={cardListing}
-                                      variant="grid"
-                                      className="absolute inset-0 min-h-0"
-                                      loading="lazy"
-                                      sizes="(max-width: 768px) 45vw, min(240px, 22vw)"
-                                    />
+                                  <div className="relative w-full shrink-0">
+                                    {ordersStatusTab === "pending" ? (
+                                      <label
+                                        className="pointer-events-auto absolute left-2 top-2 z-20 inline-flex cursor-pointer items-center justify-center"
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        {orderSelectCheckbox}
+                                      </label>
+                                    ) : null}
+                                    <div
+                                      className={`${orderThumbGrid} lm-product-card--tap relative block w-full overflow-hidden rounded-none border-0 bg-transparent p-0`}
+                                    >
+                                      <ProductListingMedia
+                                        listing={cardListing}
+                                        variant="grid"
+                                        className="absolute inset-0 min-h-0"
+                                        loading="lazy"
+                                        sizes="(max-width: 768px) 45vw, min(240px, 22vw)"
+                                      />
+                                    </div>
                                   </div>
                                   <div className="lm-product-card-body flex w-full flex-col border-0 bg-transparent text-left transition-colors duration-200 ease-in-out hover:bg-neutral-50/50 dark:hover:bg-slate-800/25">
                                     {orderCardBody}
@@ -12665,10 +12685,8 @@ function App() {
                               >
                                 {ordersRole === "buyer" && ordersStatusTab === "completed" && String(o.status || "") === "completed" ? (
                                   <div
-                                    className={`flex flex-col rounded-lg border border-neutral-200/70 bg-white/50 dark:border-slate-600/80 dark:bg-slate-900/30 ${
-                                      multicolOrderCard
-                                        ? "gap-1.5 p-2 md:gap-2 md:p-2.5"
-                                        : "gap-2 p-2.5 md:gap-3 md:p-3"
+                                    className={`flex flex-col ${
+                                      multicolOrderCard ? "gap-1.5 md:gap-2" : "gap-2 md:gap-3"
                                     }`}
                                   >
                                     <div className="min-w-0 space-y-1">
@@ -12681,8 +12699,8 @@ function App() {
                                     <div
                                       className={
                                         multicolOrderCard
-                                          ? "flex flex-col gap-1 md:flex-row md:flex-wrap md:justify-end md:gap-1.5"
-                                          : "flex flex-col gap-2 md:flex-row md:flex-wrap md:justify-end md:gap-2"
+                                          ? "flex flex-col gap-1 md:flex-row md:gap-1.5"
+                                          : "flex flex-col gap-2 md:flex-row md:gap-2"
                                       }
                                     >
                                       {(() => {
@@ -12694,10 +12712,10 @@ function App() {
                                         return (
                                           <button
                                             type="button"
-                                            className={`btn-secondary w-full touch-manipulation whitespace-nowrap md:w-auto ${
+                                            className={`btn-secondary w-full min-w-0 touch-manipulation whitespace-nowrap md:flex-1 ${
                                               multicolOrderCard
-                                                ? "min-h-9 shrink-0 px-2.5 py-1.5 text-[11px] md:min-h-0"
-                                                : "min-h-10 shrink-0 px-3 text-xs md:min-h-0"
+                                                ? "min-h-9 px-2.5 py-1.5 text-[11px] md:min-h-0"
+                                                : "min-h-10 px-3 text-xs md:min-h-0"
                                             }`}
                                             onClick={() => setCompletedRateModalOrderId(o.id)}
                                           >
@@ -12707,10 +12725,10 @@ function App() {
                                       })()}
                                       <button
                                         type="button"
-                                        className={`btn-secondary w-full touch-manipulation whitespace-nowrap md:w-auto ${
+                                        className={`btn-secondary w-full min-w-0 touch-manipulation whitespace-nowrap md:flex-1 ${
                                           multicolOrderCard
-                                            ? "min-h-9 shrink-0 px-2.5 py-1.5 text-[11px] md:min-h-0"
-                                            : "min-h-10 shrink-0 px-3 text-xs md:min-h-0"
+                                            ? "min-h-9 px-2.5 py-1.5 text-[11px] md:min-h-0"
+                                            : "min-h-10 px-3 text-xs md:min-h-0"
                                         }`}
                                         onClick={() => {
                                           const sellerId = String(o?.sellerId ?? "").trim();
@@ -12767,15 +12785,57 @@ function App() {
                                 <div className={`flex flex-col ${multicolOrderCard ? "gap-1.5" : "gap-2"}`}>
                                   {fulfillmentBanner ? (
                                     <p
+                                      role="status"
                                       className={`text-pretty text-[11px] leading-snug md:text-xs ${
-                                        ordersRole === "buyer" &&
-                                        (String(o.status || "") === "seller_accepted" ||
-                                          String(o.status || "") === "courier_assigned")
-                                          ? "text-neutral-600 dark:text-slate-400"
+                                        fulfillmentBannerKind
+                                          ? "inline-flex w-fit max-w-full items-center gap-1 rounded-md border border-brand-primary/45 bg-brand-primary/12 px-2 py-0.5 font-semibold text-brand-primary dark:border-brand-accent/45 dark:bg-brand-accent/15 dark:text-slate-100"
                                           : "font-medium text-neutral-800 dark:text-slate-200"
                                       }`}
                                     >
-                                      {fulfillmentBanner}
+                                      {fulfillmentBannerKind ? (
+                                        <>
+                                          {fulfillmentBannerKind === "preparing" ? (
+                                            <svg
+                                              className="size-3 shrink-0 opacity-90"
+                                              viewBox="0 0 20 20"
+                                              fill="currentColor"
+                                              aria-hidden
+                                            >
+                                              <path
+                                                fillRule="evenodd"
+                                                d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
+                                                clipRule="evenodd"
+                                              />
+                                            </svg>
+                                          ) : fulfillmentBannerKind === "ready_pickup" ? (
+                                            <svg
+                                              className="size-3 shrink-0 opacity-90"
+                                              viewBox="0 0 20 20"
+                                              fill="currentColor"
+                                              aria-hidden
+                                            >
+                                              <path
+                                                fillRule="evenodd"
+                                                d="M5.05 4.05a7 7 0 119.9 9.9L10 18l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
+                                                clipRule="evenodd"
+                                              />
+                                            </svg>
+                                          ) : (
+                                            <svg
+                                              className="size-3 shrink-0 opacity-90"
+                                              viewBox="0 0 20 20"
+                                              fill="currentColor"
+                                              aria-hidden
+                                            >
+                                              <path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+                                              <path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7h1a2 2 0 012 2v2.05A2.5 2.5 0 0118 13.5h1a1 1 0 001-1v-5a3 3 0 00-3-3h-3z" />
+                                            </svg>
+                                          )}
+                                          <span className="min-w-0">{fulfillmentBanner}</span>
+                                        </>
+                                      ) : (
+                                        fulfillmentBanner
+                                      )}
                                     </p>
                                   ) : null}
                                   <div
