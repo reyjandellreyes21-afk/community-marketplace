@@ -63,7 +63,18 @@ function LandingFooterIconMapPin(props) {
   );
 }
 
-export function LandingSiteFooter({ onOpenAbout, onOpenTerms, onOpenPrivacy }) {
+export function LandingSiteFooter({
+  onOpenAbout,
+  onOpenTerms,
+  onOpenPrivacy,
+  onOpenDataPrivacyAct,
+  onOpenScammers,
+  onOpenProhibited,
+  /** Formatted counts from GET /public-stats (same display rules as logged-out hero). */
+  statsListingsDisplay = "—",
+  statsSellersDisplay = "—",
+  statsCommunitiesDisplay = "—",
+}) {
   const accent = "text-teal-400 shrink-0";
   const legalBtn =
     "cursor-pointer border-0 bg-transparent p-0 text-left font-inherit text-inherit underline-offset-2 hover:underline";
@@ -100,74 +111,88 @@ export function LandingSiteFooter({ onOpenAbout, onOpenTerms, onOpenPrivacy }) {
               </li>
             </ul>
           </div>
-          <div className="text-left">
+          <div className="text-left md:col-span-2 lg:col-span-1">
             <h2 className="text-base font-bold tracking-tight text-white">Key stats</h2>
-            <dl className="mt-4 flex flex-col gap-6">
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Active listings</dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">8k+</dd>
+            <dl className="mt-6 flex flex-wrap gap-x-10 gap-y-8 lg:gap-x-12" aria-label="Marketplace totals">
+              <div className="min-w-0 text-left">
+                <dt className="sr-only">Active listings</dt>
+                <dd className="m-0">
+                  <span className="block text-2xl font-semibold tracking-tight tabular-nums text-white md:text-3xl">
+                    {statsListingsDisplay}
+                  </span>
+                  <span className="mt-1 block text-sm font-normal text-white/55">Active listings</span>
+                </dd>
               </div>
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Local sellers</dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">1.2k+</dd>
+              <div className="min-w-0 text-left">
+                <dt className="sr-only">Local sellers</dt>
+                <dd className="m-0">
+                  <span className="block text-2xl font-semibold tracking-tight tabular-nums text-white md:text-3xl">
+                    {statsSellersDisplay}
+                  </span>
+                  <span className="mt-1 block text-sm font-normal text-white/55">Local sellers</span>
+                </dd>
               </div>
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-white/55">Covered communities</dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">50+</dd>
+              <div className="min-w-0 text-left">
+                <dt className="sr-only">Covered communities</dt>
+                <dd className="m-0">
+                  <span className="block text-2xl font-semibold tracking-tight tabular-nums text-white md:text-3xl">
+                    {statsCommunitiesDisplay}
+                  </span>
+                  <span className="mt-1 block text-sm font-normal text-white/55">Covered communities</span>
+                </dd>
               </div>
             </dl>
           </div>
         </div>
         <div className="app-container mx-auto border-t border-white/15 pt-10">
-          <div className="flex flex-col items-center gap-8 lg:flex-row lg:items-end lg:justify-between">
+          <div className="flex flex-col items-center gap-8 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex flex-col items-center gap-1 lg:items-start">
               <LinkMartLogo className="h-9 w-auto max-w-[12rem] shrink-0 object-contain brightness-0 invert md:h-10 md:max-w-[13rem]" />
               <p className="text-xs font-medium tracking-wide text-white/55">Local marketplace for every community</p>
             </div>
-            <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-sm text-white/85" aria-label="Legal">
-              {onOpenPrivacy ? (
-                <button type="button" className={legalBtn} onClick={onOpenPrivacy}>
-                  Privacy Policy
-                </button>
-              ) : (
-                <a href="#">Privacy Policy</a>
-              )}
-              <a href="#">Copyright</a>
-              {onOpenTerms ? (
-                <button type="button" className={legalBtn} onClick={onOpenTerms}>
-                  Terms & conditions
-                </button>
-              ) : (
-                <a href="#">Terms & conditions</a>
-              )}
-              {onOpenAbout ? (
-                <button type="button" className={legalBtn} onClick={onOpenAbout}>
-                  About
-                </button>
-              ) : null}
+            <nav className="flex max-w-full flex-col items-center gap-3 text-sm text-white/85 lg:items-end" aria-label="Legal">
+              <div className="flex flex-wrap justify-center gap-x-5 gap-y-2">
+                {onOpenPrivacy ? (
+                  <button type="button" className={legalBtn} onClick={onOpenPrivacy}>
+                    Privacy Policy
+                  </button>
+                ) : (
+                  <a href="#">Privacy Policy</a>
+                )}
+                {onOpenDataPrivacyAct ? (
+                  <button type="button" className={legalBtn} onClick={onOpenDataPrivacyAct}>
+                    Data Privacy Act
+                  </button>
+                ) : null}
+                {onOpenScammers ? (
+                  <button type="button" className={legalBtn} onClick={onOpenScammers}>
+                    Beware of scammers
+                  </button>
+                ) : null}
+                {onOpenProhibited ? (
+                  <button type="button" className={legalBtn} onClick={onOpenProhibited}>
+                    Prohibited products
+                  </button>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap justify-center gap-x-5 gap-y-2">
+                {onOpenTerms ? (
+                  <button type="button" className={legalBtn} onClick={onOpenTerms}>
+                    Terms & conditions
+                  </button>
+                ) : (
+                  <a href="#">Terms & conditions</a>
+                )}
+                {onOpenAbout ? (
+                  <button type="button" className={legalBtn} onClick={onOpenAbout}>
+                    About
+                  </button>
+                ) : null}
+              </div>
+              <p className="text-center text-xs text-white/45 lg:text-right">
+                © {new Date().getFullYear()} LinkMart. All rights reserved.
+              </p>
             </nav>
-            <div className="flex items-center justify-center gap-2 md:gap-3">
-              <a href="#" className="landing-footer-social" aria-label="Facebook">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
-                </svg>
-              </a>
-              <a href="#" className="landing-footer-social" aria-label="X / Twitter">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                </svg>
-              </a>
-              <a href="#" className="landing-footer-social" aria-label="Instagram">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" />
-                </svg>
-              </a>
-              <a href="#" className="landing-footer-social" aria-label="YouTube">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
-                </svg>
-              </a>
-            </div>
           </div>
         </div>
       </div>

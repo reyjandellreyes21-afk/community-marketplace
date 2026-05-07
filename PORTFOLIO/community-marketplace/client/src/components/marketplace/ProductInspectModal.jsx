@@ -13,7 +13,10 @@ import { resolveListingGalleryUrls } from "../../lib/listingImageUrl.js";
 import { ChevronLeftIcon, ChevronRightIcon } from "../landing/LandingMarketing.jsx";
 import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
 import { ListingProductMetaExtras } from "./ListingProductMetaExtras.jsx";
+import { ListingDescriptionMarkdown } from "./ListingDescriptionMarkdown.jsx";
 import { OrderStatusMilestoneList } from "./OrderStatusMilestoneList.jsx";
+import { SellerBuyerRatingSummary } from "./SellerBuyerRatingSummary.jsx";
+import { buyerReviewSectionTitleSummary } from "./buyerReviewSectionClasses.js";
 
 const COURIER_TAG_LABEL = {
   fast: "Fast",
@@ -29,17 +32,21 @@ function initialsFromUsername(username) {
   return u.slice(0, 2).toUpperCase();
 }
 
-/** Buyer→seller and buyer→courier ratings when the order row includes reviews (same zone as order timeline). */
+/** Buyer→product, buyer→seller, and buyer→courier ratings when the order row includes reviews. */
 function OrderTimelineFeedbackBlocks({ order, viewerRole }) {
   if (!order) return null;
-  const sellerRating = Math.min(5, Math.max(0, Math.round(Number(order.buyerReview?.rating) || 0)));
+  const productRating = Math.min(5, Math.max(0, Math.round(Number(order.buyerReview?.productRating) || 0)));
+  const sellerRating = Math.min(5, Math.max(0, Math.round(Number(order.buyerReview?.sellerRating) || 0)));
+  const hasProductReview = productRating >= 1;
   const hasSellerReview = sellerRating >= 1;
   const courierRating = Math.min(5, Math.max(0, Math.round(Number(order.buyerCourierReview?.rating) || 0)));
   const hasCourierReview = courierRating >= 1;
   const delivery = String(order.fulfillmentType || "") === "delivery";
-  if (!hasSellerReview && !(delivery && hasCourierReview)) return null;
-
   const viewerIsBuyer = viewerRole === "buyer";
+  const showProductBlock = viewerIsBuyer && hasProductReview;
+  const showSellerBlock = hasSellerReview;
+  if (!showProductBlock && !showSellerBlock && !(delivery && hasCourierReview)) return null;
+
   const cardClass =
     "rounded-lg border border-neutral-200/80 bg-neutral-50/90 px-2.5 py-2 dark:border-slate-600 dark:bg-slate-900/50";
   const courierTags = Array.isArray(order.buyerCourierReview?.tags)
@@ -48,10 +55,42 @@ function OrderTimelineFeedbackBlocks({ order, viewerRole }) {
 
   return (
     <div className="mt-2 space-y-2">
-      {hasSellerReview ? (
+      {showProductBlock ? (
         <div className={cardClass}>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-            {viewerIsBuyer ? "Your rating (seller & product)" : "Buyer feedback"}
+          <p className={buyerReviewSectionTitleSummary}>Your product rating</p>
+          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+            <span
+              className="inline-flex items-center gap-0.5 text-amber-500 dark:text-amber-400"
+              aria-label={`${productRating} out of 5 stars`}
+            >
+              {Array.from({ length: 5 }, (_, i) => (
+                <span
+                  key={i}
+                  className={
+                    i < productRating ? "text-amber-500 dark:text-amber-400" : "text-neutral-300 dark:text-slate-600"
+                  }
+                >
+                  ★
+                </span>
+              ))}
+            </span>
+            <span className="text-[11px] font-medium tabular-nums text-neutral-700 dark:text-slate-300">
+              {productRating} / 5
+            </span>
+          </div>
+          {order.buyerReview?.productReviewText ? (
+            <p className="mt-2 text-pretty text-[11px] leading-relaxed text-neutral-700 dark:text-slate-300">
+              {order.buyerReview.productReviewText}
+            </p>
+          ) : (
+            <p className="mt-2 text-[11px] italic text-neutral-500 dark:text-slate-500">No product comment.</p>
+          )}
+        </div>
+      ) : null}
+      {showSellerBlock ? (
+        <div className={cardClass}>
+          <p className={buyerReviewSectionTitleSummary}>
+            {viewerIsBuyer ? "Your seller rating" : "Buyer rated you as seller"}
           </p>
           <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
             <span
@@ -73,18 +112,18 @@ function OrderTimelineFeedbackBlocks({ order, viewerRole }) {
               {sellerRating} / 5
             </span>
           </div>
-          {order.buyerReview?.reviewText ? (
+          {order.buyerReview?.sellerReviewText ? (
             <p className="mt-2 text-pretty text-[11px] leading-relaxed text-neutral-700 dark:text-slate-300">
-              {order.buyerReview.reviewText}
+              {order.buyerReview.sellerReviewText}
             </p>
           ) : (
-            <p className="mt-2 text-[11px] italic text-neutral-500 dark:text-slate-500">No written comment.</p>
+            <p className="mt-2 text-[11px] italic text-neutral-500 dark:text-slate-500">No seller comment.</p>
           )}
         </div>
       ) : null}
       {delivery && hasCourierReview ? (
         <div className={cardClass}>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+          <p className={buyerReviewSectionTitleSummary}>
             {viewerIsBuyer ? "Your courier rating" : "Courier feedback"}
           </p>
           <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
@@ -186,6 +225,9 @@ export function ProductInspectModal({
   optionValuesB,
   /** From `getListingCategoryShortLabel(verticalId, subId)` — same as upload category. */
   categoryLabel = "",
+  /** Buyer ratings aggregated from completed-order reviews (`order_reviews`) for this listing. */
+  listingAvgRating = null,
+  listingReviewCount = 0,
   isFavorite = false,
   onToggleFavorite,
   /** When set (e.g. opened from an order card), show milestone timeline for this order only. */
@@ -236,7 +278,7 @@ export function ProductInspectModal({
   const galleryUrlsKey = useMemo(() => galleryUrls.join("|"), [galleryUrls]);
   const displayImageUrl = galleryUrls[galleryThumbIdx] || galleryUrls[0] || "";
   const saleMeta = parseSaleMetaFromDescription(description);
-  const currentPesos = Math.floor((Number(priceCents) || 0) / 100);
+  const currentPesos = (Number(priceCents) || 0) / 100;
   const originalPesos = Number.isFinite(Number(saleMeta?.originalPesos)) ? Number(saleMeta.originalPesos) : null;
 
   const orderInspectDisplayIds = useMemo(() => {
@@ -924,6 +966,11 @@ export function ProductInspectModal({
                 {subtitle ? (
                   <p className="mt-0.5 line-clamp-2 break-words text-xs text-neutral-500 dark:text-slate-400">{subtitle}</p>
                 ) : null}
+                <SellerBuyerRatingSummary
+                  avg={listingAvgRating}
+                  count={listingReviewCount}
+                  className="mt-1 text-sm text-amber-900/95 dark:text-amber-100/95"
+                />
               </div>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <p className="text-[1.06rem] font-bold tabular-nums text-brand-primary min-[360px]:text-lg dark:text-brand-accent md:text-xl">
@@ -1067,13 +1114,11 @@ export function ProductInspectModal({
             </div>
 
             {descPlain ? (
-              <section className="space-y-1.5">
+              <section className="min-w-0 space-y-1.5">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                   Description
                 </h3>
-                <p className="whitespace-pre-wrap break-words text-pretty text-sm leading-relaxed text-neutral-800 dark:text-slate-200">
-                  {descPlain}
-                </p>
+                <ListingDescriptionMarkdown text={description} />
               </section>
             ) : null}
 
@@ -1157,11 +1202,11 @@ export function ProductInspectModal({
           {hasSellerHandlers ? (
             <div className="space-y-2">
               {salePickerOpen && typeof onSaleSelect === "function" ? (
-                <div className="overflow-x-auto rounded-xl border border-amber-200/80 bg-amber-50/80 p-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+                <div className="min-w-0 w-full rounded-xl border border-amber-200/80 bg-amber-50/80 p-2 dark:border-amber-500/30 dark:bg-amber-500/10">
                   <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">
                     Apply discount
                   </p>
-                  <div className="flex min-w-max flex-wrap gap-1.5">
+                  <div className="flex w-full min-w-0 flex-wrap gap-1.5">
                     {PRIMARY_QUICK_SALE_PERCENTS.map((percent) => (
                       <button
                         key={percent}
@@ -1188,7 +1233,7 @@ export function ProductInspectModal({
                     ) : null}
                   </div>
                   {showOtherSaleOptions && OTHER_QUICK_SALE_PERCENTS.length > 0 ? (
-                    <div className="mt-1.5 flex min-w-max flex-wrap gap-1.5">
+                    <div className="mt-1.5 flex w-full min-w-0 flex-wrap gap-1.5">
                       {OTHER_QUICK_SALE_PERCENTS.map((percent) => (
                         <button
                           key={`other-${percent}`}

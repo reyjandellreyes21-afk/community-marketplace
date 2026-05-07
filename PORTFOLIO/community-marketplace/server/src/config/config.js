@@ -24,4 +24,13 @@ export const config = {
   googleClientId: process.env.GOOGLE_CLIENT_ID || "",
   geminiApiKey: process.env.GEMINI_API_KEY || "",
   geminiModel: process.env.GEMINI_MODEL || "gemini-1.5-flash",
+  /** Link in signup confirmation email (Supabase Auth → URL Configuration must allow this origin). */
+  authEmailRedirectUrl: String(process.env.AUTH_EMAIL_REDIRECT_URL || "").trim(),
+  /** HMAC secret for phone OTP hashes (set explicitly in production). */
+  otpPepper: String(process.env.OTP_PEPPER || process.env.SUPABASE_SERVICE_ROLE_KEY || "local-dev-otp-pepper").trim(),
+  twilioAccountSid: String(process.env.TWILIO_ACCOUNT_SID || "").trim(),
+  twilioAuthToken: String(process.env.TWILIO_AUTH_TOKEN || "").trim(),
+  /** Prefer Messaging Service SID (`MG…`) when set; else use `TWILIO_FROM_NUMBER`. */
+  twilioMessagingServiceSid: String(process.env.TWILIO_MESSAGING_SERVICE_SID || "").trim(),
+  twilioFromNumber: String(process.env.TWILIO_FROM_NUMBER || "").trim(),
 };

@@ -10,7 +10,7 @@ import { useMediaQuery } from "./useMediaQuery.js";
  */
 export function useMobileViewport() {
   const ctx = useContext(ViewportContext);
+  const isMobileFromMedia = useMediaQuery(mediaQueries.mobile);
   if (ctx != null) return ctx;
-  const isMobile = useMediaQuery(mediaQueries.mobile);
-  return { isMobile, isMdUp: !isMobile };
+  return { isMobile: isMobileFromMedia, isMdUp: !isMobileFromMedia };
 }

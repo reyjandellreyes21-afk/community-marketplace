@@ -2,7 +2,8 @@
 
 export const COURIER_OPTIONAL_TAG_LABEL = {
   eco: "Eco",
-  bike: "Bike",
+  /** Flair tag — not the same as transport mode “Bike”. */
+  bike: "Cycling",
   fast: "Fast",
   helping: "Helping",
 };

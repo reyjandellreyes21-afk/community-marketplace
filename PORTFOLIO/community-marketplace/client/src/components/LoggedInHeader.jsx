@@ -7,6 +7,26 @@ import { ACTIVITY_TABS, VIEWS } from "../views.js";
 
 /** `matchMedia("(min-width: 768px)")` — desktop header path; mobile browse chrome uses scroll-collapse. */
 const MD_MIN_WIDTH_PX = 768;
+/**
+ * Extra slack after accounting for full chrome tuck (see `mobileBrowseMainHasStableCollapseOverflow`).
+ */
+const BROWSE_NAV_COLLAPSE_MIN_EXTRA_SCROLL_PX = 48;
+
+/**
+ * `#main-content` must have enough overflow that tucking the browse shell (~shell height) still leaves scroll
+ * runway; otherwise clip-height collapse grows `main` and erases scroll range → hide/show loop (shake).
+ */
+function mobileBrowseMainHasStableCollapseOverflow(mainEl, shellHeightPx) {
+  const shellH = Math.max(0, shellHeightPx || 0);
+  if (!mainEl || shellH <= 0) return false;
+  const maxScrollableY = Math.max(0, mainEl.scrollHeight - mainEl.clientHeight);
+  return maxScrollableY > shellH * 2 + BROWSE_NAV_COLLAPSE_MIN_EXTRA_SCROLL_PX;
+}
+
+/** Ignore sub-pixel / chained-scroll noise when shifting tuck. */
+const BROWSE_SCROLL_DELTA_THRESHOLD_PX = 4;
+/** Near document top, force chrome fully expanded regardless of tuck accumulator. */
+const BROWSE_TOP_FORCE_EXPAND_PX = 56;
 
 function ChevronDownIcon(props) {
   return (
@@ -160,6 +180,15 @@ function MenuLogOutIcon(props) {
   );
 }
 
+function MenuLockIcon(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M7 11V8a5 5 0 0110 0v3" />
+    </svg>
+  );
+}
+
 /** Drawer / menu trigger — 24×24 glyph inside 44px touch target */
 function MenuHamburgerIcon(props) {
   return (
@@ -211,21 +240,11 @@ function MenuFeedbackIcon(props) {
   );
 }
 
-/** Mobile secondary nav icons — 24×24, unified 1.75 stroke / filled-solid pairs (mobile strip only). */
+/** Mobile secondary nav icons — 24×24, unified 1.75 stroke; active state is color + chrome only (no filled swaps). */
 const MOBILE_NAV_ICON_STROKE = 1.75;
 
 /** Home — house glyph (matches aria-label "Home"; storefront lives in desktop pills / branding). */
-function MobileNavHomeIcon({ filled = false, className = "", ...props }) {
-  if (filled) {
-    return (
-      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
-        <path
-          fill="currentColor"
-          d="M12 2.25L3.75 9.5h2.5v11.25h4.5v-6.25h3.5v6.25h4.5V9.5h2.5L12 2.25z"
-        />
-      </svg>
-    );
-  }
+function MobileNavHomeIcon({ className = "", ...props }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -246,17 +265,7 @@ function MobileNavHomeIcon({ filled = false, className = "", ...props }) {
   );
 }
 
-function MobileNavCartIcon({ filled = false, className = "", ...props }) {
-  if (filled) {
-    return (
-      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
-        <path
-          fill="currentColor"
-          d="M7.5 20.25a1.75 1.75 0 11-.001 3.501A1.75 1.75 0 017.5 20.25zm9.25 0a1.75 1.75 0 11-.001 3.501 1.75 1.75 0 01.001-3.501zM2.5 3.25h1.9l.42 1.6h14.35c.66 0 1.14.62.98 1.25l-1.48 5.9a1.5 1.5 0 01-1.45 1.14H7.75l-.38 1.75h10.75a.85.85 0 010 1.7H6.9a1.5 1.5 0 01-1.47-1.2L3.05 4.6l-.35-1.35H2.5a.85.85 0 010-1.7z"
-        />
-      </svg>
-    );
-  }
+function MobileNavCartIcon({ className = "", ...props }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -280,17 +289,7 @@ function MobileNavCartIcon({ filled = false, className = "", ...props }) {
 }
 
 /** Buying — shopping bag / orders */
-function MobileNavBuyingIcon({ filled = false, className = "", ...props }) {
-  if (filled) {
-    return (
-      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
-        <path
-          fill="currentColor"
-          d="M8.25 6.5V5.5a3.75 3.75 0 017.5 0v1h4.25a1.25 1.25 0 011.25 1.25v10.5a2 2 0 01-2 2H5a2 2 0 01-2-2V7.75a1.25 1.25 0 011.25-1.25h4zm1.5 0h5V5.5a2.25 2.25 0 10-4.5 0v1z"
-        />
-      </svg>
-    );
-  }
+function MobileNavBuyingIcon({ className = "", ...props }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -313,18 +312,7 @@ function MobileNavBuyingIcon({ filled = false, className = "", ...props }) {
 }
 
 /** Selling — price tag / listing */
-function MobileNavSellingIcon({ filled = false, className = "", ...props }) {
-  if (filled) {
-    return (
-      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
-        <path
-          fill="currentColor"
-          d="M12.95 2.25h-6.7a2.25 2.25 0 00-1.59.66l-3.24 3.24a2.25 2.25 0 000 3.18l8.46 8.46a2.25 2.25 0 003.18 0l5.66-5.66a2.25 2.25 0 000-3.18l-5.77-5.9z"
-        />
-        <circle cx="8.25" cy="8.25" r="1.65" className="fill-white dark:fill-slate-950" />
-      </svg>
-    );
-  }
+function MobileNavSellingIcon({ className = "", ...props }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -346,17 +334,7 @@ function MobileNavSellingIcon({ filled = false, className = "", ...props }) {
   );
 }
 
-function MobileNavNotificationsIcon({ filled = false, className = "", ...props }) {
-  if (filled) {
-    return (
-      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
-        <path
-          fill="currentColor"
-          d="M12 2.25a5.25 5.25 0 00-5.25 5.25c0 3.48-1.15 4.77-2.05 5.67a.75.75 0 00.53 1.28h13.54a.75.75 0 00.53-1.28c-.9-.9-2.05-2.19-2.05-5.67A5.25 5.25 0 0012 2.25zm0 19.5a2.25 2.25 0 002.18-1.7H9.82A2.25 2.25 0 0012 21.75z"
-        />
-      </svg>
-    );
-  }
+function MobileNavNotificationsIcon({ className = "", ...props }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -379,17 +357,7 @@ function MobileNavNotificationsIcon({ filled = false, className = "", ...props }
 }
 
 /** Activity hub — receipt / order slip (distinct from notifications bell + profile). */
-function MobileNavActivityIcon({ filled = false, className = "", ...props }) {
-  if (filled) {
-    return (
-      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
-        <path
-          fill="currentColor"
-          d="M7.25 2.75h9.5c.83 0 1.5.67 1.5 1.5v15.35l-1.38-.92-1.37.92-1.37-.92-1.38.92-1.37-.92-1.37.92-1.38-.92L6 19.6V4.25c0-.83.67-1.5 1.5-1.5zm2 5.25h5.5v1.75h-5.5V8zm0 3.25h5.5v1.75h-5.5v-1.75zm0 3.25h3.25v1.75H9.25v-1.75z"
-        />
-      </svg>
-    );
-  }
+function MobileNavActivityIcon({ className = "", ...props }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -411,17 +379,7 @@ function MobileNavActivityIcon({ filled = false, className = "", ...props }) {
   );
 }
 
-function MobileNavProfileIcon({ filled = false, className = "", ...props }) {
-  if (filled) {
-    return (
-      <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" className={className} aria-hidden {...props}>
-        <path
-          fill="currentColor"
-          d="M12 11.25a3.75 3.75 0 100-7.5 3.75 3.75 0 000 7.5zm-7.2 8.77c.31-3.32 3.85-5.27 7.2-5.27s6.89 1.95 7.2 5.27a.75.75 0 01-.74.88H5.54a.75.75 0 01-.74-.88z"
-        />
-      </svg>
-    );
-  }
+function MobileNavProfileIcon({ className = "", ...props }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -448,9 +406,6 @@ const accountMenuItemBase =
 
 const accountMenuIconWrap =
   "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-neutral-200/80 bg-neutral-50 text-neutral-600 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-400";
-
-const accountMenuIconWrapDanger =
-  "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-rose-200/80 bg-rose-50 text-rose-600 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-400";
 
 /** Mobile: squircle hit targets (no circular chrome). md+: bordered pills like desktop chrome. */
 const headerUtilityButtonBase =
@@ -480,19 +435,25 @@ function navPillTrade(active, role) {
   return `${layout} bg-primary-soft text-primary shadow-sm ring-1 ring-primary/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-primary/45`;
 }
 
-/** Mobile secondary nav (icon-only): inactive = outline/neutral; active = teal + filled glyph + thin underline. */
+/** Mobile secondary nav (icon-only): same stroke weight always; active = soft pill + teal + 2.5px bar. */
 function mobileIconTabClass(active) {
   const base =
-    "relative flex min-h-[var(--ui-touch-target,44px)] min-w-0 flex-1 touch-manipulation items-center justify-center px-0.5 py-2 transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 select-none";
+    "relative flex min-h-[var(--ui-touch-target,44px)] min-w-0 flex-1 touch-manipulation items-center justify-center rounded-xl px-1 py-2 transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 select-none";
   if (!active) {
-    return `${base} text-neutral-400 hover:text-neutral-500 dark:text-slate-500 dark:hover:text-slate-400`;
+    return `${base} text-neutral-400 hover:bg-neutral-100/80 hover:text-neutral-600 dark:text-slate-500 dark:hover:bg-white/[0.06] dark:hover:text-slate-300`;
   }
-  return `${base} text-brand-primary after:pointer-events-none after:absolute after:bottom-0 after:left-1/2 after:h-[2px] after:w-9 after:max-w-[42%] after:-translate-x-1/2 after:bg-brand-primary dark:text-brand-accent dark:after:bg-brand-accent [&_.mobile-nav-tab-icon]:text-brand-primary dark:[&_.mobile-nav-tab-icon]:text-brand-accent`;
+  return `${base} bg-brand-primary/12 text-brand-primary after:pointer-events-none after:absolute after:bottom-1 after:left-1/2 after:h-[2.5px] after:w-10 after:max-w-[52%] after:-translate-x-1/2 after:rounded-full after:bg-brand-primary dark:bg-brand-accent/15 dark:text-brand-accent dark:after:bg-brand-accent [&_.mobile-nav-tab-icon]:text-brand-primary dark:[&_.mobile-nav-tab-icon]:text-brand-accent`;
 }
 
-/** Corner count pills for icon tabs + primary utilities — one style (no ring; matches desktop utility icons). */
-const mobileNavBadgeBase =
-  "pointer-events-none absolute right-1 top-1 z-[2] inline-flex min-h-[1rem] min-w-[1rem] max-w-[min(3rem,calc(100%-0.5rem))] items-center justify-center rounded-full px-1 py-[2px] text-[10px] font-bold leading-none shadow-sm";
+/** Desktop header utility icons (20×20 glyph): badge pinned to icon corner; ring separates from stroke. */
+const headerUtilityIconBadgeWrap = "relative inline-flex h-5 w-5 shrink-0 items-center justify-center";
+const headerUtilityBadgePin =
+  "pointer-events-none absolute -right-2 -top-1 z-[2] inline-flex min-h-[1.125rem] min-w-[1.125rem] max-w-[min(3rem,calc(100%+0.25rem))] items-center justify-center rounded-full border-2 border-white px-0.5 text-[10px] font-bold leading-none shadow-sm dark:border-slate-900";
+
+/** Mobile bottom tab bar (28×28 glyph): same badge logic as desktop utilities. */
+const mobileTabIconBadgeWrap = "relative inline-flex size-7 min-w-[28px] shrink-0 items-center justify-center";
+const mobileTabBadgePin =
+  "pointer-events-none absolute -right-0.5 -top-0.5 z-[2] inline-flex min-h-[1rem] min-w-[1rem] max-w-[min(3rem,calc(100%-0.25rem))] items-center justify-center rounded-full border-2 border-white px-0.5 text-[10px] font-bold leading-none shadow-sm dark:border-slate-900";
 
 /** Rose: unseen / needs attention. Slate: total exists, nothing new to highlight. */
 const navBadgeRose = "bg-rose-600 text-white dark:bg-rose-500";
@@ -503,9 +464,18 @@ const desktopNavPillBadgeBase =
 
 const mobileSheetMenuItem = `${accountMenuItemBase} min-h-[44px] items-center rounded-xl py-3`;
 
-/** Drawer rows: teal glyph, no boxed icon chip (mobile visual reference = Upload). */
-const mobileDrawerIconPlain =
-  "flex h-10 w-10 shrink-0 items-center justify-center text-brand-primary dark:text-brand-accent";
+/** Settings / Legal accordions — grid 0fr→1fr height animation (respects motion-reduce). */
+const accountMenuAccordionGrid =
+  "mt-1 grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none motion-reduce:duration-0";
+const accountMenuAccordionClip = "overflow-hidden min-h-0";
+
+/** Nested legal links — neutral text; indent reads under “Legal & policies”. */
+const accountMenuNestedLegalItem =
+  "flex min-h-[44px] w-full items-center rounded-lg py-2 pl-3 pr-2 text-left text-sm font-normal text-neutral-700 outline-none transition-colors motion-reduce:transition-none hover:bg-neutral-100/90 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary md:min-h-0 dark:text-slate-300 dark:hover:bg-slate-800/80 dark:focus-visible:ring-brand-accent";
+
+/** Drawer rows: same neutral icon chip as desktop account menu (40×40 slot). */
+const mobileDrawerIconChip =
+  "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-200/80 bg-neutral-50 text-neutral-600 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-400";
 
 function ThemeToggleGroup({ theme, setTheme }) {
   return (
@@ -586,6 +556,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {boolean} [props.liftChromeAboveOverlay] Raise header stacking above app-root overlays (e.g. quick-add sheet backdrop).
  * @param {boolean} [props.activityPrimaryTabsScrollHidden] When true, slide the Activity primary tab bar off-screen (scroll-down autohide).
  * @param {"form"|"thanks"} [props.sendFeedbackPhase] Send feedback screen: form vs thank-you (drives mobile secondary chrome title only).
+ * @param {() => void} [props.onSecondaryMobileScreenBack] When set, mobile secondary bar (About, Terms, Send feedback) back uses this instead of `goBrowse` (e.g. return to Profile from Send feedback).
  */
 export function LoggedInHeader({
   user,
@@ -600,6 +571,7 @@ export function LoggedInHeader({
   activityPrimaryBuyingBadge = { count: 0, rose: false },
   activityPrimarySellingBadge = { count: 0, rose: false },
   activityPrimaryCourierBadge = { count: 0, rose: false },
+  courierProfileIncomplete = false,
   goOrders = () => {},
   goMyPurchases = () => {},
   goCart = () => {},
@@ -629,6 +601,7 @@ export function LoggedInHeader({
   activityPrimaryTabsScrollHidden = false,
   activityHubChildStrip = null,
   sendFeedbackPhase = "form",
+  onSecondaryMobileScreenBack,
   children,
 }) {
   const mobileSecondaryScreenChrome = useMemo(() => {
@@ -638,10 +611,19 @@ export function LoggedInHeader({
     if (activeView === VIEWS.TERMS) {
       return { title: "Terms & conditions", aria: "Terms and conditions" };
     }
+    if (activeView === VIEWS.DATA_PRIVACY_ACT) {
+      return { title: "Data Privacy Act", aria: "Data Privacy Act" };
+    }
+    if (activeView === VIEWS.BEWARE_SCAMMERS) {
+      return { title: "Beware of scammers", aria: "Beware of scammers" };
+    }
+    if (activeView === VIEWS.PROHIBITED_PRODUCTS) {
+      return { title: "Prohibited products", aria: "Prohibited products" };
+    }
     if (activeView === VIEWS.SEND_FEEDBACK) {
       return sendFeedbackPhase === "thanks"
         ? { title: "Thank you", aria: "Thank you" }
-        : { title: "Send feedback", aria: "Send feedback" };
+        : { title: "Feedback", aria: "Feedback" };
     }
     return null;
   }, [activeView, sendFeedbackPhase]);
@@ -680,6 +662,8 @@ export function LoggedInHeader({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
   const [desktopSettingsOpen, setDesktopSettingsOpen] = useState(false);
+  const [mobileLegalOpen, setMobileLegalOpen] = useState(false);
+  const [desktopLegalOpen, setDesktopLegalOpen] = useState(false);
 
   const accountMenuRef = useRef(null);
   const mobileMenuButtonRef = useRef(null);
@@ -703,7 +687,9 @@ export function LoggedInHeader({
   /** Clip wrapper whose height shrinks with scroll (layout + paint, no React per frame). */
   const mobileBrowseShellClipRef = useRef(null);
 
-  const browseScrollTopRef = useRef(0);
+  /** 0…shellHeight — delta-driven tuck so scroll-up can reveal chrome from mid-page (not only near top). */
+  const browseChromeTuckPxRef = useRef(0);
+  const browseScrollLastYRef = useRef(0);
   const browseShellHeightRef = useRef(0);
   const primaryRowHeightRef = useRef(0);
   const browseChromeRafRef = useRef(0);
@@ -727,6 +713,8 @@ export function LoggedInHeader({
     setMobileMenuOpen(false);
     setMobileSettingsOpen(false);
     setDesktopSettingsOpen(false);
+    setMobileLegalOpen(false);
+    setDesktopLegalOpen(false);
   }, []);
 
   const notificationsAriaLabel =
@@ -770,6 +758,7 @@ export function LoggedInHeader({
     }
     setMobileMenuOpen(false);
     setMobileSettingsOpen(false);
+    setMobileLegalOpen(false);
   }, []);
 
   const closeMobileSheetAnimated = useCallback(() => {
@@ -868,6 +857,7 @@ export function LoggedInHeader({
       if (accountMenuOpen && accountMenuRef.current && !accountMenuRef.current.contains(t)) {
         setAccountMenuOpen(false);
         setDesktopSettingsOpen(false);
+        setDesktopLegalOpen(false);
         setMobileSettingsOpen(false);
       }
       if (mobileMenuOpen) {
@@ -891,6 +881,7 @@ export function LoggedInHeader({
 
   const openAccount = () => {
     setDesktopSettingsOpen(false);
+    setDesktopLegalOpen(false);
     setAccountMenuOpen((o) => !o);
   };
 
@@ -912,7 +903,7 @@ export function LoggedInHeader({
 
   useEffect(() => {
     if (!mobileShopBrowseScrollCollapseActive || mobileMenuOpen) {
-      browseScrollTopRef.current = 0;
+      browseChromeTuckPxRef.current = 0;
       scheduleApplyBrowseChrome();
       return undefined;
     }
@@ -923,24 +914,48 @@ export function LoggedInHeader({
 
     const onScroll = () => {
       if (mq.matches) {
-        browseScrollTopRef.current = 0;
+        browseChromeTuckPxRef.current = 0;
+        browseScrollLastYRef.current = Math.max(0, main.scrollTop || 0);
         scheduleApplyBrowseChrome();
         return;
       }
       const y = Math.max(0, main.scrollTop || 0);
-      const chromeHeight = browseShellHeightRef.current || primaryRowHeightRef.current || 0;
-      const maxH = Math.max(0, chromeHeight);
-      const maxScrollableY = Math.max(0, (main.scrollHeight || 0) - (main.clientHeight || 0));
-      const canStablyCollapse = maxScrollableY > maxH + 24;
-      browseScrollTopRef.current = canStablyCollapse ? y : 0;
+      const shellH = browseShellHeightRef.current || 0;
+
+      if (!mobileBrowseMainHasStableCollapseOverflow(main, shellH)) {
+        browseChromeTuckPxRef.current = 0;
+        browseScrollLastYRef.current = y;
+        scheduleApplyBrowseChrome();
+        return;
+      }
+
+      const prevY = browseScrollLastYRef.current;
+      const delta = y - prevY;
+      browseScrollLastYRef.current = y;
+
+      let tuck = browseChromeTuckPxRef.current;
+      if (shellH <= 0) {
+        tuck = 0;
+      } else if (y < BROWSE_TOP_FORCE_EXPAND_PX) {
+        tuck = 0;
+      } else if (delta > BROWSE_SCROLL_DELTA_THRESHOLD_PX) {
+        tuck = Math.min(shellH, tuck + delta);
+      } else if (delta < -BROWSE_SCROLL_DELTA_THRESHOLD_PX) {
+        tuck = Math.max(0, tuck + delta);
+      }
+
+      browseChromeTuckPxRef.current = Math.min(shellH, Math.max(0, tuck));
       scheduleApplyBrowseChrome();
     };
 
+    browseChromeTuckPxRef.current = 0;
+    browseScrollLastYRef.current = Math.max(0, main.scrollTop || 0);
     onScroll();
     main.addEventListener("scroll", onScroll, { passive: true });
 
     const onMm = () => {
-      browseScrollTopRef.current = 0;
+      browseChromeTuckPxRef.current = 0;
+      browseScrollLastYRef.current = Math.max(0, main.scrollTop || 0);
       scheduleApplyBrowseChrome();
     };
     mq.addEventListener("change", onMm);
@@ -952,11 +967,10 @@ export function LoggedInHeader({
   }, [mobileShopBrowseScrollCollapseActive, mobileMenuOpen, activeView, scheduleApplyBrowseChrome]);
 
   const mobileActivityZoneTabActive =
-    activeView === VIEWS.ACTIVITY ||
-    activeView === VIEWS.SELLER ||
-    activeView === VIEWS.MY_LISTINGS;
-  /** Bottom-nav profile tab; send feedback is a separate screen and does not select this tab. */
-  const mobileProfileZoneTabActive = activeView === VIEWS.PROFILE;
+    activeView === VIEWS.ACTIVITY || activeView === VIEWS.SELLER;
+  /** Bottom-nav profile tab; create/edit listing (MY_LISTINGS) lives under Profile in the tab strip. */
+  const mobileProfileZoneTabActive =
+    activeView === VIEWS.PROFILE || activeView === VIEWS.MY_LISTINGS;
   /** Mobile: hide top utility row (logo, favorites, messages) on secondary tabs — bottom tab strip stays. Send feedback keeps full chrome (primary + tab row). */
   const hideMobilePrimaryRow =
     activeView === VIEWS.CART ||
@@ -991,7 +1005,7 @@ export function LoggedInHeader({
         !desktop;
 
       if (!collapseAllowed) {
-        browseScrollTopRef.current = 0;
+        browseChromeTuckPxRef.current = 0;
         clipEl?.style.removeProperty("height");
         clipEl?.style.removeProperty("overflow");
         shellEl?.style.removeProperty("transform");
@@ -1009,9 +1023,15 @@ export function LoggedInHeader({
 
       const shellH = browseShellHeightRef.current;
       const primaryH = primaryRowHeightRef.current;
-      const y = browseScrollTopRef.current;
+      let tuckPx = browseChromeTuckPxRef.current;
+      const mainEl = document.getElementById("main-content");
+      const shellBlockH = browseShellHeightRef.current || 0;
+      if (!mobileBrowseMainHasStableCollapseOverflow(mainEl, shellBlockH)) {
+        tuckPx = 0;
+        browseChromeTuckPxRef.current = 0;
+      }
 
-      const scrollTuckPx = shellH > 0 ? Math.min(y, shellH) : 0;
+      const scrollTuckPx = shellH > 0 ? Math.min(Math.max(0, tuckPx), shellH) : 0;
 
       const swipeTuckPx =
         primaryH *
@@ -1055,6 +1075,10 @@ export function LoggedInHeader({
     const measure = () => {
       browseShellHeightRef.current = Math.max(0, mobileBrowseShellContentRef.current?.offsetHeight ?? 0);
       primaryRowHeightRef.current = Math.max(0, mobilePrimaryNavRef.current?.offsetHeight ?? 0);
+      const cap = browseShellHeightRef.current;
+      if (cap > 0) {
+        browseChromeTuckPxRef.current = Math.min(cap, Math.max(0, browseChromeTuckPxRef.current));
+      }
       scheduleApplyBrowseChrome();
     };
     measure();
@@ -1124,14 +1148,16 @@ export function LoggedInHeader({
       <div
         ref={mobileBrowseShellClipRef}
         className={`md:hidden shrink-0 overflow-hidden border-b border-neutral-200/40 bg-white/95 backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95 ${
-          collapseChromeActive && !mobileMenuOpen ? "will-change-[height] transition-none" : ""
+          collapseChromeActive && !mobileMenuOpen
+            ? "will-change-[height] motion-reduce:transition-none transition-[height] duration-200 ease-out"
+            : ""
         }`}
       >
         <div
           ref={mobileBrowseShellContentRef}
           className={`flex flex-col ${
             collapseChromeActive && !mobileMenuOpen
-              ? "will-change-transform transition-none"
+              ? "will-change-transform motion-reduce:transition-none transition-transform duration-200 ease-out"
               : "will-change-auto transition-[transform] duration-300 ease-out motion-reduce:transition-none"
           }`}
         >
@@ -1154,7 +1180,16 @@ export function LoggedInHeader({
             aria-expanded={mobileMenuOpen}
             aria-controls="mobile-nav-menu-panel"
             aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
-            onClick={() => setMobileMenuOpen((v) => !v)}
+            onClick={() =>
+              setMobileMenuOpen((v) => {
+                const next = !v;
+                if (next) {
+                  setMobileSettingsOpen(false);
+                  setMobileLegalOpen(false);
+                }
+                return next;
+              })
+            }
           >
             <MenuHamburgerIcon />
           </button>
@@ -1189,19 +1224,21 @@ export function LoggedInHeader({
               closeAllMenus();
             }}
           >
-            <HeartIcon
-              filled={activeView === VIEWS.FAVORITES}
-              className={activeView === VIEWS.FAVORITES ? "text-primary dark:text-brand-accent" : ""}
-            />
-            {favoritesBadgeCount > 0 ? (
-              <span className={`${mobileNavBadgeBase} ${navBadgeRose}`}>
-                {favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount}
-              </span>
-            ) : favoriteCount > 0 ? (
-              <span className={`${mobileNavBadgeBase} ${navBadgeMuted}`}>
-                {favoriteCount > 99 ? "99+" : favoriteCount}
-              </span>
-            ) : null}
+            <span className={headerUtilityIconBadgeWrap} aria-hidden>
+              <HeartIcon
+                filled={activeView === VIEWS.FAVORITES}
+                className={activeView === VIEWS.FAVORITES ? "text-primary dark:text-brand-accent" : ""}
+              />
+              {favoritesBadgeCount > 0 ? (
+                <span className={`${headerUtilityBadgePin} ${navBadgeRose}`}>
+                  {favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount}
+                </span>
+              ) : favoriteCount > 0 ? (
+                <span className={`${headerUtilityBadgePin} ${navBadgeMuted}`}>
+                  {favoriteCount > 99 ? "99+" : favoriteCount}
+                </span>
+              ) : null}
+            </span>
           </button>
           <button
             type="button"
@@ -1216,17 +1253,29 @@ export function LoggedInHeader({
               closeAllMenus();
             }}
           >
-            <MessagesIcon
-              filled={activeView === VIEWS.MESSAGES}
-              className={activeView === VIEWS.MESSAGES ? "text-primary dark:text-brand-accent" : ""}
-            />
+            <span className={headerUtilityIconBadgeWrap} aria-hidden>
+              <MessagesIcon
+                filled={activeView === VIEWS.MESSAGES}
+                className={activeView === VIEWS.MESSAGES ? "text-primary dark:text-brand-accent" : ""}
+              />
+              {messagesUnreadCount > 0 ? (
+                <span className={`${headerUtilityBadgePin} ${navBadgeRose}`}>
+                  {messagesUnreadCount > 99 ? "99+" : messagesUnreadCount}
+                </span>
+              ) : null}
+            </span>
           </button>
         </div>
             </div>
 
-        <nav className="mobile-app-secondary-nav shrink-0" role="navigation" aria-label="Main sections">
+        <nav
+          className="mobile-app-secondary-nav shrink-0"
+          role="navigation"
+          aria-label="Main sections"
+          data-ptr-anchor="secondary-nav"
+        >
           <div
-            className="app-shell-content-inset flex min-h-[var(--ui-touch-target,44px)] w-full max-w-full items-stretch gap-0.5 py-1 min-[360px]:gap-2"
+            className="app-shell-content-inset flex min-h-[var(--ui-touch-target,44px)] w-full max-w-full items-stretch gap-1 py-1.5 min-[360px]:gap-2"
             role="tablist"
             aria-label="Home, cart, activity, notifications, and profile"
           >
@@ -1244,8 +1293,8 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <span className="mobile-nav-tab-icon relative inline-flex size-6 shrink-0 items-center justify-center" aria-hidden>
-                <MobileNavHomeIcon filled={mobileShopTabActive} className="h-6 w-6 shrink-0" aria-hidden />
+              <span className="mobile-nav-tab-icon relative inline-flex size-7 shrink-0 items-center justify-center" aria-hidden>
+                <MobileNavHomeIcon className="h-7 w-7 shrink-0" aria-hidden />
               </span>
             </button>
             <button
@@ -1266,18 +1315,18 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <span className="mobile-nav-tab-icon inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
-                <MobileNavCartIcon filled={activeView === VIEWS.CART} className="h-6 w-6 shrink-0" aria-hidden />
+              <span className={`mobile-nav-tab-icon ${mobileTabIconBadgeWrap}`}>
+                <MobileNavCartIcon className="h-7 w-7 shrink-0" aria-hidden />
+                {cartItemCount > 0 ? (
+                  <span className={`${mobileTabBadgePin} ${navBadgeRose}`}>
+                    {cartItemCount > 99 ? "99+" : cartItemCount}
+                  </span>
+                ) : totalCartCount > 0 ? (
+                  <span className={`${mobileTabBadgePin} ${navBadgeMuted}`} aria-hidden>
+                    {totalCartCount > 99 ? "99+" : totalCartCount}
+                  </span>
+                ) : null}
               </span>
-              {cartItemCount > 0 ? (
-                <span className={`${mobileNavBadgeBase} ${navBadgeRose}`}>
-                  {cartItemCount > 99 ? "99+" : cartItemCount}
-                </span>
-              ) : totalCartCount > 0 ? (
-                <span className={`${mobileNavBadgeBase} ${navBadgeMuted}`} aria-hidden>
-                  {totalCartCount > 99 ? "99+" : totalCartCount}
-                </span>
-              ) : null}
             </button>
             <button
               type="button"
@@ -1297,18 +1346,18 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <span className="mobile-nav-tab-icon inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
-                <MobileNavActivityIcon filled={mobileActivityZoneTabActive} className="h-6 w-6 shrink-0" aria-hidden />
+              <span className={`mobile-nav-tab-icon ${mobileTabIconBadgeWrap}`}>
+                <MobileNavActivityIcon className="h-7 w-7 shrink-0" aria-hidden />
+                {activityAttentionCount > 0 ? (
+                  <span className={`${mobileTabBadgePin} ${activityAttentionRose ? navBadgeRose : navBadgeMuted}`}>
+                    {activityAttentionCount > 99 ? "99+" : activityAttentionCount}
+                  </span>
+                ) : activityTotalPipelineCount > 0 ? (
+                  <span className={`${mobileTabBadgePin} ${navBadgeMuted}`} aria-hidden>
+                    {activityTotalPipelineCount > 99 ? "99+" : activityTotalPipelineCount}
+                  </span>
+                ) : null}
               </span>
-              {activityAttentionCount > 0 ? (
-                <span className={`${mobileNavBadgeBase} ${activityAttentionRose ? navBadgeRose : navBadgeMuted}`}>
-                  {activityAttentionCount > 99 ? "99+" : activityAttentionCount}
-                </span>
-              ) : activityTotalPipelineCount > 0 ? (
-                <span className={`${mobileNavBadgeBase} ${navBadgeMuted}`} aria-hidden>
-                  {activityTotalPipelineCount > 99 ? "99+" : activityTotalPipelineCount}
-                </span>
-              ) : null}
             </button>
             <button
               type="button"
@@ -1322,14 +1371,14 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <span className="mobile-nav-tab-icon inline-flex size-6 min-w-[24px] shrink-0 items-center justify-center">
-                <MobileNavNotificationsIcon filled={activeView === VIEWS.NOTIFICATIONS} className="h-6 w-6 shrink-0" aria-hidden />
+              <span className={`mobile-nav-tab-icon ${mobileTabIconBadgeWrap}`}>
+                <MobileNavNotificationsIcon className="h-7 w-7 shrink-0" aria-hidden />
+                {notificationUnreadCount > 0 ? (
+                  <span className={`${mobileTabBadgePin} ${navBadgeRose}`}>
+                    {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
+                  </span>
+                ) : null}
               </span>
-              {notificationUnreadCount > 0 ? (
-                <span className={`${mobileNavBadgeBase} ${navBadgeRose}`}>
-                  {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
-                </span>
-              ) : null}
             </button>
             <button
               type="button"
@@ -1343,8 +1392,8 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <span className="mobile-nav-tab-icon relative inline-flex size-6 shrink-0 items-center justify-center" aria-hidden>
-                <MobileNavProfileIcon filled={mobileProfileZoneTabActive} className="h-6 w-6 shrink-0" aria-hidden />
+              <span className="mobile-nav-tab-icon relative inline-flex size-7 shrink-0 items-center justify-center" aria-hidden>
+                <MobileNavProfileIcon className="h-7 w-7 shrink-0" aria-hidden />
               </span>
             </button>
           </div>
@@ -1355,16 +1404,18 @@ export function LoggedInHeader({
                 className="md:hidden shrink-0 border-t border-neutral-200/80 bg-white/95 backdrop-blur-md supports-[backdrop-filter]:bg-white/80 dark:border-[#1f3c56]/70 dark:bg-[#0f2234]/98 dark:supports-[backdrop-filter]:bg-[#0f2234]/92"
                 role="region"
                 aria-label={mobileSecondaryScreenChrome.aria}
+                data-ptr-anchor="secondary-nav"
               >
                 <div className="app-shell-content-inset flex min-h-[3.25rem] items-center gap-3 py-2 max-[360px]:px-2.5">
                   <button
                     type="button"
                     className="inline-flex size-12 shrink-0 items-center justify-center rounded-full text-neutral-700 transition hover:bg-neutral-100 active:bg-neutral-100 dark:text-slate-100 dark:hover:bg-white/[0.08] dark:active:bg-white/[0.12]"
-                    aria-label="Back to marketplace"
-                    onClick={() => goBrowse?.()}
+                    aria-label={onSecondaryMobileScreenBack ? "Back" : "Back to marketplace"}
+                    onClick={() => (onSecondaryMobileScreenBack ?? goBrowse)?.()}
                   >
                     <svg className="size-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" aria-hidden>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 12H5" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M11 6l-6 6 6 6" />
                     </svg>
                   </button>
                   <h2 className="min-w-0 flex-1 text-xl font-semibold leading-snug tracking-tight text-neutral-900 max-[360px]:text-lg dark:text-slate-50">
@@ -1487,7 +1538,7 @@ export function LoggedInHeader({
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              className={`${headerUtilityButtonBase} ${activeView === VIEWS.MESSAGES ? headerUtilityButtonActive : ""}`}
+              className={`${headerUtilityButtonBase} relative ${activeView === VIEWS.MESSAGES ? headerUtilityButtonActive : ""}`}
               aria-label={
                 messagesUnreadCount > 0
                   ? `Messages, ${messagesUnreadCount > 99 ? "99 plus" : messagesUnreadCount} unread`
@@ -1498,10 +1549,17 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <MessagesIcon
-                filled={activeView === VIEWS.MESSAGES}
-                className={activeView === VIEWS.MESSAGES ? "text-emerald-600 dark:text-emerald-300" : ""}
-              />
+              <span className={headerUtilityIconBadgeWrap} aria-hidden>
+                <MessagesIcon
+                  filled={activeView === VIEWS.MESSAGES}
+                  className={activeView === VIEWS.MESSAGES ? "text-emerald-600 dark:text-emerald-300" : ""}
+                />
+                {messagesUnreadCount > 0 ? (
+                  <span className={`${headerUtilityBadgePin} ${navBadgeRose}`}>
+                    {messagesUnreadCount > 99 ? "99+" : messagesUnreadCount}
+                  </span>
+                ) : null}
+              </span>
             </button>
             <button
               type="button"
@@ -1512,15 +1570,17 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <NotificationsIcon
-                filled={activeView === VIEWS.NOTIFICATIONS}
-                className={activeView === VIEWS.NOTIFICATIONS ? "text-emerald-600 dark:text-emerald-300" : ""}
-              />
-              {notificationUnreadCount > 0 ? (
-                <span className={`${mobileNavBadgeBase} ${navBadgeRose}`}>
-                  {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
-                </span>
-              ) : null}
+              <span className={headerUtilityIconBadgeWrap} aria-hidden>
+                <NotificationsIcon
+                  filled={activeView === VIEWS.NOTIFICATIONS}
+                  className={activeView === VIEWS.NOTIFICATIONS ? "text-emerald-600 dark:text-emerald-300" : ""}
+                />
+                {notificationUnreadCount > 0 ? (
+                  <span className={`${headerUtilityBadgePin} ${navBadgeRose}`}>
+                    {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
+                  </span>
+                ) : null}
+              </span>
             </button>
             <button
               type="button"
@@ -1544,19 +1604,21 @@ export function LoggedInHeader({
                 closeAllMenus();
               }}
             >
-              <HeartIcon
-                filled={activeView === VIEWS.FAVORITES}
-                className={activeView === VIEWS.FAVORITES ? "text-emerald-600 dark:text-emerald-300" : ""}
-              />
-              {favoritesBadgeCount > 0 ? (
-                <span className={`${mobileNavBadgeBase} ${navBadgeRose}`}>
-                  {favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount}
-                </span>
-              ) : favoriteCount > 0 ? (
-                <span className={`${mobileNavBadgeBase} ${navBadgeMuted}`}>
-                  {favoriteCount > 99 ? "99+" : favoriteCount}
-                </span>
-              ) : null}
+              <span className={headerUtilityIconBadgeWrap} aria-hidden>
+                <HeartIcon
+                  filled={activeView === VIEWS.FAVORITES}
+                  className={activeView === VIEWS.FAVORITES ? "text-emerald-600 dark:text-emerald-300" : ""}
+                />
+                {favoritesBadgeCount > 0 ? (
+                  <span className={`${headerUtilityBadgePin} ${navBadgeRose}`}>
+                    {favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount}
+                  </span>
+                ) : favoriteCount > 0 ? (
+                  <span className={`${headerUtilityBadgePin} ${navBadgeMuted}`}>
+                    {favoriteCount > 99 ? "99+" : favoriteCount}
+                  </span>
+                ) : null}
+              </span>
             </button>
           </div>
           <div className="relative" ref={accountMenuRef}>
@@ -1639,7 +1701,13 @@ export function LoggedInHeader({
                     className={`${accountMenuItemBase} justify-between gap-2`}
                     aria-expanded={desktopSettingsOpen}
                     aria-controls="account-settings-panel"
-                    onClick={() => setDesktopSettingsOpen((v) => !v)}
+                    onClick={() =>
+                      setDesktopSettingsOpen((v) => {
+                        const next = !v;
+                        if (next) setDesktopLegalOpen(false);
+                        return next;
+                      })
+                    }
                   >
                     <span className="flex min-w-0 flex-1 items-center gap-3">
                       <span className={accountMenuIconWrap} aria-hidden>
@@ -1648,50 +1716,145 @@ export function LoggedInHeader({
                       Settings
                     </span>
                     <ChevronDownIcon
-                      className={`h-[18px] w-[18px] shrink-0 text-neutral-400 transition-transform dark:text-slate-500 ${desktopSettingsOpen ? "rotate-180" : ""}`}
+                      className={`h-[18px] w-[18px] shrink-0 text-neutral-400 transition-transform duration-300 ease-out motion-reduce:transition-none dark:text-slate-500 ${desktopSettingsOpen ? "rotate-180" : ""}`}
                     />
                   </button>
-                  {desktopSettingsOpen ? (
-                    <div
-                      id="account-settings-panel"
-                      role="region"
-                      className="mx-0.5 mb-1 rounded-xl border border-neutral-200/90 bg-neutral-50/90 p-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-600 dark:bg-slate-800/70 dark:shadow-[0_1px_2px_rgba(0,0,0,0.2)]"
-                    >
-                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Theme</p>
-                      <ThemeToggleGroup theme={theme} setTheme={setTheme} />
-                      <p className="mb-2 mt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Preferences</p>
-                      <p className="text-xs text-neutral-500 dark:text-slate-400">Notification controls will appear here.</p>
+                  <div
+                    className={`${accountMenuAccordionGrid} ${desktopSettingsOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+                  >
+                    <div className={accountMenuAccordionClip}>
+                      <div
+                        id="account-settings-panel"
+                        role="region"
+                        aria-hidden={!desktopSettingsOpen}
+                        className="space-y-3 pb-0.5 pt-0"
+                      >
+                        <div>
+                          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                            Security
+                          </p>
+                          <button
+                            type="button"
+                            className={`${accountMenuItemBase} justify-between gap-2`}
+                            onClick={() => {
+                              setActiveView(VIEWS.PASSWORD_SECURITY);
+                              closeAllMenus();
+                            }}
+                          >
+                            <span className="flex min-w-0 flex-1 items-center gap-3">
+                              <span className={accountMenuIconWrap} aria-hidden>
+                                <MenuLockIcon />
+                              </span>
+                              Password & security
+                            </span>
+                            <ChevronRightIcon className="h-[18px] w-[18px] shrink-0 text-neutral-400 dark:text-slate-500" />
+                          </button>
+                        </div>
+                        <div>
+                          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                            Theme
+                          </p>
+                          <ThemeToggleGroup theme={theme} setTheme={setTheme} />
+                        </div>
+                      </div>
                     </div>
-                  ) : null}
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={accountMenuItemBase}
-                  onClick={() => {
-                    setActiveView(VIEWS.ABOUT);
-                    closeAllMenus();
-                  }}
-                >
-                  <span className={accountMenuIconWrap} aria-hidden>
-                    <MenuInfoIcon />
-                  </span>
-                  About
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={accountMenuItemBase}
-                  onClick={() => {
-                    setActiveView(VIEWS.TERMS);
-                    closeAllMenus();
-                  }}
-                >
-                  <span className={accountMenuIconWrap} aria-hidden>
-                    <MenuFileIcon />
-                  </span>
-                  Terms & conditions
-                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={`${accountMenuItemBase} justify-between gap-2`}
+                    aria-expanded={desktopLegalOpen}
+                    aria-controls="account-legal-panel"
+                    onClick={() =>
+                      setDesktopLegalOpen((v) => {
+                        const next = !v;
+                        if (next) setDesktopSettingsOpen(false);
+                        return next;
+                      })
+                    }
+                  >
+                    <span className="flex min-w-0 flex-1 items-center gap-3">
+                      <span className={accountMenuIconWrap} aria-hidden>
+                        <MenuFileIcon />
+                      </span>
+                      Legal & policies
+                    </span>
+                    <ChevronDownIcon
+                      className={`h-[18px] w-[18px] shrink-0 text-neutral-400 transition-transform duration-300 ease-out motion-reduce:transition-none dark:text-slate-500 ${desktopLegalOpen ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                  <div
+                    className={`${accountMenuAccordionGrid} ${desktopLegalOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+                  >
+                    <div className={accountMenuAccordionClip}>
+                      <div
+                        id="account-legal-panel"
+                        role="region"
+                        aria-hidden={!desktopLegalOpen}
+                        aria-label="Legal and policy pages"
+                        className="space-y-0.5 border-l-2 border-neutral-200 pb-0.5 pl-2 pt-0 dark:border-slate-600"
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={accountMenuNestedLegalItem}
+                          onClick={() => {
+                            setActiveView(VIEWS.ABOUT);
+                            closeAllMenus();
+                          }}
+                        >
+                          About
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={accountMenuNestedLegalItem}
+                          onClick={() => {
+                            setActiveView(VIEWS.TERMS);
+                            closeAllMenus();
+                          }}
+                        >
+                          Terms & conditions
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={accountMenuNestedLegalItem}
+                          onClick={() => {
+                            setActiveView(VIEWS.DATA_PRIVACY_ACT);
+                            closeAllMenus();
+                          }}
+                        >
+                          Data Privacy Act
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={accountMenuNestedLegalItem}
+                          onClick={() => {
+                            setActiveView(VIEWS.BEWARE_SCAMMERS);
+                            closeAllMenus();
+                          }}
+                        >
+                          Beware of scammers
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={accountMenuNestedLegalItem}
+                          onClick={() => {
+                            setActiveView(VIEWS.PROHIBITED_PRODUCTS);
+                            closeAllMenus();
+                          }}
+                        >
+                          Prohibited products
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
                 <div role="none" className="mx-1 my-1.5 border-t border-neutral-200/90 dark:border-slate-700/90" />
                 <button
                   type="button"
@@ -1702,7 +1865,7 @@ export function LoggedInHeader({
                     closeAllMenus();
                   }}
                 >
-                  <span className={accountMenuIconWrapDanger} aria-hidden>
+                  <span className={`${accountMenuIconWrap} !text-rose-600 dark:!text-rose-400`} aria-hidden>
                     <MenuLogOutIcon />
                   </span>
                   Logout
@@ -1735,6 +1898,7 @@ export function LoggedInHeader({
             buyingBadge={activityPrimaryBuyingBadge}
             sellingBadge={activityPrimarySellingBadge}
             courierBadge={activityPrimaryCourierBadge}
+            courierProfileIncomplete={courierProfileIncomplete}
           />
         </div>
       ) : null}
@@ -1817,7 +1981,7 @@ export function LoggedInHeader({
                     finalizeMobileSheetClose();
                   }}
                 >
-                  <span className={mobileDrawerIconPlain} aria-hidden>
+                  <span className={mobileDrawerIconChip} aria-hidden>
                     <MenuTruckIcon />
                   </span>
                   Courier
@@ -1830,7 +1994,7 @@ export function LoggedInHeader({
                     finalizeMobileSheetClose();
                   }}
                 >
-                  <span className={mobileDrawerIconPlain} aria-hidden>
+                  <span className={mobileDrawerIconChip} aria-hidden>
                     <MenuFeedbackIcon />
                   </span>
                   Send Feedback
@@ -1840,55 +2004,152 @@ export function LoggedInHeader({
                   className={`${mobileSheetMenuItem} justify-between gap-2`}
                   aria-expanded={mobileSettingsOpen}
                   aria-controls="mobile-account-settings"
-                  onClick={() => setMobileSettingsOpen((v) => !v)}
+                  onClick={() =>
+                    setMobileSettingsOpen((v) => {
+                      const next = !v;
+                      if (next) setMobileLegalOpen(false);
+                      return next;
+                    })
+                  }
                 >
                   <span className="flex min-w-0 flex-1 items-center gap-3">
-                    <span className={mobileDrawerIconPlain} aria-hidden>
+                    <span className={mobileDrawerIconChip} aria-hidden>
                       <MenuSettingsIcon />
                     </span>
                     Settings
                   </span>
-                  <ChevronRightIcon
-                    className={`h-[18px] w-[18px] shrink-0 text-neutral-400 transition-transform dark:text-slate-500 ${mobileSettingsOpen ? "rotate-90" : ""}`}
+                  <ChevronDownIcon
+                    className={`h-[18px] w-[18px] shrink-0 text-neutral-400 transition-transform duration-300 ease-out motion-reduce:transition-none dark:text-slate-500 ${mobileSettingsOpen ? "rotate-180" : ""}`}
                   />
                 </button>
-                {mobileSettingsOpen ? (
-                  <div
-                    id="mobile-account-settings"
-                    className="mx-0.5 mb-1 rounded-xl border border-neutral-200/50 bg-neutral-50/80 p-3 dark:border-slate-600/80 dark:bg-slate-800/60"
-                  >
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Theme</p>
-                    <ThemeToggleGroup theme={theme} setTheme={setTheme} />
-                    <p className="mb-2 mt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Preferences</p>
-                    <p className="text-xs text-neutral-500 dark:text-slate-400">Notification controls will appear here.</p>
+                <div
+                  className={`${accountMenuAccordionGrid} ${mobileSettingsOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+                >
+                  <div className={accountMenuAccordionClip}>
+                    <div
+                      id="mobile-account-settings"
+                      aria-hidden={!mobileSettingsOpen}
+                      className="space-y-3 pb-0.5 pt-0"
+                    >
+                      <div>
+                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                          Security
+                        </p>
+                        <button
+                          type="button"
+                          className={`${mobileSheetMenuItem} justify-between gap-2`}
+                          onClick={() => {
+                            setActiveView(VIEWS.PASSWORD_SECURITY);
+                            closeMobileSheetAnimated();
+                          }}
+                        >
+                          <span className="flex min-w-0 flex-1 items-center gap-3">
+                            <span className={mobileDrawerIconChip} aria-hidden>
+                              <MenuLockIcon />
+                            </span>
+                            Password & security
+                          </span>
+                          <ChevronRightIcon className="h-[18px] w-[18px] shrink-0 text-neutral-400 dark:text-slate-500" />
+                        </button>
+                      </div>
+                      <div>
+                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                          Theme
+                        </p>
+                        <ThemeToggleGroup theme={theme} setTheme={setTheme} />
+                      </div>
+                    </div>
                   </div>
-                ) : null}
-                <button
-                  type="button"
-                  className={mobileSheetMenuItem}
-                  onClick={() => {
-                    setActiveView(VIEWS.ABOUT);
-                    closeMobileSheetAnimated();
-                  }}
-                >
-                  <span className={mobileDrawerIconPlain} aria-hidden>
-                    <MenuInfoIcon />
-                  </span>
-                  About
-                </button>
-                <button
-                  type="button"
-                  className={mobileSheetMenuItem}
-                  onClick={() => {
-                    setActiveView(VIEWS.TERMS);
-                    closeMobileSheetAnimated();
-                  }}
-                >
-                  <span className={mobileDrawerIconPlain} aria-hidden>
-                    <MenuFileIcon />
-                  </span>
-                  Terms & conditions
-                </button>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    className={`${mobileSheetMenuItem} justify-between gap-2`}
+                    aria-expanded={mobileLegalOpen}
+                    aria-controls="mobile-account-legal"
+                    onClick={() =>
+                      setMobileLegalOpen((v) => {
+                        const next = !v;
+                        if (next) setMobileSettingsOpen(false);
+                        return next;
+                      })
+                    }
+                  >
+                    <span className="flex min-w-0 flex-1 items-center gap-3">
+                      <span className={mobileDrawerIconChip} aria-hidden>
+                        <MenuFileIcon />
+                      </span>
+                      Legal & policies
+                    </span>
+                    <ChevronDownIcon
+                      className={`h-[18px] w-[18px] shrink-0 text-neutral-400 transition-transform duration-300 ease-out motion-reduce:transition-none dark:text-slate-500 ${mobileLegalOpen ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                  <div
+                    className={`${accountMenuAccordionGrid} ${mobileLegalOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+                  >
+                    <div className={accountMenuAccordionClip}>
+                      <div
+                        id="mobile-account-legal"
+                        role="group"
+                        aria-hidden={!mobileLegalOpen}
+                        aria-label="Legal and policy pages"
+                        className="space-y-0.5 border-l-2 border-neutral-200 pb-0.5 pl-2 pt-0 dark:border-slate-600"
+                      >
+                        <button
+                          type="button"
+                          className={accountMenuNestedLegalItem}
+                          onClick={() => {
+                            setActiveView(VIEWS.ABOUT);
+                            closeMobileSheetAnimated();
+                          }}
+                        >
+                          About
+                        </button>
+                        <button
+                          type="button"
+                          className={accountMenuNestedLegalItem}
+                          onClick={() => {
+                            setActiveView(VIEWS.TERMS);
+                            closeMobileSheetAnimated();
+                          }}
+                        >
+                          Terms & conditions
+                        </button>
+                        <button
+                          type="button"
+                          className={accountMenuNestedLegalItem}
+                          onClick={() => {
+                            setActiveView(VIEWS.DATA_PRIVACY_ACT);
+                            closeMobileSheetAnimated();
+                          }}
+                        >
+                          Data Privacy Act
+                        </button>
+                        <button
+                          type="button"
+                          className={accountMenuNestedLegalItem}
+                          onClick={() => {
+                            setActiveView(VIEWS.BEWARE_SCAMMERS);
+                            closeMobileSheetAnimated();
+                          }}
+                        >
+                          Beware of scammers
+                        </button>
+                        <button
+                          type="button"
+                          className={accountMenuNestedLegalItem}
+                          onClick={() => {
+                            setActiveView(VIEWS.PROHIBITED_PRODUCTS);
+                            closeMobileSheetAnimated();
+                          }}
+                        >
+                          Prohibited products
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
                 <button
                   type="button"
                   className={`${mobileSheetMenuItem} mt-0.5 font-medium text-rose-700 hover:bg-rose-50/90 dark:text-rose-400 dark:hover:bg-rose-950/45`}
@@ -1897,7 +2158,7 @@ export function LoggedInHeader({
                     finalizeMobileSheetClose();
                   }}
                 >
-                  <span className={`${mobileDrawerIconPlain} text-rose-600 dark:text-rose-400`} aria-hidden>
+                  <span className={`${mobileDrawerIconChip} !text-rose-600 dark:!text-rose-400`} aria-hidden>
                     <MenuLogOutIcon />
                   </span>
                   Log out

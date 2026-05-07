@@ -1,3 +1,5 @@
+import { normalizeSubscriptionTier } from "./subscriptionTier.js";
+
 /** Full display string from structured name + username fallback. */
 export function displayNameFromDocument(doc) {
   if (!doc) return "";
@@ -14,6 +16,13 @@ function birthdayToIsoDate(d) {
   const x = d instanceof Date ? d : new Date(d);
   if (Number.isNaN(x.getTime())) return "";
   return x.toISOString().slice(0, 10);
+}
+
+/** Align with profiles.courier_status + marketplace presence (`offline` | `available` | `active` | `busy`). */
+function normalizeCourierStatusForClient(raw) {
+  const s = String(raw ?? "offline").trim().toLowerCase();
+  const ALLOWED = new Set(["offline", "available", "active", "busy"]);
+  return ALLOWED.has(s) ? s : "offline";
 }
 
 export function userToClient(doc) {
@@ -56,6 +65,10 @@ export function userToClient(doc) {
     pushNotificationRegistered: Boolean(o.pushNotificationRegistered),
     pushNotificationPlatform:
       o.pushNotificationPlatform === "fcm" || o.pushNotificationPlatform === "apns" ? o.pushNotificationPlatform : null,
+    subscriptionTier: normalizeSubscriptionTier(o.subscriptionTier ?? o.subscription_tier),
+    courierStatus: normalizeCourierStatusForClient(o.courierStatus),
+    emailVerified: o.emailVerified === undefined ? true : Boolean(o.emailVerified),
+    phoneVerified: Boolean(o.phoneVerified),
   };
 }
 

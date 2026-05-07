@@ -5,9 +5,9 @@ import {
   formatPesoWhole,
   listingCodAvailabilityLabel,
   parseSaleMetaFromDescription,
-  removeSaleMetaLines,
   SALE_PERCENT_OPTIONS,
 } from "../../lib/listingSaleMeta.js";
+import { markdownToPlainPreview } from "../../lib/listingDescriptionPlain.js";
 
 function IconEye({ className }) {
   return (
@@ -85,9 +85,9 @@ export function SellerProductCard({
     : statusClass;
   const availabilityLabel = listingCodAvailabilityLabel(listing.fulfillmentModes);
   const saleMeta = parseSaleMetaFromDescription(listing.description);
-  const currentPesos = Math.floor((Number(listing.priceCents) || 0) / 100);
+  const currentPesos = (Number(listing.priceCents) || 0) / 100;
   const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
-  const descriptionPreview = removeSaleMetaLines(listing.description);
+  const descriptionPreview = markdownToPlainPreview(listing.description);
 
   useEffect(() => {
     setQtyDraft("");
@@ -136,7 +136,7 @@ export function SellerProductCard({
       : "inline-flex h-8 w-8 shrink-0 touch-manipulation items-center justify-center rounded-md border border-neutral-300 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-7 md:w-7 md:text-xs";
 
   const denseStepMinusPlus =
-    "inline-flex min-h-[44px] min-w-[2.75rem] shrink-0 touch-manipulation items-center justify-center border-0 bg-neutral-50/95 text-[15px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-100 active:bg-neutral-200/80 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-slate-800/90 dark:text-slate-100 dark:hover:bg-slate-700 dark:active:bg-slate-700 md:min-h-0 md:h-8 md:w-8 md:text-sm";
+    "inline-flex min-h-[44px] min-w-[2.5rem] shrink-0 touch-manipulation items-center justify-center border-0 bg-neutral-50/95 text-[15px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-100 active:bg-neutral-200/80 disabled:cursor-not-allowed disabled:opacity-45 min-[390px]:min-w-[2.75rem] dark:bg-slate-800/90 dark:text-slate-100 dark:hover:bg-slate-700 dark:active:bg-slate-700 md:min-h-0 md:h-8 md:w-8 md:text-sm";
   const denseQtyInput =
     "input-base min-h-[44px] min-w-0 flex-1 border-0 bg-transparent px-1.5 text-center text-[13px] font-semibold tabular-nums text-neutral-900 outline-none ring-0 focus:ring-0 dark:text-slate-100 md:h-8 md:min-h-0 md:px-1 md:text-[12px]";
   const denseApplyBtn =
@@ -255,7 +255,7 @@ export function SellerProductCard({
               <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-600 dark:text-slate-400">Qty</span>
               {quantityUpdating ? <span className="text-[10px] font-medium text-neutral-500 dark:text-slate-500">Saving…</span> : null}
             </div>
-            <div className="flex min-w-0 items-stretch gap-1">
+            <div className="flex min-w-0 flex-col items-stretch gap-1 min-[390px]:flex-row">
               <div className="flex min-h-[40px] min-w-0 flex-1 overflow-hidden rounded-lg border-0 bg-white shadow-none ring-1 ring-neutral-200/55 dark:bg-[#11283d] dark:ring-[#1f3c56]/50 md:min-h-8 md:border md:border-neutral-300/95 md:shadow-sm md:ring-0 dark:md:border-[#1f3c56] dark:md:ring-0">
                 <button
                   type="button"
@@ -297,7 +297,7 @@ export function SellerProductCard({
               </div>
               <button
                 type="button"
-                className={denseApplyBtn}
+                className={`${denseApplyBtn} w-full min-[390px]:w-auto`}
                 disabled={quantityUpdating}
                 title="Apply quantity"
                 aria-label="Apply quantity"

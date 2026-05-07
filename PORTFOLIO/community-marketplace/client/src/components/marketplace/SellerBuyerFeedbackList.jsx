@@ -25,7 +25,7 @@ function buyerInitials(displayName) {
 /**
  * Profile → Feedback: read-only list of buyer reviews (order_reviews) for this seller.
  */
-export function SellerBuyerFeedbackList({ token }) {
+export function SellerBuyerFeedbackList({ token, sellerId = "" }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -40,9 +40,13 @@ export function SellerBuyerFeedbackList({ token }) {
     let cancelled = false;
     setLoading(true);
     setError("");
+    const targetSellerId = String(sellerId || "").trim();
     (async () => {
       try {
-        const data = await apiRequest("/me/seller/buyer-feedback", { token });
+        const endpoint = targetSellerId
+          ? `/seller/${encodeURIComponent(targetSellerId)}/buyer-feedback`
+          : "/me/seller/buyer-feedback";
+        const data = await apiRequest(endpoint, { token });
         if (!cancelled) setItems(Array.isArray(data?.items) ? data.items : []);
       } catch (e) {
         if (!cancelled) {
@@ -56,7 +60,7 @@ export function SellerBuyerFeedbackList({ token }) {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, sellerId]);
 
   if (!token) {
     return (
@@ -105,9 +109,11 @@ export function SellerBuyerFeedbackList({ token }) {
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="font-semibold text-neutral-900 dark:text-slate-100">{row.listingTitle}</p>
+                <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">
+                  {String(row.listingTitle || "Listing").trim() || "Listing"}
+                </p>
                 {row.reviewedAt ? (
-                  <p className="mt-0.5 text-xs text-neutral-500 dark:text-slate-400">
+                  <p className="text-xs text-neutral-500 dark:text-slate-400">
                     {new Date(row.reviewedAt).toLocaleString(undefined, {
                       dateStyle: "medium",
                       timeStyle: "short",

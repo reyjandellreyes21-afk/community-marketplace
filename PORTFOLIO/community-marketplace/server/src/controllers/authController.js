@@ -2,6 +2,7 @@ import { OAuth2Client } from "google-auth-library";
 import { config } from "../config/config.js";
 import { AppError } from "../errors/AppError.js";
 import { uploadAvatarImage } from "../lib/communityImageStorage.js";
+import { generateSixDigitCode, hashPhoneOtp, sendTwilioSms } from "../lib/phoneVerification.js";
 import { displayNameForStoragePath } from "../lib/storagePathLabel.js";
 import { syncSellerListingsCommunityId } from "../lib/profileListingCommunity.js";
 import { supabaseAdmin, supabaseAuth } from "../lib/supabase.js";
@@ -19,6 +20,10 @@ const isMissingProfilesNotifyCourierColumn = (error) =>
 const isMissingProfilesPushTokenColumn = (error) =>
   /push_notification_token|push_notification_platform/i.test(String(error?.message || "")) &&
   /profiles|schema cache/i.test(String(error?.message || ""));
+const isMissingPhoneVerifiedColumn = (error) =>
+  /phone_verified_at/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
+const isMissingPhoneChallengeTable = (error) =>
+  /phone_verification_challenges|relation.*does not exist/i.test(String(error?.message || ""));
 const USERNAME_RULE = /^[a-z][a-z0-9._]{2,19}$/;
 const USERNAME_DUPLICATE_SEPARATOR_RULE = /(\.\.|__)/;
 
@@ -128,7 +133,7 @@ const generateUsernameFromEmail = async (email) => {
   return fallback.slice(0, 20);
 };
 
-const profileToClient = (profile) =>
+const profileToClient = (profile, authUser = null) =>
   userToClient({
     id: profile.id,
     firstName: profile.first_name || "",
@@ -159,34 +164,40 @@ const profileToClient = (profile) =>
     pushNotificationPlatform: ["fcm", "apns"].includes(String(profile.push_notification_platform || "").toLowerCase())
       ? String(profile.push_notification_platform).toLowerCase()
       : null,
+    subscription_tier: profile.subscription_tier ?? "basic",
+    courierStatus: profile.courier_status ?? "offline",
+    emailVerified: authUser != null ? Boolean(authUser.email_confirmed_at) : true,
+    phoneVerified: Boolean(profile.phone_verified_at),
   });
 
-const authUserToClient = (authUser) =>
-  {
-    const meta = authUser?.user_metadata || {};
-    return userToClient({
-      id: authUser.id,
-      email: authUser.email || "",
-      joinedAt: authUser.created_at || null,
-      firstName: meta.first_name || "",
-      middleName: meta.middle_name || "",
-      lastName: meta.last_name || "",
-      username: meta.username || "",
-      age: meta.age ?? null,
-      acceptedTerms: Boolean(meta.accepted_terms),
-      avatarUrl: meta.avatar_url || "",
-      phone: meta.phone || "",
-      birthday: meta.birthday || null,
-      community: meta.community || "",
-      communityId: meta.community_id ? String(meta.community_id).trim() : "",
-      address: meta.address || "",
-      addressUrl: meta.address_url || "",
-      gender: meta.gender || "",
-      facebookUrl: meta.facebook_url || "",
-      twitterUrl: meta.twitter_url || "",
-      instagramUrl: meta.instagram_url || "",
-    });
-  };
+const authUserToClient = (authUser) => {
+  const meta = authUser?.user_metadata || {};
+  return userToClient({
+    id: authUser.id,
+    email: authUser.email || "",
+    joinedAt: authUser.created_at || null,
+    firstName: meta.first_name || "",
+    middleName: meta.middle_name || "",
+    lastName: meta.last_name || "",
+    username: meta.username || "",
+    age: meta.age ?? null,
+    acceptedTerms: Boolean(meta.accepted_terms),
+    avatarUrl: meta.avatar_url || "",
+    phone: meta.phone || "",
+    birthday: meta.birthday || null,
+    community: meta.community || "",
+    communityId: meta.community_id ? String(meta.community_id).trim() : "",
+    address: meta.address || "",
+    addressUrl: meta.address_url || "",
+    gender: meta.gender || "",
+    facebookUrl: meta.facebook_url || "",
+    twitterUrl: meta.twitter_url || "",
+    instagramUrl: meta.instagram_url || "",
+    subscription_tier: "basic",
+    emailVerified: Boolean(authUser?.email_confirmed_at),
+    phoneVerified: false,
+  });
+};
 
 const getProfileById = async (id) => {
   const { data, error } = await supabaseAdmin.from("profiles").select("*").eq("id", id).limit(1);
@@ -265,7 +276,7 @@ export const register = async (req, res, next) => {
     const { data: createdData, error: createError } = await supabaseAdmin.auth.admin.createUser({
       email: normalizedEmail,
       password,
-      email_confirm: true,
+      email_confirm: false,
     });
     if (createError) {
       if (/already registered|already exists|duplicate|unique/i.test(createError.message || "")) {
@@ -281,17 +292,28 @@ export const register = async (req, res, next) => {
       accepted_terms: Boolean(acceptedTerms),
     });
 
-    const { data: signInData, error: signInError } = await supabaseAuth.auth.signInWithPassword({
+    const redirectTo = config.authEmailRedirectUrl || undefined;
+    const { error: resendError } = await supabaseAuth.auth.resend({
+      type: "signup",
       email: normalizedEmail,
-      password,
+      ...(redirectTo ? { options: { emailRedirectTo: redirectTo } } : {}),
     });
-    if (signInError || !signInData?.session) {
-      throw new AppError(400, "Account created, but automatic sign-in failed. Please log in.");
+    if (resendError) {
+      const m = String(resendError.message || "");
+      const probablyRateOrDuplicate = /rate|too many|seconds|after|already|please wait/i.test(m);
+      if (!probablyRateOrDuplicate) {
+        throw new AppError(
+          500,
+          resendError.message ||
+            "Account was created but we could not send the confirmation email. Try “Resend email” or contact support.",
+        );
+      }
     }
 
     res.status(201).json({
-      user: profile ? profileToClient(profile) : authUserToClient(createdData.user),
-      token: signInData.session.access_token,
+      emailVerificationRequired: true,
+      message: "Check your email to confirm your address, then sign in.",
+      email: normalizedEmail,
     });
   } catch (error) {
     next(error);
@@ -301,14 +323,36 @@ export const register = async (req, res, next) => {
 export const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
+    const normalizedLoginEmail = String(email || "").trim().toLowerCase();
     const { data: signInData, error: signInError } = await supabaseAuth.auth.signInWithPassword({
-      email: String(email || "").trim().toLowerCase(),
+      email: normalizedLoginEmail,
       password,
     });
-    if (signInError || !signInData?.user || !signInData?.session) throw new AppError(401, "Invalid credentials.");
+    if (signInError || !signInData?.user || !signInData?.session) {
+      const msg = String(signInError?.message || "");
+      if (/email not confirmed|confirm your email|email address is not confirmed/i.test(msg)) {
+        throw new AppError(403, "Confirm your email before signing in. Check your inbox or use “Resend confirmation”.");
+      }
+      if (/invalid login credentials|invalid credentials/i.test(msg)) {
+        const { data: existingProfileRows, error: profileLookupError } = await supabaseAdmin
+          .from("profiles")
+          .select("id")
+          .eq("email", normalizedLoginEmail)
+          .limit(1);
+        if (profileLookupError && profileLookupError.code !== "PGRST205") {
+          throw new AppError(500, "Failed to verify account credentials.");
+        }
+        const hasExistingEmail = Array.isArray(existingProfileRows) && existingProfileRows.length > 0;
+        if (!hasExistingEmail) throw new AppError(404, "No existing email found.");
+        throw new AppError(401, "Wrong password.");
+      }
+      throw new AppError(401, "Invalid credentials.");
+    }
+    const { data: authFull, error: authFullErr } = await supabaseAdmin.auth.admin.getUserById(signInData.user.id);
+    const authUser = !authFullErr && authFull?.user ? authFull.user : signInData.user;
     const profile = (await getProfileById(signInData.user.id)) || (await ensureProfile(signInData.user));
     res.json({
-      user: profile ? profileToClient(profile) : authUserToClient(signInData.user),
+      user: profile ? profileToClient(profile, authUser) : authUserToClient(authUser),
       token: signInData.session.access_token,
     });
   } catch (error) {
@@ -343,7 +387,7 @@ export const googleAuth = async (req, res, next) => {
       avatar_url: payload.picture || "",
     });
     res.json({
-      user: profile ? profileToClient(profile) : authUserToClient(googleData.user),
+      user: profile ? profileToClient(profile, googleData.user) : authUserToClient(googleData.user),
       token: googleData.session.access_token,
     });
   } catch (error) {
@@ -372,7 +416,8 @@ export const uploadMyAvatar = async (req, res, next) => {
       if (error) throw new AppError(500, error.message || "Failed to update profile.");
       const data = await getProfileById(req.user.id);
       if (!data) throw new AppError(500, "Failed to load updated profile.");
-      return res.json({ user: profileToClient(data) });
+      const { data: authSnap } = await supabaseAdmin.auth.admin.getUserById(req.user.id);
+      return res.json({ user: profileToClient(data, authSnap?.user || null) });
     }
     let authUser = authUserForMetadata;
     if (!authUser) {
@@ -395,10 +440,10 @@ export const uploadMyAvatar = async (req, res, next) => {
 
 export const getMe = async (req, res, next) => {
   try {
-    const profile = await getProfileById(req.user.id);
-    if (profile) return res.json({ user: profileToClient(profile) });
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.getUserById(req.user.id);
     if (authError || !authData?.user) throw new AppError(401, "User no longer exists.", null, "UNAUTHORIZED");
+    const profile = await getProfileById(req.user.id);
+    if (profile) return res.json({ user: profileToClient(profile, authData.user) });
     res.json({ user: authUserToClient(authData.user) });
   } catch (error) {
     next(error);
@@ -508,6 +553,11 @@ export const updateMe = async (req, res, next) => {
     }
     if (updates.phone !== undefined) {
       updates.phone = await ensureUniquePhoneOnWrite(updates.phone, req.user.id);
+      if (existingProfile) {
+        const before = normalizePhilippinesPhone(existingProfile.phone || "");
+        const after = updates.phone;
+        if (before !== after) updates.phone_verified_at = null;
+      }
     }
     if (communityId !== undefined) {
       const rawCommunityId = communityId === null ? "" : String(communityId).trim();
@@ -538,7 +588,8 @@ export const updateMe = async (req, res, next) => {
           isMissingProfilesCommunityIdColumn(error) ||
           isMissingProfilesCourierSuggestedColumn(error) ||
           isMissingProfilesNotifyCourierColumn(error) ||
-          isMissingProfilesPushTokenColumn(error))
+          isMissingProfilesPushTokenColumn(error) ||
+          isMissingPhoneVerifiedColumn(error))
       ) {
         const updatesWithoutMissingColumns = { ...updates };
         if (isMissingProfilesCommunityColumn(error)) delete updatesWithoutMissingColumns.community;
@@ -549,6 +600,7 @@ export const updateMe = async (req, res, next) => {
           delete updatesWithoutMissingColumns.push_notification_token;
           delete updatesWithoutMissingColumns.push_notification_platform;
         }
+        if (isMissingPhoneVerifiedColumn(error)) delete updatesWithoutMissingColumns.phone_verified_at;
         const retry = await supabaseAdmin.from("profiles").update(updatesWithoutMissingColumns).eq("id", req.user.id);
         if (retry.error) throw new AppError(500, retry.error.message || "Failed to update profile.");
       } else if (error) {
@@ -569,7 +621,8 @@ export const updateMe = async (req, res, next) => {
       if (updates.address !== undefined) {
         await syncSellerListingsCommunityId(supabaseAdmin, req.user.id, String(data?.address ?? ""));
       }
-      return res.json({ user: profileToClient(data) });
+      const { data: authAfterProfile } = await supabaseAdmin.auth.admin.getUserById(req.user.id);
+      return res.json({ user: profileToClient(data, authAfterProfile?.user || null) });
     }
 
     const userMetadata = {};
@@ -601,6 +654,172 @@ export const updateMe = async (req, res, next) => {
       await syncSellerListingsCommunityId(supabaseAdmin, req.user.id, String(updates.address ?? ""));
     }
     return res.json({ user: authUserToClient(updatedAuth.user) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resendSignupConfirmation = async (req, res, next) => {
+  try {
+    const email = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
+    if (!email) throw new AppError(400, "Email is required.");
+    const redirectTo = config.authEmailRedirectUrl || undefined;
+    const { error: resendError } = await supabaseAuth.auth.resend({
+      type: "signup",
+      email,
+      ...(redirectTo ? { options: { emailRedirectTo: redirectTo } } : {}),
+    });
+    if (resendError) throw new AppError(400, resendError.message || "Could not resend confirmation email.");
+    res.json({ ok: true, message: "If an account exists for that email, a confirmation link has been sent." });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const sendPhoneVerificationCode = async (req, res, next) => {
+  try {
+    const profile = await getProfileById(req.user.id);
+    const rawPhone = req.body?.phone !== undefined ? req.body.phone : profile?.phone;
+    const targetPhone = normalizePhilippinesPhone(rawPhone || "");
+    const profilePhone = normalizePhilippinesPhone(profile?.phone || "");
+    if (!profile || !targetPhone || !profilePhone) {
+      throw new AppError(400, "Save a valid mobile number on your profile before requesting a code.");
+    }
+    if (targetPhone !== profilePhone) {
+      throw new AppError(400, "Phone number does not match your profile. Save your number first, then request a code.");
+    }
+
+    await supabaseAdmin.from("phone_verification_challenges").delete().eq("user_id", req.user.id);
+
+    const code = generateSixDigitCode();
+    const codeHash = hashPhoneOtp(req.user.id, targetPhone, code);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+    const { error: insErr } = await supabaseAdmin.from("phone_verification_challenges").insert({
+      user_id: req.user.id,
+      phone_e164: targetPhone,
+      code_hash: codeHash,
+      expires_at: expiresAt,
+    });
+    if (insErr) {
+      if (isMissingPhoneChallengeTable(insErr)) {
+        throw new AppError(503, "Phone verification is not available yet (database migration pending).");
+      }
+      throw new AppError(500, insErr.message || "Could not start phone verification.");
+    }
+
+    const bodyText = `Your LinkMart verification code is ${code}. It expires in 10 minutes.`;
+    try {
+      await sendTwilioSms(targetPhone, bodyText);
+    } catch (e) {
+      await supabaseAdmin.from("phone_verification_challenges").delete().eq("user_id", req.user.id);
+      if (e?.code === "SMS_NOT_CONFIGURED") {
+        throw new AppError(
+          503,
+          "SMS is not configured. Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN, plus either TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER (see server/.env.example). Restart the API after updating .env.",
+        );
+      }
+      throw new AppError(502, e?.message || "Could not send SMS.");
+    }
+
+    res.json({ ok: true, message: "Verification code sent." });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const verifyPhoneCode = async (req, res, next) => {
+  try {
+    const code = String(req.body?.code || "").replace(/\D/g, "").slice(0, 6);
+    if (code.length !== 6) throw new AppError(400, "Enter the 6-digit code from SMS.");
+
+    const profile = await getProfileById(req.user.id);
+    const targetPhone = normalizePhilippinesPhone(profile?.phone || "");
+    if (!profile || !targetPhone) {
+      throw new AppError(400, "Save a mobile number on your profile first.");
+    }
+
+    const { data: rows, error: selErr } = await supabaseAdmin
+      .from("phone_verification_challenges")
+      .select("id, phone_e164, code_hash, expires_at")
+      .eq("user_id", req.user.id)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (selErr) {
+      if (isMissingPhoneChallengeTable(selErr)) {
+        throw new AppError(503, "Phone verification is not available yet (database migration pending).");
+      }
+      throw new AppError(500, selErr.message || "Verification failed.");
+    }
+    const row = Array.isArray(rows) && rows.length ? rows[0] : null;
+    if (!row) throw new AppError(400, "No verification code pending. Request a new code.");
+    if (normalizePhilippinesPhone(row.phone_e164) !== targetPhone) {
+      throw new AppError(400, "Your profile phone changed. Request a new code.");
+    }
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      await supabaseAdmin.from("phone_verification_challenges").delete().eq("id", row.id);
+      throw new AppError(400, "Code expired. Request a new one.");
+    }
+    const expectedHash = hashPhoneOtp(req.user.id, targetPhone, code);
+    if (expectedHash !== row.code_hash) {
+      throw new AppError(400, "Invalid code.");
+    }
+
+    await supabaseAdmin.from("phone_verification_challenges").delete().eq("user_id", req.user.id);
+
+    const verifiedAt = new Date().toISOString();
+    const { error: updErr } = await supabaseAdmin
+      .from("profiles")
+      .update({ phone_verified_at: verifiedAt })
+      .eq("id", req.user.id);
+    if (updErr) {
+      if (isMissingPhoneVerifiedColumn(updErr)) {
+        throw new AppError(503, "Phone verification column missing. Apply the latest database migration.");
+      }
+      throw new AppError(500, updErr.message || "Could not save verification.");
+    }
+
+    const data = await getProfileById(req.user.id);
+    if (!data) throw new AppError(500, "Failed to load profile.");
+    const { data: authSnap } = await supabaseAdmin.auth.admin.getUserById(req.user.id);
+    res.json({ user: profileToClient(data, authSnap?.user || null) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const changePassword = async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    const cur = String(currentPassword || "");
+    const nextPass = String(newPassword || "");
+    if (cur === nextPass) {
+      throw new AppError(400, "New password must be different from your current password.");
+    }
+
+    const { data: userData, error: userErr } = await supabaseAdmin.auth.admin.getUserById(req.user.id);
+    if (userErr || !userData?.user) throw new AppError(401, "User no longer exists.", null, "UNAUTHORIZED");
+
+    const authUser = userData.user;
+    const hasEmailProvider =
+      Array.isArray(authUser.identities) && authUser.identities.some((i) => i.provider === "email");
+    if (!hasEmailProvider) {
+      throw new AppError(400, "This account signs in with Google. Password change isn’t available.");
+    }
+
+    const email = String(authUser.email || req.user.email || "").trim().toLowerCase();
+    if (!email) throw new AppError(400, "No email on file for this account.");
+
+    const { error: signErr } = await supabaseAuth.auth.signInWithPassword({ email, password: cur });
+    if (signErr) throw new AppError(401, "Current password is incorrect.");
+
+    const { error: updErr } = await supabaseAdmin.auth.admin.updateUserById(req.user.id, { password: nextPass });
+    if (updErr) throw new AppError(400, updErr.message || "Could not update password.");
+
+    res.json({ ok: true });
   } catch (error) {
     next(error);
   }

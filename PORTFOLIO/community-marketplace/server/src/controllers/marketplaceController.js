@@ -3,16 +3,33 @@ import { supabaseAdmin } from "../lib/supabase.js";
 import { uploadCommunityCoverImage, uploadListingImage } from "../lib/communityImageStorage.js";
 import { displayNameForStoragePath } from "../lib/storagePathLabel.js";
 import { findConflictingCommunity, isLikelySameCommunityName } from "../lib/communityNameSimilarity.js";
-import { doesProfileAddressMatchCommunity } from "../lib/profileListingCommunity.js";
+import { doesProfileAddressMatchCommunity, parseCommaProfileAddress } from "../lib/profileListingCommunity.js";
 import { variantSignatureFromBuyerComment } from "../lib/variantSignature.js";
+import { computeCartLineSignature } from "../lib/cartLineSignature.js";
+import {
+  notifyCourierDeliveryFeedback,
+  notifyCourierInvitation,
+  notifyUserOrderEvent,
+} from "../lib/orderNotifications.js";
 
 /** PostgREST: table missing from API schema (migrations not applied or `NOTIFY pgrst, 'reload schema';` needed). */
 const isSchemaMissingError = (error) =>
   Boolean(error) &&
   (error.code === "PGRST205" || /schema cache/i.test(String(error.message || "")));
 
+/** Missing table/columns on `order_reviews` (e.g. product_rating / seller_rating not applied). */
+const isOrderReviewsSchemaError = (error) => {
+  if (!error) return false;
+  if (isSchemaMissingError(error)) return true;
+  const msg = String(error.message || "");
+  const code = error.code;
+  if (code === "PGRST204" && /order_reviews|rating|product_rating|seller_rating/i.test(msg)) return true;
+  if (/order_reviews/i.test(msg) && /column|rating|product_rating|seller_rating|could not find/i.test(msg)) return true;
+  return false;
+};
+
 const ORDER_REVIEWS_SETUP_HINT =
-  "Apply supabase/migrations/20260507130000_ensure_order_reviews.sql in the Supabase SQL Editor (or run `supabase db push`), then execute: NOTIFY pgrst, 'reload schema';";
+  "Apply supabase/migrations/20260507130000_ensure_order_reviews.sql and 20260508150000_order_reviews_product_seller_split.sql (or run the Order reviews section in supabase/sql_editor_all_in_one.sql), then execute: NOTIFY pgrst, 'reload schema';";
 
 const COURIER_DELIVERY_REVIEWS_SETUP_HINT =
   "Create table courier_delivery_reviews: in Supabase SQL Editor run supabase/migrations/20260507140000_ensure_courier_delivery_reviews.sql (includes NOTIFY). Or locally: set DATABASE_URL in server/.env then npm run db:apply-courier-reviews (from server/). Or supabase db push.";
@@ -65,6 +82,16 @@ function fulfillmentTypeForCartApiRow(row, listing) {
     ft = modes.includes("pickup") ? "pickup" : modes[0];
   }
   return ft;
+}
+
+/** Matches cart line identity when `line_signature` is absent or PostgREST cache lags behind migrations. */
+function effectiveLineSignatureFromCartRow(row, listing) {
+  const stored = String(row?.line_signature ?? "").trim();
+  if (/^[a-f0-9]{64}$/.test(stored)) return stored;
+  const vs = String(row?.variant_signature ?? "").trim().slice(0, 512);
+  const ft = fulfillmentTypeForCartApiRow(row, listing);
+  const c = String(row?.comment ?? "").trim().slice(0, 2000);
+  return computeCartLineSignature(vs, ft, c);
 }
 
 /** Public avatar URL from a `profiles` row (PostgREST uses snake_case; tolerate camelCase). */
@@ -167,12 +194,32 @@ function isCartItemsMissingFulfillmentTypeColumnError(error) {
   return /fulfillment_type/i.test(t) && /cart_items/i.test(t);
 }
 
+/** PostgREST / unmigrated DB: `cart_items.line_signature` from `20260504130000_cart_items_line_signature.sql`. */
+function isCartItemsMissingLineSignatureColumnError(error) {
+  const t = postgrestErrorText(error);
+  if (!t) return false;
+  return (
+    /line_signature/i.test(t) &&
+    /cart_items/i.test(t) &&
+    (/schema cache/i.test(t) || /does not exist/i.test(t) || /could not find/i.test(t))
+  );
+}
+
 /** When `20260502120000_order_courier_contributions` has not been applied (or schema cache lags). */
 function isMissingOrdersCourierContributionColumn(error) {
   const t = postgrestErrorText(error);
   return (
     /buyer_courier_contribution_cents|seller_courier_contribution_cents/i.test(t) &&
     (/orders/i.test(t) || /schema cache/i.test(t) || /could not find/i.test(t))
+  );
+}
+
+/** When `20260512120000_courier_assignment_inviter_flags.sql` has not been applied (or schema cache lags). */
+function isMissingCourierAssignmentInviterColumnsError(error) {
+  const t = postgrestErrorText(error);
+  return (
+    /invited_by_buyer|invited_by_seller/i.test(t) &&
+    (/courier_assignments/i.test(t) || /schema cache/i.test(t) || /could not find/i.test(t))
   );
 }
 
@@ -647,9 +694,43 @@ async function enrichListingsWithSellerProfile(rows) {
 
 const buyerReviewRowToApi = (row) => {
   if (!row) return null;
+  const productRating = row.product_rating != null ? Number(row.product_rating) : null;
+  const sellerRating = row.seller_rating != null ? Number(row.seller_rating) : null;
+  const REVIEW_EDIT_WINDOW_MS = 72 * 60 * 60 * 1000;
+  const nowMs = Date.now();
+  const readDeadline = (startedAt, fallbackCreatedAt = null) => {
+    const startedMs = Number.isFinite(new Date(startedAt).getTime())
+      ? new Date(startedAt).getTime()
+      : Number.isFinite(new Date(fallbackCreatedAt).getTime())
+        ? new Date(fallbackCreatedAt).getTime()
+        : NaN;
+    if (!Number.isFinite(startedMs)) return null;
+    return new Date(startedMs + REVIEW_EDIT_WINDOW_MS).toISOString();
+  };
+  const productEditableUntil = productRating != null
+    ? readDeadline(row.product_rating_started_at, row.created_at)
+    : null;
+  const sellerEditableUntil = sellerRating != null
+    ? readDeadline(row.seller_rating_started_at, row.created_at)
+    : null;
+  const productCanEdit = productRating != null
+    ? Boolean(productEditableUntil && nowMs <= new Date(productEditableUntil).getTime())
+    : true;
+  const sellerCanEdit = sellerRating != null
+    ? Boolean(sellerEditableUntil && nowMs <= new Date(sellerEditableUntil).getTime())
+    : true;
   return {
-    rating: row.rating,
-    reviewText: String(row.review_text ?? "").trim() || null,
+    productRating: Number.isFinite(productRating) ? productRating : null,
+    sellerRating: Number.isFinite(sellerRating) ? sellerRating : null,
+    productReviewText: String(row.product_review_text ?? "").trim() || null,
+    sellerReviewText: String(row.seller_review_text ?? "").trim() || null,
+    productRatingStartedAt: row.product_rating_started_at ?? null,
+    sellerRatingStartedAt: row.seller_rating_started_at ?? null,
+    productEditableUntil,
+    sellerEditableUntil,
+    productCanEdit,
+    sellerCanEdit,
+    createdAt: row.created_at ?? null,
     updatedAt: row.updated_at,
   };
 };
@@ -659,11 +740,23 @@ const ALLOWED_COURIER_DELIVERY_REVIEW_TAGS = new Set(["fast", "late", "friendly"
 const buyerCourierReviewRowToApi = (row) => {
   if (!row) return null;
   const tags = Array.isArray(row.tags) ? row.tags.map((t) => String(t).toLowerCase()).filter(Boolean) : [];
+  const REVIEW_EDIT_WINDOW_MS = 72 * 60 * 60 * 1000;
+  const startedMs = Number.isFinite(new Date(row.rating_started_at).getTime())
+    ? new Date(row.rating_started_at).getTime()
+    : Number.isFinite(new Date(row.created_at).getTime())
+      ? new Date(row.created_at).getTime()
+      : NaN;
+  const editableUntil = Number.isFinite(startedMs) ? new Date(startedMs + REVIEW_EDIT_WINDOW_MS).toISOString() : null;
+  const canEdit = row.rating != null ? Boolean(editableUntil && Date.now() <= new Date(editableUntil).getTime()) : true;
   return {
     rating: row.rating,
     tags,
     abuseNote: row.abuse_note != null && String(row.abuse_note).trim() ? String(row.abuse_note).trim() : null,
     abuseReportedAt: row.abuse_reported_at ?? null,
+    ratingStartedAt: row.rating_started_at ?? null,
+    editableUntil,
+    canEdit,
+    createdAt: row.created_at ?? null,
     updatedAt: row.updated_at,
   };
 };
@@ -682,8 +775,85 @@ function orderListingSnapshotFromDbRow(row) {
   };
 }
 
-const orderRowToApi = (row, reviewRow = null, listingMeta = null, courierReviewRow = null) => {
+/**
+ * Order IDs that have at least one accepted `courier_assignments` row (community courier, not seller-only delivery).
+ */
+async function orderIdsWithAcceptedCommunityCourier(orderIds) {
+  const uniq = [...new Set((orderIds || []).map((id) => String(id || "").trim()).filter(Boolean))];
+  /** @type {Set<string>} */
+  const out = new Set();
+  if (uniq.length === 0) return out;
+  const { data, error } = await supabaseAdmin
+    .from("courier_assignments")
+    .select("order_id")
+    .in("order_id", uniq)
+    .eq("status", "accepted");
+  if (error || !Array.isArray(data)) return out;
+  for (const r of data) {
+    const oid = String(r?.order_id || "").trim();
+    if (oid) out.add(oid);
+  }
+  return out;
+}
+
+function computeBuyerMayRateSeller(order) {
+  const oid = String(order.id || "").trim();
+  const sellerId = String(order.seller_id || "").trim();
+  const buyerId = String(order.buyer_id || "").trim();
+  return Boolean(oid && sellerId && buyerId);
+}
+
+/**
+ * For buyer order lists: courier id per page order (for eligibility flags).
+ * @returns {Promise<{ courierIdByOrderId: Map<string, string> }>}
+ */
+async function buyerCourierMapsForList(pageOrderIds) {
+  const courierIdByOrderId = new Map();
+  const pageIds = (pageOrderIds || []).map((x) => String(x || "").trim()).filter(Boolean);
+  if (pageIds.length > 0) {
+    const { data: pageCas } = await supabaseAdmin
+      .from("courier_assignments")
+      .select("order_id, courier_id")
+      .in("order_id", pageIds)
+      .eq("status", "accepted");
+    for (const ca of pageCas || []) {
+      const oid = String(ca.order_id || "").trim();
+      const cid = String(ca.courier_id || "").trim();
+      if (oid && cid && !courierIdByOrderId.has(oid)) courierIdByOrderId.set(oid, cid);
+    }
+  }
+
+  return { courierIdByOrderId };
+}
+
+/** Source of truth for buyer review section eligibility on an order. */
+function resolveBuyerReviewEligibilityForOrder(order, options = {}) {
+  const hasCommunityCourierDelivery = Boolean(options.hasCommunityCourierDelivery);
+  const sellerId = String(order?.seller_id || order?.sellerId || "").trim();
+  const courierId = String(options.courierId || "").trim();
+  const buyerMayRateSeller = computeBuyerMayRateSeller(order);
+  const buyerMayRateCourier = Boolean(
+    hasCommunityCourierDelivery && courierId && sellerId && courierId !== sellerId,
+  );
+  return { buyerMayRateSeller, buyerMayRateCourier, hasCommunityCourierDelivery };
+}
+
+/** Eligibility flags after a review mutation (same rules as list). */
+async function buyerRatingEligibilityExtras(order, hasCommunityCourierDelivery) {
+  let courierId = "";
+  if (hasCommunityCourierDelivery) {
+    const { assignment } = await resolveAcceptedCourierAssignmentForReview(order);
+    courierId = assignment?.courier_id != null ? String(assignment.courier_id).trim() : "";
+  }
+  return resolveBuyerReviewEligibilityForOrder(order, { hasCommunityCourierDelivery, courierId });
+}
+
+const orderRowToApi = (row, reviewRow = null, listingMeta = null, courierReviewRow = null, extras = {}) => {
   const courierAssignmentId = row.accepted_courier_assignment_id ?? row.accepted_bid_id ?? null;
+  const hasCommunityCourierDelivery =
+    extras.hasCommunityCourierDelivery !== undefined
+      ? Boolean(extras.hasCommunityCourierDelivery)
+      : Boolean(courierAssignmentId);
   return {
   id: row.id,
   listingId: row.listing_id,
@@ -699,6 +869,19 @@ const orderRowToApi = (row, reviewRow = null, listingMeta = null, courierReviewR
   acceptedCourierAssignmentId: courierAssignmentId,
   /** @deprecated Use acceptedCourierAssignmentId */
   acceptedBidId: courierAssignmentId,
+  /** True when an accepted `courier_assignments` row exists — buyer may rate the community courier (not seller self-delivery). */
+  hasCommunityCourierDelivery,
+  /**
+   * Buyer context only (from list orders / review responses): whether seller / courier rating UI applies.
+   * Seller and courier rating flags indicate whether each section applies on this order.
+   * Product/seller can be rated per completed purchase; courier applies when a separate accepted community courier exists.
+   */
+  buyerMayRateSeller: Object.prototype.hasOwnProperty.call(extras, "buyerMayRateSeller")
+    ? Boolean(extras.buyerMayRateSeller)
+    : undefined,
+  buyerMayRateCourier: Object.prototype.hasOwnProperty.call(extras, "buyerMayRateCourier")
+    ? Boolean(extras.buyerMayRateCourier)
+    : undefined,
   comment: String(row.buyer_comment ?? "").trim(),
   variantSignature: String(row.variant_signature ?? "").trim(),
   buyerReceiptAcknowledgedAt: row.buyer_receipt_acknowledged_at ?? null,
@@ -961,8 +1144,42 @@ async function atomicAcceptCourierAssignment(order, bidId, courierId) {
   await supabaseAdmin.from("courier_assignments").update({ status: "accepted" }).eq("id", bidId);
   await markCourierBusy(courierId);
 
+  const oid = String(updatedOrder.id);
+  await notifyUserOrderEvent({
+    recipientUserId: updatedOrder.buyer_id,
+    actorUserId: courierId,
+    orderId: oid,
+    recipientRole: "buyer",
+    title: "Courier assigned",
+    body: "A courier accepted your delivery.",
+    orderStatusForTab: updatedOrder.status,
+  });
+  await notifyUserOrderEvent({
+    recipientUserId: updatedOrder.seller_id,
+    actorUserId: courierId,
+    orderId: oid,
+    recipientRole: "seller",
+    title: "Courier assigned",
+    body: "A courier accepted the delivery for this order.",
+    orderStatusForTab: updatedOrder.status,
+  });
+
   const listingMeta = await fetchListingMetaForOrder(updatedOrder);
   return orderRowToApi(updatedOrder, null, listingMeta);
+}
+
+/**
+ * Merge buyer/seller suggestion flags for the same pending courier assignment (UNIQUE per order+courier).
+ * @param {{ invited_by_buyer?: boolean, invited_by_seller?: boolean } | null | undefined} existing
+ * @param {'buyer' | 'seller' | 'courier'} role
+ */
+function mergeCourierInvitationInviterFlags(existing, role) {
+  const prevB = Boolean(existing?.invited_by_buyer);
+  const prevS = Boolean(existing?.invited_by_seller);
+  return {
+    invited_by_buyer: prevB || role === "buyer",
+    invited_by_seller: prevS || role === "seller",
+  };
 }
 
 /**
@@ -1038,12 +1255,26 @@ async function assignCourierToOpenDeliveryOrder(orderId, courierId, actorUserId,
       .neq("courier_id", courierId);
   }
 
-  const { data: existingPair } = await supabaseAdmin
+  let courierAssignmentInviterColumns = true;
+  let { data: existingPair, error: existingPairErr } = await supabaseAdmin
     .from("courier_assignments")
-    .select("id, status")
+    .select("id, status, invited_by_buyer, invited_by_seller")
     .eq("order_id", orderId)
     .eq("courier_id", courierId)
     .maybeSingle();
+  if (existingPairErr && isMissingCourierAssignmentInviterColumnsError(existingPairErr)) {
+    courierAssignmentInviterColumns = false;
+    const fallback = await supabaseAdmin
+      .from("courier_assignments")
+      .select("id, status")
+      .eq("order_id", orderId)
+      .eq("courier_id", courierId)
+      .maybeSingle();
+    if (fallback.error) throw new AppError(500, fallback.error.message);
+    existingPair = fallback.data;
+  } else if (existingPairErr) {
+    throw new AppError(500, existingPairErr.message);
+  }
 
   let bidId = null;
 
@@ -1054,17 +1285,42 @@ async function assignCourierToOpenDeliveryOrder(orderId, courierId, actorUserId,
     }
     if (invitationOnly) {
       if (st === "pending") {
-        await supabaseAdmin.from("courier_assignments").update({ mode }).eq("id", existingPair.id);
+        const invFlags = courierAssignmentInviterColumns ? mergeCourierInvitationInviterFlags(existingPair, role) : {};
+        const { error: upPen } = await supabaseAdmin
+          .from("courier_assignments")
+          .update({ mode, ...invFlags })
+          .eq("id", existingPair.id);
+        if (upPen && isMissingCourierAssignmentInviterColumnsError(upPen)) {
+          courierAssignmentInviterColumns = false;
+          const { error: upPen2 } = await supabaseAdmin.from("courier_assignments").update({ mode }).eq("id", existingPair.id);
+          if (upPen2) throw new AppError(400, upPen2.message);
+        } else if (upPen) {
+          throw new AppError(400, upPen.message);
+        }
         bidId = existingPair.id;
       } else if (st === "rejected" || st === "superseded") {
-        const { error: reinvErr } = await supabaseAdmin
+        const invFlags = courierAssignmentInviterColumns ? mergeCourierInvitationInviterFlags(existingPair, role) : {};
+        let reinvErr = null;
+        ({ error: reinvErr } = await supabaseAdmin
           .from("courier_assignments")
           .update({
             mode,
             status: "pending",
             amount_cents: COMMUNITY_DELIVERY_PLACEHOLDER_CENTS,
+            ...invFlags,
           })
-          .eq("id", existingPair.id);
+          .eq("id", existingPair.id));
+        if (reinvErr && isMissingCourierAssignmentInviterColumnsError(reinvErr)) {
+          courierAssignmentInviterColumns = false;
+          ({ error: reinvErr } = await supabaseAdmin
+            .from("courier_assignments")
+            .update({
+              mode,
+              status: "pending",
+              amount_cents: COMMUNITY_DELIVERY_PLACEHOLDER_CENTS,
+            })
+            .eq("id", existingPair.id));
+        }
         if (reinvErr) throw new AppError(400, reinvErr.message);
         bidId = existingPair.id;
       } else {
@@ -1089,31 +1345,62 @@ async function assignCourierToOpenDeliveryOrder(orderId, courierId, actorUserId,
   }
 
   if (!bidId) {
-    const { data: inserted, error: ierr } = await supabaseAdmin
+    const buildInsertPayload = (withInviterCols) => ({
+      order_id: orderId,
+      courier_id: courierId,
+      amount_cents: COMMUNITY_DELIVERY_PLACEHOLDER_CENTS,
+      eta_minutes: null,
+      mode,
+      status: "pending",
+      ...(invitationOnly && withInviterCols ? mergeCourierInvitationInviterFlags(null, role) : {}),
+    });
+    let { data: inserted, error: ierr } = await supabaseAdmin
       .from("courier_assignments")
-      .insert({
-        order_id: orderId,
-        courier_id: courierId,
-        amount_cents: COMMUNITY_DELIVERY_PLACEHOLDER_CENTS,
-        eta_minutes: null,
-        mode,
-        status: "pending",
-      })
+      .insert(buildInsertPayload(courierAssignmentInviterColumns))
       .select("id")
       .single();
+    if (ierr && isMissingCourierAssignmentInviterColumnsError(ierr)) {
+      courierAssignmentInviterColumns = false;
+      ({ data: inserted, error: ierr } = await supabaseAdmin
+        .from("courier_assignments")
+        .insert(buildInsertPayload(false))
+        .select("id")
+        .single());
+    }
 
     if (ierr?.code === "23505") {
-      const { data: race } = await supabaseAdmin
+      let { data: race, error: raceErr } = await supabaseAdmin
         .from("courier_assignments")
-        .select("id, status")
+        .select("id, status, invited_by_buyer, invited_by_seller")
         .eq("order_id", orderId)
         .eq("courier_id", courierId)
         .maybeSingle();
+      if (raceErr && isMissingCourierAssignmentInviterColumnsError(raceErr)) {
+        courierAssignmentInviterColumns = false;
+        ({ data: race, error: raceErr } = await supabaseAdmin
+          .from("courier_assignments")
+          .select("id, status")
+          .eq("order_id", orderId)
+          .eq("courier_id", courierId)
+          .maybeSingle());
+      }
+      if (raceErr) throw new AppError(500, raceErr.message);
       const rst = String(race?.status || "").toLowerCase();
       if (race?.id && rst === "pending") {
         bidId = race.id;
         if (invitationOnly) {
-          await supabaseAdmin.from("courier_assignments").update({ mode }).eq("id", bidId);
+          const invFlags = courierAssignmentInviterColumns ? mergeCourierInvitationInviterFlags(race, role) : {};
+          const { error: upRace } = await supabaseAdmin
+            .from("courier_assignments")
+            .update({ mode, ...invFlags })
+            .eq("id", bidId);
+          if (upRace && isMissingCourierAssignmentInviterColumnsError(upRace)) {
+            courierAssignmentInviterColumns = false;
+            const { error: upRace2 } = await supabaseAdmin.from("courier_assignments").update({ mode }).eq("id", bidId);
+            if (upRace2) throw new AppError(400, upRace2.message);
+          } else if (upRace) {
+            throw new AppError(400, upRace.message);
+          }
         }
       } else {
         throw new AppError(409, "Could not claim this delivery.");
@@ -1127,6 +1414,13 @@ async function assignCourierToOpenDeliveryOrder(orderId, courierId, actorUserId,
 
   if (invitationOnly) {
     const { data: freshOrder } = await supabaseAdmin.from("orders").select("*").eq("id", orderId).maybeSingle();
+    await notifyCourierInvitation({
+      courierUserId: courierId,
+      actorUserId,
+      orderId: String(orderId),
+      title: "Delivery invitation",
+      body: "You were invited to deliver an order in your community.",
+    });
     const listingMeta = await fetchListingMetaForOrder(freshOrder);
     return orderRowToApi(freshOrder, null, listingMeta);
   }
@@ -1302,8 +1596,13 @@ export const listListings = async (req, res, next) => {
     if (error?.code === "PGRST205") return res.json({ listings: [] });
     if (error) throw new AppError(500, error.message);
     const rows = data || [];
-    const listings = await enrichListingsWithSellerProfile(rows);
-    res.json({
+    let listings = await enrichListingsWithSellerProfile(rows);
+    const listingIdsForRatings = listings.map((l) => String(l?.id || "").trim()).filter(Boolean);
+    if (listingIdsForRatings.length > 0) {
+      const listingRatingMap = await aggregateListingOrderRatingStatsByListingId(listingIdsForRatings);
+      listings = mergeListingOrderReviewStatsIntoListings(listings, listingRatingMap);
+    }
+    const payload = {
       listings,
       page: {
         limit: pageLimit,
@@ -1311,6 +1610,41 @@ export const listListings = async (req, res, next) => {
         returned: listings.length,
         hasMore: listings.length === pageLimit,
       },
+    };
+    if (sellerFilter) {
+      const ratingMap = await aggregateSellerOrderRatingStatsBySellerId([sellerFilter]);
+      const rs = ratingMap.get(sellerFilter) || { sellerAvgRating: null, sellerReviewCount: 0 };
+      payload.sellerAvgRating = rs.sellerAvgRating;
+      payload.sellerReviewCount = rs.sellerReviewCount;
+    }
+    res.json(payload);
+  } catch (e) {
+    next(e);
+  }
+};
+
+/** GET — anonymous landing hero: totals from listings, profiles, communities. */
+export const getPublicMarketplaceStats = async (_req, res, next) => {
+  try {
+    const countExact = (table) =>
+      supabaseAdmin.from(table).select("*", { count: "exact", head: true });
+
+    const [listingsRes, profilesRes, communitiesRes] = await Promise.all([
+      supabaseAdmin.from("listings").select("*", { count: "exact", head: true }).eq("status", "active"),
+      countExact("profiles"),
+      countExact("communities"),
+    ]);
+
+    const countOrZero = (result) => {
+      if (result.error?.code === "PGRST205") return 0;
+      if (result.error) throw new AppError(500, result.error.message);
+      return Number(result.count) || 0;
+    };
+
+    res.json({
+      listingsCount: countOrZero(listingsRes),
+      accountsCount: countOrZero(profilesRes),
+      communitiesCount: countOrZero(communitiesRes),
     });
   } catch (e) {
     next(e);
@@ -1326,8 +1660,13 @@ export const getListing = async (req, res, next) => {
     if (error) throw new AppError(500, error.message);
     if (!data) throw new AppError(404, "Listing not found.");
     if (data.status !== "active" && data.seller_id !== req.user?.id) throw new AppError(404, "Listing not found.");
-    const [listing] = await enrichListingsWithSellerProfile([data]);
-    res.json({ listing: listing || listingRowToApi(data) });
+    let listingOut = (await enrichListingsWithSellerProfile([data]))[0] || listingRowToApi(data);
+    const lid = String(listingOut?.id || data?.id || "").trim();
+    if (lid) {
+      const listingRatingMap = await aggregateListingOrderRatingStatsByListingId([lid]);
+      [listingOut] = mergeListingOrderReviewStatsIntoListings([listingOut], listingRatingMap);
+    }
+    res.json({ listing: listingOut });
   } catch (e) {
     next(e);
   }
@@ -1573,9 +1912,39 @@ export const listMyListings = async (req, res, next) => {
       .select("*")
       .eq("seller_id", req.user.id)
       .order("created_at", { ascending: false });
-    if (error?.code === "PGRST205") return res.json({ listings: [] });
+    const ratingMap = await aggregateSellerOrderRatingStatsBySellerId([req.user.id]);
+    const rs = ratingMap.get(req.user.id) || { sellerAvgRating: null, sellerReviewCount: 0 };
+    if (error?.code === "PGRST205")
+      return res.json({
+        listings: [],
+        sellerAvgRating: rs.sellerAvgRating,
+        sellerReviewCount: rs.sellerReviewCount,
+      });
     if (error) throw new AppError(500, error.message);
-    res.json({ listings: (data || []).map(listingRowToApi) });
+    const mapped = (data || []).map(listingRowToApi);
+    const listingIdsForRatings = mapped.map((l) => String(l?.id || "").trim()).filter(Boolean);
+    const listingRatingMap =
+      listingIdsForRatings.length > 0 ? await aggregateListingOrderRatingStatsByListingId(listingIdsForRatings) : new Map();
+    const listingsWithRatings = mergeListingOrderReviewStatsIntoListings(mapped, listingRatingMap);
+    res.json({
+      listings: listingsWithRatings,
+      sellerAvgRating: rs.sellerAvgRating,
+      sellerReviewCount: rs.sellerReviewCount,
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+/** Lightweight buyer→seller star aggregate for Profile (order_reviews). */
+export const getMySellerRatings = async (req, res, next) => {
+  try {
+    const ratingMap = await aggregateSellerOrderRatingStatsBySellerId([req.user.id]);
+    const rs = ratingMap.get(req.user.id) || { sellerAvgRating: null, sellerReviewCount: 0 };
+    res.json({
+      sellerAvgRating: rs.sellerAvgRating,
+      sellerReviewCount: rs.sellerReviewCount,
+    });
   } catch (e) {
     next(e);
   }
@@ -1595,7 +1964,12 @@ export const listFavorites = async (req, res, next) => {
     const { data: listings, error: lerr } = await supabaseAdmin.from("listings").select("*").in("id", ids);
     if (lerr) throw new AppError(500, lerr.message);
     const byId = new Map((listings || []).map((l) => [l.id, l]));
-    const ordered = ids.map((id) => byId.get(id)).filter(Boolean).map(listingRowToApi);
+    const orderedRows = ids.map((id) => byId.get(id)).filter(Boolean);
+    const mapped = orderedRows.map(listingRowToApi);
+    const listingIdsForRatings = mapped.map((l) => String(l?.id || "").trim()).filter(Boolean);
+    const listingRatingMap =
+      listingIdsForRatings.length > 0 ? await aggregateListingOrderRatingStatsByListingId(listingIdsForRatings) : new Map();
+    const ordered = mergeListingOrderReviewStatsIntoListings(mapped, listingRatingMap);
     res.json({ favorites: ordered });
   } catch (e) {
     next(e);
@@ -1665,8 +2039,18 @@ async function enrichCartRowsForApi(rows) {
     const un = usernameById.get(sid);
     const sellerLabel = un ? `@${un}` : sid ? `Seller ${sid.slice(0, 8)}` : "Unknown seller";
     const meta = listingRowToApi(listing);
+    const ftRow = fulfillmentTypeForCartApiRow(row, listing);
+    const storedLs = String(row.line_signature ?? "").trim();
+    const lineSignature =
+      storedLs ||
+      computeCartLineSignature(
+        String(row.variant_signature ?? "").trim().slice(0, 512),
+        ftRow,
+        String(row.comment ?? "").trim().slice(0, 2000),
+      );
     out.push({
       listingId: String(row.listing_id),
+      lineSignature,
       variantSignature: String(row.variant_signature ?? ""),
       sellerId: sid,
       sellerLabel,
@@ -1677,7 +2061,7 @@ async function enrichCartRowsForApi(rows) {
       quantity: row.quantity,
       listingQuantity: Math.max(0, Number(listing.quantity) || 0),
       fulfillmentModes: Array.isArray(listing.fulfillment_modes) ? listing.fulfillment_modes.map(String) : [],
-      fulfillmentType: fulfillmentTypeForCartApiRow(row, listing),
+      fulfillmentType: ftRow,
       comment: String(row.comment || "").trim(),
       orderType: meta.orderType,
       processingTime: meta.processingTime,
@@ -1720,25 +2104,41 @@ export const addCartItem = async (req, res, next) => {
     if (listing.seller_id === req.user.id) throw new AppError(400, "You cannot add your own listing to the cart.");
     const maxStock = Math.max(0, Number(listing.quantity) || 0);
     if (maxStock < 1) throw new AppError(400, "Out of stock. Current stock: 0.");
-    const { data: existing, error: cErr } = await supabaseAdmin
+    const fulfillmentType = resolveBuyerFulfillmentForListing(listing, req.body.fulfillmentType);
+
+    const { data: candidates, error: cErr } = await supabaseAdmin
       .from("cart_items")
-      .select("quantity,comment")
+      .select("*")
       .eq("user_id", req.user.id)
       .eq("listing_id", listingId)
-      .eq("variant_signature", variantSig)
-      .maybeSingle();
+      .eq("variant_signature", variantSig);
     if (cErr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
     if (cErr) throw new AppError(500, cErr.message);
+
+    let existing = null;
+    for (const cand of candidates || []) {
+      const storedFt = fulfillmentTypeForCartApiRow(cand, listing);
+      if (storedFt !== fulfillmentType) continue;
+      const mergedTry = comment || String(cand.comment || "").trim();
+      const ls = computeCartLineSignature(variantSig, fulfillmentType, mergedTry);
+      if (ls === effectiveLineSignatureFromCartRow(cand, listing)) {
+        existing = cand;
+        break;
+      }
+    }
+
+    const mergedComment = comment || String(existing?.comment || "").trim();
+    const lineSig = computeCartLineSignature(variantSig, fulfillmentType, mergedComment);
     const prevQty = Number(existing?.quantity) || 0;
     const mergedQty = prevQty ? prevQty + addQty : addQty;
     const newQty = Math.min(mergedQty, maxStock);
     if (newQty < 1) throw new AppError(400, "Not enough stock.");
-    const mergedComment = comment || String(existing?.comment || "").trim();
-    const fulfillmentType = resolveBuyerFulfillmentForListing(listing, req.body.fulfillmentType);
+
     const now = new Date().toISOString();
     const rowPayload = {
       user_id: req.user.id,
       listing_id: listingId,
+      line_signature: lineSig,
       variant_signature: variantSig,
       fulfillment_type: fulfillmentType,
       quantity: newQty,
@@ -1751,8 +2151,7 @@ export const addCartItem = async (req, res, next) => {
       fulfillment_type: fulfillmentType,
       updated_at: now,
     };
-    // Explicit update/insert avoids PostgREST `upsert` requiring a matching UNIQUE/PK on exactly these columns
-    // (partial migrations or stale PK on `(user_id, listing_id)` otherwise trigger ON CONFLICT errors).
+
     let uerr = null;
     if (existing) {
       ({ error: uerr } = await supabaseAdmin
@@ -1760,7 +2159,7 @@ export const addCartItem = async (req, res, next) => {
         .update(updatePayload)
         .eq("user_id", req.user.id)
         .eq("listing_id", listingId)
-        .eq("variant_signature", variantSig));
+        .eq("line_signature", lineSig));
       if (isCartItemsMissingFulfillmentTypeColumnError(uerr)) {
         const { fulfillment_type: _omitFt, ...updateWithoutFt } = updatePayload;
         ({ error: uerr } = await supabaseAdmin
@@ -1768,18 +2167,44 @@ export const addCartItem = async (req, res, next) => {
           .update(updateWithoutFt)
           .eq("user_id", req.user.id)
           .eq("listing_id", listingId)
+          .eq("line_signature", lineSig));
+      }
+      if (isCartItemsMissingLineSignatureColumnError(uerr)) {
+        ({ error: uerr } = await supabaseAdmin
+          .from("cart_items")
+          .update(updatePayload)
+          .eq("user_id", req.user.id)
+          .eq("listing_id", listingId)
           .eq("variant_signature", variantSig));
+        if (isCartItemsMissingFulfillmentTypeColumnError(uerr)) {
+          const { fulfillment_type: _omitFtL, ...updateWithoutFtL } = updatePayload;
+          ({ error: uerr } = await supabaseAdmin
+            .from("cart_items")
+            .update(updateWithoutFtL)
+            .eq("user_id", req.user.id)
+            .eq("listing_id", listingId)
+            .eq("variant_signature", variantSig));
+        }
       }
     } else {
-      ({ error: uerr } = await supabaseAdmin.from("cart_items").insert(rowPayload));
+      let insertTry = rowPayload;
+      ({ error: uerr } = await supabaseAdmin.from("cart_items").insert(insertTry));
       if (isCartItemsMissingFulfillmentTypeColumnError(uerr)) {
-        const { fulfillment_type: _omitFt2, ...rowWithoutFt } = rowPayload;
-        ({ error: uerr } = await supabaseAdmin.from("cart_items").insert(rowWithoutFt));
+        const { fulfillment_type: _omitFt2, ...rowWithoutFt } = insertTry;
+        insertTry = rowWithoutFt;
+        ({ error: uerr } = await supabaseAdmin.from("cart_items").insert(insertTry));
       }
-      if (
-        uerr &&
-        /duplicate key|unique constraint/i.test(postgrestErrorText(uerr))
-      ) {
+      if (isCartItemsMissingLineSignatureColumnError(uerr)) {
+        const { line_signature: _omitLs, ...rowWithoutLs } = insertTry;
+        insertTry = rowWithoutLs;
+        ({ error: uerr } = await supabaseAdmin.from("cart_items").insert(insertTry));
+      }
+      if (isCartItemsMissingFulfillmentTypeColumnError(uerr)) {
+        const { fulfillment_type: _omitFt2b, ...rowWithoutFt2 } = insertTry;
+        insertTry = rowWithoutFt2;
+        ({ error: uerr } = await supabaseAdmin.from("cart_items").insert(insertTry));
+      }
+      if (uerr && /duplicate key|unique constraint/i.test(postgrestErrorText(uerr))) {
         let upErr = null;
         let updatedRows = null;
         ({ data: updatedRows, error: upErr } = await supabaseAdmin
@@ -1787,7 +2212,7 @@ export const addCartItem = async (req, res, next) => {
           .update(updatePayload)
           .eq("user_id", req.user.id)
           .eq("listing_id", listingId)
-          .eq("variant_signature", variantSig)
+          .eq("line_signature", lineSig)
           .select("listing_id"));
         if (isCartItemsMissingFulfillmentTypeColumnError(upErr)) {
           const { fulfillment_type: _omitFt3, ...updateWithoutFt } = updatePayload;
@@ -1796,14 +2221,33 @@ export const addCartItem = async (req, res, next) => {
             .update(updateWithoutFt)
             .eq("user_id", req.user.id)
             .eq("listing_id", listingId)
+            .eq("line_signature", lineSig)
+            .select("listing_id"));
+        }
+        if (isCartItemsMissingLineSignatureColumnError(upErr)) {
+          ({ data: updatedRows, error: upErr } = await supabaseAdmin
+            .from("cart_items")
+            .update(updatePayload)
+            .eq("user_id", req.user.id)
+            .eq("listing_id", listingId)
             .eq("variant_signature", variantSig)
             .select("listing_id"));
+          if (isCartItemsMissingFulfillmentTypeColumnError(upErr)) {
+            const { fulfillment_type: _omitFt3b, ...updateWithoutFtB } = updatePayload;
+            ({ data: updatedRows, error: upErr } = await supabaseAdmin
+              .from("cart_items")
+              .update(updateWithoutFtB)
+              .eq("user_id", req.user.id)
+              .eq("listing_id", listingId)
+              .eq("variant_signature", variantSig)
+              .select("listing_id"));
+          }
         }
         uerr = upErr;
         if (!upErr && (!updatedRows || updatedRows.length === 0)) {
           throw new AppError(
             400,
-            "Cart cannot store multiple variant lines for the same listing until the database is migrated. Run the SQL that adds `cart_items.variant_signature` and primary key (user_id, listing_id, variant_signature).",
+            "Cart line conflict. Apply migration `20260504130000_cart_items_line_signature.sql` or resolve duplicate cart rows for this listing.",
           );
         }
       }
@@ -1821,13 +2265,44 @@ export const addCartItem = async (req, res, next) => {
 export const removeCartItem = async (req, res, next) => {
   try {
     const listingId = String(req.params.listingId);
-    const variantSig = String(req.query.variantSignature ?? "").slice(0, 512);
-    const { error } = await supabaseAdmin
+    const lineSig = String(req.query.lineSignature ?? "").trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(lineSig)) {
+      throw new AppError(400, "Query parameter lineSignature (64-char hex) is required.");
+    }
+    let { error } = await supabaseAdmin
       .from("cart_items")
       .delete()
       .eq("user_id", req.user.id)
       .eq("listing_id", listingId)
-      .eq("variant_signature", variantSig);
+      .eq("line_signature", lineSig);
+    if (error?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
+    if (isCartItemsMissingLineSignatureColumnError(error)) {
+      const { data: listing, error: lerr } = await supabaseAdmin
+        .from("listings")
+        .select("fulfillment_modes")
+        .eq("id", listingId)
+        .maybeSingle();
+      if (lerr) throw new AppError(500, lerr.message);
+      const { data: cartRows, error: cerr } = await supabaseAdmin
+        .from("cart_items")
+        .select("*")
+        .eq("user_id", req.user.id)
+        .eq("listing_id", listingId);
+      if (cerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
+      if (cerr) throw new AppError(500, cerr.message);
+      const hit = (cartRows || []).find((r) => effectiveLineSignatureFromCartRow(r, listing) === lineSig);
+      if (!hit) {
+        res.status(204).send();
+        return;
+      }
+      const variantSig = String(hit.variant_signature ?? "").trim().slice(0, 512);
+      ({ error } = await supabaseAdmin
+        .from("cart_items")
+        .delete()
+        .eq("user_id", req.user.id)
+        .eq("listing_id", listingId)
+        .eq("variant_signature", variantSig));
+    }
     if (error?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
     if (error) throw new AppError(500, error.message);
     res.status(204).send();
@@ -1839,20 +2314,12 @@ export const removeCartItem = async (req, res, next) => {
 export const patchCartItem = async (req, res, next) => {
   try {
     const listingId = String(req.params.listingId);
-    const variantSig = String(req.query.variantSignature ?? "").slice(0, 512);
+    const oldLineSig = String(req.query.lineSignature ?? "").trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(oldLineSig)) {
+      throw new AppError(400, "Query parameter lineSignature (64-char hex) is required.");
+    }
     const newQty = req.body.quantity != null ? Number(req.body.quantity) : NaN;
     if (!Number.isFinite(newQty) || newQty < 1 || !Number.isInteger(newQty)) throw new AppError(400, "Invalid quantity.");
-
-    const { data: row, error: rerr } = await supabaseAdmin
-      .from("cart_items")
-      .select("listing_id")
-      .eq("user_id", req.user.id)
-      .eq("listing_id", listingId)
-      .eq("variant_signature", variantSig)
-      .maybeSingle();
-    if (rerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
-    if (rerr) throw new AppError(500, rerr.message);
-    if (!row) throw new AppError(404, "Not in cart.");
 
     const { data: listing, error: lerr } = await supabaseAdmin
       .from("listings")
@@ -1867,35 +2334,173 @@ export const patchCartItem = async (req, res, next) => {
     const capped = Math.min(newQty, maxStock);
     if (capped < 1) throw new AppError(400, "Invalid quantity.");
 
-    const patch = {
-      quantity: capped,
-      updated_at: new Date().toISOString(),
-    };
-    if (req.body.fulfillmentType != null && req.body.fulfillmentType !== "") {
-      patch.fulfillment_type = resolveBuyerFulfillmentForListing(listing, req.body.fulfillmentType);
-    }
-
-    let { error: uerr } = await supabaseAdmin
+    let useLegacyCartLineKey = false;
+    let row = null;
+    let rerr = null;
+    ({ data: row, error: rerr } = await supabaseAdmin
       .from("cart_items")
-      .update(patch)
+      .select("*")
       .eq("user_id", req.user.id)
       .eq("listing_id", listingId)
-      .eq("variant_signature", variantSig);
-    if (isCartItemsMissingFulfillmentTypeColumnError(uerr) && Object.prototype.hasOwnProperty.call(patch, "fulfillment_type")) {
-      const { fulfillment_type: _omitFt, ...patchWithoutFt } = patch;
-      ({ error: uerr } = await supabaseAdmin
+      .eq("line_signature", oldLineSig)
+      .maybeSingle());
+    if (isCartItemsMissingLineSignatureColumnError(rerr)) {
+      useLegacyCartLineKey = true;
+      const { data: cartRows, error: cerr } = await supabaseAdmin
         .from("cart_items")
-        .update(patchWithoutFt)
+        .select("*")
+        .eq("user_id", req.user.id)
+        .eq("listing_id", listingId);
+      if (cerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
+      if (cerr) throw new AppError(500, cerr.message);
+      row = (cartRows || []).find((r) => effectiveLineSignatureFromCartRow(r, listing) === oldLineSig) || null;
+    } else if (rerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
+    else if (rerr) throw new AppError(500, rerr.message);
+    if (!row) throw new AppError(404, "Not in cart.");
+
+    const variantSig = String(row.variant_signature ?? "").trim().slice(0, 512);
+    const comment = String(row.comment ?? "").trim().slice(0, 2000);
+    let fulfillmentType = fulfillmentTypeForCartApiRow(row, listing);
+    if (req.body.fulfillmentType != null && req.body.fulfillmentType !== "") {
+      fulfillmentType = resolveBuyerFulfillmentForListing(listing, req.body.fulfillmentType);
+    }
+
+    const newLineSig = computeCartLineSignature(variantSig, fulfillmentType, comment);
+    const now = new Date().toISOString();
+
+    const finishOk = async () => {
+      const { data: rows } = await supabaseAdmin.from("cart_items").select("*").eq("user_id", req.user.id);
+      const items = await enrichCartRowsForApi(rows || []);
+      res.json({ items });
+    };
+
+    const applyCartLineKeyEq = (q, lineHex) => {
+      if (useLegacyCartLineKey) return q.eq("variant_signature", variantSig);
+      return q.eq("line_signature", lineHex);
+    };
+
+    if (newLineSig === oldLineSig) {
+      const patch = {
+        quantity: capped,
+        fulfillment_type: fulfillmentType,
+        updated_at: now,
+      };
+      let { error: uerr } = await applyCartLineKeyEq(
+        supabaseAdmin.from("cart_items").update(patch).eq("user_id", req.user.id).eq("listing_id", listingId),
+        oldLineSig,
+      );
+      if (isCartItemsMissingFulfillmentTypeColumnError(uerr) && Object.prototype.hasOwnProperty.call(patch, "fulfillment_type")) {
+        const { fulfillment_type: _omitFt, ...patchWithoutFt } = patch;
+        ({ error: uerr } = await applyCartLineKeyEq(
+          supabaseAdmin
+            .from("cart_items")
+            .update(patchWithoutFt)
+            .eq("user_id", req.user.id)
+            .eq("listing_id", listingId),
+          oldLineSig,
+        ));
+      }
+      if (uerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
+      if (uerr) throw new AppError(400, uerr.message);
+      await finishOk();
+      return;
+    }
+
+    let dest = null;
+    if (useLegacyCartLineKey) {
+      const { data: cartForDest, error: dErr } = await supabaseAdmin
+        .from("cart_items")
+        .select("*")
+        .eq("user_id", req.user.id)
+        .eq("listing_id", listingId);
+      if (dErr) throw new AppError(500, dErr.message);
+      dest =
+        (cartForDest || []).find((r) => effectiveLineSignatureFromCartRow(r, listing) === newLineSig) || null;
+    } else {
+      const r = await supabaseAdmin
+        .from("cart_items")
+        .select("*")
         .eq("user_id", req.user.id)
         .eq("listing_id", listingId)
-        .eq("variant_signature", variantSig));
+        .eq("line_signature", newLineSig)
+        .maybeSingle();
+      dest = r.data;
+    }
+
+    const destIsAnotherLine =
+      !!dest &&
+      (useLegacyCartLineKey
+        ? effectiveLineSignatureFromCartRow(dest, listing) !== oldLineSig
+        : String(dest.line_signature || "").trim() !== oldLineSig);
+
+    if (dest && destIsAnotherLine) {
+      const mergedQty = Math.min(maxStock, Number(dest.quantity) + capped);
+      let { error: delErr } = await applyCartLineKeyEq(
+        supabaseAdmin.from("cart_items").delete().eq("user_id", req.user.id).eq("listing_id", listingId),
+        oldLineSig,
+      );
+      if (delErr) throw new AppError(400, delErr.message);
+
+      const mergePatch = {
+        quantity: mergedQty,
+        fulfillment_type: fulfillmentType,
+        updated_at: now,
+      };
+      let qUp = supabaseAdmin
+        .from("cart_items")
+        .update(mergePatch)
+        .eq("user_id", req.user.id)
+        .eq("listing_id", listingId);
+      if (useLegacyCartLineKey) {
+        qUp = qUp.eq("variant_signature", String(dest.variant_signature ?? "").trim().slice(0, 512));
+      } else {
+        qUp = qUp.eq("line_signature", newLineSig);
+      }
+      let { error: upErr } = await qUp;
+      if (isCartItemsMissingFulfillmentTypeColumnError(upErr) && Object.prototype.hasOwnProperty.call(mergePatch, "fulfillment_type")) {
+        const { fulfillment_type: _omitFt2, ...mergeWithoutFt } = mergePatch;
+        let qUp2 = supabaseAdmin
+          .from("cart_items")
+          .update(mergeWithoutFt)
+          .eq("user_id", req.user.id)
+          .eq("listing_id", listingId);
+        if (useLegacyCartLineKey) {
+          qUp2 = qUp2.eq("variant_signature", String(dest.variant_signature ?? "").trim().slice(0, 512));
+        } else {
+          qUp2 = qUp2.eq("line_signature", newLineSig);
+        }
+        ({ error: upErr } = await qUp2);
+      }
+      if (upErr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
+      if (upErr) throw new AppError(400, upErr.message);
+      await finishOk();
+      return;
+    }
+
+    const movePatch = {
+      ...(useLegacyCartLineKey ? {} : { line_signature: newLineSig }),
+      fulfillment_type: fulfillmentType,
+      quantity: capped,
+      updated_at: now,
+    };
+    let { error: uerr } = await applyCartLineKeyEq(
+      supabaseAdmin.from("cart_items").update(movePatch).eq("user_id", req.user.id).eq("listing_id", listingId),
+      oldLineSig,
+    );
+    if (isCartItemsMissingFulfillmentTypeColumnError(uerr) && Object.prototype.hasOwnProperty.call(movePatch, "fulfillment_type")) {
+      const { fulfillment_type: _omitFt3, ...moveWithoutFt } = movePatch;
+      ({ error: uerr } = await applyCartLineKeyEq(
+        supabaseAdmin
+          .from("cart_items")
+          .update(moveWithoutFt)
+          .eq("user_id", req.user.id)
+          .eq("listing_id", listingId),
+        oldLineSig,
+      ));
     }
     if (uerr?.code === "PGRST205") throw new AppError(500, "Cart table missing.");
     if (uerr) throw new AppError(400, uerr.message);
-
-    const { data: rows } = await supabaseAdmin.from("cart_items").select("*").eq("user_id", req.user.id);
-    const items = await enrichCartRowsForApi(rows || []);
-    res.json({ items });
+    await finishOk();
   } catch (e) {
     next(e);
   }
@@ -1927,9 +2532,11 @@ export const createOrder = async (req, res, next) => {
       .eq("buyer_id", req.user.id)
       .eq("status", initialStatus);
     if (existingErr) throw new AppError(500, existingErr.message);
-    const matchingPlaced = (existingPlacedOrders || []).filter(
-      (o) => effectiveVariantSignatureFromOrderRow(o) === targetVariantSig,
-    );
+    const matchingPlaced = (existingPlacedOrders || []).filter((o) => {
+      if (effectiveVariantSignatureFromOrderRow(o) !== targetVariantSig) return false;
+      if (String(o?.fulfillment_type ?? "").trim() !== fulfillmentType) return false;
+      return String(o?.buyer_comment ?? "").trim() === buyerComment;
+    });
     let preferredRowId = null;
     const newBuyerCourier =
       fulfillmentType === "delivery" ? parseOptionalCourierContributionCents(req.body.buyerCourierContributionCents) ?? 0 : 0;
@@ -2022,6 +2629,17 @@ export const createOrder = async (req, res, next) => {
       preferredId: preferredRowId || null,
     });
     if (!finalized) throw new AppError(500, "Could not finalize order.");
+    await notifyUserOrderEvent({
+      recipientUserId: finalized.seller_id,
+      actorUserId: req.user.id,
+      orderId: finalized.id,
+      recipientRole: "seller",
+      title: "New order",
+      body: listing?.title
+        ? `A buyer placed an order for “${String(listing.title).trim().slice(0, 120)}”.`
+        : "A buyer placed a new order.",
+      orderStatusForTab: finalized.status,
+    });
     res.status(201).json({ order: orderRowToApi(finalized, null, listing) });
   } catch (e) {
     next(e);
@@ -2041,11 +2659,22 @@ const consolidateBuyerListingStatusOrders = async ({ buyerId, listingId, status,
   const items = Array.isArray(rows) ? rows : [];
   if (items.length === 0) return null;
 
+  /** Never merge pipeline / terminal orders — only duplicate `placed` rows (concurrent checkout). */
+  if (String(status || "").toLowerCase() !== "placed") {
+    const pref = preferredId ? items.find((r) => String(r.id) === String(preferredId)) : null;
+    return pref ?? items[0];
+  }
+
   const preferred = preferredId ? items.find((r) => String(r.id) === String(preferredId)) : null;
-  const anchorSig = preferred
-    ? effectiveVariantSignatureFromOrderRow(preferred)
-    : effectiveVariantSignatureFromOrderRow(items[0]);
-  const scoped = items.filter((r) => effectiveVariantSignatureFromOrderRow(r) === anchorSig);
+  const base = preferred || items[0];
+  const anchorSig = effectiveVariantSignatureFromOrderRow(base);
+  const anchorFulfillment = String(base?.fulfillment_type ?? "").trim();
+  const anchorComment = String(base?.buyer_comment ?? "").trim();
+  const scoped = items.filter((r) => {
+    if (effectiveVariantSignatureFromOrderRow(r) !== anchorSig) return false;
+    if (String(r?.fulfillment_type ?? "").trim() !== anchorFulfillment) return false;
+    return String(r?.buyer_comment ?? "").trim() === anchorComment;
+  });
   if (scoped.length === 0) return null;
   if (scoped.length === 1) return scoped[0];
 
@@ -2113,13 +2742,13 @@ export const listOrders = async (req, res, next) => {
       const { data: revs, error: rerr } = await supabaseAdmin.from("order_reviews").select("*").in("order_id", orderIds);
       if (!rerr && Array.isArray(revs)) {
         for (const r of revs) {
-          if (r?.order_id) reviewByOrderId.set(r.order_id, r);
+          if (r?.order_id) reviewByOrderId.set(String(r.order_id), r);
         }
       }
       const { data: crevs, error: cerr } = await supabaseAdmin.from("courier_delivery_reviews").select("*").in("order_id", orderIds);
       if (!cerr && Array.isArray(crevs)) {
         for (const r of crevs) {
-          if (r?.order_id) courierReviewByOrderId.set(r.order_id, r);
+          if (r?.order_id) courierReviewByOrderId.set(String(r.order_id), r);
         }
       }
     }
@@ -2136,15 +2765,45 @@ export const listOrders = async (req, res, next) => {
         }
       }
     }
+    const courierOrderIds =
+      orderIds.length > 0 ? await orderIdsWithAcceptedCommunityCourier(orderIds) : new Set();
+
+    let ratingExtrasByOrderId = new Map();
+    if (role === "buyer" && orderIds.length > 0) {
+      const { courierIdByOrderId } = await buyerCourierMapsForList(orderIds);
+      for (const row of rows) {
+        const oid = String(row.id || "").trim();
+        const hasCc = courierOrderIds.has(oid);
+        const cid = hasCc ? courierIdByOrderId.get(oid) || "" : "";
+        ratingExtrasByOrderId.set(
+          oid,
+          resolveBuyerReviewEligibilityForOrder(row, {
+            hasCommunityCourierDelivery: hasCc,
+            courierId: cid,
+          }),
+        );
+      }
+    }
+
     res.json({
-      orders: rows.map((row) =>
-        orderRowToApi(
+      orders: rows.map((row) => {
+        const oid = String(row.id || "").trim();
+        const extra = ratingExtrasByOrderId.get(oid);
+        return orderRowToApi(
           row,
-          reviewByOrderId.get(row.id) || null,
+          reviewByOrderId.get(String(row.id)) || null,
           listingById.get(String(row.listing_id)) || null,
-          courierReviewByOrderId.get(row.id) || null,
-        ),
-      ),
+          courierReviewByOrderId.get(String(row.id)) || null,
+          {
+            hasCommunityCourierDelivery: courierOrderIds.has(String(row.id)),
+            ...(role === "buyer" && extra
+              ? { buyerMayRateSeller: extra.buyerMayRateSeller, buyerMayRateCourier: extra.buyerMayRateCourier }
+              : role === "seller"
+                ? { buyerMayRateSeller: false, buyerMayRateCourier: false }
+                : {}),
+          },
+        );
+      }),
       page: {
         limit: pageLimit,
         offset: pageOffset,
@@ -2157,13 +2816,42 @@ export const listOrders = async (req, res, next) => {
   }
 };
 
+function parseOrderReviewStarBody(value) {
+  if (value === undefined || value === null || value === "") return { set: false, n: null };
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n) || n < 1 || n > 5) return { set: true, n: null };
+  return { set: true, n };
+}
+
 export const upsertOrderReview = async (req, res, next) => {
   try {
+    const REVIEW_EDIT_WINDOW_MS = 72 * 60 * 60 * 1000;
+    const nowMs = Date.now();
     const { id } = req.params;
-    const rating = Number(req.body.rating);
-    const reviewTextRaw = req.body.reviewText != null ? String(req.body.reviewText) : "";
-    const reviewText = reviewTextRaw.trim().slice(0, 2000);
-    if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new AppError(400, "Rating must be between 1 and 5.");
+    const b = req.body && typeof req.body === "object" ? req.body : {};
+    const pr = parseOrderReviewStarBody(b.productRating ?? b.product_rating);
+    const sr = parseOrderReviewStarBody(b.sellerRating ?? b.seller_rating);
+    const productTextIn =
+      Object.prototype.hasOwnProperty.call(b, "productReviewText") ||
+      Object.prototype.hasOwnProperty.call(b, "product_review_text");
+    const sellerTextIn =
+      Object.prototype.hasOwnProperty.call(b, "sellerReviewText") ||
+      Object.prototype.hasOwnProperty.call(b, "seller_review_text");
+    const productReviewText = productTextIn
+      ? String(b.productReviewText ?? b.product_review_text ?? "").trim().slice(0, 2000)
+      : undefined;
+    const sellerReviewText = sellerTextIn
+      ? String(b.sellerReviewText ?? b.seller_review_text ?? "").trim().slice(0, 2000)
+      : undefined;
+
+    if (pr.set && pr.n === null) throw new AppError(400, "Product rating must be between 1 and 5.");
+    if (sr.set && sr.n === null) throw new AppError(400, "Seller rating must be between 1 and 5.");
+
+    const touchesRating = pr.set || sr.set;
+    const touchesText = productTextIn || sellerTextIn;
+    if (!touchesRating && !touchesText) {
+      throw new AppError(400, "Provide a product or seller rating, or update review text.");
+    }
 
     const { data: order, error } = await supabaseAdmin.from("orders").select("*").eq("id", id).maybeSingle();
     if (error) throw new AppError(500, error.message);
@@ -2172,16 +2860,96 @@ export const upsertOrderReview = async (req, res, next) => {
     if (order.status !== "completed") throw new AppError(400, "You can only review completed orders.");
 
     const now = new Date().toISOString();
-    const { data: existing, error: exErr } = await supabaseAdmin.from("order_reviews").select("id").eq("order_id", id).maybeSingle();
-    if (isSchemaMissingError(exErr)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
+    const { data: existing, error: exErr } = await supabaseAdmin.from("order_reviews").select("*").eq("order_id", id).maybeSingle();
+    if (isOrderReviewsSchemaError(exErr)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
     if (exErr) throw new AppError(500, exErr.message);
+
+    if (!existing?.id && !pr.set && !sr.set) {
+      throw new AppError(400, "Submit at least a product or seller star rating.");
+    }
+
+    const touchesProductSection = pr.set || productTextIn;
+    const touchesSellerSection = sr.set || sellerTextIn;
+    const productStartedAtRaw = existing?.product_rating_started_at ?? existing?.created_at ?? null;
+    const sellerStartedAtRaw = existing?.seller_rating_started_at ?? existing?.created_at ?? null;
+    const productDeadlineMs = existing?.product_rating != null ? new Date(productStartedAtRaw).getTime() + REVIEW_EDIT_WINDOW_MS : NaN;
+    const sellerDeadlineMs = existing?.seller_rating != null ? new Date(sellerStartedAtRaw).getTime() + REVIEW_EDIT_WINDOW_MS : NaN;
+    if (
+      existing?.id &&
+      existing?.product_rating != null &&
+      touchesProductSection &&
+      Number.isFinite(productDeadlineMs) &&
+      nowMs > productDeadlineMs
+    ) {
+      throw new AppError(400, "Product rating edit window expired (72 hours).");
+    }
+    if (
+      existing?.id &&
+      existing?.seller_rating != null &&
+      touchesSellerSection &&
+      Number.isFinite(sellerDeadlineMs) &&
+      nowMs > sellerDeadlineMs
+    ) {
+      throw new AppError(400, "Seller rating edit window expired (72 hours).");
+    }
+
+    const nextProductRating = existing?.id
+      ? pr.set
+        ? pr.n
+        : existing.product_rating ?? null
+      : pr.set
+        ? pr.n
+        : null;
+    const nextSellerRating = existing?.id ? (sr.set ? sr.n : existing.seller_rating ?? null) : sr.set ? sr.n : null;
+
+    const nextProductText = existing?.id
+      ? productTextIn
+        ? productReviewText || null
+        : existing.product_review_text ?? null
+      : productTextIn
+        ? productReviewText || null
+        : null;
+    const nextSellerText = existing?.id
+      ? sellerTextIn
+        ? sellerReviewText || null
+        : existing.seller_review_text ?? null
+      : sellerTextIn
+        ? sellerReviewText || null
+        : null;
+
+    if (nextProductRating == null && nextSellerRating == null) {
+      throw new AppError(400, "At least one of product or seller ratings must be set.");
+    }
+    const nextProductRatingStartedAt = existing?.id
+      ? existing.product_rating != null
+        ? existing.product_rating_started_at ?? existing.created_at ?? now
+        : nextProductRating != null
+          ? now
+          : null
+      : nextProductRating != null
+        ? now
+        : null;
+    const nextSellerRatingStartedAt = existing?.id
+      ? existing.seller_rating != null
+        ? existing.seller_rating_started_at ?? existing.created_at ?? now
+        : nextSellerRating != null
+          ? now
+          : null
+      : nextSellerRating != null
+        ? now
+        : null;
+
     let reviewRow;
     if (existing?.id) {
       const { data: updated, error: uerr } = await supabaseAdmin
         .from("order_reviews")
         .update({
-          rating,
-          review_text: reviewText || null,
+          product_rating: nextProductRating,
+          seller_rating: nextSellerRating,
+          product_review_text: nextProductText,
+          seller_review_text: nextSellerText,
+          product_rating_started_at: nextProductRatingStartedAt,
+          seller_rating_started_at: nextSellerRatingStartedAt,
           updated_at: now,
           buyer_id: order.buyer_id,
           seller_id: order.seller_id,
@@ -2190,7 +2958,7 @@ export const upsertOrderReview = async (req, res, next) => {
         .eq("order_id", id)
         .select("*")
         .single();
-      if (isSchemaMissingError(uerr)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
+      if (isOrderReviewsSchemaError(uerr)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
       if (uerr) throw new AppError(500, uerr.message);
       reviewRow = updated;
     } else {
@@ -2201,18 +2969,45 @@ export const upsertOrderReview = async (req, res, next) => {
           buyer_id: order.buyer_id,
           seller_id: order.seller_id,
           listing_id: order.listing_id,
-          rating,
-          review_text: reviewText || null,
+          product_rating: nextProductRating,
+          seller_rating: nextSellerRating,
+          product_review_text: nextProductText,
+          seller_review_text: nextSellerText,
+          product_rating_started_at: nextProductRatingStartedAt,
+          seller_rating_started_at: nextSellerRatingStartedAt,
           created_at: now,
           updated_at: now,
         })
         .select("*")
         .single();
-      if (isSchemaMissingError(ierr)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
+      if (isOrderReviewsSchemaError(ierr)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
       if (ierr) throw new AppError(500, ierr.message);
       reviewRow = inserted;
     }
-    res.json({ order: orderRowToApi(order, reviewRow), review: buyerReviewRowToApi(reviewRow) });
+
+    const notifySeller = sr.set;
+    if (notifySeller) {
+      const hadSeller = existing?.seller_rating != null;
+      await notifyUserOrderEvent({
+        recipientUserId: order.seller_id,
+        actorUserId: req.user.id,
+        orderId: id,
+        recipientRole: "seller",
+        title: "New buyer feedback",
+        body: hadSeller ? "A buyer updated their seller review on your order." : "A buyer left seller feedback on your order.",
+        orderStatusForTab: order.status,
+      });
+    }
+    const hasCcDelivery = (await orderIdsWithAcceptedCommunityCourier([String(order.id)])).has(String(order.id));
+    const elig = await buyerRatingEligibilityExtras(order, hasCcDelivery);
+    res.json({
+      order: orderRowToApi(order, reviewRow, null, null, {
+        hasCommunityCourierDelivery: hasCcDelivery,
+        buyerMayRateSeller: elig.buyerMayRateSeller,
+        buyerMayRateCourier: elig.buyerMayRateCourier,
+      }),
+      review: buyerReviewRowToApi(reviewRow),
+    });
   } catch (e) {
     next(e);
   }
@@ -2274,6 +3069,7 @@ async function resolveAcceptedCourierAssignmentForReview(order) {
 
 export const upsertCourierDeliveryReview = async (req, res, next) => {
   try {
+    const REVIEW_EDIT_WINDOW_MS = 72 * 60 * 60 * 1000;
     const { id } = req.params;
     const rating = Number(req.body.rating);
     const tags = normalizeCourierDeliveryReviewTags(req.body.tags);
@@ -2294,6 +3090,9 @@ export const upsertCourierDeliveryReview = async (req, res, next) => {
     }
 
     const courierId = assignment.courier_id;
+    if (String(courierId) === String(order.seller_id)) {
+      throw new AppError(400, "When the seller delivers the order themselves, there is no separate courier to rate.");
+    }
     const now = new Date().toISOString();
 
     const { data: existing, error: exErr } = await supabaseAdmin
@@ -2303,6 +3102,13 @@ export const upsertCourierDeliveryReview = async (req, res, next) => {
       .maybeSingle();
     if (isSchemaMissingError(exErr)) throw new AppError(500, `Courier reviews are not available (${COURIER_DELIVERY_REVIEWS_SETUP_HINT})`);
     if (exErr) throw new AppError(500, exErr.message);
+    if (existing?.id && existing.rating != null) {
+      const startedAt = existing.rating_started_at ?? existing.created_at ?? null;
+      const deadlineMs = new Date(startedAt).getTime() + REVIEW_EDIT_WINDOW_MS;
+      if (Number.isFinite(deadlineMs) && Date.now() > deadlineMs) {
+        throw new AppError(400, "Courier rating edit window expired (72 hours).");
+      }
+    }
 
     let abuseReportedAt = existing?.abuse_reported_at ?? null;
     if (abuseNote) {
@@ -2318,6 +3124,7 @@ export const upsertCourierDeliveryReview = async (req, res, next) => {
           tags,
           abuse_note: abuseNote || null,
           abuse_reported_at: abuseReportedAt,
+          rating_started_at: existing.rating_started_at ?? existing.created_at ?? now,
           updated_at: now,
         })
         .eq("id", existing.id)
@@ -2338,20 +3145,41 @@ export const upsertCourierDeliveryReview = async (req, res, next) => {
           tags,
           abuse_note: abuseNote || null,
           abuse_reported_at: abuseReportedAt,
+          rating_started_at: now,
           created_at: now,
           updated_at: now,
         })
         .select("*")
         .single();
       if (isSchemaMissingError(ierr)) throw new AppError(500, `Courier reviews are not available (${COURIER_DELIVERY_REVIEWS_SETUP_HINT})`);
-      if (ierr) throw new AppError(500, ierr.message);
+      if (ierr) {
+        const code = String(ierr.code || "");
+        const msg = String(ierr.message || "");
+        if (code === "23505" || /duplicate key|unique constraint/i.test(msg)) {
+          throw new AppError(400, "You have already rated this courier.");
+        }
+        throw new AppError(500, ierr.message);
+      }
       reviewRow = inserted;
     }
 
     const { data: revRow } = await supabaseAdmin.from("order_reviews").select("*").eq("order_id", id).maybeSingle();
     const listingMeta = await fetchListingMetaForOrder(order);
+    await notifyCourierDeliveryFeedback({
+      courierUserId: courierId,
+      actorUserId: req.user.id,
+      orderId: id,
+      title: "New delivery feedback",
+      body: existing?.id ? "A buyer updated their delivery rating." : "A buyer rated your delivery.",
+    });
+    const hasCcDelivery = true;
+    const elig = await buyerRatingEligibilityExtras(order, hasCcDelivery);
     res.json({
-      order: orderRowToApi(order, revRow || null, listingMeta, reviewRow),
+      order: orderRowToApi(order, revRow || null, listingMeta, reviewRow, {
+        hasCommunityCourierDelivery: hasCcDelivery,
+        buyerMayRateSeller: elig.buyerMayRateSeller,
+        buyerMayRateCourier: elig.buyerMayRateCourier,
+      }),
       courierReview: buyerCourierReviewRowToApi(reviewRow),
     });
   } catch (e) {
@@ -2514,11 +3342,11 @@ export const patchOrder = async (req, res, next) => {
         }
       }
     }
+    /** Only collapse duplicate pending (`placed`) rows — never merge separate completed purchases of the same listing. */
     const shouldConsolidate =
       updated?.buyer_id &&
       updated?.listing_id &&
-      updated?.status &&
-      (transition !== "buyer_ack_receipt" || updated.status === "completed");
+      String(updated?.status || "").toLowerCase() === "placed";
     const consolidated = shouldConsolidate
       ? await consolidateBuyerListingStatusOrders({
           buyerId: updated.buyer_id,
@@ -2535,6 +3363,93 @@ export const patchOrder = async (req, res, next) => {
         await clearCourierBusyForOrderRow(finalOrder);
       }
     }
+
+    const stFinal = String(finalOrder?.status || "");
+    const oid = String(finalOrder.id);
+    if (transition === "seller_accept") {
+      await notifyUserOrderEvent({
+        recipientUserId: finalOrder.buyer_id,
+        actorUserId: req.user.id,
+        orderId: oid,
+        recipientRole: "buyer",
+        title: "Order in progress",
+        body: "The seller accepted your order — it’s now being prepared.",
+        orderStatusForTab: stFinal,
+      });
+    } else if (transition === "mark_ready_for_pickup") {
+      await notifyUserOrderEvent({
+        recipientUserId: finalOrder.buyer_id,
+        actorUserId: req.user.id,
+        orderId: oid,
+        recipientRole: "buyer",
+        title: "Ready for pickup",
+        body: "Your order is ready for pickup.",
+        orderStatusForTab: stFinal,
+      });
+    } else if (transition === "mark_pickup_done") {
+      await notifyUserOrderEvent({
+        recipientUserId: finalOrder.buyer_id,
+        actorUserId: req.user.id,
+        orderId: oid,
+        recipientRole: "buyer",
+        title: "Order completed",
+        body: "The seller marked your pickup order as completed.",
+        orderStatusForTab: stFinal,
+      });
+    } else if (transition === "buyer_ack_receipt") {
+      await notifyUserOrderEvent({
+        recipientUserId: finalOrder.seller_id,
+        actorUserId: req.user.id,
+        orderId: oid,
+        recipientRole: "seller",
+        title: "Pickup confirmed",
+        body: "The buyer confirmed they picked up the order.",
+        orderStatusForTab: stFinal,
+      });
+    } else if (transition === "cancel") {
+      const recipientUserId = isBuyer ? finalOrder.seller_id : finalOrder.buyer_id;
+      const recipientRole = isBuyer ? "seller" : "buyer";
+      await notifyUserOrderEvent({
+        recipientUserId,
+        actorUserId: req.user.id,
+        orderId: oid,
+        recipientRole,
+        title: "Order cancelled",
+        body: isBuyer ? "The buyer cancelled this order." : "The seller cancelled this order.",
+        orderStatusForTab: stFinal,
+      });
+    } else if (transition === "seller_self_out_for_delivery") {
+      await notifyUserOrderEvent({
+        recipientUserId: finalOrder.buyer_id,
+        actorUserId: req.user.id,
+        orderId: oid,
+        recipientRole: "buyer",
+        title: "Out for delivery",
+        body: "The seller is delivering your order.",
+        orderStatusForTab: stFinal,
+      });
+    } else if (transition === "mark_out_for_delivery") {
+      await notifyUserOrderEvent({
+        recipientUserId: finalOrder.buyer_id,
+        actorUserId: req.user.id,
+        orderId: oid,
+        recipientRole: "buyer",
+        title: "Out for delivery",
+        body: "Your order is on the way.",
+        orderStatusForTab: stFinal,
+      });
+    } else if (transition === "mark_delivered") {
+      await notifyUserOrderEvent({
+        recipientUserId: finalOrder.seller_id,
+        actorUserId: req.user.id,
+        orderId: oid,
+        recipientRole: "seller",
+        title: "Delivery completed",
+        body: "The buyer marked the order as received.",
+        orderStatusForTab: stFinal,
+      });
+    }
+
     res.json({ order: orderRowToApi(finalOrder) });
   } catch (e) {
     next(e);
@@ -2615,11 +3530,20 @@ export const listCourierInvitations = async (req, res, next) => {
     const myCommunityId = meProf?.community_id ? String(meProf.community_id) : null;
     if (!myCommunityId) return res.json({ invitations: [] });
 
-    const { data: assignments, error: aerr } = await supabaseAdmin
+    let assignmentRowsInviterCols = true;
+    let { data: assignments, error: aerr } = await supabaseAdmin
       .from("courier_assignments")
-      .select("id, order_id, mode, created_at")
+      .select("id, order_id, mode, created_at, invited_by_buyer, invited_by_seller")
       .eq("courier_id", userId)
       .eq("status", "pending");
+    if (aerr && isMissingCourierAssignmentInviterColumnsError(aerr)) {
+      assignmentRowsInviterCols = false;
+      ({ data: assignments, error: aerr } = await supabaseAdmin
+        .from("courier_assignments")
+        .select("id, order_id, mode, created_at")
+        .eq("courier_id", userId)
+        .eq("status", "pending"));
+    }
     if (aerr?.code === "PGRST205") return res.json({ invitations: [] });
     if (aerr) throw new AppError(500, aerr.message);
     const rows = assignments || [];
@@ -2656,7 +3580,7 @@ export const listCourierInvitations = async (req, res, next) => {
     };
 
     const minCourier = openDeliveryMinCourierCents();
-    /** @type {{ assignmentId: string, order: ReturnType<typeof orderRowToApi>, assignmentMode: string | null }[]} */
+    /** @type {{ assignmentId: string, order: ReturnType<typeof orderRowToApi>, assignmentMode: string | null, invitedByBuyer: boolean, invitedBySeller: boolean }[]} */
     const invitations = [];
     for (const a of rows) {
       const ord = orderById.get(String(a.order_id));
@@ -2671,6 +3595,8 @@ export const listCourierInvitations = async (req, res, next) => {
         assignmentId: String(a.id),
         order: orderRowToApi(ord, null, meta),
         assignmentMode,
+        invitedByBuyer: assignmentRowsInviterCols && Boolean(a.invited_by_buyer),
+        invitedBySeller: assignmentRowsInviterCols && Boolean(a.invited_by_seller),
       });
     }
 
@@ -2808,6 +3734,156 @@ export const getCourierModes = async (req, res, next) => {
   }
 };
 
+/**
+ * Aggregates buyer star ratings from `courier_delivery_reviews` (1–5 per completed run).
+ * @param {string[]} courierIds
+ * @returns {Promise<Map<string, { courierAvgRating: number | null, courierReviewCount: number }>>}
+ */
+async function aggregateCourierDeliveryRatingStatsByCourierId(courierIds) {
+  /** @type {Map<string, { courierAvgRating: number | null, courierReviewCount: number }>} */
+  const out = new Map();
+  const uniq = [...new Set(courierIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  for (const id of uniq) {
+    out.set(id, { courierAvgRating: null, courierReviewCount: 0 });
+  }
+  if (uniq.length === 0) return out;
+  const { data: revs, error } = await supabaseAdmin
+    .from("courier_delivery_reviews")
+    .select("courier_id, rating")
+    .in("courier_id", uniq);
+  if (error) {
+    if (isSchemaMissingError(error)) return out;
+    return out;
+  }
+  /** @type {Map<string, { sum: number, n: number }>} */
+  const sumN = new Map();
+  for (const r of revs || []) {
+    const cid = String(r.courier_id || "");
+    if (!cid) continue;
+    const rawR = Number(r.rating);
+    if (!Number.isFinite(rawR)) continue;
+    const rt = Math.max(1, Math.min(5, Math.round(rawR)));
+    const x = sumN.get(cid) || { sum: 0, n: 0 };
+    x.sum += rt;
+    x.n += 1;
+    sumN.set(cid, x);
+  }
+  for (const cid of uniq) {
+    const x = sumN.get(cid);
+    if (!x || x.n === 0) out.set(cid, { courierAvgRating: null, courierReviewCount: 0 });
+    else
+      out.set(cid, {
+        courierAvgRating: Math.round((x.sum / x.n) * 10) / 10,
+        courierReviewCount: x.n,
+      });
+  }
+  return out;
+}
+
+/**
+ * Aggregates buyer star ratings from `order_reviews` (1–5 per completed order).
+ * @param {string[]} sellerIds
+ * @returns {Promise<Map<string, { sellerAvgRating: number | null, sellerReviewCount: number }>>}
+ */
+async function aggregateSellerOrderRatingStatsBySellerId(sellerIds) {
+  /** @type {Map<string, { sellerAvgRating: number | null, sellerReviewCount: number }>} */
+  const out = new Map();
+  const uniq = [...new Set(sellerIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  for (const id of uniq) {
+    out.set(id, { sellerAvgRating: null, sellerReviewCount: 0 });
+  }
+  if (uniq.length === 0) return out;
+  const { data: revs, error } = await supabaseAdmin
+    .from("order_reviews")
+    .select("seller_id, seller_rating")
+    .in("seller_id", uniq);
+  if (error) {
+    if (isSchemaMissingError(error)) return out;
+    return out;
+  }
+  /** @type {Map<string, { sum: number, n: number }>} */
+  const sumN = new Map();
+  for (const r of revs || []) {
+    const sid = String(r.seller_id || "");
+    if (!sid) continue;
+    const rawR = Number(r.seller_rating);
+    if (!Number.isFinite(rawR)) continue;
+    const rt = Math.max(1, Math.min(5, Math.round(rawR)));
+    const x = sumN.get(sid) || { sum: 0, n: 0 };
+    x.sum += rt;
+    x.n += 1;
+    sumN.set(sid, x);
+  }
+  for (const sid of uniq) {
+    const x = sumN.get(sid);
+    if (!x || x.n === 0) out.set(sid, { sellerAvgRating: null, sellerReviewCount: 0 });
+    else
+      out.set(sid, {
+        sellerAvgRating: Math.round((x.sum / x.n) * 10) / 10,
+        sellerReviewCount: x.n,
+      });
+  }
+  return out;
+}
+
+/**
+ * Aggregates buyer star ratings from `order_reviews` per listing (1–5 per completed order).
+ * @param {string[]} listingIds
+ * @returns {Promise<Map<string, { listingAvgRating: number | null, listingReviewCount: number }>>}
+ */
+async function aggregateListingOrderRatingStatsByListingId(listingIds) {
+  /** @type {Map<string, { listingAvgRating: number | null, listingReviewCount: number }>} */
+  const out = new Map();
+  const uniq = [...new Set(listingIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  for (const id of uniq) {
+    out.set(id, { listingAvgRating: null, listingReviewCount: 0 });
+  }
+  if (uniq.length === 0) return out;
+  const { data: revs, error } = await supabaseAdmin
+    .from("order_reviews")
+    .select("listing_id, product_rating")
+    .in("listing_id", uniq);
+  if (error) {
+    if (isSchemaMissingError(error)) return out;
+    return out;
+  }
+  /** @type {Map<string, { sum: number, n: number }>} */
+  const sumN = new Map();
+  for (const r of revs || []) {
+    const lid = String(r.listing_id || "");
+    if (!lid) continue;
+    const rawR = Number(r.product_rating);
+    if (!Number.isFinite(rawR)) continue;
+    const rt = Math.max(1, Math.min(5, Math.round(rawR)));
+    const x = sumN.get(lid) || { sum: 0, n: 0 };
+    x.sum += rt;
+    x.n += 1;
+    sumN.set(lid, x);
+  }
+  for (const lid of uniq) {
+    const x = sumN.get(lid);
+    if (!x || x.n === 0) out.set(lid, { listingAvgRating: null, listingReviewCount: 0 });
+    else
+      out.set(lid, {
+        listingAvgRating: Math.round((x.sum / x.n) * 10) / 10,
+        listingReviewCount: x.n,
+      });
+  }
+  return out;
+}
+
+function mergeListingOrderReviewStatsIntoListings(listings, statsMap) {
+  return listings.map((l) => {
+    const id = String(l?.id || "").trim();
+    const s = statsMap.get(id) || { listingAvgRating: null, listingReviewCount: 0 };
+    return {
+      ...l,
+      listingAvgRating: s.listingAvgRating,
+      listingReviewCount: s.listingReviewCount,
+    };
+  });
+}
+
 async function buildCourierPresencePayload(userId) {
   let data;
   let error;
@@ -2837,6 +3913,8 @@ async function buildCourierPresencePayload(userId) {
     allowCourierTaskNotifications: true,
     pushNotificationRegistered: false,
     pushNotificationPlatform: null,
+    courierAvgRating: null,
+    courierReviewCount: 0,
   });
 
   if (error || !data) return defaults();
@@ -2867,6 +3945,9 @@ async function buildCourierPresencePayload(userId) {
   const pp = String(data.push_notification_platform || "").toLowerCase();
   const pushNotificationPlatform = pp === "fcm" || pp === "apns" ? pp : null;
 
+  const ratingMap = await aggregateCourierDeliveryRatingStatsByCourierId([userId]);
+  const ratingStats = ratingMap.get(userId) || { courierAvgRating: null, courierReviewCount: 0 };
+
   return {
     courierStatus,
     optionalTags,
@@ -2878,6 +3959,8 @@ async function buildCourierPresencePayload(userId) {
     allowCourierTaskNotifications,
     pushNotificationRegistered,
     pushNotificationPlatform,
+    courierAvgRating: ratingStats.courierAvgRating,
+    courierReviewCount: ratingStats.courierReviewCount,
   };
 }
 
@@ -2888,6 +3971,29 @@ export const getCourierPresence = async (req, res, next) => {
     next(e);
   }
 };
+
+/** Mirrors client `computeMarketplaceProfileReadiness` / buyer checkout gates. */
+function localPhone10FromProfile(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  let local = digits;
+  if (local.startsWith("63") && local.length >= 12) local = local.slice(2);
+  if (local.startsWith("0") && local.length >= 11) local = local.slice(1);
+  if (local.length > 10) local = local.slice(-10);
+  return local.slice(0, 10);
+}
+
+function profileRowMeetsCourierReadiness(row) {
+  if (!row || typeof row !== "object") return false;
+  if (String(row.username || "").trim().length < 3) return false;
+  if (localPhone10FromProfile(row.phone).length !== 10) return false;
+  if (String(row.first_name || "").trim().length < 2) return false;
+  if (String(row.last_name || "").trim().length < 2) return false;
+  const addr = parseCommaProfileAddress(row.address || "");
+  if (!String(addr.brgy || "").trim()) return false;
+  if (!String(addr.city || "").trim()) return false;
+  if (!String(addr.province || "").trim()) return false;
+  return true;
+}
 
 export const patchCourierPresence = async (req, res, next) => {
   try {
@@ -2930,6 +4036,20 @@ export const patchCourierPresence = async (req, res, next) => {
       const allowed = ["offline", "available", "active"];
       if (!rawStatus || !allowed.includes(rawStatus)) {
         throw new AppError(400, "Set courierStatus to offline, available, or active. (Busy is set automatically when you accept a delivery.)");
+      }
+      if (rawStatus === "available" || rawStatus === "active") {
+        const { data: profRow, error: profErr } = await supabaseAdmin
+          .from("profiles")
+          .select("username, phone, first_name, last_name, address")
+          .eq("id", req.user.id)
+          .maybeSingle();
+        if (profErr) throw new AppError(500, profErr.message || "Failed to load profile.");
+        if (!profileRowMeetsCourierReadiness(profRow)) {
+          throw new AppError(
+            400,
+            "Complete your profile (name, phone, and barangay address) before going on as a courier.",
+          );
+        }
       }
       patch.courier_status = rawStatus;
     }
@@ -3045,6 +4165,7 @@ export const listCommunityCouriers = async (req, res, next) => {
     });
     const idList = base.map((c) => String(c.id));
     const completedMap = await countCompletedDeliveriesForCourierIds(idList);
+    const ratingStatsMap = await aggregateCourierDeliveryRatingStatsByCourierId(idList);
     const couriers = base
       .map((c) => {
         const completedDeliveries = completedMap.get(String(c.id)) || 0;
@@ -3053,7 +4174,8 @@ export const listCommunityCouriers = async (req, res, next) => {
           optionalTags: c.optionalTags,
           modes: c.modes,
         });
-        return { ...c, completedDeliveries, badges };
+        const rs = ratingStatsMap.get(String(c.id)) || { courierAvgRating: null, courierReviewCount: 0 };
+        return { ...c, completedDeliveries, badges, ...rs };
       })
       .sort((a, b) => {
         const ra = a.courierStatus === "active" ? 0 : 1;
@@ -3474,12 +4596,14 @@ export const sellerSummary = async (req, res, next) => {
 /** Buyer star/text reviews left on completed orders — seller reads these in Profile → Feedback. */
 export const listSellerBuyerFeedback = async (req, res, next) => {
   try {
+    const targetSellerId = String(req.params?.sellerId || req.user?.id || "").trim();
+    if (!targetSellerId) throw new AppError(400, "Seller is required.");
     // Resolve via `orders` (source of truth). `order_reviews.seller_id` is denormalized and can be
     // missing or stale; filtering only on that column hid valid reviews.
     const { data: sellerOrders, error: oerr } = await supabaseAdmin
       .from("orders")
       .select("id, listing_id, created_at, buyer_id")
-      .eq("seller_id", req.user.id)
+      .eq("seller_id", targetSellerId)
       .eq("status", "completed");
     if (oerr?.code === "PGRST205") return res.json({ items: [] });
     if (oerr) throw new AppError(500, oerr.message);
@@ -3494,9 +4618,9 @@ export const listSellerBuyerFeedback = async (req, res, next) => {
       .select("*")
       .in("order_id", orderIds)
       .order("created_at", { ascending: false });
-    if (isSchemaMissingError(error)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
+    if (isOrderReviewsSchemaError(error)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
     if (error) throw new AppError(500, error.message);
-    const rows = reviews || [];
+    const rows = (reviews || []).filter((rev) => rev.seller_rating != null);
     if (rows.length === 0) return res.json({ items: [] });
 
     const listingIds = [...new Set(completedForSeller.map((o) => o.listing_id).filter(Boolean))];
@@ -3543,8 +4667,8 @@ export const listSellerBuyerFeedback = async (req, res, next) => {
         orderId: rev.order_id,
         buyerId: canonicalBuyerId,
         listingTitle: listing?.title ? String(listing.title).trim() : "Listing",
-        rating: Number(rev.rating) || 0,
-        reviewText: String(rev.review_text ?? "").trim() || null,
+        rating: Number(rev.seller_rating) || 0,
+        reviewText: String(rev.seller_review_text ?? "").trim() || null,
         reviewedAt: rev.updated_at || rev.created_at,
         buyerDisplayName: displayName(buyer),
         buyerUsername: username || null,

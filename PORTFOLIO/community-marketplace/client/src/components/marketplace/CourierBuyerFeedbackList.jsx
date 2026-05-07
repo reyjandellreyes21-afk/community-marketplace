@@ -30,7 +30,7 @@ function buyerInitials(displayName) {
 
 /**
  * Activity → Courier: read-only list of buyer ratings for this member’s delivery runs (`courier_delivery_reviews`).
- * Layout matches {@link SellerBuyerFeedbackList} (listing, stars, content, buyer profile footer).
+ * Layout matches {@link SellerBuyerFeedbackList} (date, stars, content, buyer profile footer).
  */
 export function CourierBuyerFeedbackList({ token }) {
   const [items, setItems] = useState([]);
@@ -113,9 +113,8 @@ export function CourierBuyerFeedbackList({ token }) {
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="font-semibold text-neutral-900 dark:text-slate-100">{row.listingTitle}</p>
                 {row.reviewedAt ? (
-                  <p className="mt-0.5 text-xs text-neutral-500 dark:text-slate-400">
+                  <p className="text-xs text-neutral-500 dark:text-slate-400">
                     {new Date(row.reviewedAt).toLocaleString(undefined, {
                       dateStyle: "medium",
                       timeStyle: "short",

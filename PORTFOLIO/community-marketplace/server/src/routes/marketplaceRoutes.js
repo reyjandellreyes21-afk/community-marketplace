@@ -30,6 +30,7 @@ import {
   listCourierInvitations,
   respondCourierInvitation,
   getCourierActiveDelivery,
+  getPublicMarketplaceStats,
   listOrders,
   listUsersDirectory,
   patchCourierModes,
@@ -43,6 +44,7 @@ import {
   listSellerBuyerFeedback,
   listCourierBuyerFeedback,
   sellerSummary,
+  getMySellerRatings,
   updateListing,
 } from "../controllers/marketplaceController.js";
 import { optionalAuth, requireAuth } from "../middleware/auth.js";
@@ -54,6 +56,7 @@ import { listingsValidators, marketplaceRouteValidators } from "../schemas/marke
 
 const marketplaceRouter = Router();
 
+marketplaceRouter.get("/public-stats", getPublicMarketplaceStats);
 marketplaceRouter.get("/communities", listCommunities);
 marketplaceRouter.get(
   "/communities/:communityId/couriers",
@@ -212,7 +215,15 @@ marketplaceRouter.get("/me/order-attention", requireAuth, getMeOrderAttention);
 marketplaceRouter.put("/me/order-attention", requireAuth, writeLimiter, putMeOrderAttention);
 
 marketplaceRouter.get("/me/seller/summary", requireAuth, sellerSummary);
+marketplaceRouter.get("/me/seller/ratings", requireAuth, getMySellerRatings);
 marketplaceRouter.get("/me/seller/buyer-feedback", requireAuth, listSellerBuyerFeedback);
+marketplaceRouter.get(
+  "/seller/:sellerId/buyer-feedback",
+  requireAuth,
+  marketplaceRouteValidators.sellerIdParam,
+  validate,
+  listSellerBuyerFeedback,
+);
 marketplaceRouter.get("/me/courier/buyer-feedback", requireAuth, listCourierBuyerFeedback);
 marketplaceRouter.get("/me/expenses", requireAuth, listExpenses);
 marketplaceRouter.post(

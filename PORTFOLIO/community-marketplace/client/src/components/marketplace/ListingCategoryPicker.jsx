@@ -29,12 +29,18 @@ export function ListingCategoryPicker({ value, onChange, invalid }) {
     const ranked = VERTICALS.map((v) => {
       const label = String(v.label || "").toLowerCase();
       const id = String(v.id || "").toLowerCase();
+      const subMatch = (v.subs || []).some(
+        (s) =>
+          String(s.label || "").toLowerCase().includes(q) ||
+          String(s.id || "").toLowerCase().includes(q),
+      );
       let score = 99;
       if (label === q || id === q) score = 0;
       else if (label.startsWith(q)) score = 1;
       else if (id.startsWith(q)) score = 2;
       else if (label.includes(q)) score = 3;
-      else if (id.includes(q)) score = 4;
+      else if (subMatch) score = 4;
+      else if (id.includes(q)) score = 5;
       return { v, score };
     })
       .filter((row) => row.score < 99)

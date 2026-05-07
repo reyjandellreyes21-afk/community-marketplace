@@ -95,6 +95,7 @@ export const listingsValidators = {
 export const marketplaceRouteValidators = {
   communityIdParam: [param("id").isUUID()],
   communityCouriersParam: [param("communityId").isUUID()],
+  sellerIdParam: [param("sellerId").isUUID()],
   listingIdParam: [param("listingId").isUUID()],
   cartAdd: [
     body("listingId").isUUID(),
@@ -107,9 +108,9 @@ export const marketplaceRouteValidators = {
     param("listingId").isUUID(),
     body("quantity").isInt({ min: 1 }),
     body("fulfillmentType").optional().isIn(["pickup", "delivery"]),
-    query("variantSignature").optional().isString().isLength({ max: 512 }),
+    query("lineSignature").matches(/^[a-f0-9]{64}$/),
   ],
-  cartDelete: [param("listingId").isUUID(), query("variantSignature").optional().isString().isLength({ max: 512 })],
+  cartDelete: [param("listingId").isUUID(), query("lineSignature").matches(/^[a-f0-9]{64}$/)],
   createOrder: [
     body("listingId").isUUID(),
     body("fulfillmentType").isIn(["pickup", "delivery"]),
@@ -139,8 +140,14 @@ export const marketplaceRouteValidators = {
   ],
   orderReview: [
     param("id").isUUID(),
-    body("rating").isInt({ min: 1, max: 5 }),
-    body("reviewText").optional({ checkFalsy: true }).isString().isLength({ max: 2000 }),
+    body("productRating").optional({ nullable: true }).isInt({ min: 1, max: 5 }),
+    body("sellerRating").optional({ nullable: true }).isInt({ min: 1, max: 5 }),
+    body("productReviewText").optional({ nullable: true }).isString().isLength({ max: 2000 }),
+    body("sellerReviewText").optional({ nullable: true }).isString().isLength({ max: 2000 }),
+    body("product_rating").optional({ nullable: true }).isInt({ min: 1, max: 5 }),
+    body("seller_rating").optional({ nullable: true }).isInt({ min: 1, max: 5 }),
+    body("product_review_text").optional({ nullable: true }).isString().isLength({ max: 2000 }),
+    body("seller_review_text").optional({ nullable: true }).isString().isLength({ max: 2000 }),
   ],
   orderCourierReview: [
     param("id").isUUID(),

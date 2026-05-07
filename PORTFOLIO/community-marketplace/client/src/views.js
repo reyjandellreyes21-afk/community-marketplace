@@ -17,6 +17,12 @@ export const VIEWS = {
   /** Authenticated: submit app experience / product feedback (separate DB from order reviews). */
   SEND_FEEDBACK: "send_feedback",
   TERMS: "terms",
+  /** Privacy / Data Privacy Act (standalone screen; also embedded in Terms). */
+  DATA_PRIVACY_ACT: "data_privacy_act",
+  BEWARE_SCAMMERS: "beware_scammers",
+  PROHIBITED_PRODUCTS: "prohibited_products",
+  /** Change password (email/password accounts). */
+  PASSWORD_SECURITY: "password_security",
   USERS: "users",
   /** Seller hub: products and feedback snapshot. */
   SELLER: "seller",
@@ -48,4 +54,13 @@ export const ACTIVITY_TABS = {
   BUYING: "buying",
   SELLING: "selling",
   COURIER: "courier",
+};
+
+/** Sub-tabs inside Activity → Courier (`courierHubTab` in App state). */
+export const ACTIVITY_COURIER_SUBTABS = {
+  TASKS: "tasks",
+  /** Neighborhood leaderboard (courier engagement). */
+  STATS: "stats",
+  /** Buyer ratings after completed deliveries (parity with seller hub Feedback tab). */
+  FEEDBACK: "feedback",
 };

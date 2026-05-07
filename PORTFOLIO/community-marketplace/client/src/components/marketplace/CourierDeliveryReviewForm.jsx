@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 
+import { buyerReviewCardShell, buyerReviewSectionSubtitle, buyerReviewSectionTitle } from "./buyerReviewSectionClasses.js";
+import { RatingAutosizeTextarea } from "./RatingAutosizeTextarea.jsx";
+
 const TAGS = [
   { id: "fast", label: "Fast" },
   { id: "late", label: "Late" },
@@ -50,26 +53,34 @@ export function CourierDeliveryReviewForm({ orderId, initialReview, onSubmit, di
   };
 
   const hasSaved = Boolean(initialReview?.rating);
+  const canEdit = initialReview?.canEdit !== false;
+  const showForm = !hasSaved || canEdit;
   const ratingMissing = !rating;
   const reported = Boolean(initialReview?.abuseReportedAt);
+
+  if (!showForm) {
+    return (
+      <div
+        className={`rounded-lg border border-neutral-200/60 bg-neutral-50/50 px-2.5 py-2 dark:border-slate-700 dark:bg-slate-900/30 ${
+          compact ? "text-[10px]" : "text-xs"
+        } text-neutral-600 dark:text-slate-400`}
+      >
+        Courier rating edit window ended (72 hours).
+      </div>
+    );
+  }
 
   return (
     <form
       onSubmit={handleSubmit}
       noValidate
-      className={`rounded-lg border border-violet-200/80 bg-violet-50/50 dark:border-violet-800/50 dark:bg-violet-950/30 ${
-        compact ? "p-2 md:p-2.5" : "p-2.5 md:p-3"
-      }`}
+      className={buyerReviewCardShell(compact)}
     >
-      <p
-        className={`font-semibold uppercase tracking-wide text-violet-900 dark:text-violet-200 ${
-          compact ? "text-[10px] leading-tight" : "text-[11px]"
-        }`}
-      >
+      <p className={buyerReviewSectionTitle(compact)}>
         {hasSaved ? "Your courier rating" : "Rate the community courier"}
       </p>
-      <p className="mt-0.5 text-[10px] text-neutral-600 dark:text-slate-400">
-        One review per delivery run. This is stored on the courier’s assignment, not the product review above.
+      <p className={buyerReviewSectionSubtitle(compact)}>
+        Rate the courier for this completed delivery order. This is separate from the product and seller reviews above.
       </p>
 
       <div
@@ -108,8 +119,8 @@ export function CourierDeliveryReviewForm({ orderId, initialReview, onSubmit, di
       </div>
 
       <div className={compact ? "mt-1.5" : "mt-2"}>
-        <p className={`font-medium text-neutral-700 dark:text-slate-300 ${compact ? "text-[10px]" : "text-xs"}`}>Tags</p>
-        <div className={`mt-1 flex flex-wrap gap-1.5 ${compact ? "" : "gap-2"}`}>
+        <p className="label-base">Tags</p>
+        <div className={`flex flex-wrap gap-1.5 ${compact ? "" : "gap-2"}`}>
           {TAGS.map((t) => (
             <button
               key={t.id}
@@ -118,7 +129,7 @@ export function CourierDeliveryReviewForm({ orderId, initialReview, onSubmit, di
               onClick={() => toggleTag(t.id)}
               className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition ${
                 tagSet.has(t.id)
-                  ? "border-violet-500 bg-violet-500/15 text-violet-900 dark:border-violet-400 dark:bg-violet-900/40 dark:text-violet-100"
+                  ? "border-brand-primary bg-brand-soft text-brand-primary dark:border-brand-accent dark:bg-brand-accent/10 dark:text-brand-accent"
                   : "border-neutral-200 bg-white/80 text-neutral-600 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-400"
               }`}
             >
@@ -129,18 +140,18 @@ export function CourierDeliveryReviewForm({ orderId, initialReview, onSubmit, di
       </div>
 
       <div className={compact ? "mt-2" : "mt-3"}>
-        <label htmlFor={`courier-abuse-${orderId}`} className="label-base text-[11px]">
-          Report a problem (optional)
+        <label htmlFor={`courier-comment-${orderId}`} className="label-base">
+          Comment (optional)
         </label>
-        <textarea
-          id={`courier-abuse-${orderId}`}
+        <RatingAutosizeTextarea
+          id={`courier-comment-${orderId}`}
           value={abuseNote}
           onChange={(e) => setAbuseNote(e.target.value)}
           disabled={disabled || saving}
           maxLength={500}
-          rows={compact ? 2 : 2}
           placeholder="If something went wrong, leave a short note for moderators. You can add this after you submit your stars."
-          className="textarea-base mt-0.5 min-h-[3rem] w-full resize-y px-2 py-1.5 text-[12px] leading-snug dark:bg-slate-950"
+          enterKeyHint="done"
+          compact={compact}
         />
         {reported ? (
           <p className="mt-1 text-[10px] text-neutral-500 dark:text-slate-500">A report was recorded on file — moderators may follow up.</p>
@@ -163,9 +174,9 @@ export function CourierDeliveryReviewForm({ orderId, initialReview, onSubmit, di
               Saving…
             </span>
           ) : hasSaved ? (
-            "Update courier review"
+            "Update courier rating"
           ) : (
-            "Submit courier review"
+            "Save courier rating"
           )}
         </button>
       </div>

@@ -55,12 +55,21 @@ export async function apiRequest(path, { method = "GET", token, body, headers = 
   if (hasBody && !(body instanceof FormData) && !requestHeaders["Content-Type"]) {
     requestHeaders["Content-Type"] = "application/json";
   }
-  const response = await fetch(`${API_URL}${path}`, {
-    method,
-    headers: requestHeaders,
-    body: hasBody ? (body instanceof FormData ? body : JSON.stringify(body)) : undefined,
-    ...(cache !== undefined ? { cache } : {}),
-  });
+  let response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method,
+      headers: requestHeaders,
+      body: hasBody ? (body instanceof FormData ? body : JSON.stringify(body)) : undefined,
+      ...(cache !== undefined ? { cache } : {}),
+    });
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (/failed to fetch|networkerror|load failed|network request failed/i.test(message)) {
+      throw new Error("No internet connection. Please check your network and try again.");
+    }
+    throw new Error(message || "Cannot reach server.");
+  }
   const payload = await readApiPayload(response);
   if (!response.ok) {
     const proxiedDev = import.meta.env.DEV && API_URL.startsWith("/");

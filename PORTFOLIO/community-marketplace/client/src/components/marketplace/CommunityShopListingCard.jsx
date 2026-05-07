@@ -37,10 +37,14 @@ export function CommunityShopListingCard({
   mobileCardUx = false,
   /** Disable in-card gallery swipe/dots for specific contexts (e.g. Home > Community). */
   disableGallerySwipe = false,
-  /** Orders-style attention: saved listing not yet “seen” after leaving Favorites (badge + soft highlight). */
+  /** Favorites: hide multi-photo pill dots on the image and the mobile "1/2" counter (swipe may still work). */
+  hideGalleryPageIndicators = false,
+  /** Saved listing not yet “seen” after leaving Favorites (soft card highlight only). */
   unseenAttention = false,
   /** Profile → Products: delete listing (owner only). */
   onDelete,
+  /** Home › Community & Profile › Products (mobile): entire card opens inspect like tapping Add to cart flow. */
+  mobileEntireCardTappable = false,
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
@@ -112,6 +116,18 @@ export function CommunityShopListingCard({
   /** Mobile: card CTAs live in the inspect modal; image opens details when handler exists. */
   const hideCardActionsOnMobile = Boolean(mobileUx && onInspect);
   const imageOpensInspect = Boolean(onInspect && mobileUx);
+  const wholeCardTapOpensInspect = Boolean(mobileEntireCardTappable && mobileUx && onInspect);
+
+  const onCardShellKeyDown = useCallback(
+    (e) => {
+      if (!wholeCardTapOpensInspect) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onCardHeroInspectClick();
+      }
+    },
+    [wholeCardTapOpensInspect, onCardHeroInspectClick],
+  );
 
   const pad = useFeedLayout ? "p-0" : gridMode && compactGrid ? "p-2.5" : gridMode ? "p-2.5" : "p-3.5";
   const imgBox = useFeedLayout
@@ -231,14 +247,26 @@ export function CommunityShopListingCard({
   const imageInspectBtnClass =
     "lm-product-card--tap absolute inset-0 z-0 min-h-0 w-full border-0 bg-transparent p-0 text-left";
 
+  const shellAriaLabel =
+    wholeCardTapOpensInspect && listing?.title
+      ? `View ${String(listing.title).trim() || "product"}`
+      : wholeCardTapOpensInspect
+        ? "View product"
+        : undefined;
+
   return (
     <div
       id={listing?.id ? `listing-card-${String(listing.id)}` : undefined}
+      role={wholeCardTapOpensInspect ? "button" : undefined}
+      tabIndex={wholeCardTapOpensInspect ? 0 : undefined}
+      aria-label={shellAriaLabel}
       className={`lm-card group relative transition duration-200 ease-in-out ${
         gridMode ? "lm-grid-card lm-product-card-grid" : "lm-list-card lm-product-card-list"
       } ${useFeedLayout ? "lm-product-card lm-product-card--feed" : ""} ${pad} ${gridMode ? "flex h-full min-h-0 flex-col" : ""} ${
         unseenAttention ? "bg-primary-soft dark:bg-primary/15" : ""
-      }`}
+      } ${wholeCardTapOpensInspect ? "cursor-pointer" : ""}`}
+      onClick={wholeCardTapOpensInspect ? onCardHeroInspectClick : undefined}
+      onKeyDown={wholeCardTapOpensInspect ? onCardShellKeyDown : undefined}
     >
       <div
         className={`flex min-h-0 ${
@@ -268,7 +296,7 @@ export function CommunityShopListingCard({
               {favoriteHeartSvg}
             </button>
           ) : null}
-          {canSwipeGallery ? (
+          {canSwipeGallery && !hideGalleryPageIndicators ? (
             <div
               className="pointer-events-none absolute bottom-1.5 left-0 right-0 z-[5] flex justify-center gap-1"
               aria-hidden
@@ -281,7 +309,29 @@ export function CommunityShopListingCard({
               ))}
             </div>
           ) : null}
-          {imageOpensInspect ? (
+          {imageOpensInspect && wholeCardTapOpensInspect ? (
+            <div
+              data-allow-tab-swipe
+              className={imageInspectBtnClass}
+              style={canSwipeGallery ? { touchAction: "manipulation" } : undefined}
+              onPointerDown={canSwipeGallery ? onCardHeroPointerDown : undefined}
+              onPointerUp={canSwipeGallery ? onCardHeroPointerUp : undefined}
+              role="presentation"
+            >
+              <ProductListingMedia
+                listing={listing}
+                src={displayGallerySrc}
+                variant={gridMode ? "grid" : "list"}
+                feed={useFeedLayout}
+                fillFrame={Boolean(gridMode && !useFeedLayout)}
+                softChrome={Boolean(softBrowseChrome && !useFeedLayout)}
+                ring={Boolean(useFeedLayout && softBrowseChrome)}
+                className="pointer-events-none absolute inset-0 min-h-0"
+                sizes="(max-width: 767px) 45vw, min(240px, 18vw)"
+                loading="lazy"
+              />
+            </div>
+          ) : imageOpensInspect ? (
             <button
               type="button"
               data-allow-tab-swipe
@@ -343,7 +393,7 @@ export function CommunityShopListingCard({
             />
           )}
         </div>
-        {mobileUx && canSwipeGallery ? (
+        {mobileUx && canSwipeGallery && !hideGalleryPageIndicators ? (
           <p
             className="w-full min-w-0 text-center text-[10px] font-semibold tabular-nums text-neutral-500 dark:text-slate-400 md:hidden"
             aria-live="polite"
@@ -362,11 +412,6 @@ export function CommunityShopListingCard({
                   : "flex min-w-0 flex-1 flex-col gap-2"
           }`}
         >
-          {unseenAttention ? (
-            <span className="mb-1 inline-flex w-fit items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
-              Recently updated
-            </span>
-          ) : null}
           <MarketplaceProductDetailStack
             variant="card"
             browseStackMode={mobileUx ? "listMobile" : null}
@@ -385,6 +430,8 @@ export function CommunityShopListingCard({
             optionValuesB={[]}
             quantityRow={readOnlyStockRow}
             hideDescription={Boolean(isListMode || (gridMode && (compactGrid || browseSummaryGrid)))}
+            listingAvgRating={listing.listingAvgRating}
+            listingReviewCount={listing.listingReviewCount}
           />
           {useFeedLayout && listing.cityLabel ? (
             <div className="lm-product-card-badge-row">

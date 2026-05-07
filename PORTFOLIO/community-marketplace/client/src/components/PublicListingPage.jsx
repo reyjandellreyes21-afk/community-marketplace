@@ -7,7 +7,10 @@ import { ScreenEmpty, ScreenError, InlineSuccess, ScreenLoading } from "./ui/Scr
 import { ProductListingMedia } from "./media/ProductListingMedia.jsx";
 import { PublicListingDetailSkeleton } from "./marketplace/MobileBrowseSkeleton.jsx";
 import { ListingProductMetaExtras } from "./marketplace/ListingProductMetaExtras.jsx";
+import { ListingDescriptionMarkdown } from "./marketplace/ListingDescriptionMarkdown.jsx";
+import { removeSaleMetaLines } from "../lib/listingSaleMeta.js";
 import { resolveListingGalleryUrls } from "../lib/listingImageUrl.js";
+import { SellerBuyerRatingSummary } from "./marketplace/SellerBuyerRatingSummary.jsx";
 
 const API_URL = getApiV1Base();
 
@@ -27,6 +30,11 @@ function PublicListingDetailBody({ listing, publicHeroImageIdx, setPublicHeroIma
         <h1 className="break-words text-pretty text-xl font-semibold leading-snug text-neutral-900 dark:text-slate-100">
           {listing.title}
         </h1>
+        <SellerBuyerRatingSummary
+          avg={listing.listingAvgRating}
+          count={listing.listingReviewCount}
+          className="text-sm text-amber-900/95 dark:text-amber-100/95"
+        />
         {categoryShort ? (
           <p className="text-sm text-neutral-500 dark:text-slate-400">{categoryShort}</p>
         ) : null}
@@ -84,8 +92,10 @@ function PublicListingDetailBody({ listing, publicHeroImageIdx, setPublicHeroIma
         {listing.cityLabel ? (
           <p className="text-sm text-neutral-600 dark:text-slate-400">{listing.cityLabel}</p>
         ) : null}
-        {String(listing.description || "").trim() ? (
-          <p className="whitespace-pre-wrap text-sm text-neutral-700 dark:text-slate-300">{listing.description}</p>
+        {removeSaleMetaLines(listing.description).trim() ? (
+          <div className="min-w-0">
+            <ListingDescriptionMarkdown text={listing.description} />
+          </div>
         ) : null}
         <p className="text-xs text-neutral-500 dark:text-slate-400">
           Cash on delivery (COD) or pickup — LinkMart does not hold a wallet. Sign in to place an order.

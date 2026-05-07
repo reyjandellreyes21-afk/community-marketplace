@@ -5,6 +5,7 @@ export const LEGACY_THEME_KEY_V2 = "quiz_theme_v2";
 export const LEGACY_THEME_KEY_V1 = "quiz_theme";
 export const ACTIVE_VIEW_STORAGE_KEY = "linkmart_active_view_v1";
 export const ACTIVITY_TAB_STORAGE_KEY = "linkmart_activity_tab_v1";
+export const COURIER_HUB_TAB_STORAGE_KEY = "linkmart_courier_hub_tab_v1";
 
 export function readAuthToken() {
   if (typeof window === "undefined") return "";
@@ -76,4 +77,19 @@ export function writeActivityTab(tab) {
     return;
   }
   localStorage.setItem(ACTIVITY_TAB_STORAGE_KEY, next);
+}
+
+export function readCourierHubTab() {
+  if (typeof window === "undefined") return "";
+  return String(localStorage.getItem(COURIER_HUB_TAB_STORAGE_KEY) || "").trim();
+}
+
+export function writeCourierHubTab(tab) {
+  if (typeof window === "undefined") return;
+  const next = String(tab || "").trim();
+  if (!next) {
+    localStorage.removeItem(COURIER_HUB_TAB_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(COURIER_HUB_TAB_STORAGE_KEY, next);
 }

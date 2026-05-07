@@ -3,15 +3,17 @@ import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
 import { config } from "./config/config.js";
-import { uploadMyAvatar } from "./controllers/authController.js";
+import { sendPhoneVerificationCode, uploadMyAvatar, verifyPhoneCode } from "./controllers/authController.js";
 import { createCommunity, listCommunities } from "./controllers/marketplaceController.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandlers.js";
 import { requireAuth } from "./middleware/auth.js";
 import { avatarUpload } from "./middleware/avatarUpload.js";
 import { communityImageUpload } from "./middleware/communityImageUpload.js";
 import { assignRequestId } from "./middleware/requestId.js";
+import { validate } from "./middleware/validate.js";
 import { globalApiLimiter, writeLimiter } from "./middleware/rateLimit.js";
 import { apiRouter } from "./routes/index.js";
+import { authValidators } from "./schemas/authSchemas.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -57,6 +59,22 @@ const avatarPostChain = [
 ];
 for (const path of ["/api/v1/auth/me/avatar", "/api/auth/me/avatar"]) {
   app.post(path, ...avatarPostChain);
+}
+
+/** Phone OTP — registered on the root app so POST matches reliably (same pattern as avatar upload). */
+const phoneSendCodeChain = [requireAuth, writeLimiter, sendPhoneVerificationCode];
+const phoneVerifyCodeChain = [
+  requireAuth,
+  writeLimiter,
+  ...authValidators.verifyPhoneCode,
+  validate,
+  verifyPhoneCode,
+];
+for (const path of ["/api/v1/auth/phone/send-code", "/api/auth/phone/send-code"]) {
+  app.post(path, ...phoneSendCodeChain);
+}
+for (const path of ["/api/v1/auth/phone/verify-code", "/api/auth/phone/verify-code"]) {
+  app.post(path, ...phoneVerifyCodeChain);
 }
 
 app.get("/health", (_req, res) => {

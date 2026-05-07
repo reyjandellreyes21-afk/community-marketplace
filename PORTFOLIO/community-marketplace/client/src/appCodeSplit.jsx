@@ -31,6 +31,12 @@ export const LazyLandingIllustration = lazy(() =>
   import("./components/landing/LandingIllustration.jsx").then((m) => ({ default: m.LandingIllustration })),
 );
 
+export const LazyLandingFeaturesIllustration = lazy(() =>
+  import("./components/landing/LandingFeaturesIllustration.jsx").then((m) => ({
+    default: m.LandingFeaturesIllustration,
+  })),
+);
+
 export const LazyCommunityShopListingCard = lazy(() =>
   import("./components/marketplace/CommunityShopListingCard.jsx").then((m) => ({
     default: m.CommunityShopListingCard,

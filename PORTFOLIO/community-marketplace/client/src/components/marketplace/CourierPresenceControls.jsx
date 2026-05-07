@@ -3,29 +3,25 @@ import { apiRequest } from "../../lib/appApi.js";
 import { getActivityTabChrome } from "../../lib/activityTabTheme.js";
 import { cn } from "../../lib/cn.js";
 import { ACTIVITY_TABS } from "../../views.js";
+import { persistCourierModesToProfile } from "../../lib/courierProfileModesApi.js";
 import { defaultClaimModeFromProfile, MODE_LABEL, MODE_ORDER } from "../../lib/courierTransportModes.js";
 import { Button } from "../ui/Button.jsx";
 import { CourierOpenDeliveries } from "./CourierOpenDeliveries.jsx";
-import { CourierEngagementBoard } from "./CourierEngagementBoard.jsx";
 import { CourierPublicProfileContent } from "./CourierPublicProfileContent.jsx";
 
 const courierChrome = getActivityTabChrome(ACTIVITY_TABS.COURIER);
 
-/** Idle chip style for compact Off/On (aligned with Edit `secondary compact`). */
-const courierStatusIdle =
-  "rounded-lg border-0 bg-white/90 py-1.5 text-[10px] font-semibold text-violet-900 shadow-sm ring-1 ring-violet-200/60 transition hover:bg-white dark:bg-violet-950/50 dark:text-violet-100 dark:ring-violet-700/50 dark:hover:bg-violet-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/45";
-
 const SAVE_FEEDBACK = {
-  offline: "You’re off.",
-  available: "You’re on — check open tasks below.",
-  active: "Still on — tasks below.",
+  offline: "Listing paused — neighbors won’t suggest you until you resume.",
+  available: "You’re listed for deliveries — check open tasks below.",
+  active: "Still listed — tasks below.",
   busy: "You’re on a delivery — finish up when you can.",
 };
 
 /** Must match server `ALLOWED_COURIER_OPTIONAL_TAGS` and neighbor list labels in `CommunityCourierPanel`. */
 const COURIER_OPTIONAL_TAG_OPTIONS = [
   { id: "eco", label: "Eco" },
-  { id: "bike", label: "Bike" },
+  { id: "bike", label: "Cycling" },
   { id: "fast", label: "Fast" },
   { id: "helping", label: "Helping" },
 ];
@@ -43,13 +39,14 @@ function normalizeCourierOptionalTags(raw) {
 }
 
 function presenceHint(status) {
-  if (status === "offline") return "Off — no delivery tasks.";
-  if (status === "busy") return "On a run — finish it, then turn off when you’re free.";
-  if (status === "active") return "On — neighbors can match you; tasks below.";
+  if (status === "offline") return "Listing paused — no neighbor delivery tasks.";
+  if (status === "busy") return "On a run — finish it, then pause listing when you’re free.";
+  if (status === "active") return "Listed — neighbors can suggest you; tasks below.";
   return "";
 }
 
-function MoonOffIcon({ className }) {
+/** Paused / not listed — circle-ban reads faster than moon vs sun. */
+function ListingPausedIcon({ className }) {
   return (
     <svg
       className={className}
@@ -62,12 +59,14 @@ function MoonOffIcon({ className }) {
       strokeLinejoin="round"
       aria-hidden
     >
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+      <circle cx="12" cy="12" r="10" />
+      <path d="m4.93 4.93 14.14 14.14" />
     </svg>
   );
 }
 
-function SunOnIcon({ className }) {
+/** Delivery truck — clearly “courier / deliveries available”. */
+function DeliveriesListedIcon({ className }) {
   return (
     <svg
       className={className}
@@ -80,13 +79,18 @@ function SunOnIcon({ className }) {
       strokeLinejoin="round"
       aria-hidden
     >
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+      <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" />
+      <path d="M15 18H9" />
+      <path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14" />
+      <circle cx="17" cy="18" r="2" />
+      <circle cx="7" cy="18" r="2" />
     </svg>
   );
 }
 
 /**
+ * Segmented listing controls: paused = slate fill, deliveries = emerald fill; inactive = outline.
+ *
  * @param {{
  *   groupId: string,
  *   hintId: string,
@@ -95,9 +99,8 @@ function SunOnIcon({ className }) {
  *   isOn: boolean,
  *   saving: boolean,
  *   availabilityLocked: boolean,
+ *   canTurnOn: boolean,
  *   saveStatus: (next: string) => void | Promise<void>,
- *   courierChrome: { recoveryPrimary: string },
- *   courierStatusIdle: string,
  * }} props
  */
 function CourierAvailabilityRadios({
@@ -108,15 +111,14 @@ function CourierAvailabilityRadios({
   isOn,
   saving,
   availabilityLocked,
+  canTurnOn = true,
   saveStatus,
-  courierChrome,
-  courierStatusIdle,
 }) {
   const legendId = `${groupId}-legend`;
   return (
     <>
       <p id={legendId} className="sr-only">
-        Courier availability
+        Pause or resume your listing for neighbor delivery tasks
       </p>
       <div
         className={cn("flex flex-wrap items-center gap-1.5", className)}
@@ -126,40 +128,54 @@ function CourierAvailabilityRadios({
       >
         <Button
           type="button"
-          variant={!isOn ? "primary" : "ghost"}
+          variant="ghost"
           role="radio"
           aria-checked={!isOn}
           size="compact"
           className={cn(
-            "!min-h-8 shrink-0 rounded-lg px-2.5 py-1 text-[10px] font-semibold",
-            !isOn ? courierChrome.recoveryPrimary : courierStatusIdle,
+            "!min-h-9 shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50",
+            !isOn
+              ? "!border-0 !bg-slate-700 !text-white shadow-sm hover:!bg-slate-800 dark:!bg-slate-600 dark:hover:!bg-slate-500"
+              : "!border !border-slate-300/90 !bg-white !text-slate-700 hover:!bg-slate-50 dark:!border-slate-600 dark:!bg-slate-900 dark:!text-slate-200 dark:hover:!bg-slate-800",
           )}
           disabled={saving || availabilityLocked}
           onClick={() => saveStatus("offline")}
-          title={availabilityLocked ? "Finish your active delivery before going offline." : undefined}
+          title={
+            availabilityLocked
+              ? "Finish your active delivery before pausing your listing."
+              : "Pause listing — you won’t appear in Neighbor couriers or receive open tasks."
+          }
         >
-          <span className="inline-flex items-center justify-center gap-1">
-            <MoonOffIcon className="h-3.5 w-3.5 shrink-0 opacity-90" />
-            Off
+          <span className="inline-flex items-center justify-center gap-1.5">
+            <ListingPausedIcon className="h-4 w-4 shrink-0 opacity-95" />
+            <span className="max-w-[8.5rem] text-left leading-tight">Pause listing</span>
           </span>
         </Button>
         <Button
           type="button"
-          variant={isOn ? "primary" : "ghost"}
+          variant="ghost"
           role="radio"
           aria-checked={isOn}
           size="compact"
           className={cn(
-            "!min-h-8 shrink-0 rounded-lg px-2.5 py-1 text-[10px] font-semibold",
-            isOn ? courierChrome.recoveryPrimary : courierStatusIdle,
+            "!min-h-9 shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
+            isOn
+              ? "!border-0 !bg-emerald-600 !text-white shadow-sm hover:!bg-emerald-700 dark:!bg-emerald-500 dark:hover:!bg-emerald-600"
+              : "!border !border-emerald-200 !bg-emerald-50 !text-emerald-900 hover:!bg-emerald-100/90 dark:!border-emerald-800 dark:!bg-emerald-950/45 dark:!text-emerald-100 dark:hover:!bg-emerald-950/65",
           )}
-          disabled={saving || availabilityLocked}
+          disabled={saving || availabilityLocked || !canTurnOn}
           onClick={() => saveStatus("available")}
-          title={availabilityLocked ? "Finish your active delivery before changing availability." : undefined}
+          title={
+            availabilityLocked
+              ? "Finish your active delivery before changing listing."
+              : !canTurnOn
+                ? "Complete your profile before listing yourself for deliveries."
+                : "List for deliveries — neighbors can suggest you and you’ll see open tasks."
+          }
         >
-          <span className="inline-flex items-center justify-center gap-1">
-            <SunOnIcon className="h-3.5 w-3.5 shrink-0 opacity-90" />
-            On
+          <span className="inline-flex items-center justify-center gap-1.5">
+            <DeliveriesListedIcon className="h-4 w-4 shrink-0 opacity-95" />
+            <span className="max-w-[8.5rem] text-left leading-tight">Take deliveries</span>
           </span>
         </Button>
       </div>
@@ -176,15 +192,26 @@ function PresenceLoadingSkeleton() {
 /**
  * Minimal Find-deliveries controls: off/on availability + open tasks list.
  *
- * @param {{ token: string, communityId: string, onOrdersRefresh?: () => void | Promise<void>, viewerProfile?: { id: string, displayName?: string, username?: string, avatarUrl?: string } | null }} props
+ * @param {{ token: string, communityId: string, onOrdersRefresh?: () => void | Promise<void>, onPresenceApplied?: (payload: { courierStatus?: string }) => void, viewerProfile?: { id: string, displayName?: string, username?: string, avatarUrl?: string } | null, courierProfileReady?: boolean, courierProfileMissing?: string[], onCourierCompleteProfile?: () => void }} props
  */
-export function CourierPresenceControls({ token, communityId, onOrdersRefresh, viewerProfile = null }) {
+export function CourierPresenceControls({
+  token,
+  communityId,
+  onOrdersRefresh,
+  onPresenceApplied,
+  viewerProfile = null,
+  courierProfileReady = true,
+  courierProfileMissing = [],
+  onCourierCompleteProfile,
+}) {
   const [courierStatus, setCourierStatus] = useState("offline");
   /** Kept in sync with API so PATCH doesn’t wipe tags while tags UI is hidden. */
   const [optionalTags, setOptionalTags] = useState([]);
   const [courierModes, setCourierModes] = useState([]);
   const [viewerBadges, setViewerBadges] = useState(/** @type {{ id: string, label: string }[]} */ ([]));
   const [viewerCompleted, setViewerCompleted] = useState(0);
+  const [courierAvgRating, setCourierAvgRating] = useState(/** @type {number | null} */ (null));
+  const [courierReviewCount, setCourierReviewCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState("");
@@ -204,6 +231,8 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
   const [claimMode, setClaimMode] = useState("walk");
   const [profileModes, setProfileModes] = useState(/** @type {string[]} */ ([]));
   const [modesLoaded, setModesLoaded] = useState(false);
+  /** From GET /delivery/active (child `CourierOpenDeliveries`) — transport recorded for the in-progress run. */
+  const [activeRunAssignmentMode, setActiveRunAssignmentMode] = useState(/** @type {string | null} */ (null));
 
   const selectableModes = useMemo(() => {
     if (profileModes.length > 0) return MODE_ORDER.filter((x) => profileModes.includes(x));
@@ -229,7 +258,11 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
     );
     setViewerBadges(Array.isArray(d.badges) ? d.badges : []);
     setViewerCompleted(typeof d.completedDeliveries === "number" ? d.completedDeliveries : 0);
-  }, []);
+    const ar = d.courierAvgRating;
+    setCourierAvgRating(ar != null && Number.isFinite(Number(ar)) ? Number(ar) : null);
+    setCourierReviewCount(typeof d.courierReviewCount === "number" && d.courierReviewCount >= 0 ? d.courierReviewCount : 0);
+    onPresenceApplied?.(d);
+  }, [onPresenceApplied]);
 
   const refresh = useCallback(async () => {
     if (!token) {
@@ -247,6 +280,8 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
       setCourierModes([]);
       setViewerBadges([]);
       setViewerCompleted(0);
+      setCourierAvgRating(null);
+      setCourierReviewCount(0);
       setAllowTaskNotifications(true);
       setSuggestedCompensationCents(null);
       setSuggestedPesosDraft("");
@@ -255,7 +290,7 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
     }
   }, [token, applyPresencePayload]);
 
-  /** Re-sync Off/On + busy from server without showing the full presence skeleton (used when open-delivery poll sees a change). */
+  /** Re-sync listing toggle + busy from server without showing the full presence skeleton (used when open-delivery poll sees a change). */
   const refreshPresenceQuiet = useCallback(async () => {
     if (!token) return;
     try {
@@ -339,21 +374,25 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
 
   const saveSuggestedRate = async () => {
     if (!token || courierStatus === "busy") return;
-    setSavingSuggested(true);
     setNote("");
-    try {
-      const raw = String(suggestedPesosDraft || "").trim();
-      let suggestedPayload = null;
-      if (raw === "") {
-        suggestedPayload = null;
-      } else {
-        const pesos = Number(raw);
-        if (!Number.isFinite(pesos) || pesos < 0) {
-          setNote("Enter a valid suggested rate in pesos, or leave blank to clear.");
-          return;
-        }
-        suggestedPayload = Math.round(pesos * 100);
+    const raw = String(suggestedPesosDraft || "").trim();
+    let suggestedPayload = null;
+    if (raw !== "") {
+      const pesos = Number(raw);
+      if (!Number.isFinite(pesos) || pesos < 0) {
+        setNote("Enter a valid suggested rate in pesos, or leave blank to clear.");
+        return;
       }
+      suggestedPayload = Math.round(pesos * 100);
+    }
+    const currentCents =
+      suggestedCompensationCents != null && Number.isFinite(Number(suggestedCompensationCents))
+        ? Math.max(0, Math.floor(Number(suggestedCompensationCents)))
+        : null;
+    if (suggestedPayload === currentCents) return;
+
+    setSavingSuggested(true);
+    try {
       const d = await apiRequest("/me/courier-presence", {
         method: "PATCH",
         token,
@@ -395,6 +434,11 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
 
   const saveStatus = async (next) => {
     if (!token) return;
+    const nextNorm = String(next || "").trim().toLowerCase();
+    if ((nextNorm === "available" || nextNorm === "active") && !courierProfileReady) {
+      setNote("Complete your profile before turning on courier availability.");
+      return;
+    }
     setSaving(true);
     setNote("");
     try {
@@ -413,6 +457,45 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
       setSaving(false);
     }
   };
+
+  const onActiveRunMeta = useCallback((meta) => {
+    const m = meta?.assignmentMode != null ? String(meta.assignmentMode).trim().toLowerCase() : "";
+    setActiveRunAssignmentMode(m || null);
+  }, []);
+
+  /** Keeps neighbor preview + GET /communities/.../couriers in sync with `profiles.courier_modes`. */
+  const applyPersistedCourierModes = useCallback((normalized) => {
+    setProfileModes(normalized);
+    setCourierModes(normalized);
+  }, []);
+
+  /** Multi-select walk/run/bike for neighbor-facing profile (`courier_modes`). Empty DB means “any”; toggling from full set narrows the list. */
+  const toggleProfileMode = useCallback(
+    async (m) => {
+      const mode = MODE_ORDER.includes(String(m || "").trim().toLowerCase()) ? String(m).trim().toLowerCase() : "walk";
+      const base = profileModes.length > 0 ? [...profileModes] : [...MODE_ORDER];
+      const has = base.includes(mode);
+      let nextModes = has ? base.filter((x) => x !== mode) : [...base, mode].sort((a, b) => MODE_ORDER.indexOf(a) - MODE_ORDER.indexOf(b));
+      if (nextModes.length === 0) nextModes = [mode];
+      if (!token || courierStatus === "offline") return;
+      try {
+        const normalized = await persistCourierModesToProfile(token, nextModes);
+        applyPersistedCourierModes(normalized);
+        setClaimMode((prev) =>
+          normalized.includes(prev) ? prev : defaultClaimModeFromProfile(normalized),
+        );
+      } catch (e) {
+        setNote(e?.message || "Could not save transport modes.");
+      }
+    },
+    [token, courierStatus, profileModes, applyPersistedCourierModes],
+  );
+
+  /** Next claim / invitation only — local until Post claim (does not replace profile modes). */
+  const selectNextClaimMode = useCallback((m) => {
+    const next = MODE_ORDER.includes(String(m || "").trim().toLowerCase()) ? String(m).trim().toLowerCase() : "walk";
+    setClaimMode(next);
+  }, []);
 
   const toggleOptionalTag = async (tagId) => {
     if (!token || courierStatus === "busy" || savingTags) return;
@@ -444,6 +527,7 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
 
   const neighborPreviewCourier = useMemo(() => {
     if (!viewerProfile || !String(viewerProfile.id || "").trim()) return null;
+    const busy = courierStatus === "busy";
     return {
       id: String(viewerProfile.id),
       displayName: viewerProfile.displayName,
@@ -455,6 +539,10 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
       completedDeliveries: viewerCompleted,
       badges: viewerBadges,
       suggestedCompensationCents,
+      runAssignmentMode: busy ? activeRunAssignmentMode : null,
+      nextClaimMode: !busy && courierStatus !== "offline" ? claimMode : null,
+      courierAvgRating,
+      courierReviewCount,
     };
   }, [
     viewerProfile,
@@ -464,6 +552,10 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
     viewerCompleted,
     viewerBadges,
     suggestedCompensationCents,
+    activeRunAssignmentMode,
+    claimMode,
+    courierAvgRating,
+    courierReviewCount,
   ]);
 
   const courierTransportState = useMemo(
@@ -481,12 +573,40 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
   const isOn = courierStatus !== "offline";
   const availabilityLocked = courierStatus === "busy";
   const availabilityHintText = availabilityLocked
-    ? "You’re on an active delivery — complete it before changing Off/On. Busy is set automatically."
+    ? "You’re on an active delivery — finish before pausing listing or changing modes. Busy is set automatically."
     : presenceHint(courierStatus);
   const showAvailabilityHint = Boolean(availabilityHintText);
+  /** Hide “next claim” when only one transport mode is enabled — it’s implied. */
+  const showNextClaimInSettings = selectableModes.length > 1;
 
   return (
     <div className="space-y-4">
+      {!courierProfileReady ? (
+        <div
+          role="status"
+          className="rounded-xl border border-amber-200/85 bg-amber-50/60 px-3 py-3 dark:border-amber-900/45 dark:bg-amber-950/25"
+        >
+          <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">Finish your profile to run deliveries</p>
+          <p className="mt-1 text-[11px] leading-snug text-amber-900/90 dark:text-amber-200/90">
+            Please complete the following required fields:{" "}
+            {courierProfileMissing.length ? courierProfileMissing.join(", ") : "contact and address details"}. Save your profile
+            before enabling courier availability.
+          </p>
+          {typeof onCourierCompleteProfile === "function" ? (
+            <div className="mt-3">
+              <Button
+                type="button"
+                variant="primary"
+                size="compact"
+                className={cn("min-h-9 text-[11px] font-semibold", courierChrome.recoveryPrimary)}
+                onClick={() => onCourierCompleteProfile()}
+              >
+                Complete profile
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <div>
         {!communityId ? (
           <p className="mt-2 text-[11px] text-amber-800 dark:text-amber-200">
@@ -495,22 +615,49 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
         ) : null}
         {!loading && neighborPreviewCourier ? (
           <div className={cn("mt-3 shadow-sm dark:shadow-none", courierChrome.courierPanelSurface)}>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-800/90 dark:text-violet-200/90">
-              How neighbors see you
-            </p>
-            <div className="mt-3 flex justify-end">
-              <Button
-                type="button"
-                variant="secondary"
-                size="compact"
-                className={cn("min-h-9 shrink-0 px-2.5 text-[10px] font-semibold", courierChrome.recoverySecondary)}
-                onClick={() => setNeighborSettingsOpen(true)}
-              >
-                Edit
-              </Button>
-            </div>
-            <div className="mt-3 border-t border-violet-200/60 pt-3 dark:border-violet-800/35">
-              <CourierPublicProfileContent courier={neighborPreviewCourier} variant="inline" />
+            {communityId ? (
+              <div className="border-b border-violet-200/60 pb-3 dark:border-violet-800/35">
+                <p className="mb-2 text-center text-[10px] font-medium uppercase tracking-wide text-violet-800/80 dark:text-violet-200/85">
+                  Your courier availability
+                </p>
+                <div className="flex flex-col items-center gap-2">
+                  {showAvailabilityHint ? (
+                    <p id={hintId} className="text-center text-[11px] text-neutral-600 dark:text-slate-400" aria-live="polite">
+                      {availabilityHintText}
+                    </p>
+                  ) : null}
+                  <CourierAvailabilityRadios
+                    groupId={groupId}
+                    hintId={hintId}
+                    describeHint={showAvailabilityHint}
+                    className="justify-center"
+                    isOn={isOn}
+                    saving={saving}
+                    availabilityLocked={availabilityLocked}
+                    canTurnOn={courierProfileReady}
+                    saveStatus={saveStatus}
+                  />
+                </div>
+              </div>
+            ) : null}
+            <div className={communityId ? "pt-3" : undefined}>
+              <div className="flex items-center justify-between gap-3">
+                <p className="min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-wide text-violet-800/90 dark:text-violet-200/90">
+                  How neighbors see you
+                </p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="compact"
+                  className={cn("min-h-9 shrink-0 px-3 text-[10px] font-semibold", courierChrome.recoverySecondary)}
+                  onClick={() => setNeighborSettingsOpen(true)}
+                >
+                  Edit
+                </Button>
+              </div>
+              <div className="mt-3 border-t border-violet-200/60 pt-3 dark:border-violet-800/35">
+                <CourierPublicProfileContent courier={neighborPreviewCourier} variant="inline" />
+              </div>
             </div>
           </div>
         ) : null}
@@ -527,12 +674,30 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
                 isOn={isOn}
                 saving={saving}
                 availabilityLocked={availabilityLocked}
+                canTurnOn={courierProfileReady}
                 saveStatus={saveStatus}
-                courierChrome={courierChrome}
-                courierStatusIdle={courierStatusIdle}
               />
+            ) : !neighborPreviewCourier ? (
+              <div className="mt-4 flex flex-col items-center gap-2">
+                {showAvailabilityHint ? (
+                  <p id={hintId} className="text-center text-[11px] text-neutral-600 dark:text-slate-400" aria-live="polite">
+                    {availabilityHintText}
+                  </p>
+                ) : null}
+                <CourierAvailabilityRadios
+                  groupId={groupId}
+                  hintId={hintId}
+                  describeHint={showAvailabilityHint}
+                  className="justify-center"
+                  isOn={isOn}
+                  saving={saving}
+                  availabilityLocked={availabilityLocked}
+                  canTurnOn={courierProfileReady}
+                  saveStatus={saveStatus}
+                />
+              </div>
             ) : null}
-            {showAvailabilityHint ? (
+            {!communityId && showAvailabilityHint ? (
               <p id={hintId} className="mt-2 text-center text-[11px] text-neutral-600 dark:text-slate-400" aria-live="polite">
                 {availabilityHintText}
               </p>
@@ -553,32 +718,17 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
             token={token}
             communityId={communityId}
             courierStatus={courierStatus}
+            courierProfileReady={courierProfileReady}
             viewerSuggestedCompensationCents={suggestedCompensationCents}
             courierTransportState={courierTransportState}
             showInlineTransportPicker={false}
-            headerTrailing={
-              communityId ? (
-                <CourierAvailabilityRadios
-                  groupId={groupId}
-                  hintId={hintId}
-                  describeHint={showAvailabilityHint}
-                  className="shrink-0"
-                  isOn={isOn}
-                  saving={saving}
-                  availabilityLocked={availabilityLocked}
-                  saveStatus={saveStatus}
-                  courierChrome={courierChrome}
-                  courierStatusIdle={courierStatusIdle}
-                />
-              ) : null
-            }
+            onActiveRunMeta={onActiveRunMeta}
             onClaimed={async () => {
               await refresh();
               if (typeof onOrdersRefresh === "function") await onOrdersRefresh();
             }}
             onDeliveriesLoaded={refreshPresenceQuiet}
           />
-          <CourierEngagementBoard token={token} communityId={communityId} />
         </>
       ) : null}
 
@@ -609,27 +759,88 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
               </button>
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-              <div className="flex items-start gap-2 rounded-xl border border-neutral-200/80 bg-white/80 px-3 py-2.5 dark:border-slate-600/50 dark:bg-slate-900/40">
-                <input
-                  id={`${groupId}-modal-notify-tasks`}
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-violet-600 focus:ring-violet-500 dark:border-slate-600 dark:bg-slate-900"
-                  checked={allowTaskNotifications}
-                  disabled={savingNotify}
-                  onChange={(e) => void saveTaskNotifications(e.target.checked)}
-                />
-                <label htmlFor={`${groupId}-modal-notify-tasks`} className="cursor-pointer text-[11px] leading-snug text-neutral-800 dark:text-slate-200">
-                  Allow notifications for new tasks / assignments.
-                  <span className="mt-0.5 block text-[10px] font-normal text-neutral-500 dark:text-slate-500">
-                    Native apps can use this with your device push token later; we never show your token in the app.
-                  </span>
-                </label>
-              </div>
+              {modesLoaded ? (
+                <div className="space-y-3 rounded-xl border border-violet-200/60 bg-violet-50/50 px-3 py-3 dark:border-violet-800/40 dark:bg-violet-950/30">
+                  <div>
+                    <p className="text-xs font-semibold text-neutral-900 dark:text-slate-100">Transport</p>
+                    <p className="mt-1 text-[10px] leading-snug text-neutral-600 dark:text-slate-400">
+                      Which ways you deliver for neighbors. Tap to turn each mode on or off.
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Profile transport modes">
+                      {MODE_ORDER.map((m) => {
+                        const active = profileModes.length > 0 ? profileModes.includes(m) : true;
+                        return (
+                          <Button
+                            key={m}
+                            type="button"
+                            variant={active ? "primary" : "secondary"}
+                            size="compact"
+                            className={cn(
+                              "min-h-8 px-2.5 text-[10px]",
+                              active ? courierChrome.recoveryPrimary : courierChrome.recoverySecondary,
+                            )}
+                            disabled={
+                              availabilityLocked ||
+                              courierStatus === "offline" ||
+                              saving ||
+                              savingNotify ||
+                              savingTags ||
+                              savingSuggested
+                            }
+                            onClick={() => void toggleProfileMode(m)}
+                          >
+                            {MODE_LABEL[m] ?? m}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {showNextClaimInSettings ? (
+                    <div className="border-t border-violet-200/55 pt-3 dark:border-violet-800/35">
+                      <p className="text-[10px] font-semibold text-neutral-800 dark:text-slate-200">
+                        When you accept a task, record it as
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-neutral-600 dark:text-slate-400">
+                        Only matters while you offer more than one transport mode above.
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Next delivery transport mode">
+                        {selectableModes.map((m) => (
+                          <Button
+                            key={m}
+                            type="button"
+                            variant={claimMode === m ? "primary" : "secondary"}
+                            size="compact"
+                            className={cn(
+                              "min-h-8 px-2.5 text-[10px]",
+                              claimMode === m ? courierChrome.recoveryPrimary : courierChrome.recoverySecondary,
+                            )}
+                            disabled={
+                              availabilityLocked ||
+                              courierStatus === "offline" ||
+                              saving ||
+                              savingNotify ||
+                              savingTags ||
+                              savingSuggested
+                            }
+                            onClick={() => selectNextClaimMode(m)}
+                          >
+                            {MODE_LABEL[m] ?? m}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-[11px] text-neutral-500 dark:text-slate-400" role="status">
+                  Loading transport settings…
+                </p>
+              )}
 
               <div className="rounded-xl border border-neutral-200/80 bg-white/70 px-3 py-2.5 dark:border-slate-600/50 dark:bg-slate-900/35">
-                <p className="text-[10px] font-medium text-neutral-800 dark:text-slate-200">Optional neighbor badges</p>
-                <p className="mt-0.5 text-[10px] text-neutral-600 dark:text-slate-400">
-                  Green tags on your card in Neighbor couriers. Turn off any you don’t want shown.
+                <p className="text-xs font-semibold text-neutral-900 dark:text-slate-100">Profile flair</p>
+                <p className="mt-1 text-[10px] leading-snug text-neutral-600 dark:text-slate-400">
+                  Optional tags on your card (personality, not your vehicle type — that&apos;s Transport above).
                 </p>
                 <div className="mt-2 flex flex-wrap gap-x-3 gap-y-2">
                   {COURIER_OPTIONAL_TAG_OPTIONS.map(({ id: tagId, label }) => {
@@ -656,75 +867,48 @@ export function CourierPresenceControls({ token, communityId, onOrdersRefresh, v
                 </div>
               </div>
 
-              <div className="rounded-lg border border-violet-200/50 bg-white/60 px-2.5 py-2 dark:border-violet-800/40 dark:bg-violet-950/20">
-                <p className="text-[10px] font-medium text-neutral-800 dark:text-slate-200">Suggested courier pay (optional)</p>
-                <p className="mt-0.5 text-[10px] text-neutral-600 dark:text-slate-400">
-                  For neighbors&apos; reference only — not auto-charged and not a bid.
+              <div className="rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2.5 dark:border-slate-600/50 dark:bg-slate-900/30">
+                <p className="text-xs font-semibold text-neutral-900 dark:text-slate-100">Suggested pay (optional)</p>
+                <p className="mt-1 text-[10px] leading-snug text-neutral-600 dark:text-slate-400">
+                  Reference only for neighbors — not charged automatically and not a bid. Saves when you leave the field.
                 </p>
-                <div className="mt-2 flex flex-wrap items-end gap-2">
-                  <label className="flex min-w-0 flex-1 flex-col text-[10px] text-neutral-700 dark:text-slate-300">
-                    ₱
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      className="mt-0.5 min-h-9 rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-950"
-                      placeholder="e.g. 50"
-                      value={suggestedPesosDraft}
-                      onChange={(e) => setSuggestedPesosDraft(e.target.value)}
-                      disabled={savingSuggested || courierStatus === "busy"}
-                      autoComplete="off"
-                    />
-                  </label>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="compact"
-                    className={cn("min-h-9 shrink-0", courierChrome.recoverySecondary)}
+                <label className="mt-2 flex flex-col text-[10px] text-neutral-700 dark:text-slate-300">
+                  Amount (₱)
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="mt-0.5 min-h-9 rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-950"
+                    placeholder="e.g. 50"
+                    value={suggestedPesosDraft}
+                    onChange={(e) => setSuggestedPesosDraft(e.target.value)}
+                    onBlur={() => void saveSuggestedRate()}
                     disabled={savingSuggested || courierStatus === "busy"}
-                    loading={savingSuggested}
-                    loadingLabel="…"
-                    onClick={() => void saveSuggestedRate()}
-                  >
-                    Save
-                  </Button>
-                </div>
+                    autoComplete="off"
+                  />
+                </label>
+                {savingSuggested ? (
+                  <p className="mt-1.5 text-[10px] text-neutral-500 dark:text-slate-500" aria-live="polite">
+                    Saving…
+                  </p>
+                ) : null}
               </div>
 
-              {modesLoaded && selectableModes.length > 0 ? (
-                <div className="rounded-lg border border-violet-200/60 bg-violet-50/50 px-2.5 py-2 dark:border-violet-800/40 dark:bg-violet-950/30">
-                  <p className="text-[10px] font-medium text-neutral-700 dark:text-slate-300">Transport for this run</p>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5" role="group" aria-label="Delivery transport mode">
-                    {selectableModes.map((m) => (
-                      <Button
-                        key={m}
-                        type="button"
-                        variant={claimMode === m ? "primary" : "secondary"}
-                        size="compact"
-                        className={cn(
-                          "min-h-8 px-2.5 text-[10px]",
-                          claimMode === m ? courierChrome.recoveryPrimary : courierChrome.recoverySecondary,
-                        )}
-                        disabled={
-                          availabilityLocked ||
-                          courierStatus === "offline" ||
-                          saving ||
-                          savingNotify ||
-                          savingTags ||
-                          savingSuggested
-                        }
-                        onClick={() => setClaimMode(m)}
-                      >
-                        {MODE_LABEL[m] ?? m}
-                      </Button>
-                    ))}
-                  </div>
-                  {profileModes.length === 0 ? (
-                    <p className="mt-1.5 text-[10px] text-neutral-500 dark:text-slate-500">
-                      Add modes on your profile to limit choices — until then, any mode can be recorded for this run.
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
+              <div className="flex items-start gap-2 rounded-xl border border-neutral-200/80 bg-white/80 px-3 py-2.5 dark:border-slate-600/50 dark:bg-slate-900/40">
+                <input
+                  id={`${groupId}-modal-notify-tasks`}
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-violet-600 focus:ring-violet-500 dark:border-slate-600 dark:bg-slate-900"
+                  checked={allowTaskNotifications}
+                  disabled={savingNotify}
+                  onChange={(e) => void saveTaskNotifications(e.target.checked)}
+                />
+                <label htmlFor={`${groupId}-modal-notify-tasks`} className="cursor-pointer text-[11px] leading-snug text-neutral-800 dark:text-slate-200">
+                  Task &amp; assignment notifications
+                  <span className="mt-0.5 block text-[10px] font-normal text-neutral-500 dark:text-slate-500">
+                    Native apps can hook this up to push later; your token is never shown here.
+                  </span>
+                </label>
+              </div>
             </div>
             <div className="shrink-0 border-t border-neutral-100 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] dark:border-slate-700">
               <Button

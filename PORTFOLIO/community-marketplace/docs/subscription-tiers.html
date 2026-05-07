@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Subscription tiers — LinkMart docs</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --border: rgba(128, 128, 128, 0.35);
+      --muted: #64748b;
+      --bg: canvas;
+      --fg: canvastext;
+    }
+    body {
+      font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+      max-width: 52rem;
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem 3rem;
+      color: var(--fg);
+      background: var(--bg);
+    }
+    h1 { font-size: 1.75rem; margin-top: 0; }
+    h2 { font-size: 1.25rem; margin-top: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.35rem; }
+    p, li { max-width: 55ch; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      font-size: 0.95rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.5rem 0.65rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: rgba(128, 128, 128, 0.12); font-weight: 600; }
+    code { font-size: 0.9em; }
+    .note {
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(128, 128, 128, 0.08);
+      margin: 1rem 0;
+    }
+    ul.checklist { list-style: none; padding-left: 0; }
+    ul.checklist li { padding-left: 1.5rem; position: relative; margin: 0.35rem 0; }
+    ul.checklist li::before { content: "☐"; position: absolute; left: 0; opacity: 0.8; }
+    a { color: inherit; }
+    .muted { color: var(--muted); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>Subscription tiers (Basic / Pro / Premium)</h1>
+  <p>What kinds of rules you can apply per tier and where they live in the repo.</p>
+  <p class="muted">Source: <code>docs/subscription-tiers.md</code> — open this HTML file in a browser for readable tables.</p>
+
+  <div class="note">
+    <strong>Tier order:</strong> <code>basic</code> &lt; <code>pro</code> &lt; <code>premium</code>. “Requires Pro” means Pro <em>or</em> Premium unless you scope to Pro-only.
+  </div>
+
+  <h2>Data model</h2>
+  <table>
+    <thead><tr><th>Item</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Column</strong></td><td><code>public.profiles.subscription_tier</code></td></tr>
+      <tr><td><strong>Allowed values</strong></td><td><code>basic</code>, <code>pro</code>, <code>premium</code></td></tr>
+      <tr><td><strong>Default</strong></td><td><code>basic</code></td></tr>
+      <tr><td><strong>Migration</strong></td><td><code>supabase/migrations/20260503130000_profiles_subscription_tier.sql</code></td></tr>
+      <tr><td><strong>Who may change tier</strong></td><td>Payment webhooks, admin, SQL — not <code>PATCH /auth/me</code> from the client</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Server helpers</h2>
+  <table>
+    <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>server/src/utils/subscriptionTier.js</code></td><td><code>normalizeSubscriptionTier</code>, <code>subscriptionTierRank</code>, <code>meetsMinSubscriptionTier</code></td></tr>
+      <tr><td><code>server/src/middleware/auth.js</code></td><td>Sets <code>req.user.subscriptionTier</code></td></tr>
+      <tr><td><strong><code>requireMinSubscriptionTier('pro')</code></strong></td><td>After <code>requireAuth</code>; 403 + <code>PLAN_REQUIRED</code> if tier too low</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Client helpers</h2>
+  <table>
+    <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>client/src/lib/subscriptionTier.js</code></td><td>Tier helpers + <code>formatSubscriptionTierLabel</code></td></tr>
+    </tbody>
+  </table>
+  <p><code>GET /api/v1/auth/me</code> includes <code>subscriptionTier</code> — UX only; enforce on the server.</p>
+
+  <h2>Current code status</h2>
+  <table>
+    <thead><tr><th>Piece</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>DB column + default basic</td><td>Implemented (after migration)</td></tr>
+      <tr><td><code>subscriptionTier</code> on API JSON</td><td>Implemented</td></tr>
+      <tr><td>Profile tier badge</td><td>Implemented</td></tr>
+      <tr><td><code>requireMinSubscriptionTier</code> on routes</td><td><strong>Not wired</strong> — same API for all tiers</td></tr>
+      <tr><td>Pro/Premium UI gates</td><td><strong>Not wired</strong> (label only)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Product matrix (starter)</h2>
+  <table>
+    <thead><tr><th>Capability</th><th>Basic</th><th>Pro</th><th>Premium</th></tr></thead>
+    <tbody>
+      <tr><td>Core browse &amp; buy</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Sell / listings</td><td>Yes (lowest limits)</td><td>Yes (higher)</td><td>Yes (best)</td></tr>
+      <tr><td>Images / media</td><td>Fewest</td><td>More</td><td>Most</td></tr>
+      <tr><td>Seller tools (bulk, schedule)</td><td>Minimal</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Boosted / featured</td><td>No</td><td>Optional</td><td>Stronger</td></tr>
+      <tr><td>Analytics / export</td><td>No</td><td>Basic</td><td>Advanced</td></tr>
+      <tr><td>Priority support</td><td>No</td><td>No</td><td>Optional</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Rule types</h2>
+  <table>
+    <thead><tr><th>Type</th><th>Meaning</th><th>Examples</th></tr></thead>
+    <tbody>
+      <tr><td>Limits</td><td>Cap usage</td><td>Max listings, communities, images</td></tr>
+      <tr><td>Feature gates</td><td>Off below tier</td><td>Bulk actions, boosts</td></tr>
+      <tr><td>QoS</td><td>Priority / ranking</td><td>Support SLA, search boost</td></tr>
+      <tr><td>Billing</td><td>Lifecycle</td><td>Webhooks, <code>subscription_expires_at</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Product checklist</h2>
+  <ul class="checklist">
+    <li>Final limits per tier</li>
+    <li>Which features are Basic vs Pro vs Premium</li>
+    <li>Pricing and trials</li>
+    <li>Lapse behavior (downgrade to Basic?)</li>
+    <li>Support promises per tier</li>
+  </ul>
+
+  <h2>Engineering checklist (per rule)</h2>
+  <ul class="checklist">
+    <li>Minimum tier defined</li>
+    <li>Server: <code>requireMinSubscriptionTier</code> and/or DB guard</li>
+    <li>Client UX for upgrade / disabled state</li>
+    <li>RLS aligned if Supabase client writes gated rows</li>
+  </ul>
+
+  <p><strong>Principle:</strong> Store tier in Postgres; trusted updates only; enforce on API; client for clarity only.</p>
+</body>
+</html>

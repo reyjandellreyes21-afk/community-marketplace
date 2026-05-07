@@ -53,7 +53,49 @@ export const NOTIFICATION_INBOX_MAX_ITEMS = 80;
 export const NOTIFICATION_REALTIME_DEBOUNCE_MS = 350;
 export const NOTIFICATION_POLL_FALLBACK_MS = 12000;
 
-/** @typedef {{ id: string, source: "server" | "local", text: string, title?: string | null, createdAt: number, read: boolean, type: string }} NotificationInboxItem */
+/**
+ * When true, the inbox UI and unread badge only include notifications that can deep-link
+ * (entity id + known entity type, or explicit metadata.targetView).
+ */
+export const NOTIFICATION_INBOX_NAVIGABLE_ONLY = true;
+
+/** @typedef {{ id: string, source: "server" | "local", text: string, title?: string | null, createdAt: number, read: boolean, type: string, entityType?: string | null, entityId?: string | null, metadata?: Record<string, unknown> }} NotificationInboxItem */
+
+const KNOWN_ENTITY_TYPES = new Set([
+  "order",
+  "purchase",
+  "sale",
+  "listing",
+  "product",
+  "marketplace_listing",
+  "community",
+  "community_shop",
+  "conversation",
+  "messages",
+  "message",
+]);
+
+/** Whether this row should appear in the navigable-only inbox and support tap-to-go. */
+export function isNotificationNavigable(item) {
+  if (!item || typeof item !== "object") return false;
+  const meta = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
+  if (meta.navigate === false) return false;
+  if (String(meta.targetView || "").trim()) return true;
+
+  const eid = String(item.entityId || meta.entityId || "").trim();
+  if (!eid) return false;
+
+  const etRaw = String(item.entityType || meta.entityType || "").trim().toLowerCase();
+  if (etRaw && KNOWN_ENTITY_TYPES.has(etRaw)) return true;
+
+  const t = String(item.type || "").toLowerCase();
+  if (t.includes("order") || t.includes("delivery") || t.includes("purchase")) return true;
+  if (t.includes("listing") || t.includes("product")) return true;
+  if (t.includes("community")) return true;
+  if (t.includes("message") || t.includes("chat")) return true;
+
+  return false;
+}
 
 export function createLocalNotificationId() {
   return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -78,6 +120,10 @@ export function notificationApiToInboxItem(row) {
     title && body ? `${title}: ${body}` : body || title || String(row?.body || row?.title || "Notification").trim() || "Notification";
   const createdRaw = row?.createdAt ?? row?.created_at;
   const createdMs = createdRaw ? new Date(createdRaw).getTime() : Date.now();
+  const metaRaw = row?.metadata;
+  const metadata = metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw) ? { ...metaRaw } : {};
+  const entityTypeRaw = row?.entityType ?? row?.entity_type;
+  const entityIdRaw = row?.entityId ?? row?.entity_id;
   return {
     id: String(row?.id || "").trim(),
     source: /** @type {const} */ ("server"),
@@ -86,6 +132,9 @@ export function notificationApiToInboxItem(row) {
     createdAt: Number.isFinite(createdMs) ? createdMs : Date.now(),
     read: Boolean(row?.isRead ?? row?.is_read),
     type: String(row?.type || "marketplace").trim() || "marketplace",
+    entityType: entityTypeRaw != null && String(entityTypeRaw).trim() ? String(entityTypeRaw).trim() : null,
+    entityId: entityIdRaw != null && String(entityIdRaw).trim() ? String(entityIdRaw).trim() : null,
+    metadata,
   };
 }
 
@@ -99,6 +148,9 @@ export function postgresNotificationNewToInboxItem(row) {
     type: row.type,
     created_at: row.created_at,
     is_read: row.is_read,
+    entity_type: row.entity_type,
+    entity_id: row.entity_id,
+    metadata: row.metadata,
   };
   const item = notificationApiToInboxItem(apiShape);
   return item.id ? item : null;
@@ -120,6 +172,10 @@ export function readLocalSessionNotificationsFromStorage() {
         createdAt: Number(item?.createdAt || 0),
         read: !!item?.read,
         type: String(item?.type || "").trim() || "marketplace",
+        entityType: item?.entityType != null && String(item.entityType).trim() ? String(item.entityType).trim() : null,
+        entityId: item?.entityId != null && String(item.entityId).trim() ? String(item.entityId).trim() : null,
+        metadata:
+          item?.metadata && typeof item.metadata === "object" && !Array.isArray(item.metadata) ? { ...item.metadata } : {},
       }))
       .filter((item) => item.id && item.text && Number.isFinite(item.createdAt));
   } catch {
@@ -178,6 +234,18 @@ export async function markNotificationReadApi(token, id) {
 export async function markAllNotificationsReadApi(token, ids = null) {
   const body = ids && ids.length ? { ids } : {};
   await apiRequest("/notifications/read", { method: "PATCH", token, body });
+  return { ok: true };
+}
+
+export async function deleteNotificationApi(token, id) {
+  const sid = String(id || "").trim();
+  if (!sid || sid.startsWith("lm-local-")) return { ok: true };
+  await apiRequest(`/notifications/${encodeURIComponent(sid)}`, { method: "DELETE", token });
+  return { ok: true };
+}
+
+export async function deleteAllNotificationsApi(token) {
+  await apiRequest("/notifications", { method: "DELETE", token });
   return { ok: true };
 }
 

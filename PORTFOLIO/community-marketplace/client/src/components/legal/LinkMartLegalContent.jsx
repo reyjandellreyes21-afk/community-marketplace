@@ -81,6 +81,70 @@ export function AboutLinkMartBody() {
   );
 }
 
+/** Paragraphs only — wrap with a section heading when embedded in Terms. */
+export function DataPrivacyActBody() {
+  return (
+    <div className="space-y-4">
+      <p className="mt-1 text-neutral-600 dark:text-slate-300">
+        We value your privacy and are committed to protecting your personal information. By using this marketplace, you agree that your data may be collected and used
+        for account verification, order processing, communication, security, and platform improvement.
+      </p>
+      <p className="text-neutral-600 dark:text-slate-300">We do not sell your personal information to third parties.</p>
+      <p className="text-neutral-600 dark:text-slate-300">
+        Users are responsible for protecting their own account credentials and personal information.
+      </p>
+      <p className="text-neutral-600 dark:text-slate-300">
+        This platform follows the principles of the <span className="text-neutral-800 dark:text-slate-200">Data Privacy Act of 2012</span>.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * @param {{ termsSection?: number }} props
+ */
+export function ProhibitedProductsBody({ termsSection } = {}) {
+  const title =
+    typeof termsSection === "number" ? `${termsSection}. Prohibited & illegal products` : "Prohibited & illegal products";
+  return (
+    <div className="space-y-4">
+      <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">{title}</h3>
+      <p className="mt-1 text-neutral-600 dark:text-slate-300">
+        This marketplace does not tolerate illegal, harmful, or prohibited products.
+      </p>
+      <p className="font-medium text-neutral-800 dark:text-slate-200">The following are strictly prohibited:</p>
+      <ul className="mt-2 list-disc space-y-1.5 pl-5 marker:text-neutral-400 dark:marker:text-slate-500">
+        <li className="text-neutral-600 dark:text-slate-300">Illegal drugs and controlled substances</li>
+        <li className="text-neutral-600 dark:text-slate-300">Stolen items</li>
+        <li className="text-neutral-600 dark:text-slate-300">Weapons and dangerous materials</li>
+        <li className="text-neutral-600 dark:text-slate-300">Counterfeit or fake products</li>
+        <li className="text-neutral-600 dark:text-slate-300">Fraudulent services</li>
+        <li className="text-neutral-600 dark:text-slate-300">Any product that violates local laws</li>
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * @param {{ termsSection?: number }} props
+ */
+export function BewareOfScammersBody({ termsSection } = {}) {
+  const title = typeof termsSection === "number" ? `${termsSection}. Beware of scammers` : "Beware of scammers";
+  return (
+    <div className="space-y-4">
+      <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">{title}</h3>
+      <p className="mt-1 font-medium text-neutral-800 dark:text-slate-200">Stay alert and transact responsibly.</p>
+      <ul className="mt-2 list-disc space-y-1.5 pl-5 marker:text-neutral-400 dark:marker:text-slate-500">
+        <li className="text-neutral-600 dark:text-slate-300">Never send payments outside the platform</li>
+        <li className="text-neutral-600 dark:text-slate-300">Avoid dealing with suspicious or unverified users</li>
+        <li className="text-neutral-600 dark:text-slate-300">Do not trust fake payment screenshots</li>
+        <li className="text-neutral-600 dark:text-slate-300">Meet in safe public locations when possible</li>
+        <li className="text-neutral-600 dark:text-slate-300">Report suspicious activity immediately</li>
+      </ul>
+    </div>
+  );
+}
+
 export function TermsLinkMartBody() {
   return (
     <div className="space-y-6 text-sm leading-relaxed text-neutral-700 max-[360px]:space-y-5 max-[390px]:space-y-5 max-[430px]:space-y-5 md:flex-1 md:space-y-6 dark:text-slate-300">
@@ -131,13 +195,11 @@ export function TermsLinkMartBody() {
         </p>
       </div>
       <div id="linkmart-privacy-policy" className="scroll-mt-4">
-        <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">7. Privacy</h3>
-        <p className="mt-1 text-neutral-600 dark:text-slate-300">
-          We use the account details you provide—such as email, profile fields, and content you post (listings, messages, orders)—to run sign-in, community features,
-          and support. LinkMart does not operate an in-app wallet; payments happen directly between buyers and sellers as described above. For privacy-related
-          requests or questions, use the contact options on the public landing page.
-        </p>
+        <h3 className="text-base font-semibold text-neutral-900 dark:text-slate-100">7. Data Privacy Act</h3>
+        <DataPrivacyActBody />
       </div>
+      <ProhibitedProductsBody termsSection={8} />
+      <BewareOfScammersBody termsSection={9} />
     </div>
   );
 }

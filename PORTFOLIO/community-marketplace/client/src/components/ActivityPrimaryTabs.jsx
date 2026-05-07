@@ -16,6 +16,7 @@ const TAB_BADGE_ROSE =
  * @param {{ count: number, rose?: boolean }} [props.courierBadge]
  * @param {boolean} [props.embedInActivityCard] When true, strip outer shell inset (desktop card layout)
  * @param {boolean} [props.desktopSidebar] When true, vertical rail (md+ Activity hub only — parent should not render on mobile)
+ * @param {boolean} [props.courierProfileIncomplete] Courier tab tooltip when profile lacks required fields for runs
  */
 export function ActivityPrimaryTabs({
   activityTab,
@@ -25,6 +26,7 @@ export function ActivityPrimaryTabs({
   courierBadge = { count: 0, rose: false },
   embedInActivityCard = false,
   desktopSidebar = false,
+  courierProfileIncomplete = false,
 }) {
   const tabs = [
     {
@@ -96,7 +98,11 @@ export function ActivityPrimaryTabs({
           }
         }}
       >
-      {tabs.map(({ id, label, hint, badge }) => {
+      {tabs.map(({ id, label, hint: hintBase, badge }) => {
+        const hint =
+          id === ACTIVITY_TABS.COURIER && courierProfileIncomplete
+            ? `${hintBase} Finish your profile before turning on courier availability.`
+            : hintBase;
         const selected = activityTab === id;
         const chrome = getActivityTabChrome(id);
         const b = badge && typeof badge === "object" ? badge : { count: 0, rose: false };

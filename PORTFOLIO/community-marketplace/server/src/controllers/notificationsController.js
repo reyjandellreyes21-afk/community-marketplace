@@ -104,3 +104,34 @@ export const markNotificationsReadBulk = async (req, res, next) => {
     next(e);
   }
 };
+
+export const deleteNotification = async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+    const { data, error } = await supabaseAdmin
+      .from("notifications")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", req.user.id)
+      .select("id")
+      .maybeSingle();
+    if (error) throw new AppError(500, error.message);
+    if (!data) throw new AppError(404, "Notification not found.");
+    return res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const deleteAllNotifications = async (req, res, next) => {
+  try {
+    const { error } = await supabaseAdmin
+      .from("notifications")
+      .delete()
+      .eq("user_id", req.user.id);
+    if (error) throw new AppError(500, error.message);
+    return res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+};

@@ -9,5 +9,6 @@ export const notificationsValidators = {
     query("unreadOnly").optional().isBoolean(),
   ],
   markReadOne: [param("id").isUUID()],
+  deleteOne: [param("id").isUUID()],
   markReadMany: [body("ids").optional().isArray(), body("ids.*").optional().isUUID()],
 };

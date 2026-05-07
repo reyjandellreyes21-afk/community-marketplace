@@ -1,21 +1,33 @@
+import { formatCents } from "../marketplace/money.js";
+
 export const SALE_PERCENT_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40, 50, 70, 90];
 
-export const formatPesoWhole = (priceCents) => `₱${Math.floor((Number(priceCents) || 0) / 100)}`;
+/** Unit list price from `priceCents` — shows peso precision (e.g. ₱10.50), not floored to whole pesos. */
+export const formatPesoWhole = (priceCents) => formatCents(priceCents);
 
 export const parseSaleMetaFromDescription = (description) => {
   const text = String(description || "");
   const pctMatch = text.match(/Sale\s+(\d{1,2})%\s+off/i);
-  const originalMatch = text.match(/Original\s+₱\s*(\d+)/i);
+  const originalMatch = text.match(/Original\s+₱\s*(\d+(?:\.\d{1,2})?)/i);
+  const originalPesos = originalMatch ? Number(originalMatch[1]) : null;
+  const originalCents =
+    originalMatch && Number.isFinite(originalPesos) && originalPesos > 0
+      ? Math.round(originalPesos * 100)
+      : null;
   return {
     percent: pctMatch ? Number(pctMatch[1]) : null,
-    originalPesos: originalMatch ? Number(originalMatch[1]) : null,
+    originalPesos: originalMatch && Number.isFinite(originalPesos) ? originalPesos : null,
+    originalCents,
   };
 };
 
 export const removeSaleMetaLines = (description) =>
   String(description || "")
     .split("\n")
-    .filter((line) => !/Sale\s+\d{1,2}%\s+off/i.test(line) && !/Original\s+₱\s*\d+/i.test(line))
+    .filter(
+      (line) =>
+        !/Sale\s+\d{1,2}%\s+off/i.test(line) && !/Original\s+₱\s*\d+(?:\.\d{1,2})?/i.test(line),
+    )
     .join("\n")
     .trim();
 
@@ -237,18 +249,33 @@ export function buildVariantSignatureFromSelections(listing, selA, selB) {
 
 const CART_LINE_SEP = "\u0001";
 
-/** Stable React key + selection id for a cart row (listing + variant signature). */
-export function cartLineKey(listingId, variantSignature = "") {
-  return `${String(listingId || "")}${CART_LINE_SEP}${String(variantSignature ?? "")}`;
+/**
+ * Stable React key + selection id for a cart row.
+ * Prefers `lineSignature` (variant + fulfillment + note) when present.
+ */
+export function cartLineKey(listingId, secondKey = "") {
+  return `${String(listingId || "")}${CART_LINE_SEP}${String(secondKey ?? "")}`;
 }
 
 export function cartLineKeyFromItem(item) {
+  const ls = String(item?.lineSignature ?? "").trim();
+  if (ls) return cartLineKey(item?.listingId, ls);
   return cartLineKey(item?.listingId, item?.variantSignature);
 }
 
-/** Append to `/me/cart/items/:listingId` for PATCH/DELETE when the line has variants. */
-export function cartItemApiQuerySuffix(variantSignature) {
-  const sig = String(variantSignature ?? "").trim();
-  if (!sig) return "";
-  return `?variantSignature=${encodeURIComponent(sig)}`;
+/**
+ * PATCH/DELETE `/me/cart/items/:listingId?lineSignature=` (or legacy variant-only suffix).
+ * Pass the cart item object, or a bare 64-char hex lineSignature string.
+ */
+export function cartItemApiQuerySuffix(itemOrLineSignature) {
+  if (itemOrLineSignature && typeof itemOrLineSignature === "object") {
+    const ls = String(itemOrLineSignature.lineSignature ?? "").trim().toLowerCase();
+    if (/^[a-f0-9]{64}$/.test(ls)) return `?lineSignature=${encodeURIComponent(ls)}`;
+    const vs = String(itemOrLineSignature.variantSignature ?? "").trim();
+    return vs ? `?variantSignature=${encodeURIComponent(vs)}` : "";
+  }
+  const raw = String(itemOrLineSignature ?? "").trim();
+  const lower = raw.toLowerCase();
+  if (/^[a-f0-9]{64}$/.test(lower)) return `?lineSignature=${encodeURIComponent(lower)}`;
+  return raw ? `?variantSignature=${encodeURIComponent(raw)}` : "";
 }

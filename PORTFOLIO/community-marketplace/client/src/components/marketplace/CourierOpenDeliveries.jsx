@@ -43,10 +43,28 @@ function activeRunStatusNote(statusRaw) {
   return RUN_STATUS_NOTE[s] || null;
 }
 
+/** Helper copy under Accept on suggested-invitation tasks (buyer/seller picked this courier). */
+function CourierInvitationNote({ invitedByBuyer, invitedBySeller }) {
+  const b = Boolean(invitedByBuyer);
+  const s = Boolean(invitedBySeller);
+  let lead =
+    "A buyer or seller picked you for this delivery.";
+  if (b && s) lead = "The buyer and seller both picked you for this delivery.";
+  else if (b) lead = "The buyer picked you for this delivery.";
+  else if (s) lead = "The seller picked you for this delivery.";
+  const detail = "Accept delivery to assign the run to yourself.";
+  return (
+    <p className="text-pretty text-[11px] leading-relaxed sm:text-xs">
+      <span className="font-semibold text-violet-950 dark:text-violet-100">{lead}</span>{" "}
+      <span className="text-neutral-600 dark:text-slate-400">{detail}</span>
+    </p>
+  );
+}
+
 /**
  * Shared product row for open tasks and “current delivery”.
  *
- * @param {{ o: object, listing: object | null, courierChrome: { recoveryPrimary: string }, showAcceptButton: boolean, canClaimDeliveries: boolean, claimingId: string | null, onAccept?: () => void, topMeta?: import("react").ReactNode }} props
+ * @param {{ o: object, listing: object | null, courierChrome: { recoveryPrimary: string }, showAcceptButton: boolean, canClaimDeliveries: boolean, claimingId: string | null, onAccept?: () => void, topMeta?: import("react").ReactNode, bottomMeta?: import("react").ReactNode }} props
  */
 function OpenDeliveryTaskRow({
   o,
@@ -57,6 +75,7 @@ function OpenDeliveryTaskRow({
   claimingId,
   onAccept,
   topMeta,
+  bottomMeta,
 }) {
   const enriched = enrichListingSnapshotForOrderCard(o, listing);
   const thumbListing = listingThumbFromEnriched(enriched);
@@ -93,7 +112,9 @@ function OpenDeliveryTaskRow({
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <div className="min-w-0 space-y-1">
-            {topMeta ? <div className="text-[11px] leading-snug text-neutral-600 dark:text-slate-400">{topMeta}</div> : null}
+            {topMeta ? (
+              <div className="space-y-1 text-[11px] leading-snug text-neutral-600 dark:text-slate-400">{topMeta}</div>
+            ) : null}
             <p className="truncate text-sm font-semibold leading-snug text-neutral-900 dark:text-slate-100">
               {enriched.title || "Product"}
             </p>
@@ -114,19 +135,31 @@ function OpenDeliveryTaskRow({
               ) : null}
               <div className="flex flex-wrap gap-x-2 gap-y-0.5 border-t border-neutral-200/70 pt-1 dark:border-slate-600/60">
                 <>
-                  <span>
-                    <span className="font-medium text-neutral-700 dark:text-slate-300">Goods</span> {formatCents(goodsCents)}
+                  <span
+                    className="inline-flex max-w-full items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-emerald-900 ring-1 ring-inset ring-emerald-200/90 dark:bg-emerald-950/45 dark:text-emerald-100 dark:ring-emerald-800/45"
+                    title="Product total (goods)"
+                  >
+                    <span>Goods</span>
+                    <span className="tabular-nums">{formatCents(goodsCents)}</span>
                   </span>
-                  <span>
-                    <span className="font-medium text-neutral-700 dark:text-slate-300">Delivery tip</span> {formatCents(deliveryCents)}
+                  <span
+                    className="inline-flex max-w-full items-center gap-1 rounded-md bg-brand-soft/90 px-2 py-0.5 text-[11px] font-semibold leading-snug text-brand-primary ring-1 ring-inset ring-brand-primary/25 dark:bg-slate-800/90 dark:text-brand-accent dark:ring-brand-accent/30"
+                    title="Your delivery tip (cash at handoff)"
+                  >
+                    <span>Delivery tip</span>
+                    <span className="tabular-nums">{formatCents(deliveryCents)}</span>
                   </span>
                   <span className="w-full text-[10px] text-neutral-500 dark:text-slate-500">
                     Buyer {formatCents(buyerPool)} · Seller {formatCents(sellerPool)} — cash at handoff, not in-app
                   </span>
                 </>
-                <span className="font-semibold text-neutral-800 dark:text-slate-200">
-                  <span className="font-medium">Total</span> {formatCents(totalCents)}{" "}
-                  <span className="font-normal text-neutral-500 dark:text-slate-500">COD</span>
+                <span
+                  className="inline-flex max-w-full flex-wrap items-center gap-x-1 gap-y-0 rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-amber-950 ring-1 ring-inset ring-amber-200/90 dark:bg-amber-950/50 dark:text-amber-100 dark:ring-amber-800/40"
+                  title="Collect at handoff (cash on delivery)"
+                >
+                  <span>Total</span>
+                  <span className="tabular-nums">{formatCents(totalCents)}</span>
+                  <span className="font-medium text-amber-800/85 dark:text-amber-200/90">COD</span>
                 </span>
               </div>
             </div>
@@ -153,6 +186,9 @@ function OpenDeliveryTaskRow({
                 Accept delivery
               </Button>
             </div>
+          ) : null}
+          {bottomMeta ? (
+            <div className="w-full border-t border-neutral-200/70 pt-2.5 dark:border-slate-600/55">{bottomMeta}</div>
           ) : null}
         </div>
       </div>
@@ -193,28 +229,34 @@ function OpenDeliveriesSkeleton() {
  *   token: string,
  *   communityId: string,
  *   courierStatus: string,
+ *   courierProfileReady?: boolean,
  *   onClaimed?: () => void | Promise<void>,
  *   onDeliveriesLoaded?: () => void | Promise<void>,
  *   viewerSuggestedCompensationCents?: number | null,
  *   courierTransportState?: { claimMode: string, setClaimMode: (v: string | ((p: string) => string)) => void, profileModes: string[], modesLoaded: boolean } | null,
  *   showInlineTransportPicker?: boolean,
  *   headerTrailing?: import("react").ReactNode,
+ *   onActiveRunMeta?: (meta: { assignmentMode: string | null }) => void,
  * }} props
  */
 export function CourierOpenDeliveries({
   token,
   communityId,
   courierStatus,
+  courierProfileReady = true,
   onClaimed,
   onDeliveriesLoaded,
   viewerSuggestedCompensationCents = null,
   courierTransportState = null,
   showInlineTransportPicker = true,
   headerTrailing = null,
+  onActiveRunMeta,
 }) {
   const [orders, setOrders] = useState([]);
   /** Buyer/seller invited this courier; order still `seller_accepted` until the courier accepts. */
-  const [invitations, setInvitations] = useState(/** @type {{ assignmentId: string, order: object, assignmentMode: string | null }[]} */ ([]));
+  const [invitations, setInvitations] = useState(
+    /** @type {{ assignmentId: string, order: object, assignmentMode: string | null, invitedByBuyer?: boolean, invitedBySeller?: boolean }[]} */ ([]),
+  );
   /** In-progress run (`courier_assigned` / `out_for_delivery`) from GET /delivery/active — not included in open tasks. */
   const [activeOrder, setActiveOrder] = useState(/** @type {object | null} */ (null));
   const [assignmentMode, setAssignmentMode] = useState(/** @type {string | null} */ (null));
@@ -234,7 +276,7 @@ export function CourierOpenDeliveries({
   const modesLoaded = courierTransportState ? courierTransportState.modesLoaded : internalModesLoaded;
   /** Off = hidden; available/active/busy = hub is “on”. Claims blocked only when GET `/delivery/active` returns an order (DB-backed run). */
   const hubActive = courierStatus !== "offline";
-  const canClaimDeliveries = hubActive && !activeOrder;
+  const canClaimDeliveries = hubActive && !activeOrder && courierProfileReady;
 
   const selectableModes = useMemo(() => {
     if (profileModes.length > 0) return MODE_ORDER.filter((x) => profileModes.includes(x));
@@ -353,7 +395,13 @@ export function CourierOpenDeliveries({
     if (!selectableModes.includes(claimMode)) {
       setClaimMode(selectableModes[0] || "walk");
     }
-  }, [selectableModes, claimMode]);
+  }, [selectableModes, claimMode, setClaimMode]);
+
+  useEffect(() => {
+    if (typeof onActiveRunMeta !== "function") return undefined;
+    onActiveRunMeta({ assignmentMode });
+    return undefined;
+  }, [onActiveRunMeta, assignmentMode]);
 
   useEffect(() => {
     if (!token || !hubActive) return undefined;
@@ -398,6 +446,15 @@ export function CourierOpenDeliveries({
   const openTasksOrders = useMemo(
     () => orders.filter((o) => !invitationOrderIdSet.has(String(o.id || ""))),
     [orders, invitationOrderIdSet],
+  );
+
+  /** Next claim / invitation only — does not overwrite profile `courier_modes` (set under Activity → Courier → Edit). */
+  const pickTransportMode = useCallback(
+    (m) => {
+      const next = MODE_ORDER.includes(String(m || "").trim().toLowerCase()) ? String(m).trim().toLowerCase() : "walk";
+      setClaimMode(next);
+    },
+    [setClaimMode],
   );
 
   const claim = async (orderId) => {
@@ -455,7 +512,7 @@ export function CourierOpenDeliveries({
           {headerTrailing}
         </div>
         <p className="text-[11px] text-neutral-600 dark:text-slate-400">
-          Turn <span className="font-semibold text-violet-900 dark:text-violet-200">On</span> on the right to see deliveries you can accept.
+          Choose <span className="font-semibold text-violet-900 dark:text-violet-200">Take deliveries</span> above to see tasks you can accept.
         </p>
       </div>
     );
@@ -560,7 +617,7 @@ export function CourierOpenDeliveries({
                   claimMode === m ? courierChrome.recoveryPrimary : courierChrome.recoverySecondary,
                 )}
                 disabled={Boolean(claimingId) || !canClaimDeliveries}
-                onClick={() => setClaimMode(m)}
+                onClick={() => pickTransportMode(m)}
               >
                 {MODE_LABEL[m] ?? m}
               </Button>
@@ -568,7 +625,7 @@ export function CourierOpenDeliveries({
           </div>
           {profileModes.length === 0 ? (
             <p className="mt-1.5 text-[10px] text-neutral-500 dark:text-slate-500">
-              Add modes on your profile to limit choices — until then, any mode can be recorded for this run.
+              Tap a mode to save it on your profile — neighbors see it when suggesting you. Until then, any mode can be used when you claim.
             </p>
           ) : null}
         </div>
@@ -578,15 +635,11 @@ export function CourierOpenDeliveries({
           <h4 id="courier-invitations-heading" className="text-xs font-semibold text-violet-950 dark:text-violet-100">
             Suggested to you
           </h4>
-          <p className="text-[11px] text-neutral-600 dark:text-slate-400">
-            A buyer or seller picked you for this delivery. Accept delivery to assign the run to yourself.
-          </p>
           <ul className="space-y-2">
             {invitations.map((inv) => {
               const o = inv.order;
               if (!o || typeof o !== "object") return null;
               const oid = String(o.id || "");
-              const recordedMode = inv.assignmentMode && MODE_ORDER.includes(inv.assignmentMode) ? inv.assignmentMode : null;
               return (
                 <OpenDeliveryTaskRow
                   key={String(inv.assignmentId || oid)}
@@ -597,26 +650,7 @@ export function CourierOpenDeliveries({
                   canClaimDeliveries={canClaimDeliveries}
                   claimingId={claimingId}
                   onAccept={() => respondInvitation(oid)}
-                  topMeta={
-                    <p className="text-[11px] text-violet-800 dark:text-violet-200">
-                      Suggested run
-                      {recordedMode ? (
-                        <>
-                          {" "}
-                          · invite recorded{" "}
-                          <span className="font-semibold text-neutral-800 dark:text-slate-200">
-                            {MODE_LABEL[recordedMode] ?? recordedMode}
-                          </span>
-                          {modesLoaded ? (
-                            <>
-                              {" "}
-                              — adjust with <span className="font-semibold">Transport for this run</span> above before accepting
-                            </>
-                          ) : null}
-                        </>
-                      ) : null}
-                    </p>
-                  }
+                  bottomMeta={<CourierInvitationNote invitedByBuyer={inv.invitedByBuyer} invitedBySeller={inv.invitedBySeller} />}
                 />
               );
             })}
@@ -654,20 +688,33 @@ export function CourierOpenDeliveries({
           </p>
         </div>
       ) : openTasksOrders.length > 0 ? (
-        <ul className="mt-2 space-y-2">
-          {openTasksOrders.map((o) => (
-            <OpenDeliveryTaskRow
-              key={String(o.id)}
-              o={o}
-              listing={openListingsById[String(o.listingId)] ?? null}
-              courierChrome={courierChrome}
-              showAcceptButton
-              canClaimDeliveries={canClaimDeliveries}
-              claimingId={claimingId}
-              onAccept={() => claim(o.id)}
-            />
-          ))}
-        </ul>
+        <section
+          className="mt-2 space-y-2"
+          aria-labelledby={invitations.length > 0 ? "courier-open-pool-heading" : undefined}
+        >
+          {invitations.length > 0 ? (
+            <h4
+              id="courier-open-pool-heading"
+              className="text-xs font-semibold text-violet-950 dark:text-violet-100"
+            >
+              Other open tasks
+            </h4>
+          ) : null}
+          <ul className="m-0 list-none space-y-2 p-0">
+            {openTasksOrders.map((o) => (
+              <OpenDeliveryTaskRow
+                key={String(o.id)}
+                o={o}
+                listing={openListingsById[String(o.listingId)] ?? null}
+                courierChrome={courierChrome}
+                showAcceptButton
+                canClaimDeliveries={canClaimDeliveries}
+                claimingId={claimingId}
+                onAccept={() => claim(o.id)}
+              />
+            ))}
+          </ul>
+        </section>
       ) : null}
       </div>
     </div>

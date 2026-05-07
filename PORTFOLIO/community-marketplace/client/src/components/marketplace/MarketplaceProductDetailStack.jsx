@@ -1,5 +1,8 @@
-import { formatPesoWhole, listingCodAvailabilityLabel, parseSaleMetaFromDescription, removeSaleMetaLines } from "../../lib/listingSaleMeta.js";
+import { formatPesoWhole, listingCodAvailabilityLabel, parseSaleMetaFromDescription } from "../../lib/listingSaleMeta.js";
+import { markdownToPlainPreview } from "../../lib/listingDescriptionPlain.js";
+import { ListingDescriptionMarkdown } from "./ListingDescriptionMarkdown.jsx";
 import { ListingProductMetaExtras } from "./ListingProductMetaExtras.jsx";
+import { SellerBuyerRatingSummary } from "./SellerBuyerRatingSummary.jsx";
 
 /**
  * Same stack as community product cards: title, price (+ sale), quantity row, availability, description.
@@ -11,6 +14,8 @@ import { ListingProductMetaExtras } from "./ListingProductMetaExtras.jsx";
  * @param {import("react").ReactNode} [props.titleEnd] — e.g. favorite control aligned with the title row (keeps imagery unobstructed).
  * @param {"gridMobile"|"listMobile"|null} [props.browseStackMode] — marketplace browse density on small screens (card variant only).
  * @param {string} [props.orderType] — `in_stock` | `pre_order` when listing exposes Add Product fields.
+ * @param {number | null} [props.listingAvgRating] — from `order_reviews.product_rating` aggregate for this listing.
+ * @param {number} [props.listingReviewCount]
  */
 export function MarketplaceProductDetailStack({
   title,
@@ -36,11 +41,13 @@ export function MarketplaceProductDetailStack({
   compactListMeta = false,
   uniformOrderDetailRows = false,
   uniformOrderDetailCompact = false,
+  listingAvgRating = null,
+  listingReviewCount = 0,
 }) {
   const saleMeta = parseSaleMetaFromDescription(description);
-  const currentPesos = Math.floor((Number(priceCents) || 0) / 100);
+  const currentPesos = (Number(priceCents) || 0) / 100;
   const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
-  const descriptionPreview = removeSaleMetaLines(description);
+  const descriptionPreview = markdownToPlainPreview(description);
   const availabilityLabel = listingCodAvailabilityLabel(fulfillmentModes);
   const isCard = variant === "card";
 
@@ -79,14 +86,16 @@ export function MarketplaceProductDetailStack({
         <p className={`mt-1 ${descriptionClampClass} product-description-preview`}>{descriptionPreview}</p>
       </div>
     ) : frameDescriptionAsSellerNote ? (
-      <div className="rounded-lg border border-amber-200/90 bg-amber-50/75 px-2.5 py-2 dark:border-amber-500/35 dark:bg-amber-500/10">
+      <div className="min-w-0 rounded-lg border border-amber-200/90 bg-amber-50/75 px-2.5 py-2 dark:border-amber-500/35 dark:bg-amber-500/10">
         <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">From the seller</p>
-        <p className="mt-1 line-clamp-4 text-pretty text-xs leading-relaxed text-amber-950 dark:text-amber-50">{descriptionPreview}</p>
+        <div className="mt-1 min-w-0">
+          <ListingDescriptionMarkdown text={description} tone="amber" />
+        </div>
       </div>
     ) : (
-      <p className="line-clamp-3 text-pretty text-xs leading-relaxed text-text-secondary min-[360px]:text-sm dark:text-slate-400">
-        {descriptionPreview}
-      </p>
+      <div className="min-w-0 text-text-secondary min-[360px]:text-sm dark:text-slate-400">
+        <ListingDescriptionMarkdown text={description} />
+      </div>
     )
   ) : null;
 
@@ -163,6 +172,17 @@ export function MarketplaceProductDetailStack({
           <p className={titleClass}>{title}</p>
         )
       ) : null}
+      <SellerBuyerRatingSummary
+        avg={listingAvgRating}
+        count={listingReviewCount}
+        className={
+          isCard
+            ? browseStackMode === "gridMobile"
+              ? "text-[10px] leading-tight text-amber-900/90 dark:text-amber-100/90"
+              : "text-[11px] leading-snug text-amber-900/90 dark:text-amber-100/90"
+            : "text-sm text-amber-900/95 dark:text-amber-100/95"
+        }
+      />
       <div
         className={
           compactListMeta

@@ -217,9 +217,10 @@ export function useMobilePullToRefresh({
       const cap = getMaxVisualPullPx();
       const current = Math.max(0, Number(currentPull || 0));
       const peak = Math.max(0, Number(maxPull || 0), current);
-      // Keep the cap, but decay immediately from the peak as the finger moves upward.
-      const overshoot = Math.max(0, peak - cap);
-      return Math.max(0, Math.min(cap, current - overshoot));
+      // Preserve a stable visual offset while finger is still pulling down.
+      // This avoids icon disappearing on slow release after a high peak pull.
+      const effectivePull = Math.max(current, Math.min(peak, cap));
+      return Math.max(0, Math.min(cap, effectivePull));
     };
 
     const resetGestureState = () => {
@@ -474,8 +475,7 @@ export function useMobilePullToRefresh({
         state.tracking &&
         state.intent === "vertical" &&
         state.startedAtTop &&
-        armedAtRelease &&
-        visibleAtRelease;
+        armedAtRelease;
       const reason = !state.tracking
         ? "not-tracking"
         : state.intent !== "vertical"
@@ -484,9 +484,7 @@ export function useMobilePullToRefresh({
             ? "not-started-top"
             : !armedAtRelease
               ? "not-armed"
-              : !visibleAtRelease
-                ? "icon-hidden-at-release"
-                : "ok";
+              : "ok";
       resetPullVisualsToZero();
       resetGestureState();
       if (!shouldRefresh || lockRef.current) {

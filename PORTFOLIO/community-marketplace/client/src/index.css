@@ -121,14 +121,20 @@
     @apply shrink-0;
   }
 
-  /* Light divider under icon-only secondary tabs (mobile). */
+  /* Icon-only secondary tabs: hairline + frosted row (no strip shadow). */
   .mobile-app-secondary-nav {
-    @apply shrink-0 border-b border-neutral-200/50 bg-white/95 backdrop-blur-md;
+    @apply shrink-0 border-b border-neutral-200/40 bg-gradient-to-b from-white/95 to-brand-soft/20 backdrop-blur-md;
   }
-  /* Brand panel tokens — cannot use arbitrary hex/opacity inside `@apply` in this Tailwind setup */
+  @supports (backdrop-filter: blur(12px)) {
+    .mobile-app-secondary-nav {
+      background: linear-gradient(to bottom, rgb(255 255 255 / 0.9), rgb(232 246 246 / 0.35));
+      backdrop-filter: blur(12px);
+    }
+  }
+  /* Deep slate — editorial marketplace chrome */
   .dark .mobile-app-secondary-nav {
-    border-bottom-color: rgb(61 109 143 / 0.45);
-    background-color: rgb(15 34 52 / 0.96);
+    border-bottom-color: rgb(31 60 86 / 0.5);
+    background: linear-gradient(to bottom, rgb(15 34 52 / 0.97), rgb(17 40 61 / 0.94));
     backdrop-filter: blur(12px);
   }
 
@@ -711,6 +717,17 @@
     @apply sticky top-0 z-40 border-b border-neutral-200/80 bg-white/90 pt-[env(safe-area-inset-top,0px)] shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/90;
   }
 
+  .landing-nav--elevated {
+    @apply z-50;
+    box-shadow:
+      0 4px 14px -4px rgb(15 23 42 / 0.12),
+      0 1px 0 rgb(15 23 42 / 0.06);
+  }
+
+  .dark .landing-nav--elevated {
+    box-shadow: 0 4px 22px -6px rgb(0 0 0 / 0.45);
+  }
+
   .landing-card {
     @apply rounded-2xl border border-neutral-200/90 bg-white p-8 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.12)] md:p-10 dark:border-[#1f3c56]/90 dark:bg-[#0f2234] dark:shadow-[0_16px_46px_-16px_rgba(0,0,0,0.5)];
   }
@@ -723,12 +740,13 @@
     @apply lm-btn-primary lm-btn-full h-12 min-h-[3rem] rounded-full px-8 text-sm font-semibold shadow-md shadow-brand-primary/25 motion-reduce:transition-none hover:bg-brand-hover active:scale-[0.98] motion-reduce:active:scale-100 disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100;
   }
 
+  /* Landing auth bar: one row height so logo, links, and CTAs share a common baseline */
   .landing-btn-nav-text {
-    @apply inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg px-2 text-xs font-medium text-neutral-900 transition hover:bg-neutral-100 hover:text-neutral-700 dark:text-slate-100 dark:hover:bg-slate-800 dark:hover:text-slate-200 min-[360px]:px-2.5 min-[390px]:px-3 min-[390px]:text-sm min-[430px]:px-3 md:text-sm;
+    @apply inline-flex h-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-lg px-2 text-xs font-medium text-neutral-900 transition hover:bg-neutral-100 hover:text-neutral-700 dark:text-slate-100 dark:hover:bg-slate-800 dark:hover:text-slate-200 min-[360px]:px-2.5 min-[390px]:px-3 min-[390px]:text-sm min-[430px]:px-3 md:text-sm;
   }
 
   .landing-btn-nav-primary {
-    @apply inline-flex h-9 min-h-[44px] items-center justify-center rounded-full bg-brand-primary px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-hover min-[360px]:px-3.5 min-[390px]:h-10 min-[390px]:px-4 min-[390px]:text-sm min-[430px]:px-[1.125rem] md:h-11 md:px-5 md:text-sm;
+    @apply inline-flex h-11 min-h-[44px] items-center justify-center rounded-full bg-brand-primary px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-hover min-[360px]:px-3.5 min-[390px]:px-4 min-[390px]:text-sm min-[430px]:px-[1.125rem] md:px-5 md:text-sm;
   }
 
   .landing-auth-close {
@@ -794,16 +812,12 @@
     --landing-footer-accent: rgb(45 212 191);
   }
 
-  .landing-site-footer a:not(.landing-footer-social):hover {
+  .landing-site-footer a:hover {
     @apply text-white underline decoration-white/40 underline-offset-4;
   }
 
   .landing-footer-about-link {
     @apply block text-sm text-white/90 transition hover:text-white;
-  }
-
-  .landing-footer-social {
-    @apply inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/25 text-white/90 transition hover:border-white/50 hover:bg-white/10 hover:text-white;
   }
 
   @keyframes publish-toast-progress {

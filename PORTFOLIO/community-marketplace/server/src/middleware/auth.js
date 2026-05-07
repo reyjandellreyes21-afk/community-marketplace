@@ -1,6 +1,7 @@
 import { AppError } from "../errors/AppError.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { displayNameFromDocument } from "../utils/displayName.js";
+import { meetsMinSubscriptionTier, normalizeSubscriptionTier } from "../utils/subscriptionTier.js";
 
 export const requireAuth = async (req, _res, next) => {
   const authHeader = req.headers.authorization;
@@ -32,6 +33,7 @@ export const requireAuth = async (req, _res, next) => {
       id: authData.user.id,
       email: user.email,
       name: displayNameFromDocument(user),
+      subscriptionTier: profile ? normalizeSubscriptionTier(profile.subscription_tier) : "basic",
     };
     return next();
   } catch {
@@ -67,9 +69,27 @@ export const optionalAuth = async (req, _res, next) => {
       id: authData.user.id,
       email: user.email,
       name: displayNameFromDocument(user),
+      subscriptionTier: profile ? normalizeSubscriptionTier(profile.subscription_tier) : "basic",
     };
     return next();
   } catch {
     return next();
   }
+};
+
+/**
+ * Require an authenticated user whose plan is at least `minTier` (basic | pro | premium).
+ * Use on routes that implement paid-only behavior.
+ */
+export const requireMinSubscriptionTier = (minTier) => (req, _res, next) => {
+  if (!req.user?.id) {
+    return next(new AppError(401, "Authentication required."));
+  }
+  const tier = req.user.subscriptionTier || "basic";
+  if (!meetsMinSubscriptionTier(tier, minTier)) {
+    return next(
+      new AppError(403, `This action requires a ${String(minTier)} plan or higher.`, null, "PLAN_REQUIRED"),
+    );
+  }
+  return next();
 };

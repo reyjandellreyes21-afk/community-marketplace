@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import tabLogo from "./assets/new-icon-only.png";
-import landingFeaturesArtworkPicture from "./assets/new-auth-landing.png?w=360;480;640;768&format=avif;webp;png&quality=80&as=picture";
 import { createSupabaseClient } from "./lib/supabaseClient";
 import {
   isLikelySameCommunityName,
@@ -13,14 +12,24 @@ import { formatBrowseLabel, getListingCategoryShortLabel, getVerticalById, VERTI
 import { gradientForId, initialsFromName } from "./communityUi.js";
 import { LoggedInHeader } from "./components/LoggedInHeader.jsx";
 import { SendFeedbackView } from "./components/SendFeedbackView.jsx";
+import { PasswordSecurityView } from "./components/PasswordSecurityView.jsx";
+import { PasswordRecoveryScreen } from "./components/PasswordRecoveryScreen.jsx";
 import { SecondaryScreenHeader } from "./components/SecondaryScreenHeader.jsx";
-import { AboutLinkMartBody, TermsLinkMartBody } from "./components/legal/LinkMartLegalContent.jsx";
+import {
+  AboutLinkMartBody,
+  BewareOfScammersBody,
+  DataPrivacyActBody,
+  ProhibitedProductsBody,
+  TermsLinkMartBody,
+} from "./components/legal/LinkMartLegalContent.jsx";
 import { ActivityHubOrderStatusStrip } from "./components/ActivityHubOrderStatusStrip.jsx";
 import { ActivityPrimaryTabs } from "./components/ActivityPrimaryTabs.jsx";
 import { CommunityCourierPanel } from "./components/marketplace/CommunityCourierPanel.jsx";
+import { SellerBuyerRatingSummary } from "./components/marketplace/SellerBuyerRatingSummary.jsx";
 import {
   LazyPublicListingPage,
   LazyLandingIllustration,
+  LazyLandingFeaturesIllustration,
   LazyCommunityShopListingCard,
   DeferredProductDetailStack,
   LazyProductInspectModal,
@@ -29,7 +38,6 @@ import {
   LazySellerBuyerFeedbackList,
   LazyCourierBuyerFeedbackList,
 } from "./appCodeSplit.jsx";
-import { LandingArtworkCard } from "./components/landing/LandingArtworkCard.jsx";
 import { StableMediaImage, StableAvatar } from "./components/media/StableMediaImage.jsx";
 import { ProductListingMedia } from "./components/media/ProductListingMedia.jsx";
 import {
@@ -40,7 +48,7 @@ import {
 } from "./lib/listingImageUrl.js";
 import { formatCents } from "./marketplace/money.js";
 import { orderLineUnitPriceCents } from "./lib/orderLineCents.js";
-import { ACTIVITY_TABS, SELLER_TABS, VIEWS } from "./views.js";
+import { ACTIVITY_COURIER_SUBTABS, ACTIVITY_TABS, SELLER_TABS, VIEWS } from "./views.js";
 import {
   clearActiveView,
   readActiveView,
@@ -53,6 +61,7 @@ import {
   writeThemeMode,
 } from "./lib/appSession.js";
 import { apiRequest, isUnauthorizedApiError } from "./lib/appApi.js";
+import { buildPasswordRecoveryRedirectUrl } from "./lib/authRecoveryUrl.js";
 import { useFocusTrap } from "./lib/useFocusTrap.js";
 import {
   migrateLegacyNotificationInboxStorage,
@@ -68,8 +77,12 @@ import {
   fetchNotificationsFromApi,
   markNotificationReadApi,
   markAllNotificationsReadApi,
+  deleteNotificationApi,
+  deleteAllNotificationsApi,
   deleteNotificationRemote,
   deleteAllNotificationsRemote,
+  isNotificationNavigable,
+  NOTIFICATION_INBOX_NAVIGABLE_ONLY,
 } from "./lib/marketplaceNotifications.js";
 import { CHAT_QUICK_EMOJIS } from "./lib/chatComposerEmojis.js";
 import { UI_KIT } from "./lib/appUiKit.js";
@@ -81,6 +94,9 @@ import {
   PROFILE_GENDER_OPTIONS,
   computeAgeFromBirthday,
 } from "./lib/userProfileFormat.js";
+import { formatSubscriptionTierLabel } from "./lib/subscriptionTier.js";
+import { phoneVerificationEnabled } from "./lib/featureFlags.js";
+import { computeMarketplaceProfileReadiness } from "./lib/marketplaceProfileReadiness.js";
 import {
   PH_PROVINCE_OPTIONS,
   normalizePhLocalityName,
@@ -97,20 +113,19 @@ import {
   toTitleCase,
 } from "./lib/philippinesAddress.js";
 import {
-  formatPesoWhole,
   parseSaleMetaFromDescription,
   removeSaleMetaLines,
-  listingCodAvailabilityLabel,
   normalizeListingOptionValues,
   narrowListingOptionValuesForBuyerSelection,
   parseBuyerSelectedVariantsFromComment,
   buildVariantSignatureFromSelections,
-  cartLineKey,
   cartLineKeyFromItem,
   cartItemApiQuerySuffix,
   variantSignatureFromBuyerComment,
   buyerCommentDisplayForOrderCard,
 } from "./lib/listingSaleMeta.js";
+import { formatPhpPriceFromNumber, formatPhpPriceTyping, parsePhpPricePesos } from "./lib/phpPriceInput.js";
+import { computeCartLineSignature } from "./lib/cartLineSignature.js";
 import {
   cartSeenListingIdsStorageKey,
   favoritesSeenListingIdsStorageKey,
@@ -128,8 +143,16 @@ import {
   attentionApiSideToDismissed,
   fetchOrderAttentionFromApi,
   putOrderAttentionToApi,
+  orderStatusToTabId,
 } from "./lib/orderAttentionStorage.js";
 import { getActivityTabChrome } from "./lib/activityTabTheme.js";
+import {
+  getRateButtonLabel,
+  orderNeedsCourierReview,
+  shouldShowCourierSection,
+  shouldShowRateButton,
+  shouldShowSellerSection,
+} from "./lib/orderReviewEligibility.js";
 import {
   isDeliveryCourierAssigned,
   isDeliveryInTransit,
@@ -152,6 +175,7 @@ import {
 import { quickFilterIcon, categoryIcon } from "./components/browse/BrowseFilterIcons.jsx";
 import { SectionHeading } from "./components/marketplace/SectionHeading.jsx";
 import { FilterOptionButton } from "./components/marketplace/FilterOptionButton.jsx";
+import { CourierEngagementBoard } from "./components/marketplace/CourierEngagementBoard.jsx";
 import { CourierRunnerHubPanel } from "./components/marketplace/CourierRunnerHubPanel.jsx";
 import { ListingCategoryPicker } from "./components/marketplace/ListingCategoryPicker.jsx";
 import { CartSellerSelectAllCheckbox } from "./components/marketplace/CartSellerSelectAllCheckbox.jsx";
@@ -171,8 +195,11 @@ import {
 } from "./components/landing/LandingMarketing.jsx";
 import { ScreenLoading, ScreenEmpty, ScreenError } from "./components/ui/ScreenState.jsx";
 import { BrowseGridSkeleton } from "./components/marketplace/MobileBrowseSkeleton.jsx";
+import { MobilePullToRefreshIndicator } from "./components/ui/MobilePullToRefreshIndicator.jsx";
 import { Button } from "./components/ui/Button.jsx";
+import { SimpleSelect } from "./components/ui/SimpleSelect.jsx";
 import { MobileFormActions } from "./components/ui/MobileFormActions.jsx";
+import { DiscardUnsavedChangesModal } from "./components/ui/DiscardUnsavedChangesModal.jsx";
 import { validateConfirmPassword, validateEmail, validatePasswordClient } from "./lib/formValidation.js";
 import { MobileAppShell } from "./layouts/MobileAppShell.jsx";
 import { useBodyScrollLock } from "./hooks/useBodyScrollLock.js";
@@ -191,6 +218,19 @@ const ORDER_STATUS_TAB_BADGE_ON_GLYPH_BASE =
   "pointer-events-none absolute -right-0.5 -top-0.5 z-[1] inline-flex min-h-[1rem] min-w-[1rem] max-w-[min(2.75rem,calc(100%-0.35rem))] items-center justify-center rounded-full px-[3px] py-px text-[9px] font-bold leading-none shadow-sm";
 const ORDER_STATUS_TAB_BADGE_ON_GLYPH_MUTED = `${ORDER_STATUS_TAB_BADGE_ON_GLYPH_BASE} bg-slate-500 text-white dark:bg-slate-600`;
 const ORDER_STATUS_TAB_BADGE_ON_GLYPH_ROSE = `${ORDER_STATUS_TAB_BADGE_ON_GLYPH_BASE} bg-rose-600 text-white dark:bg-rose-500`;
+
+/** Compact hero display for public stats (e.g. 7, 50+, 1.2k+, 8k+). Omits “+” under 100 so early-stage totals stay readable. */
+function formatLandingPublicStat(n) {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  const x = Math.max(0, Math.floor(Number(n)));
+  if (x < 1000) return x <= 99 ? String(x) : `${x}+`;
+  const wholeK = Math.floor(x / 1000);
+  const remainder = x % 1000;
+  if (remainder === 0 || wholeK >= 10) return `${wholeK}k+`;
+  const tenths = Math.floor(x / 100) / 10;
+  const s = Number.isInteger(tenths) ? String(tenths) : tenths.toFixed(1).replace(/\.0$/, "");
+  return `${s}k+`;
+}
 
 /** Best-effort recency for ordering “unseen” pending rows (API field names vary). */
 function orderRowSortMs(o) {
@@ -771,9 +811,8 @@ function pickMergedOrderCommentForVariantChips(entry, ordersList) {
 }
 
 /**
- * Pending (buyer) row identity: same as cart `cartLineKey(listingId, variantSignature)`.
- * Parsed `Selected:` → canonical sig; otherwise stable `__order__:id` so different DB rows never fold
- * when comments are missing or unparsed (cart never merges unknown variant lines).
+ * Pending (buyer) row identity: variant + fulfillment + buyer note (same intent as cart lineSignature).
+ * Parsed `Selected:` → canonical sig; otherwise stable `__order__:id` when variant missing.
  */
 function buyerPendingOrderMergeKey(order) {
   const listingId = String(order?.listingId || "");
@@ -781,7 +820,10 @@ function buyerPendingOrderMergeKey(order) {
   const fromComment = variantSignatureFromBuyerComment(orderBuyerCommentRaw(order));
   const canonical = fromApi || fromComment;
   const variantSig = canonical || `__order__:${String(order?.id || "").trim() || "unknown"}`;
-  return cartLineKey(listingId, variantSig);
+  const ft = String(order?.fulfillmentType ?? order?.fulfillment_type ?? "").trim();
+  const note = String(orderBuyerCommentRaw(order) ?? "").trim();
+  const sep = "\u0002";
+  return `${listingId}${sep}${variantSig}${sep}${ft}${sep}${note}`;
 }
 
 /** When folding duplicate buyer orders, keep the row with persisted variantSignature or best `Selected:` comment. */
@@ -846,10 +888,16 @@ function readInitialActivityTab() {
   return ACTIVITY_TABS.BUYING;
 }
 
+function readInitialCourierHubTab() {
+  return ACTIVITY_COURIER_SUBTABS.TASKS;
+}
+
 function App() {
   const [authMode, setAuthMode] = useState("login");
   const [authPanelVisible, setAuthPanelVisible] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
+  const [forgotPasswordSent, setForgotPasswordSent] = useState(false);
+  const [signupEmailSent, setSignupEmailSent] = useState(false);
   const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [form, setForm] = useState({
@@ -868,6 +916,12 @@ function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const routeListingId = useMemo(() => /\/l\/([0-9a-f-]{36})/i.exec(location.pathname)?.[1] ?? null, [location.pathname]);
+  const isPasswordRecoveryRoute = useMemo(() => {
+    const p = location.pathname.replace(/\/+$/, "") || "/";
+    return p === "/auth/recovery" || p.endsWith("/auth/recovery");
+  }, [location.pathname]);
+  const authPathnameRef = useRef(location.pathname);
+  authPathnameRef.current = location.pathname;
   useEffect(() => {
     const supabase = createSupabaseClient();
     if (!supabase) return undefined;
@@ -880,7 +934,13 @@ function App() {
       writeAuthToken(accessToken);
     });
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY" && session?.access_token) {
+        const path = (authPathnameRef.current || "").replace(/\/+$/, "") || "/";
+        if (path !== "/auth/recovery" && !path.endsWith("/auth/recovery")) {
+          navigate("/auth/recovery", { replace: true });
+        }
+      }
       const accessToken = session?.access_token || "";
       if (!accessToken) return;
       setToken(accessToken);
@@ -891,7 +951,7 @@ function App() {
       mounted = false;
       authListener.subscription.unsubscribe();
     };
-  }, []);
+  }, [navigate]);
 
   const [message, setMessage] = useState("");
   const [authInlineErrors, setAuthInlineErrors] = useState({
@@ -913,6 +973,45 @@ function App() {
   /** Logged-out legal overlay: same copy as in-app About / Terms (`LinkMartLegalContent`). */
   const [landingLegalView, setLandingLegalView] = useState(null);
   const [landingTermsScrollPrivacy, setLandingTermsScrollPrivacy] = useState(false);
+  /** Logged-out hero — live totals from GET /public-stats */
+  const [landingPublicStats, setLandingPublicStats] = useState({
+    listingsCount: null,
+    accountsCount: null,
+    communitiesCount: null,
+  });
+  /** Logged-out header: stronger chrome after scroll (sticky bar already in `.landing-nav`). */
+  const [landingNavElevated, setLandingNavElevated] = useState(false);
+  useEffect(() => {
+    if (user) {
+      setLandingNavElevated(false);
+      return undefined;
+    }
+    const onScroll = () => setLandingNavElevated(window.scrollY > 20);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [user]);
+  useEffect(() => {
+    if (user) return undefined;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await apiRequest("/public-stats");
+        if (cancelled) return;
+        setLandingPublicStats({
+          listingsCount: typeof data?.listingsCount === "number" ? data.listingsCount : null,
+          accountsCount: typeof data?.accountsCount === "number" ? data.accountsCount : null,
+          communitiesCount: typeof data?.communitiesCount === "number" ? data.communitiesCount : null,
+        });
+      } catch {
+        if (cancelled) return;
+        setLandingPublicStats({ listingsCount: null, accountsCount: null, communitiesCount: null });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
   const [usersList, setUsersList] = useState([]);
   const usersListRef = useRef([]);
   usersListRef.current = usersList;
@@ -951,13 +1050,21 @@ function App() {
     }
     return VIEWS.BROWSE;
   });
+  const lastNonProfileViewRef = useRef(VIEWS.BROWSE);
   /** Mobile header chrome title for Send feedback (Thank you vs form). Reset when leaving the view. */
   const [sendFeedbackPhase, setSendFeedbackPhase] = useState("form");
   const [activityTab, setActivityTab] = useState(readInitialActivityTab);
+  const [courierHubTab, setCourierHubTab] = useState(readInitialCourierHubTab);
   const activityBuying = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.BUYING;
   const activitySelling = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.SELLING;
   const activityCourier = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.COURIER;
+  const courierHubTasks = activityCourier && courierHubTab === ACTIVITY_COURIER_SUBTABS.TASKS;
+  const courierHubStats = activityCourier && courierHubTab === ACTIVITY_COURIER_SUBTABS.STATS;
+  const courierHubFeedback = activityCourier && courierHubTab === ACTIVITY_COURIER_SUBTABS.FEEDBACK;
   const activityTabChrome = useMemo(() => getActivityTabChrome(activityTab), [activityTab]);
+  useEffect(() => {
+    if (activeView !== VIEWS.PROFILE) lastNonProfileViewRef.current = activeView;
+  }, [activeView]);
   const mainContentScrollRef = useRef(null);
   const [activityPrimaryTabsScrollHidden, setActivityPrimaryTabsScrollHidden] = useState(false);
   const activityFooterScrollLastYRef = useRef(0);
@@ -987,7 +1094,6 @@ function App() {
     if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(activeView)) return VIEWS.BROWSE;
     return activeView;
   }, [activeView]);
-  const previousActiveViewRef = useRef(activeView);
   const secondarySwipeRef = useRef({
     x: 0,
     y: 0,
@@ -1002,30 +1108,14 @@ function App() {
   const secondaryDragRafRef = useRef(0);
   const secondaryDragPendingXRef = useRef(0);
   const swipeSettleTimerRef = useRef(0);
+  /** Clears `mobileSecondarySlideClass` after swipe-only transition (not used for tab taps). */
+  const mobileSecondarySlideClearTimerRef = useRef(0);
   const [mobileSecondarySlideClass, setMobileSecondarySlideClass] = useState("");
   const [mobileSecondaryDragX, setMobileSecondaryDragX] = useState(0);
   const [mobileSecondaryDragging, setMobileSecondaryDragging] = useState(false);
   /** True while `<main>` animates transform back to 0 after a cancelled swipe. */
   const [mobileSecondarySwipeSettling, setMobileSecondarySwipeSettling] = useState(false);
   const previousViewForMarketplaceScrollResetRef = useRef(activeView);
-  useEffect(() => {
-    const prev = previousActiveViewRef.current;
-    const next = secondarySwipeNavView;
-    previousActiveViewRef.current = next;
-    const isMobileNow =
-      typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)").matches : false;
-    if (!isMobileNow) {
-      setMobileSecondarySlideClass("");
-      return undefined;
-    }
-    const prevIndex = secondaryMobileNavOrder.indexOf(prev);
-    const nextIndex = secondaryMobileNavOrder.indexOf(next);
-    if (prevIndex === -1 || nextIndex === -1 || prevIndex === nextIndex) return undefined;
-    setMobileSecondarySlideClass(nextIndex > prevIndex ? "lm-view-slide-left" : "lm-view-slide-right");
-    const timerId = window.setTimeout(() => setMobileSecondarySlideClass(""), 240);
-    return () => window.clearTimeout(timerId);
-  }, [secondarySwipeNavView, secondaryMobileNavOrder]);
-
   useEffect(() => {
     const saved = readActiveView();
     if (saved === VIEWS.SELLER) setSellerTab(SELLER_TABS.PRODUCTS);
@@ -1037,9 +1127,22 @@ function App() {
       (activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP) &&
       prev !== VIEWS.BROWSE &&
       prev !== VIEWS.COMMUNITY_SHOP;
-    const enteredAboutOrTerms =
-      (activeView === VIEWS.ABOUT || activeView === VIEWS.TERMS) && prev !== VIEWS.ABOUT && prev !== VIEWS.TERMS;
-    if (!enteredMarketplaceFeed && !enteredAboutOrTerms) return;
+    const enteredAboutTermsOrPassword =
+      (activeView === VIEWS.ABOUT ||
+        activeView === VIEWS.TERMS ||
+        activeView === VIEWS.DATA_PRIVACY_ACT ||
+        activeView === VIEWS.BEWARE_SCAMMERS ||
+        activeView === VIEWS.PROHIBITED_PRODUCTS ||
+        activeView === VIEWS.PASSWORD_SECURITY ||
+        activeView === VIEWS.SEND_FEEDBACK) &&
+      prev !== VIEWS.ABOUT &&
+      prev !== VIEWS.TERMS &&
+      prev !== VIEWS.DATA_PRIVACY_ACT &&
+      prev !== VIEWS.BEWARE_SCAMMERS &&
+      prev !== VIEWS.PROHIBITED_PRODUCTS &&
+      prev !== VIEWS.PASSWORD_SECURITY &&
+      prev !== VIEWS.SEND_FEEDBACK;
+    if (!enteredMarketplaceFeed && !enteredAboutTermsOrPassword) return;
     if (typeof window === "undefined") return;
     window.requestAnimationFrame(() => {
       const main = document.getElementById("main-content");
@@ -1064,6 +1167,15 @@ function App() {
   const [sellerProfileShopLoading, setSellerProfileShopLoading] = useState(false);
   const [sellerProfileShopError, setSellerProfileShopError] = useState("");
   const [sellerProfileShopFetchKey, setSellerProfileShopFetchKey] = useState(0);
+  /** Buyer→seller averages from `order_reviews` for Profile header (own vs another member’s shop). */
+  const [profileSellerRatingSelf, setProfileSellerRatingSelf] = useState({
+    sellerAvgRating: null,
+    sellerReviewCount: 0,
+  });
+  const [profileSellerRatingOther, setProfileSellerRatingOther] = useState({
+    sellerAvgRating: null,
+    sellerReviewCount: 0,
+  });
   const [listingsLoading, setListingsLoading] = useState(false);
   /** True while refetching listings when we already show rows (manual refresh / pull-to-refresh). */
   const [listingsRefreshing, setListingsRefreshing] = useState(false);
@@ -1123,14 +1235,11 @@ function App() {
   const [ordersBulkActionLoadingTransition, setOrdersBulkActionLoadingTransition] = useState(/** @type {string | null} */ (null));
   /** Seller-only: optional add-on to courier COD pool (whole ₱) when accepting pending orders — sent as centavos per order. */
   const [sellerAcceptCourierPesos, setSellerAcceptCourierPesos] = useState("");
-  /** Seller orders loaded for courier badge counts (separate fetch from Activity orders tab). */
-  const [courierHubOrders, setCourierHubOrders] = useState([]);
-  /** Buyer orders for courier badge counts (delivery still preparing). */
-  const [courierHubBuyerOrders, setCourierHubBuyerOrders] = useState([]);
-  /** Open delivery jobs in the member’s community (tab badge on Deliver). */
-  const [courierOpenDeliveryCount, setCourierOpenDeliveryCount] = useState(0);
-  /** Pending buyer/seller invitations for this user as courier (GET /delivery/invitations). */
-  const [courierInvitationCount, setCourierInvitationCount] = useState(0);
+  /**
+   * Courier tab badge: distinct order ids from GET /delivery/open ∪ GET /delivery/invitations.
+   * The same `seller_accepted` task can appear on both; we count it once.
+   */
+  const [courierHubDistinctTaskCount, setCourierHubDistinctTaskCount] = useState(0);
   const [orderCancelReasonModalOpen, setOrderCancelReasonModalOpen] = useState(false);
   const [orderCancelReasonId, setOrderCancelReasonId] = useState("");
   const [orderCancelNote, setOrderCancelNote] = useState("");
@@ -1246,6 +1355,21 @@ function App() {
     return orders.find((o) => String(o.id) === String(completedRateModalOrderId)) ?? null;
   }, [orders, completedRateModalOrderId]);
 
+  useEffect(() => {
+    if (ordersRole !== "buyer") return;
+    const missing = (orders || []).filter(
+      (o) =>
+        String(o?.status || "").toLowerCase() === "completed" &&
+        (o?.buyerMayRateSeller === undefined || o?.buyerMayRateCourier === undefined),
+    );
+    if (missing.length > 0) {
+      console.warn("[buyer-review-eligibility] completed orders missing review eligibility flags", {
+        count: missing.length,
+        orderIds: missing.map((o) => o?.id).filter(Boolean),
+      });
+    }
+  }, [ordersRole, orders]);
+
   /** Seller orders from `/orders?role=seller` while not on the seller Orders screen — Selling nav badges. */
   const [polledSellerOrders, setPolledSellerOrders] = useState(null);
   /** Buyer orders while in seller mode — Buying nav badges. */
@@ -1300,6 +1424,26 @@ function App() {
       return { ...prev, [tabId]: Array.from(set) };
     });
   }, []);
+
+  /** Mark specific order ids as seen for the active Purchases/Orders status tab (clears row highlight + pills). */
+  const dismissOrderAttentionIdsForActiveCommerceTab = useCallback(
+    (orderIds) => {
+      const tabId = String(ordersStatusTab || "");
+      if (!RECENT_ORDER_TAB_KEYS.includes(tabId)) return;
+      const ids = [...new Set((orderIds || []).map((x) => String(x || "").trim()).filter(Boolean))];
+      if (!ids.length) return;
+      const merge = (setter) =>
+        setter((prev) => {
+          const set = new Set(prev[tabId] ?? []);
+          ids.forEach((id) => set.add(id));
+          return { ...prev, [tabId]: Array.from(set) };
+        });
+      if (ordersRole === "seller") merge(setSellerOrderDismissedIdsByTab);
+      else merge(setBuyerOrderDismissedIdsByTab);
+    },
+    [ordersRole, ordersStatusTab],
+  );
+
   const markBuyerOrderAsUnseenInTab = useCallback((tabId, orderId) => {
     const id = String(orderId || "");
     if (!id) return;
@@ -1368,6 +1512,7 @@ function App() {
   const [listingSecondOptionOpen, setListingSecondOptionOpen] = useState(false);
   const [listingSaving, setListingSaving] = useState(false);
   const [listingEditOverlayOpen, setListingEditOverlayOpen] = useState(false);
+  const listingDraftBaselineRef = useRef(null);
   /** Inline banner when publish/save listing fails (a notification is still added for the same message). */
   const [listingPublishError, setListingPublishError] = useState("");
   const [listingFieldErrors, setListingFieldErrors] = useState({});
@@ -1375,11 +1520,46 @@ function App() {
     mergeNotificationInboxLists([], readLocalSessionNotificationsFromStorage()),
   );
   const [notificationsSyncError, setNotificationsSyncError] = useState("");
+  const [notificationHeaderMenuOpen, setNotificationHeaderMenuOpen] = useState(false);
+  const notificationHeaderMenuWrapRef = useRef(null);
   const notificationsRealtimeTimerRef = useRef(null);
+  const DEBUG_REFRESH_SOURCES = false;
+  const manualPullStateRef = useRef({ tracking: false, armed: false, inProgress: false });
+  const deferredRefreshSourcesRef = useRef(new Map());
+  const [manualPullSignal, setManualPullSignal] = useState(0);
+
+  const logRefreshSource = useCallback((event, payload) => {
+    if (!DEBUG_REFRESH_SOURCES) return;
+    console.debug("[refresh-source]", event, payload);
+  }, []);
+
+  const isManualPullActive = useCallback(() => {
+    const s = manualPullStateRef.current;
+    return Boolean(s.tracking || s.inProgress);
+  }, []);
+
+  const runNonCriticalRefresh = useCallback(
+    (sourceKey, refreshFn) => {
+      if (typeof refreshFn !== "function") return Promise.resolve();
+      if (isManualPullActive()) {
+        deferredRefreshSourcesRef.current.set(sourceKey, refreshFn);
+        logRefreshSource("deferred", { sourceKey, pullState: manualPullStateRef.current });
+        return Promise.resolve();
+      }
+      logRefreshSource("execute", { sourceKey, pullState: manualPullStateRef.current });
+      return Promise.resolve(refreshFn());
+    },
+    [isManualPullActive, logRefreshSource],
+  );
+
+  const notificationInboxForUi = useMemo(() => {
+    if (!NOTIFICATION_INBOX_NAVIGABLE_ONLY) return notificationInbox;
+    return notificationInbox.filter(isNotificationNavigable);
+  }, [notificationInbox]);
 
   const unreadNotificationCount = useMemo(
-    () => notificationInbox.reduce((sum, item) => sum + (item.read ? 0 : 1), 0),
-    [notificationInbox],
+    () => notificationInboxForUi.reduce((sum, item) => sum + (item.read ? 0 : 1), 0),
+    [notificationInboxForUi],
   );
 
   const refreshNotificationsFromApi = useCallback(async () => {
@@ -1399,9 +1579,11 @@ function App() {
     }
   }, [token]);
 
-  const addNotification = useCallback((raw, { markRead = false } = {}) => {
+  const addNotification = useCallback((raw, options = {}) => {
+    const { markRead = false, entityType = null, entityId = null, metadata = null } = options || {};
     const text = String(raw ?? "").trim();
     if (!text) return;
+    const metaObj = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? { ...metadata } : {};
     const item = {
       id: createLocalNotificationId(),
       source: /** @type {const} */ ("local"),
@@ -1410,6 +1592,9 @@ function App() {
       createdAt: Date.now(),
       read: !!markRead,
       type: classifyNotificationType(text),
+      entityType: entityType != null && String(entityType).trim() ? String(entityType).trim() : null,
+      entityId: entityId != null && String(entityId).trim() ? String(entityId).trim() : null,
+      metadata: metaObj,
     };
     setNotificationInbox((prev) => {
       const without = prev.filter((p) => p.id !== item.id);
@@ -1448,17 +1633,37 @@ function App() {
       const sid = String(id || "");
       setNotificationInbox((prev) => prev.filter((item) => item.id !== sid));
       if (!sid.startsWith("lm-local-")) {
+        if (token) {
+          try {
+            await deleteNotificationApi(token, sid);
+            return;
+          } catch {
+            /* fallback to direct delete below */
+          }
+        }
         const supabase = createSupabaseClient();
         if (supabase) await deleteNotificationRemote(supabase, sid);
       }
     },
-    [],
+    [token],
   );
 
   const clearNotificationInbox = useCallback(async () => {
-    const supabase = createSupabaseClient();
-    if (user?.id && supabase) {
-      await deleteAllNotificationsRemote(supabase, user.id);
+    if (token) {
+      try {
+        await markAllNotificationsReadApi(token);
+        await deleteAllNotificationsApi(token);
+      } catch {
+        const supabase = createSupabaseClient();
+        if (user?.id && supabase) {
+          await deleteAllNotificationsRemote(supabase, user.id);
+        }
+      }
+    } else {
+      const supabase = createSupabaseClient();
+      if (user?.id && supabase) {
+        await deleteAllNotificationsRemote(supabase, user.id);
+      }
     }
     setNotificationInbox([]);
     try {
@@ -1466,7 +1671,31 @@ function App() {
     } catch {
       /* ignore */
     }
-  }, [user?.id]);
+  }, [user?.id, token]);
+
+  useEffect(() => {
+    if (!notificationHeaderMenuOpen) return undefined;
+    const onDoc = (e) => {
+      const el = notificationHeaderMenuWrapRef.current;
+      const t = e.target;
+      if (el && t instanceof Node && !el.contains(t)) setNotificationHeaderMenuOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") setNotificationHeaderMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("touchstart", onDoc, { passive: true });
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("touchstart", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [notificationHeaderMenuOpen]);
+
+  useEffect(() => {
+    if (activeView !== VIEWS.NOTIFICATIONS) setNotificationHeaderMenuOpen(false);
+  }, [activeView]);
 
   /** Adds to the notification inbox only (no ephemeral on-screen toast stack). */
   const pushMarketplaceToast = useCallback(
@@ -1479,8 +1708,21 @@ function App() {
   );
 
   const notifyFeedbackSubmitted = useCallback(() => {
-    addNotification("Thanks — your feedback was sent.");
+    addNotification("Thanks — your feedback was sent.", {
+      metadata: { targetView: "browse" },
+    });
   }, [addNotification]);
+
+  useEffect(() => {
+    if (isManualPullActive()) return;
+    if (deferredRefreshSourcesRef.current.size === 0) return;
+    const queued = Array.from(deferredRefreshSourcesRef.current.entries());
+    deferredRefreshSourcesRef.current.clear();
+    for (const [sourceKey, fn] of queued) {
+      logRefreshSource("flush", { sourceKey });
+      Promise.resolve(fn()).catch(() => {});
+    }
+  }, [manualPullSignal, isManualPullActive, logRefreshSource]);
 
   useEffect(() => {
     writeLocalSessionNotificationsToStorage(notificationInbox);
@@ -1493,11 +1735,11 @@ function App() {
       if (notificationsRealtimeTimerRef.current) window.clearTimeout(notificationsRealtimeTimerRef.current);
       notificationsRealtimeTimerRef.current = window.setTimeout(() => {
         notificationsRealtimeTimerRef.current = null;
-        void refreshNotificationsFromApi();
+        void runNonCriticalRefresh("notifications:realtime-debounce", () => refreshNotificationsFromApi());
       }, NOTIFICATION_REALTIME_DEBOUNCE_MS);
     };
 
-    void refreshNotificationsFromApi();
+    void runNonCriticalRefresh("notifications:mount", () => refreshNotificationsFromApi());
 
     const supabase = createSupabaseClient();
     let channel = null;
@@ -1513,9 +1755,14 @@ function App() {
         .subscribe();
     }
 
-    const pollId = window.setInterval(() => void refreshNotificationsFromApi(), NOTIFICATION_POLL_FALLBACK_MS);
+    const pollId = window.setInterval(
+      () => void runNonCriticalRefresh("notifications:poll", () => refreshNotificationsFromApi()),
+      NOTIFICATION_POLL_FALLBACK_MS,
+    );
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void refreshNotificationsFromApi();
+      if (document.visibilityState === "visible") {
+        void runNonCriticalRefresh("notifications:visibility", () => refreshNotificationsFromApi());
+      }
     };
     document.addEventListener("visibilitychange", onVisibility);
 
@@ -1525,13 +1772,7 @@ function App() {
       if (notificationsRealtimeTimerRef.current) window.clearTimeout(notificationsRealtimeTimerRef.current);
       if (supabase && channel) void supabase.removeChannel(channel);
     };
-  }, [token, user?.id, refreshNotificationsFromApi]);
-
-  useEffect(() => {
-    if (activeView === VIEWS.NOTIFICATIONS && unreadNotificationCount > 0) {
-      void markAllNotificationsRead();
-    }
-  }, [activeView, unreadNotificationCount, markAllNotificationsRead]);
+  }, [token, user?.id, refreshNotificationsFromApi, runNonCriticalRefresh]);
 
   const [communities, setCommunities] = useState([]);
   const communitiesRef = useRef([]);
@@ -1550,7 +1791,15 @@ function App() {
     postalCode: "",
   });
   const [communityImageFile, setCommunityImageFile] = useState(null);
+  const [communityImagePreviewUrl, setCommunityImagePreviewUrl] = useState("");
+  const [communityImageDragActive, setCommunityImageDragActive] = useState(false);
   const communityImageInputRef = useRef(null);
+  /** Bound after `openListingCropEditor` / `closeListingCropEditor` (defined later). */
+  const openListingCropEditorRef = useRef(
+    /** @param {...any} _args */
+    (..._args) => {},
+  );
+  const closeListingCropEditorRef = useRef(() => {});
   const [communitySaving, setCommunitySaving] = useState(false);
   const [communityProvinceSuggestOpen, setCommunityProvinceSuggestOpen] = useState(false);
   const communityProvinceSuggestBlurTimerRef = useRef(null);
@@ -1591,20 +1840,7 @@ function App() {
     };
   }, [user?.address]);
   /** Marketplace “Buy now” requires core contact + location details (lighter than seller upload checklist). */
-  const buyNowFromProfile = useMemo(() => {
-    const parsedAddress = splitAddressParts(user?.address);
-    const checks = [
-      [String(user?.username || "").trim().length >= 3, "Username"],
-      [toPhilippinesLocalPhone10(user?.phone).length === 10, "Phone number"],
-      [String(user?.firstName || "").trim().length >= 2, "First name"],
-      [String(user?.lastName || "").trim().length >= 2, "Last name"],
-      [String(parsedAddress.addressBarangay || "").trim().length > 0, "Barangay"],
-      [String(parsedAddress.addressCity || "").trim().length > 0, "City or Municipality"],
-      [String(parsedAddress.addressProvince || "").trim().length > 0, "Province"],
-    ];
-    const missing = checks.filter(([ok]) => !ok).map(([, label]) => label);
-    return { ready: missing.length === 0, missing };
-  }, [user]);
+  const buyNowFromProfile = useMemo(() => computeMarketplaceProfileReadiness(user), [user]);
   const buyNowBlocked = !token || !buyNowFromProfile.ready;
   const buyNowBlockedReason = useMemo(() => {
     if (!token) return "Sign in to buy.";
@@ -1723,6 +1959,8 @@ function App() {
   const [quickOrderFulfillmentType, setQuickOrderFulfillmentType] = useState("pickup");
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
   const [quickAddInlineError, setQuickAddInlineError] = useState("");
+  /** Snapshot Home › Community (or Favorites) browse mode when opening quick-add — mirrors `CommunityShopListingCard` layout rules. */
+  const [quickAddBrowseSnapshot, setQuickAddBrowseSnapshot] = useState(null);
   const productFlowOriginRef = useRef({ listingId: "", view: VIEWS.BROWSE, shopCommunityId: null });
   const productInspectReturnRef = useRef({ view: VIEWS.BROWSE, shopCommunityId: null, scrollTop: 0, listingId: "" });
   /** Read-only modal: full listing text + cart/order buyer note. */
@@ -2007,6 +2245,22 @@ function App() {
     return merged;
   }, []);
 
+  /** Merge `/auth/login`, `/auth/register`, `/auth/google` payloads into membership state and open community shop when `communityId` is present. */
+  const applySessionFromAuthResponse = useCallback(
+    (incomingUser) => {
+      const merged = mergeIncomingUserWithMembership(incomingUser || {}, {});
+      setUser(merged);
+      const cid = String(merged.communityId || "").trim();
+      if (cid) {
+        setShopCommunityId(cid);
+        setActiveView(VIEWS.COMMUNITY_SHOP);
+      } else {
+        setActiveView(VIEWS.BROWSE);
+      }
+    },
+    [mergeIncomingUserWithMembership],
+  );
+
   const applyJoinedCommunity = useCallback((communityName) => {
     const normalized = String(communityName || "").trim();
     setUser((prev) => {
@@ -2216,12 +2470,27 @@ function App() {
   const [mobileCommunityActionsOpen, setMobileCommunityActionsOpen] = useState(false);
   const [mobileTopChromeCollapsed, setMobileTopChromeCollapsed] = useState(false);
   const [mobileBrowseCategoryQuery, setMobileBrowseCategoryQuery] = useState("");
+  const MOBILE_RECENT_CATEGORY_KEY = "marketplace_recent_categories_v1";
+  const [mobileRecentCategoryIds, setMobileRecentCategoryIds] = useState([]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(MOBILE_RECENT_CATEGORY_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) setMobileRecentCategoryIds(parsed.filter(Boolean).slice(0, 5));
+    } catch {
+      // ignore
+    }
+  }, []);
   const browseVerticalsForMobileDrawer = useMemo(() => {
     const q = mobileBrowseCategoryQuery.trim().toLowerCase();
     if (!q) return VERTICALS;
-    return VERTICALS.filter(
-      (v) => v.label.toLowerCase().includes(q) || String(v.id).toLowerCase().includes(q)
-    );
+    return VERTICALS.filter((v) => {
+      const label = String(v.label || "").toLowerCase();
+      const id = String(v.id || "").toLowerCase();
+      if (label.includes(q) || id.includes(q)) return true;
+      return (v.subs || []).some((s) => String(s.label || "").toLowerCase().includes(q) || String(s.id || "").toLowerCase().includes(q));
+    });
   }, [mobileBrowseCategoryQuery]);
   const [publishFlash, setPublishFlash] = useState("");
   const [publishFlashExiting, setPublishFlashExiting] = useState(false);
@@ -2277,6 +2546,9 @@ function App() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [profileFieldErrors, setProfileFieldErrors] = useState({});
+  const [phoneVerifyLoading, setPhoneVerifyLoading] = useState(false);
+  const [phoneVerifyMessage, setPhoneVerifyMessage] = useState("");
+  const [phoneOtpCode, setPhoneOtpCode] = useState("");
   const [profileSocialExpanded, setProfileSocialExpanded] = useState(false);
   /** Hide “Finish your profile” strip until next session / profile becomes complete. */
   const [profileFinishBannerDismissed, setProfileFinishBannerDismissed] = useState(false);
@@ -2715,11 +2987,10 @@ function App() {
               method: "POST",
               body: { credential: response.credential },
             });
-            setUser(data.user);
+            applySessionFromAuthResponse(data.user);
             setToken(data.token);
             writeAuthToken(data.token);
             setMessage("");
-            setActiveView(VIEWS.BROWSE);
             setAuthPanelVisible(false);
           } catch (error) {
             setMessage(error.message || "Google login failed.");
@@ -2742,11 +3013,13 @@ function App() {
     script.defer = true;
     script.onload = initGoogle;
     document.body.appendChild(script);
-  }, [authMode, user, authPanelVisible, googleAuthButtonWidth]);
+  }, [applySessionFromAuthResponse, authMode, user, authPanelVisible, googleAuthButtonWidth]);
 
   const openAuthPanel = useCallback((mode) => {
     setAuthMode(mode);
     setMessage("");
+    setForgotPasswordSent(false);
+    setSignupEmailSent(false);
     setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
     setAuthPanelVisible(true);
   }, []);
@@ -2754,9 +3027,19 @@ function App() {
   const closeAuthPanel = useCallback(() => {
     setAuthPanelVisible(false);
     setMessage("");
+    setForgotPasswordSent(false);
+    setSignupEmailSent(false);
     setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
     setShowAuthPassword(false);
     setShowConfirmPassword(false);
+  }, []);
+
+  const scrollToLandingNextSection = useCallback(() => {
+    const el = document.getElementById("landing-next-section");
+    if (!el) return;
+    const reduce =
+      typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
   }, []);
 
   const openLandingAbout = useCallback(() => {
@@ -2775,6 +3058,24 @@ function App() {
     closeAuthPanel();
     setLandingTermsScrollPrivacy(true);
     setLandingLegalView("terms");
+  }, [closeAuthPanel]);
+
+  const openLandingDataPrivacyAct = useCallback(() => {
+    closeAuthPanel();
+    setLandingTermsScrollPrivacy(false);
+    setLandingLegalView("data_privacy_act");
+  }, [closeAuthPanel]);
+
+  const openLandingScammers = useCallback(() => {
+    closeAuthPanel();
+    setLandingTermsScrollPrivacy(false);
+    setLandingLegalView("scammers");
+  }, [closeAuthPanel]);
+
+  const openLandingProhibited = useCallback(() => {
+    closeAuthPanel();
+    setLandingTermsScrollPrivacy(false);
+    setLandingLegalView("prohibited");
   }, [closeAuthPanel]);
 
   useEffect(() => {
@@ -3076,7 +3377,7 @@ function App() {
     const flush = () => {
       debounceTimer = null;
       if (cancelled) return;
-      void refreshConversationsSnapshot().catch(() => {});
+      void runNonCriticalRefresh("conversations:realtime-flush", () => refreshConversationsSnapshot()).catch(() => {});
       // Force active thread message refetch on next render cycle.
       setChatThreads((prev) =>
         prev.map((thread) =>
@@ -3099,10 +3400,12 @@ function App() {
 
     // Socket-independent safety net so users still get near-realtime updates.
     const pollId = window.setInterval(() => {
-      void refreshConversationsSnapshot().catch(() => {});
+      void runNonCriticalRefresh("conversations:poll", () => refreshConversationsSnapshot()).catch(() => {});
     }, 6000);
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void refreshConversationsSnapshot().catch(() => {});
+      if (document.visibilityState === "visible") {
+        void runNonCriticalRefresh("conversations:visibility", () => refreshConversationsSnapshot()).catch(() => {});
+      }
     };
     document.addEventListener("visibilitychange", onVisibility);
 
@@ -3113,7 +3416,7 @@ function App() {
       document.removeEventListener("visibilitychange", onVisibility);
       void supabase.removeChannel(channel);
     };
-  }, [token, user?.id, activeChatUserId, refreshConversationsSnapshot]);
+  }, [token, user?.id, activeChatUserId, refreshConversationsSnapshot, runNonCriticalRefresh]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.PROFILE || !user?.id) return undefined;
@@ -3201,11 +3504,19 @@ function App() {
             }
           : { email: form.email.trim(), password: form.password };
       const data = await apiRequest(endpoint, { method: "POST", body });
-      setUser(data.user);
+      if (data?.emailVerificationRequired) {
+        setSignupEmailSent(true);
+        setMessage(String(data.message || "Check your email to confirm your account, then sign in."));
+        setForm((prev) => ({ ...prev, password: "", confirmPassword: "" }));
+        setShowAuthPassword(false);
+        setShowConfirmPassword(false);
+        return;
+      }
+      applySessionFromAuthResponse(data.user);
       setToken(data.token);
       writeAuthToken(data.token);
-      setActiveView(VIEWS.BROWSE);
       setAuthPanelVisible(false);
+      setSignupEmailSent(false);
       setForm({
         email: "",
         password: "",
@@ -3223,6 +3534,85 @@ function App() {
       setAuthLoading(false);
     }
   };
+
+  const handleForgotPassword = async (event) => {
+    event.preventDefault();
+    setMessage("");
+    setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
+    const emailErr = validateEmail(form.email);
+    if (emailErr) {
+      setAuthInlineErrors((prev) => ({ ...prev, email: emailErr }));
+      return;
+    }
+    const supabase = createSupabaseClient();
+    if (!supabase) {
+      setMessage("Password reset is not available. Check app configuration.");
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      const redirectTo = buildPasswordRecoveryRedirectUrl();
+      const { error } = await supabase.auth.resetPasswordForEmail(form.email.trim(), { redirectTo });
+      if (error) throw error;
+      setForgotPasswordSent(true);
+    } catch (err) {
+      setMessage(err?.message || "Could not send reset email.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleResendSignupConfirmation = async () => {
+    const email = String(form.email || "").trim();
+    if (!email) {
+      setMessage("Enter the email you used to register.");
+      return;
+    }
+    setAuthLoading(true);
+    setMessage("");
+    try {
+      await apiRequest("/auth/resend-confirmation", { method: "POST", body: { email } });
+      setMessage("If an account exists for that email, a confirmation link has been sent.");
+    } catch (err) {
+      setMessage(err?.message || "Could not resend the email.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSendPhoneVerifyCode = useCallback(async () => {
+    if (!token) return;
+    setPhoneVerifyLoading(true);
+    setPhoneVerifyMessage("");
+    try {
+      await apiRequest("/auth/phone/send-code", { method: "POST", token });
+      setPhoneVerifyMessage("Code sent. Check your SMS.");
+    } catch (err) {
+      setPhoneVerifyMessage(err?.message || "Could not send code.");
+    } finally {
+      setPhoneVerifyLoading(false);
+    }
+  }, [token]);
+
+  const handleVerifyPhoneOtp = useCallback(async () => {
+    if (!token || String(phoneOtpCode || "").replace(/\D/g, "").length !== 6) return;
+    setPhoneVerifyLoading(true);
+    setPhoneVerifyMessage("");
+    try {
+      const digits = String(phoneOtpCode || "").replace(/\D/g, "").slice(0, 6);
+      const data = await apiRequest("/auth/phone/verify-code", { method: "POST", token, body: { code: digits } });
+      if (data?.user) {
+        setUser((prev) => mergeIncomingUserWithMembership(data.user, prev || {}));
+      }
+      setPhoneOtpCode("");
+      setPhoneVerifyMessage("Phone verified.");
+      pushMarketplaceToast("Your phone number is verified.");
+    } catch (err) {
+      setPhoneVerifyMessage(err?.message || "Verification failed.");
+    } finally {
+      setPhoneVerifyLoading(false);
+    }
+  }, [token, phoneOtpCode, mergeIncomingUserWithMembership]);
 
   const logout = () => {
     writeAuthToken("");
@@ -3270,6 +3660,7 @@ function App() {
       setSelectedListingId(null);
       setActiveView(VIEWS.ACTIVITY);
       setActivityTab(tab);
+      if (tab === ACTIVITY_TABS.COURIER) setCourierHubTab(ACTIVITY_COURIER_SUBTABS.TASKS);
       if (tab === ACTIVITY_TABS.BUYING) setOrdersRole("buyer");
       else if (tab === ACTIVITY_TABS.SELLING) setOrdersRole("seller");
       if (typeof window !== "undefined") {
@@ -3299,9 +3690,12 @@ function App() {
     setActiveView(VIEWS.PROFILE);
   }, []);
   const goBackFromSellerProfile = useCallback(() => {
+    const fallbackView = Object.values(VIEWS).includes(String(lastNonProfileViewRef.current || ""))
+      ? lastNonProfileViewRef.current
+      : VIEWS.BROWSE;
     const nextView = Object.values(VIEWS).includes(String(profileViewReturnView || ""))
       ? profileViewReturnView
-      : VIEWS.BROWSE;
+      : fallbackView;
     setProfileViewUserId("");
     setProfileViewReturnView("");
     setActiveView(nextView);
@@ -3363,6 +3757,7 @@ function App() {
     }
   }, []);
   const openUploadAtTop = useCallback(() => {
+    listingDraftBaselineRef.current = null;
     setActiveView(VIEWS.MY_LISTINGS);
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
@@ -3421,6 +3816,20 @@ function App() {
     [goBrowse, goCart, goActivity, goInbox, goNotifications, goOwnProfile],
   );
 
+  /** Send feedback is opened from the account menu; back should return to the prior screen (e.g. Profile), not always Home. */
+  const sendFeedbackReturnViewRef = useRef(VIEWS.BROWSE);
+  const prevActiveViewChainRef = useRef(activeView);
+  useEffect(() => {
+    const prev = prevActiveViewChainRef.current;
+    if (activeView === VIEWS.SEND_FEEDBACK && prev !== VIEWS.SEND_FEEDBACK) {
+      sendFeedbackReturnViewRef.current = prev;
+    }
+    prevActiveViewChainRef.current = activeView;
+  }, [activeView]);
+  const goBackFromSendFeedback = useCallback(() => {
+    goSecondaryMobileNavView(sendFeedbackReturnViewRef.current);
+  }, [goSecondaryMobileNavView]);
+
   const scrollToListingSection = useCallback((sectionId, { openAdvanced = false } = {}) => {
     if (openAdvanced) setListingAdvancedOpen(true);
     if (typeof window === "undefined") return;
@@ -3452,6 +3861,10 @@ function App() {
     const sid = String(profileViewUserId || "").trim();
     return Boolean(sid) && sid !== String(user?.id || "");
   }, [profileViewUserId, user?.id]);
+  const profileSellerRatingForHeader = useMemo(() => {
+    if (showSellerProfileShopAside) return profileSellerRatingOther;
+    return profileSellerRatingSelf;
+  }, [showSellerProfileShopAside, profileSellerRatingOther, profileSellerRatingSelf]);
   const profileRenderUser = useMemo(() => {
     if (!isViewingSellerProfile) return user;
     const v = viewedProfileUser || {};
@@ -3487,28 +3900,65 @@ function App() {
   }, [isViewingSellerProfile, profileEditing]);
 
   useEffect(() => {
+    if (!token || activeView !== VIEWS.PROFILE) return undefined;
+    const otherId = String(profileViewUserId || "").trim();
+    if (otherId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiRequest("/me/seller/ratings", { token });
+        if (cancelled) return;
+        const avg = data?.sellerAvgRating;
+        const count = data?.sellerReviewCount;
+        setProfileSellerRatingSelf({
+          sellerAvgRating: typeof avg === "number" && Number.isFinite(avg) ? avg : null,
+          sellerReviewCount:
+            typeof count === "number" && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0,
+        });
+      } catch {
+        if (!cancelled) setProfileSellerRatingSelf({ sellerAvgRating: null, sellerReviewCount: 0 });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeView, profileViewUserId]);
+
+  useEffect(() => {
     const otherId = String(profileViewUserId || "").trim();
     const viewingOtherProfile = Boolean(otherId) && otherId !== String(user?.id || "");
     if (activeView !== VIEWS.PROFILE || !viewingOtherProfile) {
       setSellerProfileShopListings([]);
       setSellerProfileShopError("");
       setSellerProfileShopLoading(false);
+      setProfileSellerRatingOther({ sellerAvgRating: null, sellerReviewCount: 0 });
       return undefined;
     }
     let cancelled = false;
     setSellerProfileShopLoading(true);
     setSellerProfileShopError("");
+    setProfileSellerRatingOther({ sellerAvgRating: null, sellerReviewCount: 0 });
     (async () => {
       try {
         const data = await apiRequest(`/listings?sellerId=${encodeURIComponent(otherId)}&limit=60`, {
           ...(token ? { token } : {}),
           cache: "no-store",
         });
-        if (!cancelled) setSellerProfileShopListings(Array.isArray(data?.listings) ? data.listings : []);
+        if (!cancelled) {
+          setSellerProfileShopListings(Array.isArray(data?.listings) ? data.listings : []);
+          const avg = data?.sellerAvgRating;
+          const count = data?.sellerReviewCount;
+          setProfileSellerRatingOther({
+            sellerAvgRating: typeof avg === "number" && Number.isFinite(avg) ? avg : null,
+            sellerReviewCount:
+              typeof count === "number" && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0,
+          });
+        }
       } catch (e) {
         if (!cancelled) {
           setSellerProfileShopListings([]);
           setSellerProfileShopError(e?.message || "Could not load their listings.");
+          setProfileSellerRatingOther({ sellerAvgRating: null, sellerReviewCount: 0 });
         }
       } finally {
         if (!cancelled) setSellerProfileShopLoading(false);
@@ -3606,6 +4056,15 @@ function App() {
   }, [activeChatUserId]);
 
   const { isMobile: isMobileViewport } = useMobileViewport();
+  useEffect(() => {
+    if (!isMobileViewport) {
+      setMobileSecondarySlideClass("");
+      if (mobileSecondarySlideClearTimerRef.current) {
+        window.clearTimeout(mobileSecondarySlideClearTimerRef.current);
+        mobileSecondarySlideClearTimerRef.current = 0;
+      }
+    }
+  }, [isMobileViewport]);
   useBodyScrollLock(activeView === VIEWS.MESSAGES && messagesMobilePane === "thread" && isMobileViewport);
   const messagesThreadKeyboardInsetPx = useVisualViewportBottomOverlap(
     activeView === VIEWS.MESSAGES && messagesMobilePane === "thread" && isMobileViewport,
@@ -3633,8 +4092,25 @@ function App() {
 
     const DELTA_PX = 10;
     const TOP_REVEAL_PX = 48;
+    /** Min extra scroll range beyond the viewport before auto-hide runs — avoids toggling + padding swap on short pages (shake). */
+    const MEANINGFUL_OVERFLOW_PX = TOP_REVEAL_PX + 48;
+
+    const hasMeaningfulScrollOverflow = () => {
+      if (typeof window === "undefined") return false;
+      if (isMainScrollport()) {
+        const el = mainContentScrollRef.current;
+        if (!el) return false;
+        return el.scrollHeight > el.clientHeight + MEANINGFUL_OVERFLOW_PX;
+      }
+      const doc = document.documentElement;
+      return doc.scrollHeight > window.innerHeight + MEANINGFUL_OVERFLOW_PX;
+    };
 
     const onScroll = () => {
+      if (!hasMeaningfulScrollOverflow()) {
+        setActivityPrimaryTabsScrollHidden(false);
+        return;
+      }
       const y = getScrollY();
       const prev = activityFooterScrollLastYRef.current;
       const delta = y - prev;
@@ -3661,6 +4137,12 @@ function App() {
     if (!secondaryMobileNavOrder.includes(secondarySwipeNavView)) return undefined;
     const main = document.getElementById("main-content");
     if (!main) return undefined;
+    const DEBUG_GESTURES = false;
+    const logGesture = (...args) => {
+      if (!DEBUG_GESTURES) return;
+      console.debug("[main-swipe]", ...args);
+    };
+    const usePointerEvents = typeof window !== "undefined" && "PointerEvent" in window;
     const flushDragFrame = () => {
       if (secondaryDragRafRef.current) {
         window.cancelAnimationFrame(secondaryDragRafRef.current);
@@ -3698,24 +4180,38 @@ function App() {
       });
     };
 
-    const onTouchStart = (e) => {
-      if (e.touches.length !== 1) return;
-      const t = e.touches[0];
-      if (t.clientX < 22) {
+    let activeMode = null; // "touch" | "pointer"
+    let activePointerId = null;
+    let intent = "none"; // "none" | "horizontal" | "vertical"
+    let fromAllowedSwipeZone = false;
+    let startedAtTop = false;
+
+    const resetGestureState = () => {
+      activeMode = null;
+      activePointerId = null;
+      intent = "none";
+      fromAllowedSwipeZone = false;
+      startedAtTop = false;
+    };
+
+    const beginSwipeGesture = (clientX, clientY, target, mode) => {
+      secondaryDragPendingXRef.current = 0;
+      if (Number(clientX || 0) < 22) {
         secondarySwipeRef.current = {
           x: 0, y: 0, dx: 0, dy: 0, t: 0, width: 0, tracking: false, horizontal: false, baseView: secondarySwipeNavView,
         };
+        resetGestureState();
         return;
       }
-      const target = e.target;
       if (
         target instanceof Element &&
-        !target.closest("[data-allow-tab-swipe]") &&
-        target.closest("button,a,input,textarea,select,[role='button'],[data-no-swipe-nav]")
+        target.closest("button,a,input,textarea,select,[role='button'],[data-no-swipe-nav]") &&
+        !target.closest("[data-allow-tab-swipe]")
       ) {
         secondarySwipeRef.current = {
           x: 0, y: 0, dx: 0, dy: 0, t: 0, width: 0, tracking: false, horizontal: false, baseView: secondarySwipeNavView,
         };
+        resetGestureState();
         return;
       }
       if (swipeSettleTimerRef.current) {
@@ -3723,9 +4219,13 @@ function App() {
         swipeSettleTimerRef.current = 0;
       }
       setMobileSecondarySwipeSettling(false);
+      intent = "none";
+      fromAllowedSwipeZone = Boolean(target instanceof Element && target.closest("[data-allow-tab-swipe]"));
+      startedAtTop = Math.max(0, Number(main.scrollTop || 0)) <= 8;
+      activeMode = mode;
       secondarySwipeRef.current = {
-        x: t.clientX,
-        y: t.clientY,
+        x: Number(clientX || 0),
+        y: Number(clientY || 0),
         dx: 0,
         dy: 0,
         t: Date.now(),
@@ -3734,26 +4234,69 @@ function App() {
         horizontal: false,
         baseView: secondarySwipeNavView,
       };
+      logGesture("start", {
+        mode,
+        x: Number(clientX || 0),
+        y: Number(clientY || 0),
+        startedAtTop,
+        fromAllowedSwipeZone,
+      });
     };
 
-    const onTouchMove = (e) => {
-      if (!secondarySwipeRef.current.tracking || e.touches.length !== 1) return;
-      const t = e.touches[0];
-      const state = secondarySwipeRef.current;
-      const dx = t.clientX - state.x;
-      const dy = t.clientY - state.y;
-      state.dx = dx;
-      state.dy = dy;
-      if (!state.horizontal && Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx) * 1.15) {
-        state.tracking = false;
+    const updateSwipeGesture = (eventLike, clientX, clientY) => {
+      if (!secondarySwipeRef.current.tracking) return;
+      if (main.getAttribute("data-pull-intent") === "vertical") {
+        intent = "vertical";
+        secondarySwipeRef.current.tracking = false;
+        secondaryDragPendingXRef.current = 0;
+        setMobileSecondaryDragging(false);
+        setMobileSecondaryDragX(0);
+        logGesture("intent", { intent, reason: "pull-lock" });
         return;
       }
-      if (!state.horizontal && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      const state = secondarySwipeRef.current;
+      const dx = Number(clientX || 0) - state.x;
+      const dy = Number(clientY || 0) - state.y;
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+      state.dx = dx;
+      state.dy = dy;
+      if (intent === "none") {
+        // Vertical intent wins near top so pull-to-refresh can take over.
+        if (startedAtTop && dy > 4 && absDy >= absDx * 0.85) {
+          intent = "vertical";
+          state.tracking = false;
+          secondaryDragPendingXRef.current = 0;
+          setMobileSecondaryDragging(false);
+          setMobileSecondaryDragX(0);
+          logGesture("intent", { intent, dx, dy, startedAtTop });
+          return;
+        }
+        // If gesture is mostly vertical, don't allow horizontal capture.
+        if (absDy > 16 && absDy > absDx * 1.15) {
+          intent = "vertical";
+          state.tracking = false;
+          secondaryDragPendingXRef.current = 0;
+          setMobileSecondaryDragging(false);
+          setMobileSecondaryDragX(0);
+          logGesture("intent", { intent, dx, dy });
+          return;
+        }
+        const horizontalThreshold = fromAllowedSwipeZone ? 16 : 34;
+        const horizontalRatio = fromAllowedSwipeZone ? 1.4 : 1.9;
+        if (absDx > horizontalThreshold && absDx > absDy * horizontalRatio) {
+          intent = "horizontal";
+          logGesture("intent", { intent, dx, dy, fromAllowedSwipeZone });
+        } else {
+          return;
+        }
+      }
+      if (intent !== "horizontal") return;
+      if (!state.horizontal) {
         state.horizontal = true;
         setMobileSecondaryDragging(true);
       }
-      if (!state.horizontal) return;
-      if (e.cancelable) e.preventDefault();
+      if (eventLike?.cancelable) eventLike.preventDefault();
       const baseIndex = secondaryMobileNavOrder.indexOf(state.baseView);
       const index = baseIndex === -1 ? secondaryMobileNavOrder.indexOf(secondarySwipeNavView) : baseIndex;
       const atFirst = index <= 0;
@@ -3762,11 +4305,12 @@ function App() {
       const maxDrag = Math.max(120, Math.floor((state.width || window.innerWidth || 360) * 0.92));
       const effectiveDx = Math.max(-maxDrag, Math.min(maxDrag, dx * edgeResistance));
       scheduleDragUpdate(effectiveDx);
+      logGesture("drag", { dx, dy, effectiveDx });
     };
 
-    const onTouchEnd = () => {
+    const endSwipeGesture = () => {
       const snap = secondarySwipeRef.current;
-      const pending = secondaryDragPendingXRef.current;
+      const pending = secondarySwipeRef.current.horizontal ? secondaryDragPendingXRef.current : 0;
       secondarySwipeRef.current = {
         x: 0, y: 0, dx: 0, dy: 0, t: 0, width: 0, tracking: false, horizontal: false, baseView: secondarySwipeNavView,
       };
@@ -3775,7 +4319,10 @@ function App() {
       setMobileSecondaryDragging(false);
 
       if (!snap.tracking || !snap.horizontal) {
-        settleSwipeRelease(pending);
+        secondaryDragPendingXRef.current = 0;
+        settleSwipeRelease(0);
+        logGesture("end", { committed: false, reason: "not-horizontal" });
+        resetGestureState();
         return;
       }
       const { dx, dy, t, width, baseView } = snap;
@@ -3791,11 +4338,15 @@ function App() {
       const shouldCommitByVelocity = Math.abs(velocityX) > 0.22 && Math.abs(dx) > 12;
       if (!shouldCommitByDistance && !shouldCommitByVelocity) {
         settleSwipeRelease(pending);
+        logGesture("end", { committed: false, reason: "threshold", dx, dy, velocityX });
+        resetGestureState();
         return;
       }
       const nextIndex = dx < 0 || velocityX < 0 ? index + 1 : index - 1;
       if (nextIndex < 0 || nextIndex >= secondaryMobileNavOrder.length) {
         settleSwipeRelease(pending);
+        logGesture("end", { committed: false, reason: "edge", dx, velocityX, index });
+        resetGestureState();
         return;
       }
       const nextView = secondaryMobileNavOrder[nextIndex];
@@ -3806,37 +4357,121 @@ function App() {
         }
         setMobileSecondarySwipeSettling(false);
         setMobileSecondaryDragX(0);
+        const slideLeft = nextIndex > index;
+        setMobileSecondarySlideClass(slideLeft ? "lm-view-slide-left" : "lm-view-slide-right");
+        if (mobileSecondarySlideClearTimerRef.current) {
+          window.clearTimeout(mobileSecondarySlideClearTimerRef.current);
+        }
+        mobileSecondarySlideClearTimerRef.current = window.setTimeout(() => {
+          mobileSecondarySlideClearTimerRef.current = 0;
+          setMobileSecondarySlideClass("");
+        }, 240);
         goSecondaryMobileNavView(nextView);
+        logGesture("end", { committed: true, dx, velocityX, from: secondarySwipeNavView, to: nextView });
       } else {
         settleSwipeRelease(pending);
+        logGesture("end", { committed: false, reason: "same-view" });
       }
+      resetGestureState();
     };
 
-    const onTouchCancel = () => {
-      const pending = secondaryDragPendingXRef.current;
+    const cancelSwipeGesture = () => {
+      const pending = secondarySwipeRef.current.horizontal ? secondaryDragPendingXRef.current : 0;
       flushDragFrame();
       secondarySwipeRef.current = {
         x: 0, y: 0, dx: 0, dy: 0, t: 0, width: 0, tracking: false, horizontal: false, baseView: secondarySwipeNavView,
       };
       setMobileSecondaryDragging(false);
       setMobileSecondaryDragX(pending);
+      secondaryDragPendingXRef.current = 0;
       settleSwipeRelease(pending);
+      logGesture("cancel", { pending });
+      resetGestureState();
+    };
+
+    const onTouchStart = (e) => {
+      if (usePointerEvents) return;
+      if (activeMode && activeMode !== "touch") return;
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      beginSwipeGesture(t.clientX, t.clientY, e.target, "touch");
+    };
+
+    const onTouchMove = (e) => {
+      if (usePointerEvents) return;
+      if (activeMode !== "touch") return;
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      updateSwipeGesture(e, t.clientX, t.clientY);
+    };
+
+    const onTouchEnd = () => {
+      if (usePointerEvents) return;
+      if (activeMode !== "touch") return;
+      endSwipeGesture();
+    };
+
+    const onTouchCancel = () => {
+      if (usePointerEvents) return;
+      if (activeMode !== "touch") return;
+      cancelSwipeGesture();
+    };
+
+    const onPointerDown = (e) => {
+      if (!usePointerEvents) return;
+      if (activeMode && activeMode !== "pointer") return;
+      if (!e.isPrimary) return;
+      activePointerId = e.pointerId;
+      beginSwipeGesture(e.clientX, e.clientY, e.target, "pointer");
+    };
+
+    const onPointerMove = (e) => {
+      if (!usePointerEvents) return;
+      if (activeMode !== "pointer") return;
+      if (!e.isPrimary || e.pointerId !== activePointerId) return;
+      updateSwipeGesture(e, e.clientX, e.clientY);
+    };
+
+    const onPointerUp = (e) => {
+      if (!usePointerEvents) return;
+      if (activeMode !== "pointer") return;
+      if (!e.isPrimary || e.pointerId !== activePointerId) return;
+      endSwipeGesture();
+    };
+
+    const onPointerCancel = (e) => {
+      if (!usePointerEvents) return;
+      if (activeMode !== "pointer") return;
+      if (!e.isPrimary || e.pointerId !== activePointerId) return;
+      cancelSwipeGesture();
     };
 
     main.addEventListener("touchstart", onTouchStart, { passive: true });
     main.addEventListener("touchmove", onTouchMove, { passive: false });
     main.addEventListener("touchend", onTouchEnd, { passive: true });
     main.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    main.addEventListener("pointerdown", onPointerDown, { passive: true });
+    main.addEventListener("pointermove", onPointerMove, { passive: false });
+    main.addEventListener("pointerup", onPointerUp, { passive: true });
+    main.addEventListener("pointercancel", onPointerCancel, { passive: true });
     return () => {
       flushDragFrame();
       if (swipeSettleTimerRef.current) {
         window.clearTimeout(swipeSettleTimerRef.current);
         swipeSettleTimerRef.current = 0;
       }
+      if (mobileSecondarySlideClearTimerRef.current) {
+        window.clearTimeout(mobileSecondarySlideClearTimerRef.current);
+        mobileSecondarySlideClearTimerRef.current = 0;
+      }
       main.removeEventListener("touchstart", onTouchStart);
       main.removeEventListener("touchmove", onTouchMove);
       main.removeEventListener("touchend", onTouchEnd);
       main.removeEventListener("touchcancel", onTouchCancel);
+      main.removeEventListener("pointerdown", onPointerDown);
+      main.removeEventListener("pointermove", onPointerMove);
+      main.removeEventListener("pointerup", onPointerUp);
+      main.removeEventListener("pointercancel", onPointerCancel);
     };
   }, [goSecondaryMobileNavView, isMobileViewport, secondaryMobileNavOrder, secondarySwipeNavView, activeView]);
 
@@ -3866,6 +4501,16 @@ function App() {
       document.body.style.overflow = previousOverflow;
     };
   }, [quickAddModalOpen]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    if (!listingEditOverlayOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [listingEditOverlayOpen]);
 
   const activeChatThread = useMemo(
     () => sortedChatThreads.find((thread) => String(thread.participantId) === String(activeChatUserId)) || null,
@@ -4185,6 +4830,24 @@ function App() {
     setMessagesThreadMenuOpen(false);
   }, [activeChatUserId]);
 
+  const viewCurrentChatUserProfile = useCallback(() => {
+    const pid = String(activeChatUserId || "").trim();
+    if (!pid) return;
+    setMessagesThreadMenuOpen(false);
+    if (pid === String(user?.id || "").trim()) {
+      goOwnProfile();
+      return;
+    }
+    setProfileViewReturnView(VIEWS.MESSAGES);
+    setProfileViewUserId(pid);
+    setActiveView(VIEWS.PROFILE);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        window.scrollTo(0, 0);
+      });
+    }
+  }, [activeChatUserId, user?.id, goOwnProfile]);
+
   const deleteCurrentThread = useCallback(() => {
     const pid = String(activeChatUserId || "").trim();
     if (!pid) return;
@@ -4325,6 +4988,8 @@ function App() {
     if (listingSort !== "newest") items.push(activeSortLabel);
     return items;
   }, [browseQuickFilter, browseVerticalId, activeView, communityListingsQuery, listingSort]);
+  const activeBrowseResultsCount =
+    activeView === VIEWS.FAVORITES ? visibleFavoritesListings.length : visibleBrowseListings.length;
 
   const ordersForStatusTab = useMemo(
     () => orders.filter((o) => orderMatchesOrdersStatusTab(o.status, ordersStatusTab)),
@@ -4480,27 +5145,135 @@ function App() {
     return done;
   }, [listingForm.title, listingForm.categories, listingForm.pricePesos, listingForm.quantity]);
   const listingRequiredTotalCount = 4;
+  const buildListingDraftSnapshot = useCallback((form, { coverPreviewUrl = "", coverFile = null, extraItems = [] } = {}) => {
+    const extra = Array.isArray(extraItems)
+      ? extraItems.map((item) => ({
+          previewUrl: String(item?.previewUrl || "").trim(),
+          hasFile: Boolean(item?.file),
+        }))
+      : [];
+    return {
+      title: String(form?.title || "").trim(),
+      description: String(form?.description || "").trim(),
+      pricePesos: String(form?.pricePesos || "").trim(),
+      quantity: String(form?.quantity || "").trim(),
+      categories: String(form?.categories || "").trim(),
+      subId: String(form?.subId || "all").trim() || "all",
+      optionNameA: String(form?.optionNameA || "").trim(),
+      optionValuesA: String(form?.optionValuesA || "").trim(),
+      optionNameB: String(form?.optionNameB || "").trim(),
+      optionValuesB: String(form?.optionValuesB || "").trim(),
+      orderType: String(form?.orderType || "in_stock") === "pre_order" ? "pre_order" : "in_stock",
+      processingTime: String(form?.processingTime || "").trim(),
+      pickup: Boolean(form?.pickup),
+      delivery: Boolean(form?.delivery),
+      coverPreviewUrl: String(coverPreviewUrl || "").trim(),
+      hasCoverFile: Boolean(coverFile),
+      extra,
+    };
+  }, []);
   const listingFormDirty = useMemo(() => {
-    return Boolean(
+    const creatingDirty = Boolean(
       String(listingForm.title || "").trim() ||
         String(listingForm.description || "").trim() ||
         String(listingForm.pricePesos || "").trim() ||
         String(listingForm.quantity || "").trim() ||
         String(listingForm.categories || "").trim() ||
-      String(listingForm.optionNameA || "").trim() ||
-      String(listingForm.optionValuesA || "").trim() ||
-      String(listingForm.optionNameB || "").trim() ||
-      String(listingForm.optionValuesB || "").trim() ||
-      String(listingForm.processingTime || "").trim() ||
-      String(listingForm.orderType || "in_stock") !== "in_stock" ||
+        String(listingForm.optionNameA || "").trim() ||
+        String(listingForm.optionValuesA || "").trim() ||
+        String(listingForm.optionNameB || "").trim() ||
+        String(listingForm.optionValuesB || "").trim() ||
+        String(listingForm.processingTime || "").trim() ||
+        String(listingForm.orderType || "in_stock") !== "in_stock" ||
         listingForm.pickup ||
         listingForm.delivery ||
         listingImageFile ||
         listingImagePreviewUrl ||
-        listingExtraImages.length > 0 ||
-        editingListingId,
+        listingExtraImages.length > 0,
     );
-  }, [editingListingId, listingExtraImages.length, listingForm, listingImageFile, listingImagePreviewUrl]);
+    if (!editingListingId) return creatingDirty;
+    const baseline = listingDraftBaselineRef.current;
+    if (!baseline) return creatingDirty;
+    const current = buildListingDraftSnapshot(listingForm, {
+      coverPreviewUrl: listingImagePreviewUrl,
+      coverFile: listingImageFile,
+      extraItems: listingExtraImages,
+    });
+    return JSON.stringify(current) !== JSON.stringify(baseline);
+  }, [
+    buildListingDraftSnapshot,
+    editingListingId,
+    listingExtraImages,
+    listingForm,
+    listingImageFile,
+    listingImagePreviewUrl,
+  ]);
+
+  const listingEditorActive = activeView === VIEWS.MY_LISTINGS || listingEditOverlayOpen;
+  const shouldConfirmDiscardListingChanges = Boolean(listingEditorActive && listingFormDirty && !listingSaving);
+  const pendingDiscardListingActionRef = useRef(null);
+  const [discardListingChangesModalOpen, setDiscardListingChangesModalOpen] = useState(false);
+
+  const requestDiscardListingChanges = useCallback(
+    (action) => {
+      if (!shouldConfirmDiscardListingChanges) {
+        action?.();
+        return;
+      }
+      pendingDiscardListingActionRef.current = typeof action === "function" ? action : null;
+      setDiscardListingChangesModalOpen(true);
+    },
+    [shouldConfirmDiscardListingChanges],
+  );
+
+  const closeDiscardListingChangesModal = useCallback(() => {
+    pendingDiscardListingActionRef.current = null;
+    setDiscardListingChangesModalOpen(false);
+  }, []);
+
+  const confirmDiscardListingChangesModal = useCallback(() => {
+    const next = pendingDiscardListingActionRef.current;
+    pendingDiscardListingActionRef.current = null;
+    setDiscardListingChangesModalOpen(false);
+    if (typeof next === "function") next();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    if (!listingEditorActive || !listingFormDirty) return undefined;
+    const onBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [listingEditorActive, listingFormDirty]);
+
+  const setActiveViewGuarded = useCallback(
+    (nextView) => {
+      requestDiscardListingChanges(() => setActiveView(nextView));
+    },
+    [requestDiscardListingChanges],
+  );
+
+  const goBrowseGuarded = useCallback(
+    () => requestDiscardListingChanges(goBrowse),
+    [requestDiscardListingChanges, goBrowse],
+  );
+  const goCartGuarded = useCallback(() => requestDiscardListingChanges(goCart), [requestDiscardListingChanges, goCart]);
+  const goOwnProfileGuarded = useCallback(
+    () => requestDiscardListingChanges(goOwnProfile),
+    [requestDiscardListingChanges, goOwnProfile],
+  );
+  const goActivityGuarded = useCallback(
+    (tab) => requestDiscardListingChanges(() => goActivity(tab)),
+    [requestDiscardListingChanges, goActivity],
+  );
+  const goInboxGuarded = useCallback(() => requestDiscardListingChanges(goInbox), [requestDiscardListingChanges, goInbox]);
+  const goNotificationsGuarded = useCallback(
+    () => requestDiscardListingChanges(goNotifications),
+    [requestDiscardListingChanges, goNotifications],
+  );
   const profileConnectedSocialCount = useMemo(() => {
     let count = 0;
     if (String(profileDraft.facebookUrl || "").trim()) count += 1;
@@ -4544,14 +5317,10 @@ function App() {
   }, [token, mergeIncomingUserWithMembership]);
 
   const setCartLineQuantity = useCallback(
-    async (listingId, rawTarget, variantSignature = "") => {
-      const id = String(listingId);
-      const sig = String(variantSignature ?? "");
-      const lineKey = cartLineKeyFromItem({ listingId: id, variantSignature: sig });
-      const item = cartItems.find(
-        (i) => String(i.listingId) === id && String(i.variantSignature ?? "") === sig,
-      );
-      if (!item) return;
+    async (item, rawTarget) => {
+      if (!item?.listingId) return;
+      const id = String(item.listingId);
+      const lineKey = cartLineKeyFromItem(item);
       const maxStock = Number(item.listingQuantity);
       const maxQ =
         Number.isFinite(maxStock) && maxStock >= 1 ? maxStock : Math.max(1, Number(item.quantity) || 1);
@@ -4562,7 +5331,7 @@ function App() {
           setCartQtySavingId(lineKey);
           startCartItemFadeOut(lineKey);
           try {
-            await apiRequest(`/me/cart/items/${id}${cartItemApiQuerySuffix(sig)}`, {
+            await apiRequest(`/me/cart/items/${id}${cartItemApiQuerySuffix(item)}`, {
               method: "DELETE",
               token,
             });
@@ -4582,7 +5351,7 @@ function App() {
       if (token) {
         setCartQtySavingId(lineKey);
         try {
-          const d = await apiRequest(`/me/cart/items/${id}${cartItemApiQuerySuffix(sig)}`, {
+          const d = await apiRequest(`/me/cart/items/${id}${cartItemApiQuerySuffix(item)}`, {
             method: "PATCH",
             token,
             body: { quantity: clamped },
@@ -4600,7 +5369,7 @@ function App() {
         );
       }
     },
-    [cancelCartItemFadeOut, cartItems, mergeCartItemsPreservingOrder, startCartItemFadeOut, token],
+    [cancelCartItemFadeOut, mergeCartItemsPreservingOrder, startCartItemFadeOut, token],
   );
 
   useEffect(() => {
@@ -4721,7 +5490,12 @@ function App() {
       const currentLineCents = Math.max(0, Number(item?.unitPriceCents) || 0) * qty;
       const meta = parseSaleMetaFromDescription(item?.description || "");
       const originalPesos = Number.isFinite(Number(meta?.originalPesos)) ? Number(meta.originalPesos) : null;
-      const originalUnitCents = originalPesos != null && originalPesos > 0 ? Math.round(originalPesos * 100) : Math.max(0, Number(item?.unitPriceCents) || 0);
+      const originalUnitCents =
+        meta?.originalCents != null && meta.originalCents > 0
+          ? meta.originalCents
+          : originalPesos != null && originalPesos > 0
+            ? Math.round(originalPesos * 100)
+            : Math.max(0, Number(item?.unitPriceCents) || 0);
       const originalLineCents = originalUnitCents * qty;
       currentTotalCents += currentLineCents;
       originalTotalCents += Math.max(currentLineCents, originalLineCents);
@@ -4750,7 +5524,6 @@ function App() {
     for (const item of selectedCartItems) {
       const listingId = String(item?.listingId || "");
       if (!listingId) continue;
-      const variantSig = String(item?.variantSignature ?? "");
       const lineKey = cartLineKeyFromItem(item);
       const qty = Math.max(1, Math.floor(Number(item?.quantity) || 1));
       const modes = Array.isArray(item?.fulfillmentModes) ? item.fulfillmentModes.map(String) : [];
@@ -4784,7 +5557,7 @@ function App() {
         successCount += 1;
         startCartItemFadeOut(lineKey);
         try {
-          await apiRequest(`/me/cart/items/${listingId}${cartItemApiQuerySuffix(variantSig)}`, {
+          await apiRequest(`/me/cart/items/${listingId}${cartItemApiQuerySuffix(item)}`, {
             method: "DELETE",
             token,
           });
@@ -5051,9 +5824,17 @@ function App() {
     try {
       const data = await apiRequest("/me/listings", { token });
       setSellerListings(data.listings || []);
+      const avg = data?.sellerAvgRating;
+      const count = data?.sellerReviewCount;
+      setProfileSellerRatingSelf({
+        sellerAvgRating: typeof avg === "number" && Number.isFinite(avg) ? avg : null,
+        sellerReviewCount:
+          typeof count === "number" && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0,
+      });
     } catch (e) {
       setSellerListingsFetchError(e?.message || "Could not load your listings.");
       setSellerListings([]);
+      setProfileSellerRatingSelf({ sellerAvgRating: null, sellerReviewCount: 0 });
     } finally {
       setSellerListingsLoading(false);
     }
@@ -5107,10 +5888,10 @@ function App() {
         // Keep existing rows on transient errors; initial load still clears via the main orders effect on role change.
       }
     };
-    void run();
-    const id = window.setInterval(run, 90000);
+    void runNonCriticalRefresh("orders:buyer-poll-mount", run);
+    const id = window.setInterval(() => void runNonCriticalRefresh("orders:buyer-poll", run), 90000);
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void run();
+      if (document.visibilityState === "visible") void runNonCriticalRefresh("orders:buyer-visibility", run);
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
@@ -5118,7 +5899,7 @@ function App() {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [token, ordersRole]);
+  }, [token, ordersRole, runNonCriticalRefresh]);
 
   /** Refetch seller-side order list for Sales inbox rows or off-screen nav badges (same API as HTTP polling). */
   const refreshSellerOrdersSnapshot = useCallback(async (isCancelled) => {
@@ -5169,12 +5950,17 @@ function App() {
     if (activeView !== VIEWS.ACTIVITY || activityTab !== ACTIVITY_TABS.SELLING) return undefined;
     let cancelled = false;
     const isCancelled = () => cancelled;
-    void refreshSellerOrdersSnapshot(isCancelled);
-    const id = window.setInterval(() => void refreshSellerOrdersSnapshot(isCancelled), SELLER_ORDERS_POLL_MS);
+    void runNonCriticalRefresh("orders:seller-screen-mount", () => refreshSellerOrdersSnapshot(isCancelled));
+    const id = window.setInterval(
+      () => void runNonCriticalRefresh("orders:seller-screen-poll", () => refreshSellerOrdersSnapshot(isCancelled)),
+      SELLER_ORDERS_POLL_MS,
+    );
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void refreshSellerOrdersSnapshot(isCancelled);
+      if (document.visibilityState === "visible") {
+        void runNonCriticalRefresh("orders:seller-screen-visibility", () => refreshSellerOrdersSnapshot(isCancelled));
+      }
     };
-    const onFocus = () => void refreshSellerOrdersSnapshot(isCancelled);
+    const onFocus = () => void runNonCriticalRefresh("orders:seller-screen-focus", () => refreshSellerOrdersSnapshot(isCancelled));
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onFocus);
     return () => {
@@ -5183,7 +5969,7 @@ function App() {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onFocus);
     };
-  }, [token, activeView, ordersRole, activityTab, refreshSellerOrdersSnapshot]);
+  }, [token, activeView, ordersRole, activityTab, refreshSellerOrdersSnapshot, runNonCriticalRefresh]);
 
   useEffect(() => {
     if (!token) return undefined;
@@ -5191,12 +5977,17 @@ function App() {
     if (onSellerOrdersScreen) return undefined;
     let cancelled = false;
     const isCancelled = () => cancelled;
-    void refreshSellerOrdersSnapshot(isCancelled);
-    const id = window.setInterval(() => void refreshSellerOrdersSnapshot(isCancelled), SELLER_ORDERS_POLL_MS);
+    void runNonCriticalRefresh("orders:seller-offscreen-mount", () => refreshSellerOrdersSnapshot(isCancelled));
+    const id = window.setInterval(
+      () => void runNonCriticalRefresh("orders:seller-offscreen-poll", () => refreshSellerOrdersSnapshot(isCancelled)),
+      SELLER_ORDERS_POLL_MS,
+    );
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void refreshSellerOrdersSnapshot(isCancelled);
+      if (document.visibilityState === "visible") {
+        void runNonCriticalRefresh("orders:seller-offscreen-visibility", () => refreshSellerOrdersSnapshot(isCancelled));
+      }
     };
-    const onFocus = () => void refreshSellerOrdersSnapshot(isCancelled);
+    const onFocus = () => void runNonCriticalRefresh("orders:seller-offscreen-focus", () => refreshSellerOrdersSnapshot(isCancelled));
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onFocus);
     return () => {
@@ -5205,7 +5996,7 @@ function App() {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onFocus);
     };
-  }, [token, activitySelling, ordersRole, refreshSellerOrdersSnapshot]);
+  }, [token, activitySelling, ordersRole, refreshSellerOrdersSnapshot, runNonCriticalRefresh]);
 
   /** While Selling, keep a buyer order snapshot for Buying nav badges (mirrors off-screen seller poll). */
   useEffect(() => {
@@ -5213,12 +6004,17 @@ function App() {
     if (ordersRole !== "seller") return undefined;
     let cancelled = false;
     const isCancelled = () => cancelled;
-    void refreshBuyerOrdersSnapshot(isCancelled);
-    const id = window.setInterval(() => void refreshBuyerOrdersSnapshot(isCancelled), SELLER_ORDERS_POLL_MS);
+    void runNonCriticalRefresh("orders:buyer-offscreen-mount", () => refreshBuyerOrdersSnapshot(isCancelled));
+    const id = window.setInterval(
+      () => void runNonCriticalRefresh("orders:buyer-offscreen-poll", () => refreshBuyerOrdersSnapshot(isCancelled)),
+      SELLER_ORDERS_POLL_MS,
+    );
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void refreshBuyerOrdersSnapshot(isCancelled);
+      if (document.visibilityState === "visible") {
+        void runNonCriticalRefresh("orders:buyer-offscreen-visibility", () => refreshBuyerOrdersSnapshot(isCancelled));
+      }
     };
-    const onFocus = () => void refreshBuyerOrdersSnapshot(isCancelled);
+    const onFocus = () => void runNonCriticalRefresh("orders:buyer-offscreen-focus", () => refreshBuyerOrdersSnapshot(isCancelled));
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onFocus);
     return () => {
@@ -5227,7 +6023,7 @@ function App() {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onFocus);
     };
-  }, [token, ordersRole, refreshBuyerOrdersSnapshot]);
+  }, [token, ordersRole, refreshBuyerOrdersSnapshot, runNonCriticalRefresh]);
 
   /**
    * Supabase Realtime: refetch order lists when `public.orders` rows you are party to change (RLS filters events).
@@ -5239,8 +6035,8 @@ function App() {
     let debounceTimer = null;
     const flush = () => {
       debounceTimer = null;
-      void refreshSellerOrdersSnapshot(() => false);
-      void refreshBuyerOrdersSnapshot(() => false);
+      void runNonCriticalRefresh("orders:realtime-seller", () => refreshSellerOrdersSnapshot(() => false));
+      void runNonCriticalRefresh("orders:realtime-buyer", () => refreshBuyerOrdersSnapshot(() => false));
     };
     const onOrdersChange = () => {
       if (debounceTimer) window.clearTimeout(debounceTimer);
@@ -5254,7 +6050,7 @@ function App() {
       if (debounceTimer) window.clearTimeout(debounceTimer);
       void supabase.removeChannel(channel);
     };
-  }, [token, user?.id, refreshSellerOrdersSnapshot, refreshBuyerOrdersSnapshot]);
+  }, [token, user?.id, refreshSellerOrdersSnapshot, refreshBuyerOrdersSnapshot, runNonCriticalRefresh]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.ACTIVITY || !(activityBuying || activitySelling) || !orders.length)
@@ -5342,11 +6138,21 @@ function App() {
       try {
         setSellerListingsFetchError("");
         const data = await apiRequest("/me/listings", { token });
-        if (!cancelled) setSellerListings(data.listings || []);
+        if (!cancelled) {
+          setSellerListings(data.listings || []);
+          const avg = data?.sellerAvgRating;
+          const count = data?.sellerReviewCount;
+          setProfileSellerRatingSelf({
+            sellerAvgRating: typeof avg === "number" && Number.isFinite(avg) ? avg : null,
+            sellerReviewCount:
+              typeof count === "number" && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0,
+          });
+        }
       } catch (e) {
         if (!cancelled) {
           setSellerListings([]);
           setSellerListingsFetchError(e?.message || "Could not load your listings.");
+          setProfileSellerRatingSelf({ sellerAvgRating: null, sellerReviewCount: 0 });
         }
       } finally {
         if (!cancelled) setSellerListingsLoading(false);
@@ -5429,24 +6235,87 @@ function App() {
     refreshMobileNavigationState,
   ]);
 
-  const { isPullRefreshing: mobilePullRefreshing } = useMobilePullToRefresh({
-    enabled:
-      Boolean(token) &&
-      isMobileViewport &&
-      (activeView === VIEWS.BROWSE ||
-        activeView === VIEWS.COMMUNITY_SHOP ||
-        activeView === VIEWS.FAVORITES ||
-        activeView === VIEWS.MESSAGES ||
-        activeView === VIEWS.NOTIFICATIONS ||
-        activeView === VIEWS.PROFILE ||
-        activeView === VIEWS.ABOUT ||
-        activeView === VIEWS.TERMS),
-    isBusy: listingsBusyRef.current || favoritesLoading || ordersLoading || sellerListingsLoading || cartCheckoutSubmitting,
+  const mobilePullToRefreshEnabled = isMobileViewport;
+  const DEBUG_PTR_FORENSICS = false;
+  const [mobilePtrTopOffsetPx, setMobilePtrTopOffsetPx] = useState(null);
+  const handleMobilePullStateChange = useCallback((nextState) => {
+    manualPullStateRef.current = {
+      tracking: Boolean(nextState?.tracking),
+      armed: Boolean(nextState?.armed),
+      inProgress: Boolean(nextState?.inProgress),
+    };
+    setManualPullSignal((v) => v + 1);
+  }, []);
+
+  const {
+    isPullRefreshing: mobilePullRefreshing,
+    pullDragPx: mobilePullDragPx,
+    pullProgress: mobilePullProgress,
+    isPullArmed: mobilePullArmed,
+    pullDirection: mobilePullDirection,
+    debugState: mobilePullDebugState,
+  } = useMobilePullToRefresh({
+    enabled: mobilePullToRefreshEnabled,
+    onPullStateChange: handleMobilePullStateChange,
     onRefresh: refreshMobileViewAndNavigation,
     onError: (error) => {
       pushMarketplaceToast(error?.message || "Could not refresh right now. Please try again.");
     },
   });
+  const mobilePullIndicatorVisible =
+    isMobileViewport &&
+    (mobilePullDragPx > 0 || mobilePullProgress > 0 || manualPullStateRef.current.tracking || mobilePullRefreshing);
+  const mobilePullInteractionActive =
+    isMobileViewport &&
+    (manualPullStateRef.current.tracking || manualPullStateRef.current.inProgress || mobilePullIndicatorVisible);
+
+  useEffect(() => {
+    if (!DEBUG_PTR_FORENSICS) return;
+    console.debug("[ptr-app]", {
+      isMobileViewport,
+      mobilePullDragPx,
+      mobilePullProgress,
+      mobilePullRefreshing,
+      mobilePullIndicatorVisible,
+      pullDebug: mobilePullDebugState,
+    });
+  }, [
+    DEBUG_PTR_FORENSICS,
+    isMobileViewport,
+    mobilePullDragPx,
+    mobilePullProgress,
+    mobilePullRefreshing,
+    mobilePullIndicatorVisible,
+    mobilePullDebugState,
+  ]);
+
+  useEffect(() => {
+    if (!isMobileViewport) {
+      setMobilePtrTopOffsetPx(null);
+      return undefined;
+    }
+
+    const updatePtrTopOffset = () => {
+      const anchors = Array.from(document.querySelectorAll('[data-ptr-anchor="secondary-nav"]'));
+      let maxBottom = 0;
+      for (const node of anchors) {
+        if (!(node instanceof HTMLElement)) continue;
+        const rect = node.getBoundingClientRect();
+        if (rect.height <= 0 || rect.width <= 0) continue;
+        maxBottom = Math.max(maxBottom, rect.bottom);
+      }
+      setMobilePtrTopOffsetPx(maxBottom > 0 ? maxBottom : null);
+    };
+
+    const raf = requestAnimationFrame(updatePtrTopOffset);
+    window.addEventListener("resize", updatePtrTopOffset, { passive: true });
+    window.addEventListener("scroll", updatePtrTopOffset, { passive: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", updatePtrTopOffset);
+      window.removeEventListener("scroll", updatePtrTopOffset);
+    };
+  }, [isMobileViewport, activeView]);
 
   useEffect(() => {
     if (!token || (!isBrowseLikeView && activeView !== VIEWS.MY_LISTINGS && activeView !== VIEWS.PROFILE)) return undefined;
@@ -5492,9 +6361,15 @@ function App() {
   }, []);
 
   const closeAddCommunityModal = useCallback(() => {
+    closeListingCropEditorRef.current();
     setCommunityFormOpen(false);
     setCommunityEditingId(null);
     setCommunityImageFile(null);
+    setCommunityImagePreviewUrl((prev) => {
+      if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return "";
+    });
+    setCommunityImageDragActive(false);
     setCommunityProvinceSuggestOpen(false);
     setCommunityCitySuggestOpen(false);
     if (communityProvinceSuggestBlurTimerRef.current) {
@@ -5509,6 +6384,7 @@ function App() {
   }, []);
 
   const openAddCommunityModal = useCallback(() => {
+    closeListingCropEditorRef.current();
     const fallbackName = String(profileCommunityName || "").trim();
     setCommunityEditingId(null);
     setCommunityForm({
@@ -5519,11 +6395,19 @@ function App() {
     });
     setCommunityProvinceSuggestOpen(false);
     setCommunityCitySuggestOpen(false);
+    setCommunityImageFile(null);
+    setCommunityImagePreviewUrl((prev) => {
+      if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return "";
+    });
+    setCommunityImageDragActive(false);
+    if (communityImageInputRef.current) communityImageInputRef.current.value = "";
     setCommunityFormOpen(true);
   }, [profileCityProvincePostal.city, profileCityProvincePostal.postalCode, profileCityProvincePostal.province, profileCommunityName]);
 
   const openEditCommunityModal = useCallback((community) => {
     if (!community?.id) return;
+    closeListingCropEditorRef.current();
     setCommunityEditingId(String(community.id));
     setCommunityForm({
       name: String(community.name || "").trim(),
@@ -5534,8 +6418,45 @@ function App() {
     setCommunityProvinceSuggestOpen(false);
     setCommunityCitySuggestOpen(false);
     setCommunityImageFile(null);
+    setCommunityImagePreviewUrl((prev) => {
+      if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return String(community.imageUrl || "").trim();
+    });
+    setCommunityImageDragActive(false);
     if (communityImageInputRef.current) communityImageInputRef.current.value = "";
     setCommunityFormOpen(true);
+  }, []);
+
+  const applyCommunityImageFile = useCallback(
+    async (file) => {
+      const f = file instanceof File ? file : null;
+      if (!f) return;
+      if (!String(f.type || "").startsWith("image/")) {
+        pushMarketplaceToast("Please choose a JPEG, PNG, WebP, or GIF image.");
+        return;
+      }
+      try {
+        const ready = await ensureImageFileUnderMaxBytes(f, MAX_LISTING_COMMUNITY_IMAGE_BYTES, {
+          maxLongEdge: 2560,
+        });
+        const localPreview = URL.createObjectURL(ready);
+        void openListingCropEditorRef.current("community", ready, localPreview, { sourcePreviewOwned: true });
+      } catch {
+        pushMarketplaceToast("Could not process that image. Try a different file.");
+      }
+    },
+    [pushMarketplaceToast],
+  );
+
+  const clearCommunityImageSelection = useCallback(() => {
+    closeListingCropEditorRef.current();
+    setCommunityImageFile(null);
+    setCommunityImagePreviewUrl((prev) => {
+      if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return "";
+    });
+    setCommunityImageDragActive(false);
+    if (communityImageInputRef.current) communityImageInputRef.current.value = "";
   }, []);
 
   useEffect(() => {
@@ -5675,23 +6596,24 @@ function App() {
   const refreshCourierHub = useCallback(async () => {
     if (!token) return;
     try {
-      const [sellerData, buyerData, openData, invData] = await Promise.all([
-        apiRequest(`/orders?role=seller`, { token }),
-        apiRequest(`/orders?role=buyer`, { token }),
+      const [openData, invData] = await Promise.all([
         apiRequest(`/delivery/open`, { token }).catch(() => ({ orders: [] })),
         apiRequest(`/delivery/invitations`, { token }).catch(() => ({ invitations: [] })),
       ]);
-      setCourierHubOrders(sellerData.orders || []);
-      setCourierHubBuyerOrders(buyerData.orders || []);
       const open = Array.isArray(openData?.orders) ? openData.orders : [];
-      setCourierOpenDeliveryCount(open.length);
       const inv = Array.isArray(invData?.invitations) ? invData.invitations : [];
-      setCourierInvitationCount(inv.length);
+      const seen = new Set();
+      for (const o of open) {
+        const id = String(o?.id ?? "").trim();
+        if (id) seen.add(id);
+      }
+      for (const i of inv) {
+        const id = String(i?.order?.id ?? "").trim();
+        if (id) seen.add(id);
+      }
+      setCourierHubDistinctTaskCount(seen.size);
     } catch {
-      setCourierHubOrders([]);
-      setCourierHubBuyerOrders([]);
-      setCourierOpenDeliveryCount(0);
-      setCourierInvitationCount(0);
+      setCourierHubDistinctTaskCount(0);
     }
   }, [token]);
 
@@ -5700,76 +6622,80 @@ function App() {
     await refreshCourierHub();
   }, [refreshOrdersList, refreshCourierHub]);
 
-  const courierSellerAssignOrders = useMemo(
-    () =>
-      courierHubOrders.filter(
-        (o) => String(o.fulfillmentType || "") === "delivery" && isDeliverySellerPreparing(o),
-      ),
-    [courierHubOrders],
-  );
+  /**
+   * Courier nav badges: open neighborhood tasks + courier invitations only.
+   * Seller/buyer “assign courier” rows stay on Selling/Buying tabs — do not duplicate here.
+   */
+  const userCourierCommunityId = String(user?.communityId || "").trim();
 
-  const courierBuyerAssignOrders = useMemo(
-    () =>
-      courierHubBuyerOrders.filter(
-        (o) => String(o.fulfillmentType || "") === "delivery" && isDeliverySellerPreparing(o),
-      ),
-    [courierHubBuyerOrders],
-  );
-
-  /** Find deliveries + buyer-side assign attention — Activity hub rose courier slice (open jobs + orders needing courier suggest). */
+  /** Activity hub rose courier slice — open jobs + pending invitations (not seller/buyer order lists). */
   const courierRoseAttentionCount = useMemo(
-    () =>
-      Math.min(
-        99,
-        Math.max(0, courierOpenDeliveryCount + courierBuyerAssignOrders.length + courierInvitationCount),
-      ),
-    [courierOpenDeliveryCount, courierBuyerAssignOrders.length, courierInvitationCount],
+    () => Math.min(99, Math.max(0, courierHubDistinctTaskCount)),
+    [courierHubDistinctTaskCount],
   );
 
-  /** Full courier pipeline: open tasks + seller/buyer delivery orders not yet assigned (muted Activity fallback). */
+  /** Muted Activity fallback — same surface as rose slice (no seller/buyer pipeline on Courier tab). */
   const courierFullPipelineCount = useMemo(
-    () =>
-      Math.min(
-        99,
-        Math.max(
-          0,
-          courierOpenDeliveryCount +
-            courierSellerAssignOrders.length +
-            courierBuyerAssignOrders.length +
-            courierInvitationCount,
-        ),
-      ),
-    [
-      courierOpenDeliveryCount,
-      courierSellerAssignOrders.length,
-      courierBuyerAssignOrders.length,
-      courierInvitationCount,
-    ],
+    () => Math.min(99, Math.max(0, courierHubDistinctTaskCount)),
+    [courierHubDistinctTaskCount],
   );
 
   const activityPrimaryCourierBadge = useMemo(() => {
-    const roseRaw = courierOpenDeliveryCount + courierBuyerAssignOrders.length + courierInvitationCount;
-    const fullRaw =
-      courierOpenDeliveryCount +
-      courierSellerAssignOrders.length +
-      courierBuyerAssignOrders.length +
-      courierInvitationCount;
+    if (!userCourierCommunityId) {
+      return { count: 0, rose: false };
+    }
+    const pipelineCount = courierHubDistinctTaskCount;
+    const incomplete = !buyNowFromProfile.ready;
+    const courierOnline =
+      String(user?.courierStatus ?? "offline").trim().toLowerCase() !== "offline";
+    const hasCourierCommunityWork = pipelineCount > 0;
     return {
-      count: Math.min(99, roseRaw > 0 ? roseRaw : fullRaw),
-      rose: roseRaw > 0,
+      count: Math.min(99, Math.max(0, pipelineCount)),
+      rose: incomplete ? false : courierOnline && hasCourierCommunityWork,
     };
-  }, [
-    courierOpenDeliveryCount,
-    courierSellerAssignOrders.length,
-    courierBuyerAssignOrders.length,
-    courierInvitationCount,
-  ]);
+  }, [userCourierCommunityId, buyNowFromProfile.ready, user?.courierStatus, courierHubDistinctTaskCount]);
+
+  /** Activity nav icon: rose courier slice only while availability is on — offline still counts toward muted pipeline via {@link courierFullPipelineCount}. */
+  const courierNavRoseAttentionCount = useMemo(() => {
+    const online =
+      String(user?.courierStatus ?? "offline").trim().toLowerCase() !== "offline";
+    return online ? courierRoseAttentionCount : 0;
+  }, [user?.courierStatus, courierRoseAttentionCount]);
+
+  const applyCourierPresenceToUser = useCallback((payload) => {
+    if (!payload || typeof payload !== "object") return;
+    const cs = payload.courierStatus;
+    if (cs == null) return;
+    const normalized = String(cs).trim().toLowerCase();
+    setUser((prev) => (prev ? { ...prev, courierStatus: normalized } : prev));
+  }, []);
+
+  useEffect(() => {
+    if (!token) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await apiRequest("/me/courier-presence", { token });
+        if (cancelled || !d || typeof d !== "object") return;
+        const cs = d.courierStatus;
+        if (cs == null) return;
+        setUser((prev) =>
+          prev ? { ...prev, courierStatus: String(cs).trim().toLowerCase() } : prev,
+        );
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   useEffect(() => {
     if (!activityCourier || !token) return undefined;
-    void refreshCourierHub();
+    void runNonCriticalRefresh("courier:hub-mount", () => refreshCourierHub());
     return undefined;
-  }, [activityCourier, token, refreshCourierHub]);
+  }, [activityCourier, token, refreshCourierHub, runNonCriticalRefresh]);
 
   const patchOrderTransition = async (orderId, transition, options = {}) => {
     const { orderIds, successMessage } = options;
@@ -5793,18 +6719,18 @@ function App() {
     }
   };
 
-  /** Delivery orders may still need a courier rating even when `acceptedCourierAssignmentId` is missing from the row (server resolves assignment by order_id). */
-  const orderNeedsCourierReview = (o) =>
-    String(o?.fulfillmentType || "") === "delivery" && !o?.buyerCourierReview?.rating;
-
-  const submitOrderReview = async (orderId, rating, reviewText) => {
+  const submitOrderReview = async (orderId, partial) => {
     try {
-      await apiRequest(`/orders/${orderId}/review`, { method: "PUT", token, body: { rating, reviewText } });
+      await apiRequest(`/orders/${orderId}/review`, { method: "PUT", token, body: partial });
       const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
       const nextOrders = data.orders || [];
       setOrders(nextOrders);
       const updated = nextOrders.find((x) => String(x.id) === String(orderId));
-      if (updated && !orderNeedsCourierReview(updated)) {
+      const br = updated?.buyerReview;
+      const productDone = Boolean(br?.productRating);
+      const sellerNotRequired = !shouldShowSellerSection(updated);
+      const sellerDone = sellerNotRequired || Boolean(br?.sellerRating);
+      if (updated && productDone && sellerDone && !orderNeedsCourierReview(updated)) {
         setCompletedRateModalOrderId(null);
       }
       pushMarketplaceToast("Thanks for your feedback.");
@@ -5865,7 +6791,9 @@ function App() {
     }
   };
 
-  const deleteSellerListingById = async (id) => {
+  const deleteSellerListingById = async (id, options = {}) => {
+    const exitLikeCancel = Boolean(options.exitLikeCancel);
+    const wasOverlay = Boolean(options.wasOverlay);
     if (!token || !id) return;
     const ok = typeof window === "undefined" ? true : window.confirm("Delete this listing?");
     if (!ok) return;
@@ -5875,6 +6803,7 @@ function App() {
       setSellerListings(refreshed.listings || []);
       if (editingListingId && String(editingListingId) === String(id)) {
         setEditingListingId(null);
+        listingDraftBaselineRef.current = null;
         setListingForm({
           title: "",
           description: "",
@@ -5904,6 +6833,22 @@ function App() {
         setListingOptionValueDraftA("");
         setListingOptionValueDraftB("");
         setListingSecondOptionOpen(false);
+        if (exitLikeCancel) {
+          setListingEditOverlayOpen(false);
+          setSellerTab(SELLER_TABS.PRODUCTS);
+          if (wasOverlay) {
+            const origin = productFlowOriginRef.current || {};
+            const originView = String(origin.view || "");
+            if (
+              [VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES, VIEWS.PROFILE].includes(originView)
+            ) {
+              setActiveView(originView);
+            }
+          } else {
+            goOwnProfile();
+            navigate("/", { replace: true });
+          }
+        }
       }
       pushMarketplaceToast("Listing deleted.");
     } catch (e) {
@@ -5920,19 +6865,23 @@ function App() {
       return;
     }
     const currentPriceCents = Math.max(0, Number(listing?.priceCents) || 0);
-    const currentPesos = Math.floor(currentPriceCents / 100);
     const desc = String(listing?.description || "");
     const meta = parseSaleMetaFromDescription(desc);
-    const basePesos = Number.isFinite(Number(meta.originalPesos)) && Number(meta.originalPesos) > 0 ? Number(meta.originalPesos) : currentPesos;
-    const discountedPesos = Math.max(0, Math.floor(basePesos * (1 - pct / 100)));
-    const discountedPriceCents = discountedPesos * 100;
+    const baseCents =
+      meta?.originalCents != null && meta.originalCents > 0
+        ? meta.originalCents
+        : Number.isFinite(Number(meta?.originalPesos)) && Number(meta.originalPesos) > 0
+          ? Math.round(Number(meta.originalPesos) * 100)
+          : currentPriceCents;
+    const discountedPriceCents = Math.max(0, Math.round(baseCents * (1 - pct / 100)));
     if (discountedPriceCents === currentPriceCents) {
       pushMarketplaceToast("Discount did not change the price.");
       return;
     }
     const baseDescription = removeSaleMetaLines(desc);
     const saleTag = `Sale ${pct}% off`;
-    const originalTag = `Original ₱${basePesos}`;
+    const originalLabel = String(Number((baseCents / 100).toFixed(2)));
+    const originalTag = `Original ₱${originalLabel}`;
     const patchedDescription = [baseDescription, `${saleTag} | ${originalTag}`].filter(Boolean).join("\n");
     try {
       await apiRequest(`/me/listings/${id}`, {
@@ -5999,6 +6948,17 @@ function App() {
     const valsB = normalizeListingOptionValues(listing.optionValuesB);
     const optNameA = String(listing.optionNameA || "").trim();
     const optNameB = String(listing.optionNameB || "").trim();
+    let browseView = null;
+    if (activeView === VIEWS.PRODUCT_DETAIL) {
+      const rv = String(productInspectReturnRef.current?.view || "");
+      if (rv === VIEWS.COMMUNITY_SHOP) browseView = effectiveCommunityBrowseView;
+      else if (rv === VIEWS.FAVORITES) browseView = effectiveFavoriteBrowseView;
+    } else if (activeView === VIEWS.COMMUNITY_SHOP) {
+      browseView = effectiveCommunityBrowseView;
+    } else if (activeView === VIEWS.FAVORITES) {
+      browseView = effectiveFavoriteBrowseView;
+    }
+    setQuickAddBrowseSnapshot({ browseView, isMobile: isMobileViewport });
     setQuickAddListing(listing);
     setQuickActionType(mode);
     setQuickOrderFulfillmentType(initialFulfillment);
@@ -6057,6 +7017,7 @@ function App() {
     setQuickAddLightboxImageFailed(false);
     setQuickAddModalOpen(false);
     setQuickAddListing(null);
+    setQuickAddBrowseSnapshot(null);
     setQuickActionType("cart");
     setQuickOrderFulfillmentType("pickup");
     setQuickAddQuantity("1");
@@ -6214,6 +7175,14 @@ function App() {
           : Number.isFinite(Number(listingLike.soldCount))
           ? Number(listingLike.soldCount)
           : null,
+      listingAvgRating:
+        typeof listingLike.listingAvgRating === "number" && Number.isFinite(listingLike.listingAvgRating)
+          ? listingLike.listingAvgRating
+          : null,
+      listingReviewCount:
+        typeof listingLike.listingReviewCount === "number" && Number.isFinite(listingLike.listingReviewCount)
+          ? Math.max(0, Math.floor(listingLike.listingReviewCount))
+          : 0,
       showBuyerCommerceActions: Boolean(extra.showBuyerCommerceActions),
       showSellerCommerceActions: Boolean(extra.showSellerCommerceActions),
       onAddToCart: typeof extra.onAddToCart === "function" ? extra.onAddToCart : undefined,
@@ -6235,7 +7204,7 @@ function App() {
               const id = String(listingLike.id || "");
               setProductInspect((prev) => {
                 if (!prev) return prev;
-                const nextFavorite = !Boolean(prev.isFavorite);
+                const nextFavorite = !prev.isFavorite;
                 void toggleFavorite(id, nextFavorite);
                 return { ...prev, isFavorite: nextFavorite };
               });
@@ -6313,6 +7282,14 @@ function App() {
               sellerAvatarUrl: String(fresh.sellerAvatarUrl || "").trim() || prev.sellerAvatarUrl,
               listingStockQty: qtyFresh != null ? qtyFresh : prev.listingStockQty,
               listingSoldQty: soldFresh != null ? soldFresh : prev.listingSoldQty,
+              listingAvgRating:
+                typeof fresh.listingAvgRating === "number" && Number.isFinite(fresh.listingAvgRating)
+                  ? fresh.listingAvgRating
+                  : prev.listingAvgRating ?? null,
+              listingReviewCount:
+                typeof fresh.listingReviewCount === "number" && Number.isFinite(fresh.listingReviewCount)
+                  ? Math.max(0, Math.floor(fresh.listingReviewCount))
+                  : prev.listingReviewCount ?? 0,
               quantity:
                 String(prev.quantityLabel || "")
                   .trim()
@@ -6340,6 +7317,155 @@ function App() {
     openChatWithUser,
     pushMarketplaceToast,
   ]);
+
+  const navigateFromNotification = useCallback(
+    (item) => {
+      if (!item) return;
+      void markNotificationRead(item.id);
+
+      const meta = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
+      const explicitView = String(meta.targetView || "").trim().toLowerCase();
+
+      if (explicitView === "browse" || explicitView === "marketplace") {
+        goBrowse();
+        return;
+      }
+      if (explicitView === "cart") {
+        goCart();
+        return;
+      }
+      if (explicitView === "notifications") {
+        setActiveView(VIEWS.NOTIFICATIONS);
+        return;
+      }
+      if (explicitView === "messages" && meta.participantUserId) {
+        void openChatWithUser(String(meta.participantUserId));
+        return;
+      }
+      if (explicitView === "activity") {
+        setActiveView(VIEWS.ACTIVITY);
+        const actTab = String(meta.activityTab || "").trim().toLowerCase();
+        if (actTab === "courier" || String(meta.ordersRole || meta.role || "").toLowerCase() === "courier") {
+          setActivityTab(ACTIVITY_TABS.COURIER);
+          const sub = String(meta.courierHubTab || "").trim().toLowerCase();
+          if (sub === "stats") setCourierHubTab(ACTIVITY_COURIER_SUBTABS.STATS);
+          else if (sub === "feedback") setCourierHubTab(ACTIVITY_COURIER_SUBTABS.FEEDBACK);
+          else setCourierHubTab(ACTIVITY_COURIER_SUBTABS.TASKS);
+          return;
+        }
+        const sr = String(meta.ordersRole || meta.role || "").toLowerCase();
+        if (sr === "seller") {
+          setActivityTab(ACTIVITY_TABS.SELLING);
+          setOrdersRole("seller");
+        } else {
+          setActivityTab(ACTIVITY_TABS.BUYING);
+          setOrdersRole("buyer");
+        }
+        const ot = meta.ordersTab || meta.ordersStatusTab;
+        if (ot && RECENT_ORDER_TAB_KEYS.includes(String(ot))) setOrdersStatusTab(String(ot));
+        return;
+      }
+
+      let entityType = String(item.entityType || meta.entityType || "").trim().toLowerCase();
+      const entityId = String(item.entityId || meta.entityId || "").trim();
+      const typeLower = String(item.type || "").toLowerCase();
+
+      if (!entityType) {
+        if (typeLower.includes("order") || typeLower.includes("delivery") || typeLower.includes("purchase"))
+          entityType = "order";
+        else if (typeLower.includes("listing") || typeLower.includes("product")) entityType = "listing";
+        else if (typeLower.includes("community")) entityType = "community";
+        else if (typeLower.includes("message") || typeLower.includes("chat")) entityType = "conversation";
+      }
+
+      if (!entityId) return;
+
+      if (entityType === "order" || entityType === "purchase" || entityType === "sale") {
+        const order = orders.find((o) => String(o.id || "") === entityId);
+        const uid = String(user?.id || "");
+        let role =
+          meta.ordersRole === "seller" || meta.role === "seller"
+            ? "seller"
+            : meta.ordersRole === "buyer" || meta.role === "buyer"
+              ? "buyer"
+              : null;
+        if (!role && order && uid) {
+          role = String(order.sellerId || "") === uid ? "seller" : "buyer";
+        }
+        if (!role) role = "buyer";
+        const tabFromMeta = meta.ordersTab || meta.ordersStatusTab;
+        const tab =
+          tabFromMeta && RECENT_ORDER_TAB_KEYS.includes(String(tabFromMeta))
+            ? String(tabFromMeta)
+            : order
+              ? orderStatusToTabId(order.status)
+              : "pending";
+        setActiveView(VIEWS.ACTIVITY);
+        setActivityTab(role === "seller" ? ACTIVITY_TABS.SELLING : ACTIVITY_TABS.BUYING);
+        setOrdersRole(role);
+        setOrdersStatusTab(tab);
+        setOrderSelection({ [entityId]: true });
+        if (typeof window !== "undefined") {
+          window.requestAnimationFrame(() => {
+            window.scrollTo(0, 0);
+          });
+        }
+        return;
+      }
+
+      if (entityType === "listing" || entityType === "product" || entityType === "marketplace_listing") {
+        openProductInspect({ id: entityId }, {});
+        return;
+      }
+
+      if (entityType === "community" || entityType === "community_shop") {
+        setBrowseVerticalId(null);
+        setBrowseSubId(null);
+        setBrowseQuickFilter("all");
+        setSelectedListingId(null);
+        navigate("/", { replace: true });
+        setShopCommunityId(entityId);
+        setActiveView(VIEWS.COMMUNITY_SHOP);
+        return;
+      }
+
+      if (entityType === "conversation" || entityType === "messages" || entityType === "message") {
+        const thread = chatThreads.find((t) => String(t.conversationId || "") === entityId);
+        if (thread?.participantId) {
+          openChatThread(thread.participantId);
+          return;
+        }
+        if (meta.participantUserId) {
+          void openChatWithUser(String(meta.participantUserId));
+          return;
+        }
+        setActiveView(VIEWS.MESSAGES);
+      }
+    },
+    [
+      markNotificationRead,
+      goBrowse,
+      goCart,
+      openChatWithUser,
+      openChatThread,
+      openProductInspect,
+      orders,
+      user?.id,
+      chatThreads,
+      navigate,
+      setActiveView,
+      setActivityTab,
+      setCourierHubTab,
+      setBrowseQuickFilter,
+      setBrowseSubId,
+      setBrowseVerticalId,
+      setOrderSelection,
+      setOrdersRole,
+      setOrdersStatusTab,
+      setSelectedListingId,
+      setShopCommunityId,
+    ],
+  );
 
   useEffect(() => {
     if (!productInspect) return;
@@ -6496,11 +7622,12 @@ function App() {
         if (cachedSeller?.username) {
           sellerUsername = String(cachedSeller.username || "").trim();
         }
+        const lineSignature = await computeCartLineSignature(variantSig, quickOrderFulfillmentType, mergedComment);
         setCartItems((prev) => {
           const listingId = String(quickAddListing.id);
           const idx = prev.findIndex(
             (item) =>
-              String(item.listingId) === listingId && String(item.variantSignature ?? "") === variantSig,
+              String(item.listingId) === listingId && String(item.lineSignature ?? "") === lineSignature,
           );
           if (idx === -1) {
             const sellerLabel = sellerUsername
@@ -6512,6 +7639,7 @@ function App() {
               ...prev,
               {
                 listingId,
+                lineSignature,
                 variantSignature: variantSig,
                 sellerId,
                 sellerLabel,
@@ -6537,6 +7665,7 @@ function App() {
           const mergedQty = Math.min(maxQty, Number(existing.quantity || 0) + parsedQty);
           next[idx] = {
             ...existing,
+            lineSignature,
             variantSignature: variantSig,
             quantity: mergedQty,
             listingQuantity: maxQty,
@@ -6593,7 +7722,12 @@ function App() {
       activeView === VIEWS.PRODUCT_DETAIL
         ? (productInspectReturnRef.current?.shopCommunityId ? String(productInspectReturnRef.current.shopCommunityId) : null)
         : (shopCommunityId || null);
-    const launchedFromProductFlow = [VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(sourceView);
+    const launchedFromProductFlow = [
+      VIEWS.BROWSE,
+      VIEWS.COMMUNITY_SHOP,
+      VIEWS.FAVORITES,
+      VIEWS.PROFILE,
+    ].includes(sourceView);
     productFlowOriginRef.current = {
       listingId: String(listing.id || ""),
       view: sourceView,
@@ -6602,11 +7736,12 @@ function App() {
     const normalizedImageUrls = dedupeListingImageUrlsOrdered(
       Array.isArray(listing.imageUrls) ? listing.imageUrls.map((url) => String(url || "").trim()).filter(Boolean) : [],
     ).slice(0, LISTING_MAX_IMAGES);
-    setEditingListingId(String(listing.id));
-    setListingForm({
+    const nextListingForm = {
       title: String(listing.title || ""),
       description: String(listing.description || ""),
-      pricePesos: Number.isFinite(Number(listing.priceCents)) ? String(Number(listing.priceCents) / 100) : "",
+      pricePesos: Number.isFinite(Number(listing.priceCents))
+        ? formatPhpPriceFromNumber(Number(listing.priceCents) / 100)
+        : "",
       quantity: Number.isFinite(Number(listing.quantity)) ? String(Number(listing.quantity)) : "",
       categories: String(listing.categories || listing.verticalId || ""),
       subId: String(listing.subId || "all"),
@@ -6618,7 +7753,9 @@ function App() {
       processingTime: String(listing.processingTime || "").trim(),
       pickup: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("pickup") : true,
       delivery: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("delivery") : true,
-    });
+    };
+    setEditingListingId(String(listing.id));
+    setListingForm(nextListingForm);
     setListingFieldErrors({});
     setListingImageFile(null);
     setListingCoverContentHash("");
@@ -6640,6 +7777,11 @@ function App() {
         })),
       );
     }
+    listingDraftBaselineRef.current = buildListingDraftSnapshot(nextListingForm, {
+      coverPreviewUrl: String(normalizedImageUrls[0] || listing.imageUrl || "").trim(),
+      coverFile: null,
+      extraItems: normalizedImageUrls.slice(1, LISTING_MAX_IMAGES).map((url) => ({ previewUrl: url, file: null })),
+    });
     setListingOptionValueDraftA("");
     setListingOptionValueDraftB("");
     setListingSecondOptionOpen(
@@ -6747,7 +7889,7 @@ function App() {
       return;
     }
 
-    const pesos = Number(listingForm.pricePesos);
+    const pesos = parsePhpPricePesos(listingForm.pricePesos);
     if (!Number.isFinite(pesos) || pesos < 0) {
       pushMarketplaceToast("Enter a valid price in pesos.");
       return;
@@ -6862,6 +8004,7 @@ function App() {
       setListingOptionValueDraftB("");
       setListingSecondOptionOpen(false);
       setEditingListingId(null);
+      listingDraftBaselineRef.current = null;
       setListingEditOverlayOpen(false);
       setPublishFlash("");
       setSellerTab(SELLER_TABS.PRODUCTS);
@@ -6957,6 +8100,7 @@ function App() {
       };
     });
   }, []);
+  closeListingCropEditorRef.current = closeListingCropEditor;
 
   const openListingCropEditor = useCallback(async (mode, sourceFile, sourcePreviewUrl, { targetId = "", sourcePreviewOwned = false } = {}) => {
     if (!sourceFile || !sourcePreviewUrl) return;
@@ -6991,6 +8135,7 @@ function App() {
       dragStartTop: 0.1,
     });
   }, []);
+  openListingCropEditorRef.current = openListingCropEditor;
 
   const openListingCropEditorForCover = useCallback(async () => {
     if (listingImageFile && listingImagePreviewUrl) {
@@ -7081,7 +8226,9 @@ function App() {
         return null;
       };
       const occupied = new Set();
-      if (listingCropEditor.mode === "new") {
+      if (listingCropEditor.mode === "community") {
+        // Single community photo — no duplicate check vs listing slots.
+      } else if (listingCropEditor.mode === "new") {
         if (String(listingCoverContentHash || "").trim()) occupied.add(listingCoverContentHash);
         else if (listingImageFile) {
           const ch = await sha256HexFromBlob(listingImageFile);
@@ -7108,7 +8255,7 @@ function App() {
           if (h) occupied.add(h);
         }
       }
-      if (contentHash && occupied.has(contentHash)) {
+      if (listingCropEditor.mode !== "community" && contentHash && occupied.has(contentHash)) {
         setListingCropApplyError("This image is already in your listing.");
         return;
       }
@@ -7145,6 +8292,10 @@ function App() {
             return { ...item, file: cropped, previewUrl, name: cropped.name || item.name, contentHash };
           }),
         );
+      } else if (listingCropEditor.mode === "community") {
+        if (communityImagePreviewUrl && communityImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(communityImagePreviewUrl);
+        setCommunityImageFile(cropped);
+        setCommunityImagePreviewUrl(previewUrl);
       }
       closeListingCropEditor();
     } catch {
@@ -7152,6 +8303,7 @@ function App() {
     }
   }, [
     closeListingCropEditor,
+    communityImagePreviewUrl,
     listingCoverContentHash,
     listingCropEditor,
     listingExtraImages,
@@ -7284,8 +8436,14 @@ function App() {
     }
   }, [listingForm.optionValuesA, listingForm.optionValuesB]);
 
-  const openProfileEdit = () => {
+  /** @param {{ navigateToOwnProfile?: boolean }} [options] When true (e.g. courier hub), switch to Profile view before opening the editor. */
+  const openProfileEdit = (options) => {
     if (!user) return;
+    if (options?.navigateToOwnProfile) {
+      setProfileViewUserId("");
+      setProfileViewReturnView("");
+      setActiveView(VIEWS.PROFILE);
+    }
     const parsedAddress = splitAddressParts(user.address);
     const draftBirthday = user.birthday ?? "";
     const computedAge = computeAgeFromBirthday(draftBirthday);
@@ -7701,38 +8859,77 @@ function App() {
     );
   }
 
+  if (isPasswordRecoveryRoute) {
+    return <PasswordRecoveryScreen navigate={navigate} />;
+  }
+
   if (!user) {
     return (
       <div className="landing-shell">
-        <header className="landing-nav">
-          <div className="app-container flex h-14 min-[430px]:h-[4.25rem] w-full max-w-full items-center justify-between gap-2 px-4 min-[360px]:gap-2.5 min-[360px]:px-5 min-[390px]:gap-3 min-[390px]:px-6 md:h-[4.25rem] md:justify-start md:gap-3 md:px-8 lg:px-12">
-            <button
-              type="button"
-              className="min-w-0 shrink rounded-xl px-0.5 py-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950 [&_picture]:block [&_picture]:leading-none"
-              aria-label="LinkMart — scroll to top"
-              onClick={() => {
-                const reduce =
-                  typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-                window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
-              }}
-            >
-              <LinkMartLogo className="h-8 w-auto max-w-[min(40vw,8.5rem)] shrink-0 object-contain min-[360px]:max-w-[min(42vw,9.25rem)] min-[390px]:h-9 min-[390px]:max-w-[min(44vw,9.75rem)] min-[430px]:max-w-[min(46vw,10.25rem)] md:h-10 md:max-w-[min(10.5rem,100%)]" />
-            </button>
-            <div className="hidden min-h-0 min-w-0 flex-1 md:block" aria-hidden />
-            <nav className="flex shrink-0 items-center gap-1.5 min-[360px]:gap-2 min-[390px]:gap-2.5 min-[430px]:gap-3 md:gap-3" aria-label="Log in or sign up">
-              <button type="button" className="landing-btn-nav-text" onClick={() => openAuthPanel("login")}>
-                Log in
+        <header className={`landing-nav ${landingNavElevated ? "landing-nav--elevated" : ""}`}>
+          {/*
+            Match hero column width (max-w-6xl inside app-container) so logo/auth align with headline + grid below,
+            not the wider 7xl band alone.
+          */}
+          <div className="app-container">
+            <div className="mx-auto flex h-14 min-[430px]:h-[4.25rem] w-full max-w-6xl items-center justify-between gap-2 md:h-[4.25rem] md:gap-3">
+              <button
+                type="button"
+                className="max-w-[min(52vw,11rem)] shrink-0 rounded-xl px-1 py-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950 [&_img]:block [&_img]:max-h-full [&_img]:w-auto [&_picture]:block [&_picture]:leading-none"
+                aria-label="LinkMart, scroll to top"
+                onClick={() => {
+                  const reduce =
+                    typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+                  window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+                }}
+              >
+                <LinkMartLogo className="block h-8 w-auto max-w-[min(46vw,10rem)] shrink-0 object-contain leading-none min-[390px]:h-9 md:h-10 md:max-w-[min(10.5rem,100%)]" />
               </button>
-              <button type="button" className="landing-btn-nav-primary" onClick={() => openAuthPanel("signup")}>
-                Sign up
+              <div className="hidden min-w-0 flex-1 items-center justify-center overflow-hidden md:flex">
+                <button
+                  type="button"
+                  className="inline-flex h-10 shrink-0 items-center justify-center rounded-full bg-neutral-100/70 px-4 text-sm font-semibold text-brand-primary shadow-sm transition hover:bg-neutral-200/90 dark:bg-slate-800/70 dark:text-brand-accent dark:hover:bg-slate-700/90"
+                  onClick={scrollToLandingNextSection}
+                >
+                  How LinkMart works
+                </button>
+              </div>
+              <nav
+                className="flex shrink-0 items-center gap-1.5 min-[360px]:gap-2 min-[390px]:gap-2.5 min-[430px]:gap-3 md:gap-3"
+                aria-label="Account: log in or join free"
+              >
+                <button type="button" className="landing-btn-nav-text" onClick={() => openAuthPanel("login")}>
+                  Log in
+                </button>
+                <button type="button" className="landing-btn-nav-primary" onClick={() => openAuthPanel("signup")}>
+                  Join free
+                </button>
+              </nav>
+            </div>
+          </div>
+          <div className="app-container md:hidden">
+            <div className="mx-auto flex w-full max-w-6xl justify-center pb-1">
+              <button
+                type="button"
+                className="landing-link px-2 py-1.5 text-xs font-semibold min-[390px]:text-sm"
+                onClick={scrollToLandingNextSection}
+              >
+                How LinkMart works
               </button>
-            </nav>
+            </div>
+          </div>
+          <div className="app-container border-t border-neutral-200/70 md:hidden dark:border-slate-700/80">
+            <div className="mx-auto w-full max-w-6xl">
+              <p className="pb-[calc(0.35rem+env(safe-area-inset-bottom,0px))] pt-1.5 text-center text-[11px] leading-snug text-neutral-500 dark:text-slate-400">
+                Join free · COD pickup or delivery · No wallet inside the app
+              </p>
+            </div>
           </div>
         </header>
 
         <main id="main-content">
           <div className="landing-hero-band">
-            <div className="app-container px-6 md:px-8 lg:px-12">
+            <div className="app-container">
               <div className="relative mx-auto w-full max-w-6xl">
                 <section className="relative grid min-h-[calc(100svh-3.5rem-env(safe-area-inset-top,0px))] min-[430px]:min-h-[calc(100svh-4.25rem-env(safe-area-inset-top,0px))] grid-cols-1 items-start gap-10 pb-28 pt-6 min-[430px]:pt-8 md:gap-12 md:pb-32 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:gap-x-12 lg:gap-y-8 lg:pb-36 lg:pt-[200px] xl:gap-x-16">
               <div className="order-2 flex max-w-xl flex-col items-center gap-7 text-center md:gap-8 lg:order-1 lg:max-w-none lg:items-start lg:text-left">
@@ -7741,8 +8938,8 @@ function App() {
                     A marketplace built for <span className="text-brand-primary dark:text-brand-accent">your local community</span>
                   </h1>
                   <p className="mx-auto max-w-xl text-pretty text-lg leading-relaxed text-neutral-600 dark:text-slate-400 md:text-xl md:leading-relaxed lg:mx-0">
-                    LinkMart connects neighbors for COD pickup or delivery: no in-app wallet, optional neighbor couriers (walk, run, bike), and seller tools for stock
-                    and profit.
+                    Buy and sell with neighbors you can meet in person. Pay cash on delivery (COD) for pickup or delivery, keep money out of an in-app wallet, and use
+                    optional neighbor couriers (walk, run, bike) plus seller tools for stock and profit.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-3 md:gap-4 lg:justify-start">
@@ -7750,20 +8947,26 @@ function App() {
                     Start selling locally
                   </button>
                   <button type="button" className="btn-secondary rounded-full px-8 py-3 text-sm" onClick={() => openAuthPanel("login")}>
-                    Browse nearby listings
+                    Log in to browse
                   </button>
                 </div>
                 <div className="grid w-full max-w-mobile-baseline grid-cols-3 gap-x-6 gap-y-6 border-t border-neutral-200/80 pt-9 dark:border-slate-700/80 md:max-w-lg md:gap-x-10 lg:max-w-none lg:flex lg:flex-wrap lg:justify-start lg:gap-x-12">
                   <div className="min-w-0 text-center lg:text-left">
-                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">8k+</span>
+                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 tabular-nums dark:text-slate-100">
+                      {formatLandingPublicStat(landingPublicStats.listingsCount)}
+                    </span>
                     <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Local listings</span>
                   </div>
                   <div className="min-w-0 text-center lg:text-left">
-                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">1.2k+</span>
+                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 tabular-nums dark:text-slate-100">
+                      {formatLandingPublicStat(landingPublicStats.accountsCount)}
+                    </span>
                     <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Neighborhood sellers</span>
                   </div>
                   <div className="min-w-0 text-center lg:text-left">
-                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">50+</span>
+                    <span className="block text-2xl font-semibold tracking-tight text-neutral-900 tabular-nums dark:text-slate-100">
+                      {formatLandingPublicStat(landingPublicStats.communitiesCount)}
+                    </span>
                     <span className="mt-1 block text-sm text-neutral-500 dark:text-slate-400">Active communities</span>
                   </div>
                 </div>
@@ -7802,7 +9005,7 @@ function App() {
             </div>
           </div>
 
-          <div className="app-container px-6 pb-24 pt-12 md:px-8 md:pb-32 md:pt-14 lg:px-12">
+          <div className="app-container pb-24 pt-12 md:pb-32 md:pt-14">
           <section
             id="landing-next-section"
             className="scroll-mt-24 px-4 py-10 md:scroll-mt-28 md:px-8 md:px-10 md:py-12"
@@ -7895,13 +9098,16 @@ function App() {
                 <LandingFeatureRow {...LANDING_FEATURE_ROWS[2]} />
               </div>
               <div className="order-1 flex w-full justify-center px-4 lg:order-2 lg:justify-end lg:px-2 lg:pl-4">
-                <LandingArtworkCard
-                  picture={landingFeaturesArtworkPicture}
-                  alt="Marketplace platform features"
-                  className="w-full max-w-xs md:max-w-sm lg:max-w-none lg:max-w-[min(100%,28rem)]"
-                  objectPosition="object-right"
-                  sizes="(max-width: 1023px) min(100vw - 2rem, 24rem), min(28rem, 45vw)"
-                />
+                <Suspense
+                  fallback={
+                    <div
+                      className="aspect-[16/10] w-full max-w-xs animate-pulse rounded-[1.75rem] bg-neutral-200/60 dark:bg-slate-700/60 md:max-w-sm lg:max-w-none lg:max-w-[min(100%,28rem)]"
+                      aria-hidden
+                    />
+                  }
+                >
+                  <LazyLandingFeaturesIllustration />
+                </Suspense>
               </div>
             </div>
           </section>
@@ -7922,7 +9128,17 @@ function App() {
           </section>
           </div>
 
-          <LandingSiteFooter onOpenAbout={openLandingAbout} onOpenTerms={openLandingTerms} onOpenPrivacy={openLandingPrivacy} />
+          <LandingSiteFooter
+            onOpenAbout={openLandingAbout}
+            onOpenTerms={openLandingTerms}
+            onOpenPrivacy={openLandingPrivacy}
+            onOpenDataPrivacyAct={openLandingDataPrivacyAct}
+            onOpenScammers={openLandingScammers}
+            onOpenProhibited={openLandingProhibited}
+            statsListingsDisplay={formatLandingPublicStat(landingPublicStats.listingsCount)}
+            statsSellersDisplay={formatLandingPublicStat(landingPublicStats.accountsCount)}
+            statsCommunitiesDisplay={formatLandingPublicStat(landingPublicStats.communitiesCount)}
+          />
         </main>
 
         {authPanelVisible && (
@@ -7936,7 +9152,7 @@ function App() {
               type="button"
               tabIndex={-1}
               className="landing-auth-modal-backdrop absolute inset-0 bg-neutral-900/45 backdrop-blur-[3px] dark:bg-black/55"
-              aria-label="Close sign-in dialog"
+              aria-label="Close account dialog"
               onClick={closeAuthPanel}
             />
             <div
@@ -7948,18 +9164,135 @@ function App() {
                 <button type="button" className="landing-auth-close" onClick={closeAuthPanel} aria-label="Close">
                   <span aria-hidden="true">×</span>
                 </button>
+                {(authMode === "login" || authMode === "signup") && (
+                  <div
+                    className="mb-5 flex rounded-full bg-neutral-100/95 p-1 shadow-inner dark:bg-slate-800/95"
+                    role="tablist"
+                    aria-label="Choose log in or join free"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={authMode === "login"}
+                      id="auth-tab-login"
+                      className={`relative min-h-[44px] flex-1 rounded-full px-3 py-2 text-sm font-semibold transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950 ${authMode === "login" ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-900 dark:text-slate-100" : "text-neutral-600 hover:text-neutral-900 dark:text-slate-400 dark:hover:text-slate-200"}`}
+                      onClick={() => {
+                        if (authMode === "login") return;
+                        setAuthMode("login");
+                        setMessage("");
+                        setForgotPasswordSent(false);
+                        setSignupEmailSent(false);
+                        setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
+                        setShowAuthPassword(false);
+                        setShowConfirmPassword(false);
+                        setForm((prev) => ({ ...prev, confirmPassword: "" }));
+                      }}
+                    >
+                      Log in
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={authMode === "signup"}
+                      id="auth-tab-signup"
+                      className={`relative min-h-[44px] flex-1 rounded-full px-3 py-2 text-sm font-semibold transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950 ${authMode === "signup" ? "bg-white text-neutral-900 shadow-sm dark:bg-slate-900 dark:text-slate-100" : "text-neutral-600 hover:text-neutral-900 dark:text-slate-400 dark:hover:text-slate-200"}`}
+                      onClick={() => {
+                        if (authMode === "signup") return;
+                        setAuthMode("signup");
+                        setMessage("");
+                        setForgotPasswordSent(false);
+                        setSignupEmailSent(false);
+                        setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
+                        setShowAuthPassword(false);
+                        setShowConfirmPassword(false);
+                      }}
+                    >
+                      Join free
+                    </button>
+                  </div>
+                )}
                 <div className="mb-8 pr-10">
                   <h2 id="auth-modal-title" className="mobile-page-title text-neutral-900 dark:text-slate-100">
-                    {authMode === "signup" ? "Create an account" : "Welcome back"}
+                    {authMode === "signup" && signupEmailSent
+                      ? "Check your email"
+                      : authMode === "signup"
+                        ? "Join your local marketplace"
+                        : authMode === "forgot"
+                          ? "Reset your password"
+                          : "Welcome back"}
                   </h2>
                   <p className="mt-4 max-w-mobile-baseline text-sm leading-relaxed text-neutral-600 dark:text-slate-400 md:max-w-md md:text-[15px] md:leading-relaxed">
-                    {authMode === "signup"
-                      ? "Create your account to post items, manage listings, and connect with buyers in your community."
-                      : "Sign in with email or Google to continue buying and selling in your local area."}
+                    {authMode === "signup" && signupEmailSent
+                      ? `We sent a confirmation link to ${String(form.email || "").trim() || "your inbox"}. Open it to verify, then log in here.`
+                      : authMode === "signup"
+                        ? "List items, chat buyers, and arrange COD pickup or delivery nearby. No wallet lives inside the app."
+                        : authMode === "forgot"
+                          ? "Enter the email on your account. We will send a link so you can set a new password."
+                          : "Use email or Google to browse listings, message sellers, and keep orders moving near you."}
                   </p>
+                  {(authMode === "login" || (authMode === "signup" && !signupEmailSent)) && (
+                    <p className="mt-3 text-center text-xs leading-relaxed text-neutral-500 dark:text-slate-500 md:text-left">
+                      <span className="tabular-nums">{formatLandingPublicStat(landingPublicStats.listingsCount)}</span>{" "}
+                      active listings ·{" "}
+                      <span className="tabular-nums">{formatLandingPublicStat(landingPublicStats.accountsCount)}</span> sellers ·{" "}
+                      <span className="tabular-nums">{formatLandingPublicStat(landingPublicStats.communitiesCount)}</span> communities
+                    </p>
+                  )}
                 </div>
 
-                <form noValidate onSubmit={handleAuth} className="space-y-5">
+                {authMode === "signup" && signupEmailSent ? (
+                  <div className="space-y-6">
+                    {message ? (
+                      <p className="rounded-xl border border-neutral-200/90 bg-neutral-50/80 px-3 py-2 text-sm text-neutral-800 dark:border-slate-600 dark:bg-slate-800/50 dark:text-slate-200">
+                        {message}
+                      </p>
+                    ) : null}
+                    <div className="flex flex-col gap-3">
+                      <button
+                        type="button"
+                        className="landing-btn-primary w-full"
+                        disabled={authLoading}
+                        onClick={handleResendSignupConfirmation}
+                      >
+                        {authLoading ? "Sending…" : "Send another confirmation email"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary w-full rounded-full px-4 py-3 text-sm"
+                        onClick={() => {
+                          setAuthMode("login");
+                          setSignupEmailSent(false);
+                          setMessage("");
+                        }}
+                      >
+                        Back to log in
+                      </button>
+                    </div>
+                  </div>
+                ) : authMode === "forgot" && forgotPasswordSent ? (
+                  <div className="space-y-6 text-center">
+                    <p className="text-sm leading-relaxed text-neutral-700 dark:text-slate-300">
+                      If that email has an account, you will get a reset link soon. Check inbox and spam.
+                    </p>
+                    <button
+                      type="button"
+                      className="landing-btn-primary w-full"
+                      onClick={() => {
+                        setAuthMode("login");
+                        setForgotPasswordSent(false);
+                        setMessage("");
+                      }}
+                    >
+                      Back to log in
+                    </button>
+                  </div>
+                ) : (
+                <>
+                <form
+                  noValidate
+                  onSubmit={authMode === "forgot" ? handleForgotPassword : handleAuth}
+                  className="space-y-5"
+                >
                 <>
                   <div>
                     <label htmlFor="auth-email" className="label-base">
@@ -7995,6 +9328,7 @@ function App() {
                       </p>
                     ) : null}
                   </div>
+                  {authMode !== "forgot" ? (
                   <div>
                     <label htmlFor="auth-password" className="label-base">
                       Password
@@ -8037,7 +9371,24 @@ function App() {
                         {authInlineErrors.password}
                       </p>
                     ) : null}
+                    {authMode === "login" ? (
+                      <div className="mt-2 text-right">
+                        <button
+                          type="button"
+                          className="landing-link text-sm"
+                          onClick={() => {
+                            setAuthMode("forgot");
+                            setMessage("");
+                            setForgotPasswordSent(false);
+                            setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
+                          }}
+                        >
+                          Forgot password?
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
+                  ) : null}
                   {authMode === "signup" && (
                     <>
                       <div>
@@ -8129,6 +9480,9 @@ function App() {
                     {message}
                   </p>
                 ) : null}
+                <p className="mb-4 px-0.5 text-center text-[11px] leading-snug text-neutral-500 dark:text-slate-500 md:text-left">
+                  Join free. Pay neighbors in person. COD pickup and delivery.
+                </p>
                 <MobileFormActions className="rounded-b-xl">
                   <button
                     type="submit"
@@ -8142,10 +9496,16 @@ function App() {
                           className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white border-t-transparent motion-reduce:animate-none"
                           aria-hidden
                         />
-                        {authMode === "signup" ? "Creating account…" : "Signing in…"}
+                        {authMode === "signup"
+                          ? "Joining…"
+                          : authMode === "forgot"
+                            ? "Sending…"
+                            : "Signing in…"}
                       </span>
                     ) : authMode === "signup" ? (
-                      "Create account"
+                      "Join free"
+                    ) : authMode === "forgot" ? (
+                      "Send reset link"
                     ) : (
                       "Log in"
                     )}
@@ -8153,11 +9513,11 @@ function App() {
                 </MobileFormActions>
                 </form>
 
-                {authMode !== "signup" && (
+                {authMode === "login" && (
                   <>
                     <div className="my-6 flex items-center gap-3">
                       <span className="h-px flex-1 bg-neutral-200 dark:bg-slate-600" />
-                      <span className="text-xs font-medium uppercase tracking-wide text-neutral-600 dark:text-slate-400">or</span>
+                      <span className="text-xs font-medium uppercase tracking-wide text-neutral-600 dark:text-slate-400">Or</span>
                       <span className="h-px flex-1 bg-neutral-200 dark:bg-slate-600" />
                     </div>
 
@@ -8181,13 +9541,14 @@ function App() {
                 <p className="mt-8 text-center text-sm text-neutral-600 dark:text-slate-400">
                   {authMode === "signup" ? (
                     <>
-                      Already have an account?{" "}
+                      Already selling or buying here?{" "}
                       <button
                         type="button"
                         className="landing-link"
                         onClick={() => {
                           setAuthMode("login");
                           setMessage("");
+                          setForgotPasswordSent(false);
                           setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
                           setShowAuthPassword(false);
                           setShowConfirmPassword(false);
@@ -8197,9 +9558,25 @@ function App() {
                         Log in
                       </button>
                     </>
+                  ) : authMode === "forgot" ? (
+                    <>
+                      Want to sign in instead?{" "}
+                      <button
+                        type="button"
+                        className="landing-link"
+                        onClick={() => {
+                          setAuthMode("login");
+                          setMessage("");
+                          setForgotPasswordSent(false);
+                          setAuthInlineErrors({ email: "", password: "", confirmPassword: "", terms: "" });
+                        }}
+                      >
+                        Log in
+                      </button>
+                    </>
                   ) : (
                     <>
-                      New here?{" "}
+                      First time on LinkMart?{" "}
                       <button
                         type="button"
                         className="landing-link"
@@ -8211,11 +9588,13 @@ function App() {
                           setShowConfirmPassword(false);
                         }}
                       >
-                        Create account
+                        Join free
                       </button>
                     </>
                   )}
                 </p>
+                </>
+                )}
               </div>
             </div>
           </div>
@@ -8226,15 +9605,55 @@ function App() {
             className="fixed inset-0 z-[110] flex min-h-0 flex-col bg-white dark:bg-slate-950"
             role="dialog"
             aria-modal="true"
-            aria-label={landingLegalView === "about" ? "About LinkMart" : "Terms and conditions"}
+            aria-label={
+              landingLegalView === "about"
+                ? "About LinkMart"
+                : landingLegalView === "terms"
+                  ? "Terms and conditions"
+                  : landingLegalView === "data_privacy_act"
+                    ? "Data Privacy Act"
+                    : landingLegalView === "scammers"
+                      ? "Beware of scammers"
+                      : landingLegalView === "prohibited"
+                        ? "Prohibited products"
+                        : "Legal information"
+            }
           >
             <SecondaryScreenHeader
-              title={landingLegalView === "about" ? "About LinkMart" : "Terms & conditions"}
+              title={
+                landingLegalView === "about"
+                  ? "About LinkMart"
+                  : landingLegalView === "terms"
+                    ? "Terms & conditions"
+                    : landingLegalView === "data_privacy_act"
+                      ? "Data Privacy Act"
+                      : landingLegalView === "scammers"
+                        ? "Beware of scammers"
+                        : landingLegalView === "prohibited"
+                          ? "Prohibited products"
+                          : ""
+              }
               onBack={() => setLandingLegalView(null)}
             />
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] pt-2 [-webkit-overflow-scrolling:touch] md:px-8">
               <div className="mx-auto w-full max-w-3xl">
-                {landingLegalView === "about" ? <AboutLinkMartBody /> : <TermsLinkMartBody />}
+                {landingLegalView === "about" ? (
+                  <AboutLinkMartBody />
+                ) : landingLegalView === "terms" ? (
+                  <TermsLinkMartBody />
+                ) : landingLegalView === "data_privacy_act" ? (
+                  <div className="space-y-4 text-sm leading-relaxed text-neutral-700 dark:text-slate-300">
+                    <DataPrivacyActBody />
+                  </div>
+                ) : landingLegalView === "scammers" ? (
+                  <div className="text-sm leading-relaxed text-neutral-700 dark:text-slate-300">
+                    <BewareOfScammersBody />
+                  </div>
+                ) : landingLegalView === "prohibited" ? (
+                  <div className="text-sm leading-relaxed text-neutral-700 dark:text-slate-300">
+                    <ProhibitedProductsBody />
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -8280,23 +9699,44 @@ function App() {
           </div>
         </div>
       ) : null}
+      <MobilePullToRefreshIndicator
+        pullProgress={mobilePullRefreshing ? 1 : mobilePullProgress}
+        pullDragPx={mobilePullDragPx}
+        pullDirection={mobilePullDirection}
+        isRefreshing={mobilePullRefreshing}
+        isArmed={mobilePullArmed || mobilePullRefreshing}
+        topOffsetPx={mobilePtrTopOffsetPx}
+        visible={mobilePullIndicatorVisible}
+      />
+      {DEBUG_PTR_FORENSICS && isMobileViewport ? (
+        <div className="pointer-events-none fixed right-2 top-2 z-[300] rounded-md bg-black/80 px-2 py-1 text-[10px] font-mono leading-tight text-white">
+          <div>{`mode:${mobilePullDebugState?.mode || "-"}`}</div>
+          <div>{`intent:${mobilePullDebugState?.intent || "-"}`}</div>
+          <div>{`top:${mobilePullDebugState?.startedAtTop ? "y" : "n"}`}</div>
+          <div>{`drag:${Math.round(Number(mobilePullDragPx || 0))}`}</div>
+          <div>{`armed:${mobilePullArmed ? "y" : "n"}`}</div>
+          <div>{`vis:${mobilePullIndicatorVisible ? "y" : "n"}`}</div>
+          <div>{`why:${mobilePullDebugState?.lastReason || "-"}`}</div>
+        </div>
+      ) : null}
       <MobileAppShell
         className={activeView === VIEWS.ACTIVITY ? activityTabChrome.activityShellWrap : undefined}
       >
       <LoggedInHeader
         user={user}
         activeView={activeView}
-        setActiveView={setActiveView}
-        goOwnProfile={goOwnProfile}
-        goBrowse={goBrowse}
-        goActivity={goActivity}
+        setActiveView={setActiveViewGuarded}
+        goOwnProfile={goOwnProfileGuarded}
+        goBrowse={goBrowseGuarded}
+        goActivity={goActivityGuarded}
         activityTab={activityTab}
-        courierAttentionCount={courierRoseAttentionCount}
+        courierAttentionCount={courierNavRoseAttentionCount}
         courierPipelineCount={courierFullPipelineCount}
         activityPrimaryBuyingBadge={activityPrimaryBuyingBadge}
         activityPrimarySellingBadge={activityPrimarySellingBadge}
         activityPrimaryCourierBadge={activityPrimaryCourierBadge}
-        goCart={goCart}
+        courierProfileIncomplete={!buyNowFromProfile.ready}
+        goCart={goCartGuarded}
         inboxBadgeCount={inboxNavBadgeCount}
         messagesUnreadCount={totalChatUnreadCount}
         cartItemCount={cartNavBadgeCount}
@@ -8314,28 +9754,28 @@ function App() {
         setTheme={setTheme}
         onLogout={logout}
         getDisplayNameFromUser={getDisplayNameFromUser}
-        onNavigateHome={() => navigate("/")}
+        onNavigateHome={() => requestDiscardListingChanges(() => navigate("/"))}
         onMobileBrowseNavCollapsedChange={setMobileTopChromeCollapsed}
         mobileSecondaryDragX={mobileSecondaryDragX}
         hideNavigationChrome={activeView === VIEWS.PRODUCT_DETAIL || listingEditOverlayOpen}
         liftChromeAboveOverlay={quickAddModalOpen}
         activityPrimaryTabsScrollHidden={activityPrimaryTabsScrollHidden}
         sendFeedbackPhase={sendFeedbackPhase}
+        onSecondaryMobileScreenBack={
+          activeView === VIEWS.SEND_FEEDBACK ? goBackFromSendFeedback : undefined
+        }
       >
-      {isMobileViewport && mobilePullRefreshing ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className="pointer-events-none fixed left-1/2 top-[max(0.5rem,calc(4.25rem+env(safe-area-inset-top,0px)+0.5rem))] z-[65] -translate-x-1/2 rounded-full border border-neutral-200/80 bg-white/95 px-3 py-1 text-xs font-semibold text-brand-primary shadow-sm dark:border-slate-700 dark:bg-slate-900/95 dark:text-brand-accent"
-        >
-          Refreshing…
-        </div>
-      ) : null}
       <main
         ref={mainContentScrollRef}
         id="main-content"
         className={`${UI_KIT.mobileMainScroll} app-container scroll-pt-2 scroll-pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] space-y-5 pt-4 pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] md:scroll-pb-0 md:scroll-pt-0 ${
-          activeView === VIEWS.ABOUT || activeView === VIEWS.TERMS || activeView === VIEWS.SEND_FEEDBACK
+          activeView === VIEWS.ABOUT ||
+          activeView === VIEWS.TERMS ||
+          activeView === VIEWS.DATA_PRIVACY_ACT ||
+          activeView === VIEWS.BEWARE_SCAMMERS ||
+          activeView === VIEWS.PROHIBITED_PRODUCTS ||
+          activeView === VIEWS.SEND_FEEDBACK ||
+          activeView === VIEWS.PASSWORD_SECURITY
             ? "max-md:!pt-1 max-md:scroll-pt-0"
             : ""
         } ${
@@ -8343,7 +9783,11 @@ function App() {
           (activeView === VIEWS.MESSAGES ||
             activeView === VIEWS.ABOUT ||
             activeView === VIEWS.TERMS ||
-            activeView === VIEWS.SEND_FEEDBACK)
+            activeView === VIEWS.DATA_PRIVACY_ACT ||
+            activeView === VIEWS.BEWARE_SCAMMERS ||
+            activeView === VIEWS.PROHIBITED_PRODUCTS ||
+            activeView === VIEWS.SEND_FEEDBACK ||
+            activeView === VIEWS.PASSWORD_SECURITY)
             ? "md:space-y-0 md:py-3 md:pb-4"
             : "md:space-y-6 md:py-8 md:pb-12"
         } ${
@@ -8369,6 +9813,7 @@ function App() {
         }`}
         style={
           isMobileViewport &&
+          !mobilePullInteractionActive &&
           secondaryMobileNavOrder.includes(secondarySwipeNavView) &&
           (mobileSecondaryDragging || mobileSecondaryDragX !== 0 || mobileSecondarySwipeSettling)
             ? {
@@ -8550,41 +9995,73 @@ function App() {
                 </>
               ) : activeView === VIEWS.FAVORITES ? null : (
                 <>
-                  <div>
-                    <h2 className="min-w-0 text-2xl font-semibold text-neutral-900 dark:text-slate-100 md:whitespace-nowrap">Marketplace</h2>
+                  <div className="min-w-0 px-3 pt-1 md:px-0 md:pt-0">
+                    <div className="flex min-w-0 flex-wrap items-end gap-3 gap-y-2">
+                      <h2 className="min-w-0 text-2xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100 md:text-[1.65rem] md:whitespace-nowrap">
+                        Marketplace
+                      </h2>
+                      <span
+                        className="hidden h-px min-w-[2.5rem] flex-1 bg-gradient-to-r from-brand-primary/35 via-brand-border/80 to-transparent md:block dark:from-brand-accent/40 dark:via-brand-primary/25"
+                        aria-hidden
+                      />
+                    </div>
                   </div>
                   {activeView === VIEWS.BROWSE ? (
                     <button
                       type="button"
-                      className="fixed bottom-[max(1rem,calc(env(safe-area-inset-bottom,0px)+1rem))] right-[max(1rem,env(safe-area-inset-right,0px))] z-[45] flex h-14 w-14 touch-manipulation items-center justify-center rounded-xl bg-brand-primary p-0 text-white shadow-lg transition hover:bg-brand-primary/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary md:bottom-8 md:right-8 dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90 dark:focus-visible:outline-brand-accent"
+                      className="group fixed bottom-[max(3rem,calc(env(safe-area-inset-bottom,0px)+1.75rem))] right-[max(2.5rem,env(safe-area-inset-right,0px))] z-[45] flex h-14 w-14 touch-manipulation items-center justify-center overflow-hidden rounded-2xl border border-t border-white/35 border-b border-black/15 bg-gradient-to-b from-white/30 via-brand-primary to-brand-hover p-0 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.55),inset_0_-2px_8px_rgba(0,50,50,0.22),0_5px_0_#0d5858,0_14px_36px_-10px_rgba(31,166,166,0.55),0_20px_50px_-16px_rgba(15,23,42,0.22)] ring-2 ring-white/25 ring-offset-2 ring-offset-[rgba(249,250,251,0.9)] transition-[transform,box-shadow,filter] duration-200 ease-out before:pointer-events-none before:absolute before:inset-x-2 before:top-1 before:h-[42%] before:rounded-lg before:bg-gradient-to-b before:from-white/50 before:to-transparent before:opacity-90 before:content-[''] motion-reduce:transition-none hover:-translate-y-1 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.65),inset_0_-2px_8px_rgba(0,50,50,0.18),0_7px_0_#0a4d4d,0_18px_44px_-10px_rgba(31,166,166,0.62),0_24px_56px_-14px_rgba(15,23,42,0.28)] hover:brightness-[1.03] motion-reduce:hover:translate-y-0 active:translate-y-0.5 active:shadow-[inset_0_2px_6px_rgba(0,40,40,0.35),inset_0_-1px_0_rgba(255,255,255,0.2),0_3px_0_#0d5858,0_8px_20px_-6px_rgba(31,166,166,0.45)] motion-reduce:active:translate-y-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary md:bottom-10 md:right-8 dark:border-t-white/25 dark:border-b-black/30 dark:from-white/20 dark:via-brand-accent dark:to-[#0f6d6d] dark:text-slate-950 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.35),inset_0_-2px_8px_rgba(0,0,0,0.35),0_5px_0_#063838,0_16px_40px_-10px_rgba(31,166,166,0.5),0_22px_55px_-14px_rgba(0,0,0,0.45)] dark:ring-white/20 dark:ring-offset-2 dark:ring-offset-slate-950 dark:hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_7px_0_#052e2e,0_20px_48px_-10px_rgba(31,166,166,0.55),0_26px_60px_-12px_rgba(0,0,0,0.5)] dark:hover:brightness-105 dark:active:shadow-[inset_0_3px_8px_rgba(0,0,0,0.45),0_3px_0_#063838,0_10px_24px_-6px_rgba(31,166,166,0.4)] dark:focus-visible:outline-brand-accent"
                       aria-label="New community"
                       onClick={openAddCommunityModal}
                     >
-                      <svg className="h-7 w-7 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden>
+                      <svg
+                        className="relative z-[1] h-7 w-7 shrink-0 drop-shadow-[0_2px_3px_rgba(0,0,0,0.35)] transition-transform duration-200 group-hover:scale-105 group-active:scale-95 motion-reduce:group-hover:scale-100 motion-reduce:group-active:scale-100"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        aria-hidden
+                      >
                         <path d="M12 5v14M5 12h14" />
                       </svg>
                     </button>
                   ) : null}
-                  <div className={`${UI_KIT.viewSection} p-3 md:p-4`}>
-                <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-500 md:text-sm md:normal-case md:tracking-normal md:text-brand-primary">
-                      Communities
+                  <div className="min-w-0 p-3 md:p-0">
+                <div className="relative min-w-0 rounded-2xl border border-brand-border/70 bg-gradient-to-br from-white via-brand-soft/35 to-white p-4 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_8px_28px_-12px_rgba(31,166,166,0.12),0_2px_6px_rgba(15,23,42,0.04)] ring-1 ring-brand-primary/[0.06] dark:border-[#3d6d8f]/35 dark:from-slate-900 dark:via-[#0f2234]/95 dark:to-slate-900 dark:shadow-[0_1px_0_rgba(255,255,255,0.04)_inset,0_12px_40px_-18px_rgba(0,0,0,0.45)] dark:ring-brand-accent/10 md:p-5">
+                  <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl" aria-hidden>
+                    <div className="absolute -right-16 -top-20 h-48 w-48 rounded-full bg-brand-primary/[0.07] blur-3xl dark:bg-brand-accent/[0.06]" />
+                  </div>
+                  <div className="relative min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center rounded-full border border-brand-border/90 bg-white/90 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.18em] text-brand-primary shadow-sm ring-1 ring-brand-primary/5 backdrop-blur-sm dark:border-brand-primary/25 dark:bg-slate-800/90 dark:text-brand-accent dark:ring-brand-accent/10">
+                        Communities
+                      </span>
+                    </div>
+                    <p className="mt-2.5 max-w-2xl text-pretty text-sm leading-relaxed text-neutral-600 dark:text-slate-400 md:mt-3 md:text-base md:leading-relaxed">
+                      Discover local sellers and community storefronts. Cash on delivery at pickup or delivery.
                     </p>
-                    <p className="mt-1 max-w-2xl text-sm leading-relaxed text-neutral-600 dark:text-slate-400 md:text-base">
-                      LinkMart: local goods and community shops—COD pickup or delivery.
-                    </p>
-                </div>
-                {communitiesError ? <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{communitiesError}</p> : null}
+                  </div>
+                {communitiesError ? <p className="relative mt-3 text-sm text-rose-600 dark:text-rose-400">{communitiesError}</p> : null}
                 {communitiesLoading && communities.length === 0 ? (
-                  <p className="mt-3 text-sm text-neutral-600 dark:text-slate-400">Loading communities…</p>
+                  <p className="relative mt-3 text-sm text-neutral-600 dark:text-slate-400">Loading communities…</p>
                 ) : null}
                 {!(communitiesLoading && communities.length === 0) && communities.length > 0 ? (
-                  <div className="mt-4 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end md:justify-between">
-                    <div className="flex min-w-0 flex-1 flex-col gap-1 md:max-w-md">
+                  <div className="relative mt-5 flex flex-col gap-4 border-t border-brand-border/50 pt-5 dark:border-slate-600/50 md:mt-6 md:flex-row md:flex-wrap md:items-stretch md:justify-between md:gap-5 md:pt-6">
+                    <div className="flex min-w-0 flex-1 flex-col gap-2 md:max-w-lg">
                       <label htmlFor="community-directory-search" className="sr-only">
                         Search communities
                       </label>
-                      <div className="input-base flex min-h-0 min-w-0 items-center gap-1 py-2 pl-3 pr-2 focus-within:border-brand-primary focus-within:ring-2 focus-within:ring-brand-primary/25 dark:focus-within:border-brand-primary">
+                      <div className="input-base flex min-h-0 min-w-0 items-center gap-2.5 rounded-full border-neutral-200/90 bg-white/95 py-2 pl-3.5 pr-2 shadow-[0_2px_8px_-4px_rgba(15,23,42,0.08)] ring-1 ring-neutral-950/[0.04] focus-within:border-brand-primary focus-within:ring-2 focus-within:ring-brand-primary/22 dark:border-[#3d6d8f]/50 dark:bg-slate-950/80 dark:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.35)] dark:ring-white/[0.05] dark:focus-within:border-brand-accent dark:focus-within:ring-brand-accent/25">
+                        <svg
+                          className="h-4 w-4 shrink-0 text-brand-primary/80 dark:text-brand-accent/85"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          aria-hidden
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z" />
+                        </svg>
                         <input
                           id="community-directory-search"
                           type="search"
@@ -8597,7 +10074,7 @@ function App() {
                         {communityDirectoryQuery.trim() ? (
                           <button
                             type="button"
-                            className="inline-flex shrink-0 items-center justify-center rounded-md px-2 py-1.5 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                            className="inline-flex shrink-0 items-center justify-center rounded-full px-3 py-1.5 text-xs font-semibold text-brand-primary transition hover:bg-brand-soft/90 dark:text-brand-accent dark:hover:bg-slate-800/90"
                             aria-label="Clear search"
                             onClick={() => setCommunityDirectoryQuery("")}
                           >
@@ -8606,33 +10083,46 @@ function App() {
                         ) : null}
                       </div>
                     </div>
-                    <div className="flex min-w-0 flex-wrap items-center gap-2 md:justify-end">
-                      <p className="min-w-0 text-xs text-neutral-500 dark:text-slate-400" aria-live="polite">
-                        {directoryCommunities.length === communities.length
-                          ? `${communities.length} ${communities.length === 1 ? "community" : "communities"}`
-                          : `${directoryCommunities.length} of ${communities.length} shown`}
-                      </p>
-                      <label htmlFor="community-directory-sort" className="sr-only">
-                        Sort communities
-                      </label>
-                      <select
-                        id="community-directory-sort"
-                        value={communityDirectorySort}
-                        onChange={(e) => setCommunityDirectorySort(e.target.value)}
-                        className="input-base w-full min-w-0 py-2 pl-3 pr-8 text-sm md:w-auto md:min-w-[10.5rem]"
+                    <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between md:w-auto md:flex-nowrap md:items-end md:justify-end md:gap-3">
+                      <p
+                        className="min-w-0 text-xs font-medium text-neutral-500 dark:text-slate-400 md:text-[13px]"
+                        aria-live="polite"
                       >
-                        <option value="name">Name (A–Z)</option>
-                        <option value="members">Most members</option>
-                      </select>
+                        <span className="inline-flex items-center rounded-lg bg-white/80 px-2.5 py-1 ring-1 ring-neutral-200/80 dark:bg-slate-800/80 dark:ring-slate-600/60">
+                          {directoryCommunities.length === communities.length
+                            ? `${communities.length} ${communities.length === 1 ? "community" : "communities"}`
+                            : `${directoryCommunities.length} of ${communities.length} shown`}
+                        </span>
+                      </p>
+                      <div className="flex min-w-0 flex-col gap-1 sm:min-w-[11rem] sm:items-end">
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400 dark:text-slate-500 sm:sr-only">
+                          Sort by
+                        </span>
+                        <label htmlFor="community-directory-sort" className="sr-only">
+                          Sort communities
+                        </label>
+                        <SimpleSelect
+                          id="community-directory-sort"
+                          value={communityDirectorySort}
+                          onChange={setCommunityDirectorySort}
+                          className="w-full min-w-0 sm:w-auto md:min-w-[11rem]"
+                          triggerClassName="rounded-full border-neutral-200/90 bg-white/95 shadow-[0_2px_8px_-4px_rgba(15,23,42,0.08)] ring-1 ring-neutral-950/[0.04] dark:border-[#3d6d8f]/50 dark:bg-slate-950/80 dark:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.35)] dark:ring-white/[0.05]"
+                          options={[
+                            { value: "name", label: "Name (A–Z)" },
+                            { value: "members", label: "Most members" },
+                          ]}
+                        />
+                      </div>
                     </div>
                   </div>
                 ) : null}
+                </div>
                 <ul
                   className="mt-4 grid grid-cols-1 gap-3 md:mt-5 md:grid-cols-2 md:gap-4 lg:grid-cols-3 xl:grid-cols-4"
                   aria-label="Communities"
                 >
                   {!(communitiesLoading && communities.length === 0) && communities.length === 0 ? (
-                    <li className="col-span-full min-w-0 rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/50 px-4 py-6 text-sm text-neutral-600 dark:border-slate-600 dark:bg-slate-800/35 dark:text-slate-400 md:max-w-xl md:px-5 md:py-7">
+                    <li className="col-span-full min-w-0 w-full rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/50 px-4 py-6 text-sm text-neutral-600 dark:border-slate-600 dark:bg-slate-800/35 dark:text-slate-400 md:px-5 md:py-7">
                       No communities available right now.
                     </li>
                   ) : null}
@@ -8664,7 +10154,7 @@ function App() {
                         <div
                           tabIndex={0}
                           aria-label={`Open ${communityTitle}`}
-                          className="flex h-full min-h-0 cursor-pointer flex-col overflow-hidden rounded-2xl border border-neutral-200/80 bg-white p-0 outline-none shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-8px_rgba(15,23,42,0.08)] ring-1 ring-neutral-950/[0.03] transition hover:border-neutral-300/95 hover:shadow-[0_4px_20px_-6px_rgba(15,23,42,0.12)] focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 dark:border-slate-700/90 dark:bg-slate-900 dark:shadow-[0_1px_2px_rgba(0,0,0,0.2),0_12px_40px_-16px_rgba(0,0,0,0.45)] dark:ring-white/[0.04] dark:hover:border-slate-600 dark:focus-visible:ring-brand-accent/50 dark:focus-visible:ring-offset-slate-950"
+                          className="group relative flex h-full min-h-0 cursor-pointer flex-col overflow-hidden rounded-[1.35rem] border border-neutral-200/75 bg-white p-0 outline-none shadow-[0_1px_0_rgba(255,255,255,0.85)_inset,0_2px_6px_rgba(15,23,42,0.04),0_16px_40px_-18px_rgba(15,23,42,0.12),0_0_0_1px_rgba(31,166,166,0.05)] transition-all duration-300 ease-out hover:border-brand-border/90 hover:shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_12px_28px_-8px_rgba(31,166,166,0.14),0_28px_56px_-24px_rgba(15,23,42,0.14)] motion-reduce:transition-none active:scale-[0.995] motion-reduce:active:scale-100 md:hover:-translate-y-1 motion-reduce:md:hover:translate-y-0 focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 dark:border-slate-700/85 dark:bg-slate-900 dark:shadow-[0_1px_0_rgba(255,255,255,0.04)_inset,0_2px_8px_rgba(0,0,0,0.35),0_20px_50px_-22px_rgba(0,0,0,0.55)] dark:hover:border-brand-primary/35 dark:hover:shadow-[0_12px_40px_-12px_rgba(31,166,166,0.12),0_24px_48px_-20px_rgba(0,0,0,0.45)] dark:focus-visible:ring-brand-accent/50 dark:focus-visible:ring-offset-slate-950"
                           onClick={openThisCommunityShop}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
@@ -8673,50 +10163,84 @@ function App() {
                             }
                           }}
                         >
-                          <div className="group flex min-h-0 flex-1 flex-col gap-0 text-left">
-                            <div className="relative aspect-[16/9] max-h-[9.5rem] w-full shrink-0 overflow-hidden rounded-t-2xl shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ring-1 ring-black/[0.06] transition group-hover:ring-brand-primary/25 dark:ring-white/[0.08] dark:group-hover:ring-brand-accent/30 md:max-h-[10rem]">
+                          <div className="flex min-h-0 flex-1 flex-col gap-0 text-left">
+                            <div className="relative aspect-square w-full shrink-0 overflow-hidden rounded-t-[1.35rem] bg-neutral-100 dark:bg-slate-800/80">
+                              <div className="absolute inset-0 transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform group-hover:scale-[1.045] motion-reduce:transition-none motion-reduce:group-hover:scale-100">
+                                {c.imageUrl ? (
+                                  <StableMediaImage
+                                    src={c.imageUrl}
+                                    alt=""
+                                    className="pointer-events-none absolute inset-0 h-full w-full"
+                                    loading="lazy"
+                                    decoding="async"
+                                    sizes="(max-width: 768px) 50vw, (max-width: 1280px) 22vw, 300px"
+                                  />
+                                ) : (
+                                  <div
+                                    className="relative flex h-full w-full items-center justify-center text-base font-bold tracking-tight text-white md:text-xl"
+                                    style={{ backgroundImage: `linear-gradient(145deg, ${g.from} 0%, ${g.to} 55%, ${g.from} 130%)` }}
+                                    aria-hidden
+                                  >
+                                    <span className="relative z-[1] drop-shadow-[0_2px_12px_rgba(0,0,0,0.2)]">{initials}</span>
+                                    <div
+                                      className="pointer-events-none absolute inset-0 opacity-[0.22] mix-blend-overlay"
+                                      style={{
+                                        backgroundImage:
+                                          "radial-gradient(circle at 18% 12%, rgba(255,255,255,0.65) 0%, transparent 42%), radial-gradient(circle at 82% 88%, rgba(0,0,0,0.12) 0%, transparent 48%)",
+                                      }}
+                                      aria-hidden
+                                    />
+                                  </div>
+                                )}
+                              </div>
                               {c.imageUrl ? (
-                                <StableMediaImage
-                                  src={c.imageUrl}
-                                  alt=""
-                                  className="pointer-events-none absolute inset-0 h-full w-full"
-                                  loading="lazy"
-                                  decoding="async"
-                                  sizes="(max-width: 768px) 28vw, 120px"
-                                />
+                                <>
+                                  <div
+                                    className="pointer-events-none absolute inset-0 bg-gradient-to-t from-neutral-950/35 via-neutral-950/5 to-transparent dark:from-slate-950/50"
+                                    aria-hidden
+                                  />
+                                  <div
+                                    className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-black/[0.07] dark:ring-white/[0.09]"
+                                    aria-hidden
+                                  />
+                                </>
                               ) : (
                                 <div
-                                  className="flex h-full w-full items-center justify-center text-base font-bold tracking-tight text-white md:text-xl"
-                                  style={{ backgroundImage: `linear-gradient(135deg, ${g.from}, ${g.to})` }}
+                                  className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-white/25 dark:ring-white/10"
                                   aria-hidden
-                                >
-                                  {initials}
-                                </div>
+                                />
                               )}
                             </div>
-                            <div className="min-w-0 flex-1 space-y-1.5 px-3 pb-3 pt-3 md:px-3.5 md:pb-3.5 md:pt-3.5">
-                              <p className="line-clamp-2 break-words text-[0.9375rem] font-semibold leading-snug tracking-tight text-neutral-900 dark:text-slate-50 md:text-base">
-                                {communityTitle}
-                              </p>
-                              <p className="line-clamp-2 text-xs leading-relaxed text-neutral-600 dark:text-slate-400 md:text-[13px]">
-                                {formatCommunityMarketplaceSubtitle(c)}
-                              </p>
-                              <p className="text-xs text-neutral-500 dark:text-slate-500 md:text-[13px]">
-                                <span className="font-medium text-neutral-600 dark:text-slate-400">Members</span>
-                                <span className="mx-1.5 text-neutral-300 dark:text-slate-600" aria-hidden>
-                                  ·
+                            <div className="relative min-w-0 flex-1 space-y-2 px-3.5 pb-3 pt-3.5 md:px-4 md:pb-4 md:pt-4">
+                              <div className="space-y-1.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-brand-primary/85 dark:text-brand-accent/90">
+                                  Community
+                                </p>
+                                <p className="line-clamp-2 break-words text-pretty text-[0.9375rem] font-semibold leading-snug tracking-tight text-neutral-900 dark:text-slate-50 md:text-base">
+                                  {communityTitle}
+                                </p>
+                                <p className="line-clamp-2 text-xs leading-relaxed text-neutral-600 dark:text-slate-400 md:text-[13px]">
+                                  {formatCommunityMarketplaceSubtitle(c)}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2 text-[11px] text-neutral-500 dark:text-slate-500 md:text-[12px]">
+                                <span className="inline-flex h-7 items-center gap-1.5 rounded-lg bg-neutral-100/95 px-2 ring-1 ring-neutral-200/80 dark:bg-slate-800/80 dark:ring-slate-600/70">
+                                  <svg className="h-3.5 w-3.5 shrink-0 text-brand-primary/90 dark:text-brand-accent/90" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+                                  </svg>
+                                  <span className="font-medium text-neutral-600 dark:text-slate-400">Members</span>
+                                  <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">
+                                    {getDisplayedMemberCount(c)}
+                                  </span>
                                 </span>
-                                <span className="tabular-nums font-semibold text-neutral-800 dark:text-slate-200">
-                                  {getDisplayedMemberCount(c)}
-                                </span>
-                              </p>
+                              </div>
                             </div>
                           </div>
-                          <div className="mt-auto flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-neutral-100 bg-neutral-50/50 px-3 py-2.5 dark:border-slate-700/80 dark:bg-slate-800/40 md:px-3.5 md:py-3">
+                          <div className="mt-auto flex shrink-0 flex-wrap items-center justify-start gap-2 border-t border-brand-border/60 bg-gradient-to-b from-brand-soft/65 via-white to-white px-3.5 py-2.5 dark:border-slate-600/70 dark:from-slate-800/90 dark:via-slate-900 dark:to-slate-900 md:px-4 md:py-3">
                             {isMemberOfCommunityRow(c) ? (
-                              <span className="pointer-events-none inline-flex items-center gap-1.5 rounded-full border border-emerald-200/90 bg-gradient-to-b from-emerald-50 to-emerald-50/80 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-900 shadow-[0_1px_0_rgba(255,255,255,0.7)_inset] ring-1 ring-emerald-900/[0.04] dark:border-emerald-500/25 dark:from-emerald-950/80 dark:to-emerald-950/50 dark:text-emerald-100 dark:shadow-none dark:ring-emerald-400/10">
+                              <span className="pointer-events-none inline-flex items-center gap-1.5 rounded-full border border-brand-border/95 bg-gradient-to-b from-brand-soft to-brand-soft/75 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-primary shadow-[0_1px_0_rgba(255,255,255,0.85)_inset] ring-1 ring-brand-primary/10 dark:border-brand-primary/35 dark:from-slate-800 dark:to-slate-900/90 dark:text-brand-accent dark:shadow-none dark:ring-brand-accent/15">
                                 <span
-                                  className="inline-flex size-1.5 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_1px_rgba(255,255,255,0.85)] dark:bg-emerald-400 dark:shadow-[0_0_0_1px_rgba(15,23,42,0.9)]"
+                                  className="inline-flex size-1.5 shrink-0 rounded-full bg-brand-primary shadow-[0_0_0_1px_rgba(255,255,255,0.9)] dark:bg-brand-accent dark:shadow-[0_0_0_1px_rgba(15,23,42,0.85)]"
                                   aria-hidden
                                 />
                                 Member
@@ -8724,7 +10248,7 @@ function App() {
                             ) : (
                               <button
                                 type="button"
-                                className="inline-flex min-h-9 min-w-[5.5rem] shrink-0 items-center justify-center rounded-full bg-brand-primary px-4 py-2 text-xs font-semibold text-white shadow-[0_1px_2px_rgba(15,23,42,0.08)] ring-1 ring-brand-primary/20 transition hover:bg-brand-primary/92 hover:shadow-[0_4px_14px_-4px_rgba(45,106,79,0.35)] active:scale-[0.98] dark:bg-brand-accent dark:text-slate-900 dark:ring-brand-accent/25 dark:hover:bg-brand-accent/92"
+                                className="inline-flex min-h-9 min-w-[5.5rem] shrink-0 items-center justify-center rounded-full bg-brand-primary px-4 py-2 text-xs font-semibold text-white shadow-[0_2px_8px_-2px_rgba(31,166,166,0.45)] ring-1 ring-brand-primary/25 transition hover:bg-brand-hover hover:shadow-[0_6px_20px_-4px_rgba(31,166,166,0.42)] active:scale-[0.98] motion-reduce:active:scale-100 dark:bg-brand-accent dark:text-slate-900 dark:ring-brand-accent/30 dark:hover:bg-brand-accent/90"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   void joinCommunityAndAttachListings(c, { notifySuccess: true });
@@ -8742,7 +10266,7 @@ function App() {
                               href={c.googleUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="border-t border-neutral-100 bg-white px-3 py-2 text-right text-[11px] font-medium text-brand-primary decoration-brand-primary/30 underline-offset-2 transition hover:bg-neutral-50/80 hover:text-brand-primary/90 dark:border-slate-700/80 dark:bg-slate-900 dark:text-brand-accent dark:hover:bg-slate-800/60"
+                              className="border-t border-neutral-100/90 bg-white/95 px-3.5 py-2.5 text-right text-[11px] font-semibold text-brand-primary decoration-brand-primary/25 underline-offset-[3px] backdrop-blur-[2px] transition hover:bg-brand-soft/40 hover:text-brand-hover dark:border-slate-700/80 dark:bg-slate-900/95 dark:text-brand-accent dark:hover:bg-slate-800/70"
                               onClick={(e) => e.stopPropagation()}
                             >
                               Open in Google Maps
@@ -8803,16 +10327,28 @@ function App() {
                     <label htmlFor="mobile-browse-category-search" className="sr-only">
                       Search categories
                     </label>
-                    <input
-                      id="mobile-browse-category-search"
-                      type="search"
-                      enterKeyHint="search"
-                      autoComplete="off"
-                      placeholder="Search categories…"
-                      value={mobileBrowseCategoryQuery}
-                      onChange={(e) => setMobileBrowseCategoryQuery(e.target.value)}
-                      className="input-base border-neutral-200/90 bg-white py-2.5 pl-3 pr-9 text-sm shadow-sm dark:border-slate-600 dark:bg-slate-950"
-                    />
+                    <div className="relative">
+                      <input
+                        id="mobile-browse-category-search"
+                        type="search"
+                        enterKeyHint="search"
+                        autoComplete="off"
+                        placeholder="Search categories…"
+                        value={mobileBrowseCategoryQuery}
+                        onChange={(e) => setMobileBrowseCategoryQuery(e.target.value)}
+                        className="input-base border-neutral-200/90 bg-white py-2.5 pl-3 pr-10 text-sm shadow-sm dark:border-slate-600 dark:bg-slate-950"
+                      />
+                      {mobileBrowseCategoryQuery.trim() ? (
+                        <button
+                          type="button"
+                          className="absolute right-2 top-1/2 inline-flex h-7 min-h-7 min-w-7 -translate-y-1/2 items-center justify-center rounded-md text-[11px] font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                          onClick={() => setMobileBrowseCategoryQuery("")}
+                          aria-label="Clear category search"
+                        >
+                          Clear
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="drawer-scroll min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-y-contain px-3 py-3 md:space-y-5">
                   <div className="rounded-xl bg-neutral-50/90 p-2.5 ring-1 ring-neutral-200/60 dark:bg-slate-800/35 dark:ring-slate-600/50">
@@ -8877,6 +10413,51 @@ function App() {
                       Categories
                     </p>
                     <div className="flex flex-col gap-2">
+                    {mobileBrowseCategoryQuery.trim() === "" && mobileRecentCategoryIds.length > 0 ? (
+                      <div className="mb-1 rounded-xl border border-neutral-200/80 bg-white/70 p-2 dark:border-slate-600/70 dark:bg-slate-900/20">
+                        <p className="mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-400 dark:text-slate-500">
+                          Recent
+                        </p>
+                        <div className="flex flex-col gap-1.5">
+                          {mobileRecentCategoryIds
+                            .map((id) => VERTICALS.find((v) => v.id === id))
+                            .filter(Boolean)
+                            .map((v) => {
+                              const allSub = v.subs.find((s) => s.id === "all") ?? v.subs[0];
+                              const isActive = browseVerticalId === v.id;
+                              return (
+                                <FilterOptionButton
+                                  key={`recent-${v.id}`}
+                                  active={isActive}
+                                  sheet={mobileCommunityFiltersOpen}
+                                  icon={categoryIcon(v.id || v.label)}
+                                  label={v.label}
+                                  onClick={() => {
+                                    pickBrowseScope(v.id, allSub?.id ?? null);
+                                    setMobileCommunityFiltersOpen(false);
+                                  }}
+                                />
+                              );
+                            })}
+                        </div>
+                      </div>
+                    ) : null}
+                    <FilterOptionButton
+                      key="all-categories"
+                      active={browseVerticalId == null}
+                      sheet={mobileCommunityFiltersOpen}
+                      icon={categoryIcon("all")}
+                      label="All categories"
+                      onClick={() => {
+                        setBrowseVerticalId(null);
+                        setBrowseSubId(null);
+                        setBrowseQuickFilter("all");
+                        setSelectedListingId(null);
+                        navigate("/", { replace: true });
+                        setActiveView((prev) => (prev === VIEWS.FAVORITES ? VIEWS.FAVORITES : VIEWS.COMMUNITY_SHOP));
+                        setMobileCommunityFiltersOpen(false);
+                      }}
+                    />
                     {browseVerticalsForMobileDrawer.length === 0 ? (
                       <p className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50 px-3 py-3 text-center text-sm text-neutral-600 dark:border-slate-600 dark:bg-slate-800/50 dark:text-slate-400">
                         No categories match your search.
@@ -8886,17 +10467,27 @@ function App() {
                       const allSub = v.subs.find((s) => s.id === "all") ?? v.subs[0];
                       const isActive = browseVerticalId === v.id;
                       return (
-                        <FilterOptionButton
-                          key={v.id}
-                          active={isActive}
-                          sheet={mobileCommunityFiltersOpen}
-                          icon={categoryIcon(v.id || v.label)}
-                          label={v.label}
-                          onClick={() => {
-                            pickBrowseScope(v.id, allSub?.id ?? null);
-                            setMobileCommunityFiltersOpen(false);
-                          }}
-                        />
+                        <div key={v.id} className="space-y-1.5">
+                          <div className="grid grid-cols-1 gap-1.5">
+                            <FilterOptionButton
+                              active={isActive}
+                              sheet={mobileCommunityFiltersOpen}
+                              icon={categoryIcon(v.id || v.label)}
+                              label={v.label}
+                              onClick={() => {
+                                pickBrowseScope(v.id, allSub?.id ?? null);
+                                try {
+                                  const next = [v.id, ...mobileRecentCategoryIds.filter((x) => x !== v.id)].slice(0, 5);
+                                  setMobileRecentCategoryIds(next);
+                                  window.localStorage.setItem(MOBILE_RECENT_CATEGORY_KEY, JSON.stringify(next));
+                                } catch {
+                                  // ignore
+                                }
+                                setMobileCommunityFiltersOpen(false);
+                              }}
+                            />
+                          </div>
+                        </div>
                       );
                     })}
                     </div>
@@ -9025,6 +10616,11 @@ function App() {
                           : "flex shrink-0 flex-wrap items-center gap-2"
                       }
                     >
+                    {activeView === VIEWS.COMMUNITY_SHOP || activeView === VIEWS.FAVORITES ? (
+                      <p className="text-xs font-medium text-neutral-500 dark:text-slate-400 lg:order-2 lg:ml-auto lg:text-sm" aria-live="polite">
+                        {activeBrowseResultsCount} {activeBrowseResultsCount === 1 ? "result" : "results"}
+                      </p>
+                    ) : null}
                       {activeView === VIEWS.COMMUNITY_SHOP ? (
                         <div className="flex h-9 w-full min-w-0 items-center gap-1.5 rounded-lg border border-neutral-200/65 bg-white px-2.5 shadow-[0_1px_3px_rgba(15,23,42,0.045)] dark:border-slate-600/85 dark:bg-slate-900 lg:h-auto lg:min-h-10 lg:flex-1 lg:rounded-xl lg:bg-white lg:shadow-none dark:lg:bg-slate-950">
                           <input
@@ -9202,6 +10798,7 @@ function App() {
                           effectiveCommunityBrowseView !== "list"
                         }
                         disableGallerySwipe={activeView === VIEWS.COMMUNITY_SHOP}
+                        hideGalleryPageIndicators={activeView === VIEWS.FAVORITES}
                         softBrowseChrome={isMobileViewport && activeView === VIEWS.COMMUNITY_SHOP}
                         browseSummaryGrid={
                           isMobileViewport &&
@@ -9210,6 +10807,9 @@ function App() {
                             : effectiveCommunityBrowseView === "grid")
                         }
                         mobileCardUx={isMobileViewport}
+                        mobileEntireCardTappable={
+                          isMobileViewport && (activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP)
+                        }
                         isFavorite={favoriteIds.has(l.id)}
                         showActions
                         currentUserId={user?.id || ""}
@@ -9653,7 +11253,8 @@ function App() {
                           }}
                         >
                           <svg className="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 12H5" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M11 6l-6 6 6 6" />
                           </svg>
                         </button>
                         <StableAvatar
@@ -9689,6 +11290,14 @@ function App() {
                               role="menu"
                               className="absolute right-0 top-full z-[60] mt-1.5 min-w-[11.5rem] overflow-hidden rounded-xl border border-neutral-200/95 bg-white py-1 shadow-lg dark:border-slate-600 dark:bg-slate-900"
                             >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="flex w-full px-3 py-2.5 text-left text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:text-slate-100 dark:hover:bg-slate-800"
+                                onClick={() => viewCurrentChatUserProfile()}
+                              >
+                                View profile
+                              </button>
                               <button
                                 type="button"
                                 role="menuitem"
@@ -9880,80 +11489,156 @@ function App() {
 
         {activeView === VIEWS.NOTIFICATIONS && (
           <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
-            <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <h2 className="break-words text-2xl font-semibold text-neutral-900 dark:text-slate-100">Notifications</h2>
-                {notificationsSyncError ? (
-                  <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-400/90" role="status">
-                    {notificationsSyncError}
-                  </p>
-                ) : null}
+            <div className="w-full min-w-0 space-y-2">
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <h2 className="min-w-0 flex-1 text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100 sm:text-2xl">
+                  Notifications
+                </h2>
+                <div className="relative shrink-0" ref={notificationHeaderMenuWrapRef}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    iconOnly
+                    aria-label="Notification actions"
+                    aria-expanded={notificationHeaderMenuOpen}
+                    aria-haspopup="menu"
+                    className="!size-10 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                    onClick={() => setNotificationHeaderMenuOpen((o) => !o)}
+                  >
+                    <svg className="size-5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <path d="M12 6.75a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 6.75a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 6.75a1.5 1.5 0 110-3 1.5 1.5 0 010 3z" />
+                    </svg>
+                  </Button>
+                  {notificationHeaderMenuOpen ? (
+                    <div
+                      role="menu"
+                      aria-label="Inbox actions"
+                      className="absolute right-0 top-full z-[60] mt-1.5 min-w-[12.5rem] overflow-hidden rounded-xl border border-neutral-200/90 bg-white py-1 shadow-lg ring-1 ring-black/[0.04] dark:border-slate-600 dark:bg-slate-900 dark:ring-white/[0.06]"
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={unreadNotificationCount === 0}
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-semibold text-primary transition hover:bg-primary-soft/80 disabled:cursor-not-allowed disabled:opacity-45 dark:text-brand-accent dark:hover:bg-slate-800"
+                        onClick={() => {
+                          setNotificationHeaderMenuOpen(false);
+                          void markAllNotificationsRead();
+                        }}
+                      >
+                        <svg className="size-4 shrink-0 opacity-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                          <path
+                            d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                        Mark all read
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={notificationInbox.length === 0}
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-semibold text-primary transition hover:bg-primary-soft/80 disabled:cursor-not-allowed disabled:opacity-45 dark:text-brand-accent dark:hover:bg-slate-800"
+                        onClick={() => {
+                          setNotificationHeaderMenuOpen(false);
+                          void clearNotificationInbox();
+                        }}
+                      >
+                        <svg className="size-4 shrink-0 opacity-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                          <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        Clear all
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className="rounded-lg border border-neutral-300/80 px-3 py-1.5 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                  onClick={() => void markAllNotificationsRead()}
-                  disabled={unreadNotificationCount === 0}
-                >
-                  Mark all read
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg border border-neutral-300/80 px-3 py-1.5 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                  onClick={() => void clearNotificationInbox()}
-                  disabled={notificationInbox.length === 0}
-                >
-                  Clear all
-                </button>
-              </div>
+              {notificationsSyncError ? (
+                <p className="text-xs font-medium text-amber-700 dark:text-amber-400/90" role="status">
+                  {notificationsSyncError}
+                </p>
+              ) : null}
             </div>
-            {notificationInbox.length === 0 ? (
+            {notificationInboxForUi.length === 0 ? (
               <ScreenEmpty
-                title="You’re all caught up"
-                description="Order updates, delivery status, and marketplace alerts from your session will land here."
+                title={
+                  notificationInbox.length > 0 && NOTIFICATION_INBOX_NAVIGABLE_ONLY
+                    ? "No linked updates yet"
+                    : "You’re all caught up"
+                }
+                description={
+                  notificationInbox.length > 0 && NOTIFICATION_INBOX_NAVIGABLE_ONLY
+                    ? "Only notifications that open a specific order, listing, community, or conversation are shown here."
+                    : "Important updates you can open—orders, deliveries, listings, and messages—appear here when they include a link."
+                }
                 primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
+                className="!border-solid border-neutral-200/90 bg-primary-soft/15 shadow-sm dark:border-slate-600/80 dark:bg-slate-800/40 dark:shadow-none"
               />
             ) : (
-              <div className="space-y-2.5">
-                {notificationInbox.map((item) => {
+              <div className="space-y-3">
+                {notificationInboxForUi.map((item) => {
                   const createdLabel = new Date(item.createdAt).toLocaleString();
+                  const canOpen = isNotificationNavigable(item);
+                  const unread = !item.read;
                   return (
                     <article
                       key={item.id}
-                      className={`${UI_KIT.surfaceRaised} flex items-start justify-between gap-3 p-3 md:p-3.5 ${
-                        item.read ? "opacity-80" : ""
+                      className={`${UI_KIT.surfaceRaised} flex items-start justify-between gap-3 rounded-xl p-3.5 md:p-4 ${
+                        unread
+                          ? "border-l-[3px] border-l-brand-primary bg-primary-soft/55 shadow-sm ring-1 ring-brand-primary/15 dark:border-l-brand-accent dark:bg-brand-primary/[0.08] dark:ring-brand-accent/20"
+                          : ""
                       }`}
                     >
-                      <div className="min-w-0 space-y-1">
-                        <p className="text-sm font-medium leading-relaxed text-neutral-800 dark:text-slate-100">{item.text}</p>
+                      <button
+                        type="button"
+                        className={`min-w-0 flex-1 space-y-1.5 rounded-lg text-left outline-none transition focus-visible:ring-2 focus-visible:ring-brand-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-950 ${
+                          canOpen ? "cursor-pointer hover:opacity-95" : "cursor-default"
+                        }`}
+                        aria-label={canOpen ? `Open: ${item.text}` : undefined}
+                        disabled={!canOpen}
+                        onClick={() => {
+                          if (!canOpen) return;
+                          navigateFromNotification(item);
+                        }}
+                      >
+                        <p
+                          className={`text-sm font-medium leading-relaxed ${
+                            unread
+                              ? "text-neutral-900 dark:text-slate-50"
+                              : "text-neutral-600 dark:text-slate-400"
+                          }`}
+                        >
+                          {item.text}
+                        </p>
                         <div className="flex flex-wrap items-center gap-2 text-[11px] text-neutral-500 dark:text-slate-400">
-                          <span className="rounded-full border border-neutral-300/80 px-2 py-0.5 uppercase tracking-wide dark:border-slate-600">
+                          <span className="rounded-md bg-neutral-100/90 px-2 py-0.5 font-medium uppercase tracking-wide text-neutral-600 dark:bg-slate-800/80 dark:text-slate-300">
                             {item.type}
                           </span>
-                          <span>{createdLabel}</span>
-                          {!item.read ? (
-                            <span className="rounded-full bg-brand-primary/15 px-2 py-0.5 font-semibold text-brand-primary">Unread</span>
+                          <span className="text-neutral-400 dark:text-slate-500">{createdLabel}</span>
+                          {unread ? (
+                            <span className="rounded-full bg-brand-primary/15 px-2 py-0.5 font-semibold text-brand-primary dark:bg-brand-accent/15 dark:text-brand-accent">
+                              Unread
+                            </span>
                           ) : null}
                         </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        {!item.read ? (
-                          <button
-                            type="button"
-                            className="rounded-md border border-neutral-300/80 px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                            onClick={() => markNotificationRead(item.id)}
-                          >
-                            Mark read
-                          </button>
-                        ) : null}
-                        <button
+                      </button>
+                      <div className="flex shrink-0 flex-col items-end justify-start pt-0.5">
+                        <Button
                           type="button"
-                          className="rounded-md border border-neutral-300/80 px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                          onClick={() => dismissNotification(item.id)}
+                          variant="ghost"
+                          iconOnly
+                          aria-label={`Dismiss notification: ${item.text}`}
+                          className="!size-9 !min-h-9 !min-w-9 rounded-full text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-400 dark:hover:bg-slate-800/90 dark:hover:text-slate-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            dismissNotification(item.id);
+                          }}
                         >
-                          Dismiss
-                        </button>
+                          <svg className="size-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                            <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </Button>
                       </div>
                     </article>
                   );
@@ -10060,6 +11745,7 @@ function App() {
                     <LazyCommunityShopListingCard
                       key={l.id}
                       listing={l}
+                      hideGalleryPageIndicators
                       unseenAttention={!favoriteSeenSet.has(String(l.id))}
                       gridMode={effectiveFavoriteBrowseView !== "list"}
                       compactGrid={effectiveFavoriteBrowseView === "compact"}
@@ -10137,12 +11823,46 @@ function App() {
                   aria-label="Back"
                   onClick={() => {
                     if (listingSaving) return;
-                    setListingEditOverlayOpen(false);
-                    const origin = productFlowOriginRef.current || {};
-                    const originView = String(origin.view || "");
-                    if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(originView)) {
-                      setActiveView(originView);
-                    }
+                    requestDiscardListingChanges(() => {
+                      setListingForm({
+                        title: "",
+                        description: "",
+                        pricePesos: "",
+                        quantity: "",
+                        categories: "",
+                        subId: "all",
+                        optionNameA: "",
+                        optionValuesA: "",
+                        optionNameB: "",
+                        optionValuesB: "",
+                        orderType: "in_stock",
+                        processingTime: "",
+                        pickup: false,
+                        delivery: false,
+                      });
+                      setListingFieldErrors({});
+                      setListingImageFile(null);
+                      setListingCoverContentHash("");
+                      if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+                      setListingImagePreviewUrl("");
+                      clearListingExtraImages();
+                      setListingCropQueue([]);
+                      closeListingCropEditor();
+                      closeListingPhotoActionModal();
+                      setListingAdvancedOpen(false);
+                      setListingOptionValueDraftA("");
+                      setListingOptionValueDraftB("");
+                      setListingSecondOptionOpen(false);
+                      setEditingListingId(null);
+                      listingDraftBaselineRef.current = null;
+
+                      setListingEditOverlayOpen(false);
+                      const origin = productFlowOriginRef.current || {};
+                      const originView = String(origin.view || "");
+                      if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES, VIEWS.PROFILE].includes(originView)) {
+                        setActiveView(originView);
+                      }
+                    });
                   }}
                 >
                   <svg
@@ -10199,7 +11919,41 @@ function App() {
                       aria-label="Back"
                       onClick={() => {
                         if (listingSaving) return;
-                        setActiveView(VIEWS.PROFILE);
+                        requestDiscardListingChanges(() => {
+                          setListingForm({
+                            title: "",
+                            description: "",
+                            pricePesos: "",
+                            quantity: "",
+                            categories: "",
+                            subId: "all",
+                            optionNameA: "",
+                            optionValuesA: "",
+                            optionNameB: "",
+                            optionValuesB: "",
+                            orderType: "in_stock",
+                            processingTime: "",
+                            pickup: false,
+                            delivery: false,
+                          });
+                          setListingFieldErrors({});
+                          setListingImageFile(null);
+                          setListingCoverContentHash("");
+                          if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+                          setListingImagePreviewUrl("");
+                          clearListingExtraImages();
+                          setListingCropQueue([]);
+                          closeListingCropEditor();
+                          closeListingPhotoActionModal();
+                          setListingAdvancedOpen(false);
+                          setListingOptionValueDraftA("");
+                          setListingOptionValueDraftB("");
+                          setListingSecondOptionOpen(false);
+                          setEditingListingId(null);
+                          listingDraftBaselineRef.current = null;
+
+                          setActiveView(VIEWS.PROFILE);
+                        });
                       }}
                     >
                       <svg
@@ -10490,172 +12244,6 @@ function App() {
                     </div>
                   </div>
                 ) : null}
-                {listingCropEditor.open ? (
-                  <div className="fixed inset-0 z-[118] flex items-center justify-center p-4">
-                    <button
-                      type="button"
-                      className="absolute inset-0 bg-black/50"
-                      aria-label="Close crop editor"
-                      onClick={() => closeListingCropEditor()}
-                    />
-                    <div className="relative z-10 w-full max-w-3xl rounded-2xl border border-neutral-200 bg-white p-4 shadow-2xl dark:border-slate-700 dark:bg-slate-900 md:p-5">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Crop image</p>
-                          <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">Move and resize the square crop before uploading.</p>
-                        </div>
-                        <button
-                          type="button"
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-300 text-sm text-neutral-600 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
-                          aria-label="Close crop editor"
-                          onClick={() => closeListingCropEditor()}
-                        >
-                          ×
-                        </button>
-                      </div>
-                      <div className="mt-4">
-                        <div>
-                          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Adjust crop</p>
-                          <div
-                            ref={listingCropViewportRef}
-                            className="relative aspect-square w-full overflow-hidden rounded-xl border border-neutral-200 bg-black/90 touch-none dark:border-slate-700"
-                            onPointerDown={(e) => {
-                              if (!listingCropEditor.open) return;
-                              setListingCropApplyError("");
-                              e.currentTarget.setPointerCapture(e.pointerId);
-                              setListingCropEditor((prev) => ({
-                                ...prev,
-                                dragging: true,
-                                dragStartX: e.clientX,
-                                dragStartY: e.clientY,
-                                dragStartLeft: prev.cropLeft,
-                                dragStartTop: prev.cropTop,
-                              }));
-                            }}
-                            onPointerMove={(e) => {
-                              if (!listingCropEditor.dragging) return;
-                              const viewportSize = Number(listingCropViewportRef.current?.clientWidth || 1);
-                              const dx = e.clientX - listingCropEditor.dragStartX;
-                              const dy = e.clientY - listingCropEditor.dragStartY;
-                              setListingCropEditor((prev) => ({
-                                ...prev,
-                                cropLeft: (() => {
-                                  const w = Math.max(1, Number(prev.sourceWidth || 1));
-                                  const h = Math.max(1, Number(prev.sourceHeight || 1));
-                                  const renderedWidthFactor = w >= h ? 1 : w / h;
-                                  const side = Math.max(1, Math.floor(Math.min(w, h) * clampNumber(prev.cropSize, 0.2, 1)));
-                                  const maxLeft = Math.max(0, (w - side) / w);
-                                  const next = prev.dragStartLeft + (dx / viewportSize) / renderedWidthFactor;
-                                  return clampNumber(next, 0, maxLeft);
-                                })(),
-                                cropTop: (() => {
-                                  const w = Math.max(1, Number(prev.sourceWidth || 1));
-                                  const h = Math.max(1, Number(prev.sourceHeight || 1));
-                                  const renderedHeightFactor = h >= w ? 1 : h / w;
-                                  const side = Math.max(1, Math.floor(Math.min(w, h) * clampNumber(prev.cropSize, 0.2, 1)));
-                                  const maxTop = Math.max(0, (h - side) / h);
-                                  const next = prev.dragStartTop + (dy / viewportSize) / renderedHeightFactor;
-                                  return clampNumber(next, 0, maxTop);
-                                })(),
-                              }));
-                            }}
-                            onPointerUp={(e) => {
-                              if (listingCropEditor.dragging) {
-                                try {
-                                  e.currentTarget.releasePointerCapture(e.pointerId);
-                                } catch {
-                                  // noop
-                                }
-                              }
-                              setListingCropEditor((prev) => ({ ...prev, dragging: false }));
-                            }}
-                            onPointerCancel={() => setListingCropEditor((prev) => ({ ...prev, dragging: false }))}
-                          >
-                            {listingCropEditor.sourcePreviewUrl ? (
-                              <img
-                                src={listingCropEditor.sourcePreviewUrl}
-                                alt=""
-                                className="h-full w-full object-contain"
-                                draggable={false}
-                              />
-                            ) : null}
-                            {(() => {
-                              const w = Math.max(1, Number(listingCropEditor.sourceWidth || 1));
-                              const h = Math.max(1, Number(listingCropEditor.sourceHeight || 1));
-                              const renderW = w >= h ? 100 : (w / h) * 100;
-                              const renderH = h >= w ? 100 : (h / w) * 100;
-                              const offsetX = (100 - renderW) / 2;
-                              const offsetY = (100 - renderH) / 2;
-                              const side = Math.max(1, Math.floor(Math.min(w, h) * clampNumber(listingCropEditor.cropSize, 0.2, 1)));
-                              const cropWPercent = (side / w) * renderW;
-                              const cropHPercent = (side / h) * renderH;
-                              const leftPercent = offsetX + clampNumber(listingCropEditor.cropLeft, 0, 1) * renderW;
-                              const topPercent = offsetY + clampNumber(listingCropEditor.cropTop, 0, 1) * renderH;
-                              return (
-                                <div
-                                  className="pointer-events-none absolute border-2 border-white/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]"
-                                  style={{
-                                    left: `${leftPercent}%`,
-                                    top: `${topPercent}%`,
-                                    width: `${cropWPercent}%`,
-                                    height: `${cropHPercent}%`,
-                                  }}
-                                />
-                              );
-                            })()}
-                          </div>
-                          <div className="mt-3">
-                            <div className="flex items-center justify-between text-[11px] font-medium text-neutral-600 dark:text-slate-400">
-                              <span>Crop size</span>
-                              <span>{Math.round(clampNumber(Number(listingCropEditor.cropSize) || 1, 0.2, 1) * 100)}%</span>
-                            </div>
-                            <input
-                              type="range"
-                              min={20}
-                              max={100}
-                              step={1}
-                              className="mt-1 w-full"
-                              value={Math.round(clampNumber(Number(listingCropEditor.cropSize) || 1, 0.2, 1) * 100)}
-                              onChange={(e) => {
-                                setListingCropApplyError("");
-                                setListingCropEditor((prev) => {
-                                  const w = Math.max(1, Number(prev.sourceWidth || 1));
-                                  const h = Math.max(1, Number(prev.sourceHeight || 1));
-                                  const nextCropSize = clampNumber((Number(e.target.value) || 80) / 100, 0.2, 1);
-                                  const side = Math.max(1, Math.floor(Math.min(w, h) * nextCropSize));
-                                  const maxLeft = Math.max(0, (w - side) / w);
-                                  const maxTop = Math.max(0, (h - side) / h);
-                                  return {
-                                    ...prev,
-                                    cropSize: nextCropSize,
-                                    cropLeft: clampNumber(prev.cropLeft, 0, maxLeft),
-                                    cropTop: clampNumber(prev.cropTop, 0, maxTop),
-                                  };
-                                });
-                              }}
-                            />
-                            <p className="mt-1 text-[11px] text-neutral-500 dark:text-slate-400">Drag the square to reposition the crop area.</p>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="mt-4 flex flex-col items-stretch gap-2">
-                        <div className="flex items-center justify-end gap-2">
-                          <button type="button" className="btn-secondary" onClick={() => closeListingCropEditor()}>
-                            Cancel
-                          </button>
-                          <button type="button" className="btn-primary" onClick={() => void applyListingCropEditor()}>
-                            Apply crop
-                          </button>
-                        </div>
-                        {listingCropApplyError ? (
-                          <p className="field-error-text text-right" role="alert">
-                            {listingCropApplyError}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
               </div>
               <div id="listing-section-details" className="md:col-span-2">
                 <label htmlFor="listing-title" className="label-base">
@@ -10699,19 +12287,22 @@ function App() {
                   </p>
                 ) : null}
               </div>
-              <div className="md:col-span-2">
+              <div className="min-w-0 max-w-full md:col-span-2">
                 <label htmlFor="listing-description" className="label-base">
                   Description (optional)
                 </label>
+                <p className="mb-1.5 text-[11px] leading-snug text-neutral-500 dark:text-slate-400">
+                  Expands downward as you type; long lines wrap inside the field.
+                </p>
                 <textarea
                   id="listing-description"
                   name="description"
-                  className="input-base min-h-[5rem] w-full"
+                  className="input-base box-border min-h-[5rem] w-full min-w-0 max-w-full resize-y overflow-x-hidden overflow-y-auto break-words [field-sizing:content] [overflow-wrap:anywhere] md:min-h-[6rem]"
                   enterKeyHint="done"
                   value={listingForm.description}
                   placeholder="Details"
                   onChange={(e) => setListingForm((p) => ({ ...p, description: e.target.value }))}
-                  rows={3}
+                  rows={4}
                   maxLength={2000}
                 />
                 <p className="mt-1 text-right text-[11px] text-neutral-500 dark:text-slate-400">{listingDescriptionCount}/2000</p>
@@ -10737,17 +12328,16 @@ function App() {
                     </span>
                     <input
                       id="listing-price-pesos"
-                      className="min-h-[44px] min-w-0 flex-1 border-0 bg-transparent px-3 py-2.5 text-base text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500 md:min-h-0 md:text-sm"
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      placeholder="e.g. 499.00"
+                      className="min-h-[44px] min-w-0 flex-1 border-0 bg-transparent px-3 py-2.5 text-base tabular-nums text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500 md:min-h-0 md:text-sm"
+                      type="text"
+                      placeholder="e.g. 1,499.00"
                       aria-label="Price in Philippine pesos"
                       inputMode="decimal"
+                      autoComplete="off"
                       enterKeyHint="next"
                       value={listingForm.pricePesos}
                       onChange={(e) => {
-                        setListingForm((p) => ({ ...p, pricePesos: e.target.value }));
+                        setListingForm((p) => ({ ...p, pricePesos: formatPhpPriceTyping(e.target.value) }));
                         if (listingFieldErrors.pricePesos) setListingFieldErrors((prev) => ({ ...prev, pricePesos: "" }));
                       }}
                     />
@@ -10813,11 +12403,11 @@ function App() {
               </div>
               <div id="listing-section-fulfillment" className="py-5 md:py-4">
                 <p className="label-base">Fulfillment *</p>
-                <div className="mt-2 flex flex-wrap items-center gap-4">
+                <div className="mt-2 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
                     aria-pressed={listingForm.delivery}
-                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
                       listingForm.delivery
                         ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
                         : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
@@ -10827,12 +12417,21 @@ function App() {
                       if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
                     }}
                   >
-                    <span className="mr-1" aria-hidden>🚚</span> COD Delivery
+                    <span className="inline-flex shrink-0 items-center justify-center" aria-hidden>
+                      <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" />
+                        <path d="M15 18H9" />
+                        <path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14" />
+                        <circle cx="17" cy="18" r="2" />
+                        <circle cx="7" cy="18" r="2" />
+                      </svg>
+                    </span>
+                    <span>COD Delivery</span>
                   </button>
                   <button
                     type="button"
                     aria-pressed={listingForm.pickup}
-                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
                       listingForm.pickup
                         ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
                         : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
@@ -10842,7 +12441,13 @@ function App() {
                       if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
                     }}
                   >
-                    <span className="mr-1" aria-hidden>📍</span> Pick-up
+                    <span className="inline-flex shrink-0 items-center justify-center" aria-hidden>
+                      <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+                        <circle cx="12" cy="10" r="3" />
+                      </svg>
+                    </span>
+                    <span>Pick-up</span>
                   </button>
                 </div>
                 <p className="mt-2 text-xs text-neutral-500 dark:text-slate-400">Choose how buyers can receive the item.</p>
@@ -11262,10 +12867,10 @@ function App() {
               </div>
               <div id="listing-section-publish" className="md:col-span-2">
                 <MobileFormActions className="border-t border-neutral-200/65 px-0 dark:border-slate-700">
-                <div className="flex w-full min-w-0 flex-col gap-2 md:flex-row md:w-auto md:items-center md:justify-start">
+                <div className="flex w-full min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-stretch md:justify-start md:gap-2">
                   <button
                     type="submit"
-                    className="btn-primary w-full whitespace-normal text-balance md:w-auto"
+                    className="btn-primary w-full whitespace-normal text-balance md:w-auto md:min-w-[10rem]"
                     disabled={listingSaving}
                     aria-busy={listingSaving || undefined}
                   >
@@ -11283,61 +12888,81 @@ function App() {
                       "Publish listing"
                     )}
                   </button>
+                  <div className="flex w-full min-w-0 gap-2 md:w-auto md:flex-initial md:items-stretch">
                   <button
                     type="button"
-                    className="btn-secondary w-full md:w-auto"
+                    className="btn-secondary min-h-[44px] flex-1 md:min-h-0 md:flex-initial md:min-w-[7rem]"
                     disabled={listingSaving}
                     onClick={() => {
-                      if (listingFormDirty) {
-                        const ok = typeof window === "undefined" ? true : window.confirm("Discard your unsaved listing changes?");
-                        if (!ok) return;
-                      }
-                      setListingForm({
-                        title: "",
-                        description: "",
-                        pricePesos: "",
-                        quantity: "",
-                        categories: "",
-                        subId: "all",
-                        optionNameA: "",
-                        optionValuesA: "",
-                        optionNameB: "",
-                        optionValuesB: "",
-                        orderType: "in_stock",
-                        processingTime: "",
-                        pickup: false,
-                        delivery: false,
-                      });
-                      setListingFieldErrors({});
-                      setListingImageFile(null);
-                      setListingCoverContentHash("");
-                      if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
-                      setListingImagePreviewUrl("");
-                      clearListingExtraImages();
-                      setListingCropQueue([]);
-                      closeListingCropEditor();
-                      closeListingPhotoActionModal();
-                      setListingAdvancedOpen(false);
-                      setListingOptionValueDraftA("");
-                      setListingOptionValueDraftB("");
-                      setListingSecondOptionOpen(false);
-                      setEditingListingId(null);
-                      setListingEditOverlayOpen(false);
-                      setSellerTab(SELLER_TABS.PRODUCTS);
-                      if (listingEditOverlayOpen) {
-                        const origin = productFlowOriginRef.current || {};
-                        const originView = String(origin.view || "");
-                        if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(originView)) {
-                          setActiveView(originView);
+                      requestDiscardListingChanges(() => {
+                        setListingForm({
+                          title: "",
+                          description: "",
+                          pricePesos: "",
+                          quantity: "",
+                          categories: "",
+                          subId: "all",
+                          optionNameA: "",
+                          optionValuesA: "",
+                          optionNameB: "",
+                          optionValuesB: "",
+                          orderType: "in_stock",
+                          processingTime: "",
+                          pickup: false,
+                          delivery: false,
+                        });
+                        setListingFieldErrors({});
+                        setListingImageFile(null);
+                        setListingCoverContentHash("");
+                        if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+                        setListingImagePreviewUrl("");
+                        clearListingExtraImages();
+                        setListingCropQueue([]);
+                        closeListingCropEditor();
+                        closeListingPhotoActionModal();
+                        setListingAdvancedOpen(false);
+                        setListingOptionValueDraftA("");
+                        setListingOptionValueDraftB("");
+                        setListingSecondOptionOpen(false);
+                        setEditingListingId(null);
+                        listingDraftBaselineRef.current = null;
+                        setListingEditOverlayOpen(false);
+                        setSellerTab(SELLER_TABS.PRODUCTS);
+                        if (listingEditOverlayOpen) {
+                          const origin = productFlowOriginRef.current || {};
+                          const originView = String(origin.view || "");
+                          if (
+                            [VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES, VIEWS.PROFILE].includes(originView)
+                          ) {
+                            setActiveView(originView);
+                          }
+                        } else {
+                          goOwnProfile();
+                          navigate("/", { replace: true });
                         }
-                      } else {
-                        goOwnProfile();
-                        navigate("/", { replace: true });
-                      }
+                      });
                     }}
                   >
                     Cancel
                   </button>
+                  {editingListingId ? (
+                    <button
+                      type="button"
+                      className="btn-danger min-h-[44px] flex-1 md:min-h-0 md:flex-initial md:min-w-[7rem]"
+                      disabled={listingSaving}
+                      aria-label="Delete this listing"
+                      onClick={() => {
+                        if (!editingListingId || listingSaving) return;
+                        void deleteSellerListingById(editingListingId, {
+                          exitLikeCancel: true,
+                          wasOverlay: listingEditOverlayOpen,
+                        });
+                      }}
+                    >
+                      Delete
+                    </button>
+                  ) : null}
+                  </div>
                 </div>
                 <p className="mt-2 text-left text-xs text-neutral-600 dark:text-slate-300">
                   Required complete: <span className="font-semibold text-neutral-800 dark:text-slate-100">{listingRequiredCompletedCount}/{listingRequiredTotalCount}</span>
@@ -11474,7 +13099,6 @@ function App() {
                         {orderedItems.map((item) => {
                           const lid = String(item.listingId);
                           const lineKey = cartLineKeyFromItem(item);
-                          const vSig = String(item.variantSignature ?? "");
                           const isCartLineUnseen = Boolean(lid && !cartSeenSet.has(lid));
                           const isRemoving = cartRemovingListingIds.includes(lineKey);
                           const cfList = effectiveCommerceFlowViewBuyer === "list";
@@ -11554,58 +13178,20 @@ function App() {
                               {cfList ? (
                                 <>
                                   {isMobileViewport ? (
-                                    <div className="flex shrink-0 flex-col items-stretch gap-2">
-                                      <button
-                                        type="button"
-                                        className={`lm-product-media lm-product-media--soft relative ${thumbClass} shrink-0 overflow-hidden cursor-pointer`}
-                                        aria-label={`View details: ${item.title || "product"}`}
-                                        onClick={openCartItemInspect}
-                                      >
-                                        <ProductListingMedia
-                                          listing={item}
-                                          variant="list"
-                                          className="absolute inset-0 min-h-0"
-                                          loading="lazy"
-                                          sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
-                                        />
-                                      </button>
-                                      <div className="flex w-full items-center justify-center gap-0.5">
-                                        <button
-                                          type="button"
-                                          className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                          aria-label="Decrease quantity"
-                                          disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            setCartQtyEdit({ id: null, str: "" });
-                                            void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1, vSig);
-                                          }}
-                                        >
-                                          −
-                                        </button>
-                                        <span
-                                          className="inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
-                                          aria-label={`Quantity for ${item.title || "product"}`}
-                                        >
-                                          {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
-                                        </span>
-                                        <button
-                                          type="button"
-                                          className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                          aria-label="Increase quantity"
-                                          disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) >= maxAvailableQty}
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            setCartQtyEdit({ id: null, str: "" });
-                                            void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1, vSig);
-                                          }}
-                                        >
-                                          +
-                                        </button>
-                                      </div>
-                                    </div>
+                                    <button
+                                      type="button"
+                                      className={`lm-product-media lm-product-media--soft relative ${thumbClass} shrink-0 overflow-hidden cursor-pointer`}
+                                      aria-label={`View details: ${item.title || "product"}`}
+                                      onClick={openCartItemInspect}
+                                    >
+                                      <ProductListingMedia
+                                        listing={item}
+                                        variant="list"
+                                        className="absolute inset-0 min-h-0"
+                                        loading="lazy"
+                                        sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
+                                      />
+                                    </button>
                                   ) : (
                                     <button
                                       type="button"
@@ -11622,9 +13208,9 @@ function App() {
                                       />
                                     </button>
                                   )}
-                                  <div className="flex w-full min-w-0 flex-1 flex-col gap-1">
+                                  <div className="flex w-full min-w-0 flex-1 flex-col">
                                 <div
-                                  className="w-full min-w-0 text-left touch-manipulation"
+                                  className="w-full min-w-0 flex-1 text-left touch-manipulation"
                                   role="button"
                                   tabIndex={0}
                                   aria-label={`View details: ${item.title || "product"}`}
@@ -11636,54 +13222,10 @@ function App() {
                                     }
                                   }}
                                 >
-                                  {isCartLineUnseen ? (
-                                    <span className="mb-1 inline-flex w-fit max-w-full shrink-0 self-start items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
-                                      Recently updated
-                                    </span>
-                                  ) : null}
                                   <DeferredProductDetailStack
                                     variant="card"
                                     title={item.title || "Product"}
-                                    titleEnd={
-                                      cfList && !isMobileViewport ? (
-                                        <div className="flex items-center gap-0.5">
-                                          <button
-                                            type="button"
-                                            className="inline-flex h-7 w-7 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                            aria-label="Decrease quantity"
-                                            disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-                                              setCartQtyEdit({ id: null, str: "" });
-                                              void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1, vSig);
-                                            }}
-                                          >
-                                            −
-                                          </button>
-                                          <span
-                                            className="inline-flex h-7 min-w-[2.25rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-xs font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
-                                            aria-label={`Quantity for ${item.title || "product"}`}
-                                          >
-                                            {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
-                                          </span>
-                                          <button
-                                            type="button"
-                                            className="inline-flex h-7 w-7 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                            aria-label="Increase quantity"
-                                            disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) >= maxAvailableQty}
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-                                              setCartQtyEdit({ id: null, str: "" });
-                                              void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1, vSig);
-                                            }}
-                                          >
-                                            +
-                                          </button>
-                                        </div>
-                                      ) : null
-                                    }
+                                    titleEnd={null}
                                     priceCents={item.unitPriceCents}
                                     description={item.description}
                                     hideDescription
@@ -11712,6 +13254,47 @@ function App() {
                                     listingMetaDensity="compact"
                                   />
                                 </div>
+                                <div className="mt-auto flex items-center gap-2 border-t border-neutral-200/70 pt-2 dark:border-slate-700/60">
+                                    <span className="text-[11px] font-medium text-text-secondary dark:text-slate-400">
+                                      Quantity
+                                    </span>
+                                    <div className="inline-flex items-stretch overflow-hidden rounded-md border border-neutral-200/90 bg-white dark:border-slate-600/80 dark:bg-slate-900">
+                                      <button
+                                        type="button"
+                                        className="inline-flex h-8 w-8 touch-manipulation items-center justify-center border-r border-neutral-200/90 bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600/80 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                        aria-label="Decrease quantity"
+                                        disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          setCartQtyEdit({ id: null, str: "" });
+                                          void setCartLineQuantity(item, (Number(item.quantity) || 1) - 1);
+                                        }}
+                                      >
+                                        −
+                                      </button>
+                                      <span
+                                        className="inline-flex h-8 min-w-[2.5rem] items-center justify-center px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:text-slate-100"
+                                        aria-label={`Quantity for ${item.title || "product"}`}
+                                      >
+                                        {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        className="inline-flex h-8 w-8 touch-manipulation items-center justify-center border-l border-neutral-200/90 bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600/80 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                        aria-label="Increase quantity"
+                                        disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) >= maxAvailableQty}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          setCartQtyEdit({ id: null, str: "" });
+                                          void setCartLineQuantity(item, (Number(item.quantity) || 0) + 1);
+                                        }}
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+                                  </div>
                               </div>
                                 </>
                               ) : (
@@ -11739,50 +13322,9 @@ function App() {
                                         />
                                       </button>
                                     </div>
-                                    {isMobileViewport ? (
-                                      <div className="mt-2 flex w-full items-center justify-center gap-0.5 px-0.5">
-                                        <button
-                                          type="button"
-                                          className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                          aria-label="Decrease quantity"
-                                          disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            setCartQtyEdit({ id: null, str: "" });
-                                            void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1, vSig);
-                                          }}
-                                        >
-                                          −
-                                        </button>
-                                        <span
-                                          className="inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
-                                          aria-label={`Quantity for ${item.title || "product"}`}
-                                        >
-                                          {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
-                                        </span>
-                                        <button
-                                          type="button"
-                                          className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                          aria-label="Increase quantity"
-                                          disabled={
-                                            cartQtySavingId === lineKey ||
-                                            (Number(item.quantity) || 0) >= maxAvailableQty
-                                          }
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            setCartQtyEdit({ id: null, str: "" });
-                                            void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1, vSig);
-                                          }}
-                                        >
-                                          +
-                                        </button>
-                                      </div>
-                                    ) : null}
-                                    <div className="lm-product-card-body">
+                                    <div className="lm-product-card-body flex min-h-0 flex-1 flex-col">
                                       <div
-                                        className="w-full min-w-0 text-left touch-manipulation"
+                                        className="w-full min-w-0 flex-1 text-left touch-manipulation"
                                         role="button"
                                         tabIndex={0}
                                         aria-label={`View details: ${item.title || "product"}`}
@@ -11794,11 +13336,6 @@ function App() {
                                           }
                                         }}
                                       >
-                                        {isCartLineUnseen ? (
-                                          <span className="mb-1 inline-flex w-fit max-w-full shrink-0 self-start items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
-                                            Recently updated
-                                          </span>
-                                        ) : null}
                                         <DeferredProductDetailStack
                                           variant="card"
                                           title={item.title || "Product"}
@@ -11819,48 +13356,50 @@ function App() {
                                           listingMetaDensity="compact"
                                         />
                                       </div>
-                                      {!isMobileViewport ? (
-                                        <div className="mt-1.5 flex items-center justify-between gap-2">
-                                          <span className="text-[11px] font-medium text-text-secondary dark:text-slate-400">
-                                            Quantity
+                                      <div className="mt-auto flex items-center gap-2 border-t border-neutral-200/70 pt-2 dark:border-slate-700/60">
+                                        <span className="text-[11px] font-medium text-text-secondary dark:text-slate-400">
+                                          Quantity
+                                        </span>
+                                        <div className="inline-flex items-stretch overflow-hidden rounded-md border border-neutral-200/90 bg-white dark:border-slate-600/80 dark:bg-slate-900">
+                                          <button
+                                            type="button"
+                                            className="inline-flex h-8 w-8 touch-manipulation items-center justify-center border-r border-neutral-200/90 bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600/80 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                            aria-label="Decrease quantity"
+                                            disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              setCartQtyEdit({ id: null, str: "" });
+                                              void setCartLineQuantity(item, (Number(item.quantity) || 1) - 1);
+                                            }}
+                                          >
+                                            −
+                                          </button>
+                                          <span
+                                            className="inline-flex h-8 min-w-[2.5rem] items-center justify-center px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:text-slate-100"
+                                            aria-label={`Quantity for ${item.title || "product"}`}
+                                          >
+                                            {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
                                           </span>
-                                          <div className="flex items-center gap-0.5">
-                                            <button
-                                              type="button"
-                                              className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                              aria-label="Decrease quantity"
-                                              disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
-                                              onClick={() => {
-                                                setCartQtyEdit({ id: null, str: "" });
-                                                void setCartLineQuantity(item.listingId, (Number(item.quantity) || 1) - 1, vSig);
-                                              }}
-                                            >
-                                              −
-                                            </button>
-                                            <span
-                                              className="inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-neutral-200/90 bg-white px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:border-slate-600/80 dark:bg-slate-900 dark:text-slate-100"
-                                              aria-label={`Quantity for ${item.title || "product"}`}
-                                            >
-                                              {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
-                                            </span>
-                                            <button
-                                              type="button"
-                                              className="inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-md bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                              aria-label="Increase quantity"
-                                              disabled={
-                                                cartQtySavingId === lineKey ||
-                                                (Number(item.quantity) || 0) >= maxAvailableQty
-                                              }
-                                              onClick={() => {
-                                                setCartQtyEdit({ id: null, str: "" });
-                                                void setCartLineQuantity(item.listingId, (Number(item.quantity) || 0) + 1, vSig);
-                                              }}
-                                            >
-                                              +
-                                            </button>
-                                          </div>
+                                          <button
+                                            type="button"
+                                            className="inline-flex h-8 w-8 touch-manipulation items-center justify-center border-l border-neutral-200/90 bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600/80 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+                                            aria-label="Increase quantity"
+                                            disabled={
+                                              cartQtySavingId === lineKey ||
+                                              (Number(item.quantity) || 0) >= maxAvailableQty
+                                            }
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              setCartQtyEdit({ id: null, str: "" });
+                                              void setCartLineQuantity(item, (Number(item.quantity) || 0) + 1);
+                                            }}
+                                          >
+                                            +
+                                          </button>
                                         </div>
-                                      ) : null}
+                                      </div>
                                     </div>
                                 </div>
                               )}
@@ -11894,6 +13433,7 @@ function App() {
                 buyingBadge={activityPrimaryBuyingBadge}
                 sellingBadge={activityPrimarySellingBadge}
                 courierBadge={activityPrimaryCourierBadge}
+                courierProfileIncomplete={!buyNowFromProfile.ready}
               />
             </aside>
             <div className="min-w-0 space-y-4 md:min-w-0">
@@ -12400,6 +13940,9 @@ function App() {
                                 0,
                                 Number(o.sellerCourierContributionCents ?? o.seller_courier_contribution_cents) || 0,
                               );
+                          const orderGoodsCents = Math.max(0, Number(entry.mergedGoodsCents ?? o.codGoodsCents) || 0);
+                          const orderDeliveryFeeCents = Math.max(0, Number(entry.mergedDeliveryCents ?? o.codDeliveryCents) || 0);
+                          const orderCodLineTotalCents = orderGoodsCents + orderDeliveryFeeCents;
                           const completedHistoryRow =
                             ordersStatusTab === "completed" && String(o.status || "") === "completed";
                           /** Avoid an empty footer shell in list view (stacked `gap` + `mt`/`pt` looked like a large dead zone). */
@@ -12410,7 +13953,7 @@ function App() {
                               String(o.status || "") === "completed") ||
                             (ordersRole === "seller" &&
                               ordersStatusTab === "completed" &&
-                              Boolean(o.buyerReview?.rating)) ||
+                              Boolean(o.buyerReview?.sellerRating)) ||
                             (ordersRole === "buyer" &&
                               String(o.status || "") === "ready_for_pickup" &&
                               o.fulfillmentType === "pickup") ||
@@ -12430,6 +13973,7 @@ function App() {
                             orderListingsById[String(o.listingId)] ||
                             (cardListing?.id ? cardListing : null);
                           const openOrderProductInspect = () => {
+                            dismissOrderAttentionIdsForActiveCommerceTab(entry.orderIds);
                             const L = orderListingForProductOpen;
                             if (!L?.id) {
                               pushMarketplaceToast("Listing details are not available.");
@@ -12467,11 +14011,6 @@ function App() {
                           };
                           const orderCardBody = (
                             <div className="flex min-w-0 flex-col gap-1">
-                              {shouldHighlightRecent ? (
-                                <span className="inline-flex w-fit max-w-full shrink-0 self-start items-center rounded-full border border-emerald-400/90 bg-emerald-200/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-500/25 dark:text-emerald-200">
-                                  Recently updated
-                                </span>
-                              ) : null}
                               <DeferredProductDetailStack
                                 variant="card"
                                 browseStackMode={cfList ? "listMobile" : null}
@@ -12519,18 +14058,42 @@ function App() {
                                     {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"}
                                   </span>
                                 </p>
-                                <p className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1 text-pretty">
-                                  <span className="font-medium text-neutral-700 dark:text-slate-300">
-                                    Total
-                                    <span className="text-neutral-500 dark:text-slate-500">:</span>
-                                  </span>
-                                  <span className="min-w-0 tabular-nums font-semibold text-neutral-800 dark:text-slate-200">
-                                    {formatCents(
-                                      Math.max(0, Number(entry.mergedGoodsCents ?? o.codGoodsCents) || 0) +
-                                        Math.max(0, Number(entry.mergedDeliveryCents ?? o.codDeliveryCents) || 0),
-                                    )}
-                                  </span>
-                                </p>
+                                {ordersStatusTab === "processing" && o.fulfillmentType === "delivery" ? (
+                                  <div className="flex flex-wrap gap-x-2 gap-y-1 border-t border-neutral-200/70 pt-1 dark:border-slate-600/60">
+                                    <span
+                                      className="inline-flex max-w-full items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-emerald-900 ring-1 ring-inset ring-emerald-200/90 dark:bg-emerald-950/45 dark:text-emerald-100 dark:ring-emerald-800/45"
+                                      title="Product total (goods)"
+                                    >
+                                      <span>Goods</span>
+                                      <span className="tabular-nums">{formatCents(orderGoodsCents)}</span>
+                                    </span>
+                                    <span
+                                      className="inline-flex max-w-full items-center gap-1 rounded-md bg-brand-soft/90 px-2 py-0.5 text-[11px] font-semibold leading-snug text-brand-primary ring-1 ring-inset ring-brand-primary/25 dark:bg-slate-800/90 dark:text-brand-accent dark:ring-brand-accent/30"
+                                      title="Agreed delivery fee (COD)"
+                                    >
+                                      <span>Delivery fee</span>
+                                      <span className="tabular-nums">{formatCents(orderDeliveryFeeCents)}</span>
+                                    </span>
+                                    <span
+                                      className="inline-flex max-w-full flex-wrap items-center gap-x-1 gap-y-0 rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-amber-950 ring-1 ring-inset ring-amber-200/90 dark:bg-amber-950/50 dark:text-amber-100 dark:ring-amber-800/40"
+                                      title="Goods + delivery fee (cash on delivery)"
+                                    >
+                                      <span>Total</span>
+                                      <span className="tabular-nums">{formatCents(orderCodLineTotalCents)}</span>
+                                      <span className="font-medium text-amber-800/85 dark:text-amber-200/90">COD</span>
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <p className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1 text-pretty">
+                                    <span className="font-medium text-neutral-700 dark:text-slate-300">
+                                      Total
+                                      <span className="text-neutral-500 dark:text-slate-500">:</span>
+                                    </span>
+                                    <span className="min-w-0 tabular-nums font-semibold text-neutral-800 dark:text-slate-200">
+                                      {formatCents(orderCodLineTotalCents)}
+                                    </span>
+                                  </p>
+                                )}
                                 {orderCommentRow.show &&
                                 !(
                                   orderCommentRow.label === "Selection" &&
@@ -12579,15 +14142,17 @@ function App() {
                                 <div className="flex shrink-0 items-center self-center pt-0.5">{orderSelectCheckbox}</div>
                               ) : null}
                               <div
-                                className={`min-w-0 flex-1 cursor-pointer transition duration-200 ease-in-out ${
+                                className={`min-w-0 flex-1 transition duration-200 ease-in-out ${
                                   cfList
                                     ? "relative lm-card lm-list-card lm-product-card-list flex flex-col gap-3 p-3 md:gap-3.5"
                                     : "relative lm-card lm-grid-card lm-product-card lm-product-card--feed lm-commerce-order-card flex h-full min-h-0 flex-1 flex-col overflow-x-hidden !overflow-y-visible p-0"
-                                }`}
-                                onClick={openOrderProductInspect}
+                                } ${shouldHighlightRecent ? "bg-primary-soft dark:bg-primary/15" : ""}`}
                               >
                               {cfList ? (
-                                <div className="flex w-full min-w-0 items-start gap-3 rounded-xl transition-colors duration-200 ease-in-out hover:bg-neutral-50/70 dark:hover:bg-slate-800/35">
+                                <div
+                                  className="flex w-full min-w-0 cursor-pointer items-start gap-3 rounded-xl transition-colors duration-200 ease-in-out [-webkit-tap-highlight-color:transparent] hover:bg-neutral-50/70 dark:hover:bg-slate-800/35"
+                                  onClick={openOrderProductInspect}
+                                >
                                   <div
                                     className={`lm-product-media lm-product-media--soft relative ${orderThumbList} shrink-0 overflow-hidden rounded-md transition hover:opacity-95`}
                                   >
@@ -12604,7 +14169,10 @@ function App() {
                                   </div>
                                 </div>
                               ) : (
-                                <>
+                                <div
+                                  className="cursor-pointer [-webkit-tap-highlight-color:transparent]"
+                                  onClick={openOrderProductInspect}
+                                >
                                   <div className="relative w-full shrink-0">
                                     {ordersStatusTab === "pending" ? (
                                       <label
@@ -12630,26 +14198,46 @@ function App() {
                                   <div className="lm-product-card-body flex w-full flex-col border-0 bg-transparent text-left transition-colors duration-200 ease-in-out hover:bg-neutral-50/50 dark:hover:bg-slate-800/25">
                                     {orderCardBody}
                                   </div>
-                                </>
+                                </div>
                               )}
                               {o.fulfillmentType === "delivery" ? (
                                 <div
                                   className={`relative z-10 w-full min-w-0 shrink-0 overflow-visible border-t border-neutral-200/70 pt-2 pb-2 text-[10px] leading-snug text-neutral-600 dark:border-slate-600/55 dark:text-slate-400 ${
                                     cfList ? "mt-2" : "px-2.5"
                                   }`}
-                                  onClick={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    dismissOrderAttentionIdsForActiveCommerceTab(entry.orderIds);
+                                  }}
                                   onPointerDown={(e) => e.stopPropagation()}
                                 >
-                                  <p className="text-pretty text-neutral-700 dark:text-slate-300">
-                                    <span className="font-medium">Delivery tip</span>{" "}
-                                    <span className="tabular-nums font-semibold">
-                                      {formatCents(buyerPoolCents + sellerPoolCents)}
-                                    </span>
-                                    <span className="font-normal text-neutral-500 dark:text-slate-500">
-                                      {" "}
-                                      ({formatCents(buyerPoolCents)} buyer · {formatCents(sellerPoolCents)} seller) · cash at handoff
-                                    </span>
-                                  </p>
+                                  {ordersStatusTab === "processing" ? (
+                                    <div className="space-y-1 text-pretty">
+                                      <span
+                                        className="inline-flex max-w-full flex-wrap items-center gap-1 rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-violet-950 ring-1 ring-inset ring-violet-200/90 dark:bg-violet-950/45 dark:text-violet-100 dark:ring-violet-800/45"
+                                        title="Courier tip pool (cash at handoff)"
+                                      >
+                                        <span>Delivery tip</span>
+                                        <span className="tabular-nums">{formatCents(buyerPoolCents + sellerPoolCents)}</span>
+                                      </span>
+                                      <p className="text-neutral-600 dark:text-slate-400">
+                                        ({formatCents(buyerPoolCents)} buyer · {formatCents(sellerPoolCents)} seller) · cash at
+                                        handoff
+                                      </p>
+                                    </div>
+                                  ) : (
+                                    <p className="text-pretty text-neutral-700 dark:text-slate-300">
+                                      <span className="font-medium">Delivery tip</span>{" "}
+                                      <span className="tabular-nums font-semibold">
+                                        {formatCents(buyerPoolCents + sellerPoolCents)}
+                                      </span>
+                                      <span className="font-normal text-neutral-500 dark:text-slate-500">
+                                        {" "}
+                                        ({formatCents(buyerPoolCents)} buyer · {formatCents(sellerPoolCents)} seller) · cash at
+                                        handoff
+                                      </span>
+                                    </p>
+                                  )}
                                   {token &&
                                   entry.orderIds.length === 1 &&
                                   canAdjustCourierPoolForViewer(o, ordersRole) ? (
@@ -12673,14 +14261,17 @@ function App() {
                               ) : null}
                               {orderCardFooterHasChrome ? (
                               <div
-                                className={`relative z-0 text-sm ${
+                                className={`relative z-0 text-sm [-webkit-tap-highlight-color:transparent] ${
                                   multicolOrderCard
                                     ? "mt-1.5 space-y-1 pt-1.5 md:mt-2 md:space-y-1.5 md:pt-2"
                                     : cfList
                                       ? "space-y-1.5 md:space-y-2"
                                       : "mt-2 space-y-1.5 pt-1.5 md:mt-3 md:space-y-2 md:pt-2"
                                 } ${cfList ? "" : "px-2.5 pb-2.5"}`}
-                                onClick={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  dismissOrderAttentionIdsForActiveCommerceTab(entry.orderIds);
+                                }}
                                 onPointerDown={(e) => e.stopPropagation()}
                               >
                                 {ordersRole === "buyer" && ordersStatusTab === "completed" && String(o.status || "") === "completed" ? (
@@ -12704,11 +14295,8 @@ function App() {
                                       }
                                     >
                                       {(() => {
-                                        const sellerRated = Boolean(o.buyerReview?.rating);
-                                        const needsCourier = orderNeedsCourierReview(o);
-                                        const fullyRated = sellerRated && !needsCourier;
-                                        if (fullyRated) return null;
-                                        const rateLabel = !sellerRated ? "Rate" : "Rate delivery";
+                                        if (!shouldShowRateButton(o)) return null;
+                                        const rateLabel = getRateButtonLabel(o);
                                         return (
                                           <button
                                             type="button"
@@ -12740,18 +14328,18 @@ function App() {
                                     </div>
                                   </div>
                                 ) : null}
-                                {ordersRole === "seller" && ordersStatusTab === "completed" && o.buyerReview?.rating ? (
+                                {ordersRole === "seller" && ordersStatusTab === "completed" && o.buyerReview?.sellerRating ? (
                                   <div
                                     className={`rounded-lg border border-neutral-200/80 bg-neutral-50/60 dark:border-slate-600 dark:bg-slate-900/40 ${
                                       multicolOrderCard ? "px-2 py-1.5 text-[11px]" : "px-3 py-2 text-xs"
                                     }`}
                                   >
                                     <p className="font-medium text-neutral-800 dark:text-slate-200">
-                                      Buyer rated this order {o.buyerReview.rating} / 5
+                                      Buyer rated you as seller {o.buyerReview.sellerRating} / 5
                                     </p>
-                                    {o.buyerReview.reviewText ? (
+                                    {o.buyerReview.sellerReviewText ? (
                                       <p className="mt-1 whitespace-pre-wrap break-words text-pretty text-neutral-600 dark:text-slate-400">
-                                        {o.buyerReview.reviewText}
+                                        {o.buyerReview.sellerReviewText}
                                       </p>
                                     ) : null}
                                   </div>
@@ -12955,7 +14543,21 @@ function App() {
                                           o.listingCommunityId || orderListingsById[String(o.listingId)]?.communityId || "",
                                         ).trim()}
                                         orderId={o.id}
+                                        order={o}
+                                        viewerRole={ordersRole === "buyer" || ordersRole === "seller" ? ordersRole : "buyer"}
+                                        excludeUserIds={[String(o.buyerId || "").trim(), String(o.sellerId || "").trim()].filter(
+                                          Boolean,
+                                        )}
                                         compact={multicolOrderCard}
+                                        onPoolUpdated={async () => {
+                                          try {
+                                            const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+                                            setOrders(data.orders || []);
+                                            void refreshCourierHub();
+                                          } catch {
+                                            pushMarketplaceToast("Tip saved — refresh orders if amounts look stale.");
+                                          }
+                                        }}
                                         onAssigned={async () => {
                                           await refreshCourierAndOrders();
                                           pushMarketplaceToast(
@@ -12964,9 +14566,6 @@ function App() {
                                               : "Courier invited. They can accept or decline from Activity → Deliver.",
                                           );
                                         }}
-                                        {...(ordersRole === "buyer"
-                                          ? { heading: "Neighbor couriers", assignButtonLabel: "Suggest" }
-                                          : {})}
                                       />
                                     </div>
                                   ) : null}
@@ -13110,38 +14709,112 @@ function App() {
                       <span className="text-neutral-600 dark:text-slate-300">Neighbor runs and COD handoffs</span>
                     </p>
                   </div>
+                  <div
+                    className="flex w-full min-w-0 shrink-0 rounded-xl border border-neutral-200/85 bg-neutral-100/40 p-0.5 sm:w-auto dark:border-slate-600/65 dark:bg-slate-800/40"
+                    role="tablist"
+                    aria-label="Courier hub sections"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={courierHubTasks}
+                      className={`min-h-9 flex-1 rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition sm:flex-none sm:px-3 ${
+                        courierHubTasks
+                          ? activityTabChrome.segmentActive
+                          : "text-neutral-600 hover:bg-white/80 dark:text-slate-400 dark:hover:bg-slate-700/50"
+                      }`}
+                      onClick={() => setCourierHubTab(ACTIVITY_COURIER_SUBTABS.TASKS)}
+                    >
+                      Tasks
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={courierHubStats}
+                      className={`min-h-9 flex-1 rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition sm:flex-none sm:px-3 ${
+                        courierHubStats
+                          ? activityTabChrome.segmentActive
+                          : "text-neutral-600 hover:bg-white/80 dark:text-slate-400 dark:hover:bg-slate-700/50"
+                      }`}
+                      onClick={() => setCourierHubTab(ACTIVITY_COURIER_SUBTABS.STATS)}
+                    >
+                      Stats
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={courierHubFeedback}
+                      className={`min-h-9 flex-1 rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition sm:flex-none sm:px-3 ${
+                        courierHubFeedback
+                          ? activityTabChrome.segmentActive
+                          : "text-neutral-600 hover:bg-white/80 dark:text-slate-400 dark:hover:bg-slate-700/50"
+                      }`}
+                      onClick={() => setCourierHubTab(ACTIVITY_COURIER_SUBTABS.FEEDBACK)}
+                    >
+                      Feedback
+                    </button>
+                  </div>
                 </div>
                 <div
                   id="courier-hub-panel"
                   role="region"
-                  aria-label="Find deliveries"
+                  aria-label={
+                    courierHubFeedback
+                      ? "Courier buyer feedback"
+                      : courierHubStats
+                        ? "Courier neighborhood stats"
+                        : "Find deliveries"
+                  }
                   className="space-y-4 pt-3 md:space-y-6 md:pt-4"
                 >
-                  <CourierRunnerHubPanel
-                    token={token}
-                    communityId={String(user?.communityId || joinedShopCommunityId || "").trim()}
-                    onOrdersRefresh={refreshCourierAndOrders}
-                    viewerProfile={
-                      user?.id
-                        ? {
-                            id: String(user.id),
-                            username: user.username,
-                            displayName: getDisplayNameFromUser(user),
-                            avatarUrl: user.avatarUrl || "",
-                          }
-                        : null
-                    }
-                  />
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-semibold text-neutral-900 dark:text-slate-100">Buyer feedback</h4>
-                    <Suspense
-                      fallback={
-                        <div className="min-h-[4rem] animate-pulse rounded-xl bg-neutral-100/90 dark:bg-slate-800/80" aria-hidden />
+                  {courierHubTasks ? (
+                    <CourierRunnerHubPanel
+                      token={token}
+                      communityId={String(user?.communityId || joinedShopCommunityId || "").trim()}
+                      onOrdersRefresh={refreshCourierAndOrders}
+                      onPresenceApplied={applyCourierPresenceToUser}
+                      courierProfileReady={buyNowFromProfile.ready}
+                      courierProfileMissing={buyNowFromProfile.missing}
+                      onCourierCompleteProfile={() => openProfileEdit({ navigateToOwnProfile: true })}
+                      viewerProfile={
+                        user?.id
+                          ? {
+                              id: String(user.id),
+                              username: user.username,
+                              displayName: getDisplayNameFromUser(user),
+                              avatarUrl: user.avatarUrl || "",
+                            }
+                          : null
                       }
-                    >
-                      <LazyCourierBuyerFeedbackList token={token} />
-                    </Suspense>
-                  </div>
+                    />
+                  ) : courierHubStats ? (
+                    <>
+                      {!String(user?.communityId || joinedShopCommunityId || "").trim() ? (
+                        <p className="text-[11px] text-amber-800 dark:text-amber-200">
+                          Join a community on your profile to see neighborhood leaderboard stats.
+                        </p>
+                      ) : null}
+                      <CourierEngagementBoard
+                        token={token}
+                        communityId={String(user?.communityId || joinedShopCommunityId || "").trim()}
+                        leadDivider={false}
+                      />
+                    </>
+                  ) : (
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold text-neutral-900 dark:text-slate-100">Buyer feedback</h4>
+                      <p className="text-xs text-neutral-600 dark:text-slate-400">
+                        Ratings and notes from buyers after completed deliveries.
+                      </p>
+                      <Suspense
+                        fallback={
+                          <div className="min-h-[4rem] animate-pulse rounded-xl bg-neutral-100/90 dark:bg-slate-800/80" aria-hidden />
+                        }
+                      >
+                        <LazyCourierBuyerFeedbackList token={token} />
+                      </Suspense>
+                    </div>
+                  )}
                 </div>
               </>
             )}
@@ -13158,8 +14831,12 @@ function App() {
               notifyFeedbackSubmitted();
               setSendFeedbackPhase("thanks");
             }}
-            onBack={goBrowse}
+            onBack={goBackFromSendFeedback}
           />
+        )}
+
+        {activeView === VIEWS.PASSWORD_SECURITY && (
+          <PasswordSecurityView token={token} onBack={goBrowse} />
         )}
 
         {activeView === VIEWS.ABOUT && (
@@ -13181,6 +14858,45 @@ function App() {
               <SecondaryScreenHeader title="Terms & conditions" onBack={goBrowse} />
             </div>
             <TermsLinkMartBody />
+          </section>
+        )}
+
+        {activeView === VIEWS.DATA_PRIVACY_ACT && (
+          <section
+            className={`${UI_KIT.viewSection} mx-auto w-full max-w-3xl pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] [-webkit-overflow-scrolling:touch] md:mx-0 md:w-full md:max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:flex md:flex-col`}
+          >
+            <div className="hidden md:block">
+              <SecondaryScreenHeader title="Data Privacy Act" onBack={goBrowse} />
+            </div>
+            <div className="space-y-4 text-sm leading-relaxed text-neutral-700 dark:text-slate-300">
+              <DataPrivacyActBody />
+            </div>
+          </section>
+        )}
+
+        {activeView === VIEWS.BEWARE_SCAMMERS && (
+          <section
+            className={`${UI_KIT.viewSection} mx-auto w-full max-w-3xl pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] [-webkit-overflow-scrolling:touch] md:mx-0 md:w-full md:max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:flex md:flex-col`}
+          >
+            <div className="hidden md:block">
+              <SecondaryScreenHeader title="Beware of scammers" onBack={goBrowse} />
+            </div>
+            <div className="text-sm leading-relaxed text-neutral-700 dark:text-slate-300">
+              <BewareOfScammersBody />
+            </div>
+          </section>
+        )}
+
+        {activeView === VIEWS.PROHIBITED_PRODUCTS && (
+          <section
+            className={`${UI_KIT.viewSection} mx-auto w-full max-w-3xl pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] [-webkit-overflow-scrolling:touch] md:mx-0 md:w-full md:max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:flex md:flex-col`}
+          >
+            <div className="hidden md:block">
+              <SecondaryScreenHeader title="Prohibited products" onBack={goBrowse} />
+            </div>
+            <div className="text-sm leading-relaxed text-neutral-700 dark:text-slate-300">
+              <ProhibitedProductsBody />
+            </div>
           </section>
         )}
 
@@ -13209,7 +14925,20 @@ function App() {
                       aria-label="Back"
                       onClick={goBackFromSellerProfile}
                     >
-                      <ChevronLeftIcon className="h-5 w-5" aria-hidden />
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.25"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-5 w-5"
+                        aria-hidden
+                      >
+                        <path d="M19 12H5" />
+                        <path d="M11 6l-6 6 6 6" />
+                      </svg>
                     </button>
                   )}
                   <h2 className="min-w-0 text-2xl font-semibold text-neutral-900 dark:text-slate-100">
@@ -13226,7 +14955,7 @@ function App() {
                     spacious={false}
                     className="!border-amber-200/85 !bg-amber-50/60 !py-4 dark:!border-amber-900/45 dark:!bg-amber-950/25"
                     title="Finish your profile"
-                    description={`Still needed: ${buyNowFromProfile.missing.join(", ")}. Add these so Buy now, cart checkout, and meetup details work.`}
+                    description={`Please complete the following required fields: ${buyNowFromProfile.missing.join(", ")}. This information is required for Buy Now, checkout, and meetup coordination.`}
                     primaryAction={{ label: "Complete profile", onClick: openProfileEdit }}
                     onDismiss={() => setProfileFinishBannerDismissed(true)}
                   />
@@ -13318,7 +15047,7 @@ function App() {
                           aria-autocomplete="list"
                           aria-expanded={profileBrgySuggestOpen && profileBrgyCommunitySuggestions.length > 0}
                           aria-controls="profile-brgy-suggestions-list"
-                          className="input-base min-h-[44px] w-full cursor-default border-0 text-sm read-only:border-0 read-only:bg-neutral-50 read-only:text-neutral-700 dark:read-only:bg-slate-900/50 dark:read-only:text-slate-300 md:h-9 md:min-h-0"
+                          className="input-base min-h-[44px] w-full cursor-default text-sm read-only:bg-neutral-50/95 read-only:text-neutral-700 dark:read-only:bg-slate-900/60 dark:read-only:text-slate-300 md:h-9 md:min-h-0"
                           value={profileDraft.community}
                           placeholder="No community yet. Join one from Communities."
                           readOnly
@@ -13351,6 +15080,74 @@ function App() {
                         />
                       </div>
                       {profileFieldErrors.phone ? <p className="field-error-text mt-1">{profileFieldErrors.phone}</p> : null}
+                      {phoneVerificationEnabled &&
+                      profileEditing &&
+                      toPhilippinesLocalPhone10(profileDraft.phone).length === 10 ? (
+                        <div className="mt-3 overflow-hidden rounded-xl border border-neutral-200/90 bg-white/70 p-4 text-sm shadow-sm ring-1 ring-black/[0.03] dark:border-slate-600 dark:bg-slate-900/45 dark:ring-white/[0.04]">
+                          {user?.phoneVerified ? (
+                            <p className="font-medium text-emerald-800 dark:text-emerald-200">Phone verified</p>
+                          ) : (
+                            <div className="space-y-4">
+                              <p className="text-pretty text-neutral-600 dark:text-slate-400">
+                                We’ll text a 6-digit code to your +63 number. Standard SMS rates may apply.
+                              </p>
+                              {phoneVerifyMessage ? (
+                                <p
+                                  className={
+                                    phoneVerifyMessage.toLowerCase().includes("verified")
+                                      ? "text-emerald-800 dark:text-emerald-200"
+                                      : "text-neutral-800 dark:text-slate-200"
+                                  }
+                                  role="status"
+                                >
+                                  {phoneVerifyMessage}
+                                </p>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="btn-secondary min-h-[44px] w-full rounded-lg px-4 py-2.5 text-sm font-medium md:w-auto md:self-start"
+                                disabled={phoneVerifyLoading || !token}
+                                onClick={handleSendPhoneVerifyCode}
+                              >
+                                {phoneVerifyLoading ? "Sending…" : "Send verification code"}
+                              </button>
+                              <div className="min-w-0 space-y-2">
+                                <label htmlFor="profile-phone-otp-inline" className="sr-only">
+                                  Enter the 6-digit verification code
+                                </label>
+                                <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-stretch md:gap-3">
+                                  <input
+                                    id="profile-phone-otp-inline"
+                                    type="text"
+                                    inputMode="numeric"
+                                    autoComplete="one-time-code"
+                                    maxLength={6}
+                                    placeholder="6-digit code"
+                                    className="input-base min-h-[44px] min-w-0 w-full max-w-full text-center text-base tracking-[0.35em] placeholder:tracking-normal md:max-w-[13rem] md:flex-none md:text-sm"
+                                    value={phoneOtpCode}
+                                    onChange={(e) => {
+                                      const d = e.target.value.replace(/\D/g, "").slice(0, 6);
+                                      setPhoneOtpCode(d);
+                                      setPhoneVerifyMessage("");
+                                    }}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="landing-btn-primary min-h-[44px] w-full shrink-0 rounded-lg px-5 py-2.5 text-sm font-semibold md:w-auto md:min-w-[7.5rem]"
+                                    disabled={phoneVerifyLoading || phoneOtpCode.replace(/\D/g, "").length !== 6}
+                                    onClick={handleVerifyPhoneOtp}
+                                  >
+                                    Verify
+                                  </button>
+                                </div>
+                                <p className="text-[11px] text-neutral-500 dark:text-slate-500">
+                                  Enter the code from your SMS, then tap Verify.
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="min-w-0 md:order-2">
                       <label className="label-base" htmlFor="profile-email-inline">
@@ -13363,7 +15160,7 @@ function App() {
                         inputMode="email"
                         readOnly
                         aria-readonly="true"
-                        className="input-base min-h-[44px] cursor-default border-0 read-only:border-0 read-only:bg-neutral-50 read-only:text-neutral-700 dark:read-only:bg-slate-900/50 dark:read-only:text-slate-300 md:h-9 md:min-h-0"
+                        className="input-base min-h-[44px] cursor-default read-only:bg-neutral-50/95 read-only:text-neutral-700 dark:read-only:bg-slate-900/60 dark:read-only:text-slate-300 md:h-9 md:min-h-0"
                         autoComplete="email"
                         value={profileDraft.email}
                       />
@@ -14274,6 +16071,18 @@ function App() {
                       <p className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100">
                         {getProfileCardDisplayNameFromUser(profileRenderUser)}
                       </p>
+                      {!isViewingSellerProfile ? (
+                        <p className="mt-1 text-center text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                          <span className="rounded-full border border-neutral-200/80 bg-neutral-50 px-2.5 py-0.5 dark:border-slate-600 dark:bg-slate-800/80">
+                            {formatSubscriptionTierLabel(profileRenderUser?.subscriptionTier)}
+                          </span>
+                        </p>
+                      ) : null}
+                      <SellerBuyerRatingSummary
+                        avg={profileSellerRatingForHeader.sellerAvgRating}
+                        count={profileSellerRatingForHeader.sellerReviewCount}
+                        className="mt-1 text-center text-amber-900/95 dark:text-amber-100/95"
+                      />
                       <div className="mt-2 flex items-center justify-center gap-3">
                         {(() => {
                           const facebookHref =
@@ -14394,6 +16203,11 @@ function App() {
                           </svg>
                           <span>Phone: </span>
                           <span className="font-semibold">{toPhilippinesLocal11Display(profileRenderUser.phone)}</span>
+                          {phoneVerificationEnabled && profileRenderUser.phoneVerified ? (
+                            <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100">
+                              Verified
+                            </span>
+                          ) : null}
                         </li>
                       ) : null}
                       {String(profileRenderUser.community || "").trim() ? (
@@ -14538,6 +16352,7 @@ function App() {
                             <LazyCommunityShopListingCard
                               key={l.id}
                               listing={l}
+                              hideGalleryPageIndicators
                               gridMode={effectiveSellerProductsView !== "list"}
                               compactGrid={effectiveSellerProductsView === "compact"}
                               mobileOwnerActionsInMenu={isMobileViewport && effectiveSellerProductsView !== "list"}
@@ -14545,6 +16360,7 @@ function App() {
                               softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
                               browseSummaryGrid={isMobileViewport && effectiveSellerProductsView === "grid"}
                               mobileCardUx={isMobileViewport}
+                              mobileEntireCardTappable={isMobileViewport}
                               isFavorite={false}
                               showActions
                               currentUserId={user?.id || ""}
@@ -14597,16 +16413,28 @@ function App() {
               </aside>
               ) : (
               <aside className="min-w-0 space-y-4 pt-8 lg:rounded-2xl lg:border lg:border-neutral-200/70 lg:bg-white lg:p-5 lg:pt-5 lg:shadow-sm dark:lg:border-slate-600 dark:lg:bg-slate-900/80">
-                <div className="flex flex-wrap gap-2" role="tablist" aria-label="Seller shop: products">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected
-                    className={UI_KIT.tabActive}
-                  >
-                    Products
-                  </button>
+                <div className="flex flex-wrap gap-2" role="tablist" aria-label="Seller shop: products and buyer feedback">
+                  {[
+                    { id: SELLER_TABS.PRODUCTS, label: "Products" },
+                    { id: SELLER_TABS.FEEDBACK, label: "Feedback" },
+                  ].map(({ id, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      role="tab"
+                      aria-selected={sellerTab === id}
+                      className={`min-h-[44px] rounded-full px-4 py-2 text-sm font-medium transition md:min-h-0 md:px-3 md:py-1.5 ${
+                        sellerTab === id
+                          ? UI_KIT.tabActive
+                          : "border-0 bg-neutral-100/55 text-neutral-600 hover:bg-neutral-100 dark:bg-slate-800/55 dark:text-slate-400 dark:hover:bg-slate-800 md:border md:border-neutral-200/85 md:bg-transparent md:hover:bg-neutral-50 dark:md:border-slate-600"
+                      }`}
+                      onClick={() => setSellerTab(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
+                {sellerTab === SELLER_TABS.PRODUCTS && (
                 <div className={`space-y-3 p-4 ${UI_KIT.surfaceCard}`}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">
@@ -14679,6 +16507,7 @@ function App() {
                             <LazyCommunityShopListingCard
                               key={l.id}
                               listing={l}
+                              hideGalleryPageIndicators
                               gridMode={effectiveSellerProductsView !== "list"}
                               compactGrid={effectiveSellerProductsView === "compact"}
                               mobileOwnerActionsInMenu={isMobileViewport && effectiveSellerProductsView !== "list"}
@@ -14686,6 +16515,7 @@ function App() {
                               softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
                               browseSummaryGrid={isMobileViewport && effectiveSellerProductsView === "grid"}
                               mobileCardUx={isMobileViewport}
+                              mobileEntireCardTappable={isMobileViewport}
                               isFavorite={favoriteIds.has(l.id)}
                               showActions
                               currentUserId={user?.id || ""}
@@ -14744,6 +16574,16 @@ function App() {
                     />
                   ) : null}
                 </div>
+                )}
+                {sellerTab === SELLER_TABS.FEEDBACK && (
+                  <Suspense
+                    fallback={
+                      <ScreenLoading message="Loading feedback…" minHeight={false} className="min-h-[8rem] py-6" />
+                    }
+                  >
+                    <LazySellerBuyerFeedbackList token={token} sellerId={String(profileViewUserId || "").trim()} />
+                  </Suspense>
+                )}
               </aside>
               )}
             </div>
@@ -14753,6 +16593,17 @@ function App() {
       </main>
       </LoggedInHeader>
       </MobileAppShell>
+
+      <DiscardUnsavedChangesModal
+        open={discardListingChangesModalOpen}
+        title="Discard your unsaved listing changes?"
+        message="You have unsaved changes. If you leave now, your edits will be lost."
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        busy={listingSaving}
+        onClose={closeDiscardListingChangesModal}
+        onConfirm={confirmDiscardListingChangesModal}
+      />
 
       {orderCancelReasonModalOpen ? (
         <div
@@ -14867,7 +16718,7 @@ function App() {
                 id="completed-rate-modal-title"
                 className="text-lg font-semibold text-neutral-900 dark:text-slate-100"
               >
-                Rate
+                Rate your order
               </h2>
               <button
                 type="button"
@@ -14886,9 +16737,10 @@ function App() {
                     onSubmit={submitOrderReview}
                     disabled={!token}
                     compact={false}
+                    showSellerSection={shouldShowSellerSection(completedRateModalOrder)}
                   />
                 </Suspense>
-                {completedRateModalOrder.fulfillmentType === "delivery" ? (
+                {shouldShowCourierSection(completedRateModalOrder) ? (
                   <Suspense fallback={<p className="text-sm text-neutral-500">Loading…</p>}>
                     <LazyCourierDeliveryReviewForm
                       orderId={completedRateModalOrder.id}
@@ -15062,46 +16914,107 @@ function App() {
             <div className="drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-2.5 min-[360px]:px-5 min-[360px]:py-3 md:px-5 md:py-4">
               <div className="mx-auto min-w-0 max-w-2xl space-y-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:gap-4 lg:gap-6">
-                  <div className="mx-auto flex w-full shrink-0 flex-col md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]">
-                    <div className="relative mx-auto aspect-square w-full max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]">
-                      {resolveListingCoverImageUrl(quickAddListing) ? (
-                        <button
-                          type="button"
-                          className="absolute inset-0 z-0 cursor-zoom-in touch-pan-y"
-                          aria-label="View larger product image"
-                          onClick={() => setQuickAddImagePreviewOpen(true)}
-                          style={{ touchAction: "pan-x pan-y" }}
-                        >
-                          <ProductListingMedia
-                            listing={quickAddListing}
-                            variant="grid"
-                            fillFrame
-                            className="pointer-events-none absolute inset-0 min-h-0"
-                            imageClassName="transition duration-200 hover:scale-[1.02]"
-                            sizes="(max-width: 768px) min(100vw, 64rem), 12rem"
-                            loading="eager"
-                          />
-                        </button>
-                      ) : (
-                        <ProductListingMedia
-                          listing={quickAddListing}
-                          variant="grid"
-                          fillFrame
-                          className="absolute inset-0 min-h-0"
-                          sizes="(max-width: 768px) min(100vw, 64rem), 12rem"
-                          loading="eager"
-                        />
-                      )}
-                    </div>
-                  </div>
+                  {(() => {
+                    const snap = quickAddBrowseSnapshot || { browseView: null, isMobile: isMobileViewport };
+                    const effView = snap.browseView ?? "grid";
+                    const snapMobile = snap.isMobile;
+                    const gridModeQa = effView !== "list";
+                    const listModeQa = effView === "list";
+                    const compactQa = effView === "compact";
+                    const quickAddImageBoxClass = (() => {
+                      if (!gridModeQa) {
+                        if (snapMobile) {
+                          return "relative mx-auto aspect-[4/3] w-full min-h-0 max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
+                        }
+                        return "relative mx-auto h-32 w-32 shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:mx-0";
+                      }
+                      if (compactQa && snapMobile) {
+                        return "relative mx-auto h-28 max-h-28 w-full min-h-0 !aspect-auto overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
+                      }
+                      if (snapMobile) {
+                        return "relative mx-auto aspect-square w-full min-h-0 max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
+                      }
+                      return "relative mx-auto aspect-square w-full max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:mx-0 md:h-48 md:max-w-[12rem] md:rounded-lg lg:max-w-[14rem]";
+                    })();
+                    const imageColClass =
+                      listModeQa && !snapMobile
+                        ? "mx-auto flex w-full shrink-0 flex-col md:mx-0 md:max-w-[8rem]"
+                        : "mx-auto flex w-full shrink-0 flex-col md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]";
+                    return (
+                      <div className={imageColClass}>
+                        <div className={quickAddImageBoxClass}>
+                          {resolveListingCoverImageUrl(quickAddListing) ? (
+                            <button
+                              type="button"
+                              className="absolute inset-0 z-0 cursor-zoom-in touch-pan-y"
+                              aria-label="View larger product image"
+                              onClick={() => setQuickAddImagePreviewOpen(true)}
+                              style={{ touchAction: "pan-x pan-y" }}
+                            >
+                              <ProductListingMedia
+                                listing={quickAddListing}
+                                variant={gridModeQa ? "grid" : "list"}
+                                fillFrame={Boolean(gridModeQa)}
+                                className="pointer-events-none absolute inset-0 min-h-0"
+                                imageClassName="transition duration-200 hover:scale-[1.02]"
+                                sizes="(max-width: 768px) min(100vw, 64rem), 12rem"
+                                loading="eager"
+                              />
+                            </button>
+                          ) : (
+                            <ProductListingMedia
+                              listing={quickAddListing}
+                              variant={gridModeQa ? "grid" : "list"}
+                              fillFrame={Boolean(gridModeQa)}
+                              className="absolute inset-0 min-h-0"
+                              sizes="(max-width: 768px) min(100vw, 64rem), 12rem"
+                              loading="eager"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <div className="min-w-0 flex-1 space-y-4">
                     {(() => {
-                      const saleMeta = parseSaleMetaFromDescription(String(quickAddListing.description || ""));
-                      const currentPesos = Math.floor((Number(quickAddListing.priceCents) || 0) / 100);
-                      const originalPesos = Number.isFinite(Number(saleMeta?.originalPesos))
-                        ? Number(saleMeta.originalPesos)
-                        : null;
-                      const showStrike = originalPesos != null && originalPesos > currentPesos;
+                      const snap = quickAddBrowseSnapshot || { browseView: null, isMobile: isMobileViewport };
+                      const effView = snap.browseView ?? "grid";
+                      const snapMobile = snap.isMobile;
+                      const gridModeQa = effView !== "list";
+                      const listModeQa = effView === "list";
+                      const compactQa = effView === "compact";
+                      const browseSummaryQa = snapMobile && effView === "grid";
+                      const stockQtyQa = Math.max(0, Number(quickAddListing.quantity) || 0);
+                      const soldQtyQa =
+                        quickAddListing?.soldCount != null && Number.isFinite(Number(quickAddListing.soldCount))
+                          ? Math.max(0, Number(quickAddListing.soldCount))
+                          : null;
+                      const isOutOfStockQa = stockQtyQa <= 0;
+                      const readOnlyStockRowQa = (
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300">
+                              <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">
+                                Stock
+                              </span>
+                              <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
+                              <span className="tabular-nums font-semibold text-text-primary dark:text-slate-100">
+                                {stockQtyQa}
+                              </span>
+                            </p>
+                            {soldQtyQa != null ? (
+                              <span className="rounded-full border border-amber-300/80 bg-amber-100/80 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 min-[390px]:text-[11px] dark:border-amber-400/35 dark:bg-amber-500/15 dark:text-amber-300">
+                                Sold {soldQtyQa}
+                              </span>
+                            ) : null}
+                            {isOutOfStockQa ? (
+                              <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-600 min-[380px]:text-xs dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
+                                Out of stock
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
                       const qaValsA = normalizeListingOptionValues(quickAddListing.optionValuesA);
                       const qaValsB = normalizeListingOptionValues(quickAddListing.optionValuesB);
                       const qaLabelA = String(quickAddListing.optionNameA || "").trim();
@@ -15113,25 +17026,48 @@ function App() {
                         : [];
                       const qaOffersPickup = qaFulfillmentModes.includes("pickup");
                       const qaOffersDelivery = qaFulfillmentModes.includes("delivery");
+                      const dualFulfillmentPickers = qaOffersPickup && qaOffersDelivery;
                       return (
                         <>
                           <div className="min-w-0 space-y-2">
-                            <p className="product-card-title break-words">{quickAddListing.title || "Product"}</p>
-                            <div className="flex min-w-0 flex-wrap items-center gap-2">
-                              <p className="product-price tabular-nums">{formatPesoWhole(quickAddListing.priceCents)}</p>
-                              {showStrike ? (
-                                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                                  <span className="text-[11px] font-medium text-neutral-500 line-through min-[380px]:text-xs dark:text-slate-500">
-                                    ₱{originalPesos}
-                                  </span>
-                                  {saleMeta?.percent ? (
-                                    <span className="rounded-md border border-amber-300/80 bg-amber-100/80 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-300">
-                                      -{saleMeta.percent}%
-                                    </span>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </div>
+                            <DeferredProductDetailStack
+                              variant="card"
+                              browseStackMode={snapMobile ? "listMobile" : null}
+                              compactListMeta={listModeQa || snapMobile}
+                              title={quickAddListing.title || "Untitled product"}
+                              priceCents={quickAddListing.priceCents}
+                              categoryLabel={
+                                snapMobile
+                                  ? ""
+                                  : getListingCategoryShortLabel(quickAddListing.verticalId, quickAddListing.subId)
+                              }
+                              description={quickAddListing.description}
+                              fulfillmentModes={quickAddListing.fulfillmentModes}
+                              orderType={quickAddListing.orderType}
+                              processingTime={quickAddListing.processingTime}
+                              optionNameA=""
+                              optionValuesA={[]}
+                              optionNameB=""
+                              optionValuesB={[]}
+                              quantityRow={readOnlyStockRowQa}
+                              hideDescription={Boolean(
+                                listModeQa || (gridModeQa && (compactQa || browseSummaryQa)),
+                              )}
+                              hideAvailability={dualFulfillmentPickers}
+                              listingAvgRating={quickAddListing.listingAvgRating}
+                              listingReviewCount={quickAddListing.listingReviewCount}
+                            />
+                            {quickAddListing.cityLabel ? (
+                              <span
+                                className={
+                                  snapMobile && gridModeQa
+                                    ? `${UI_KIT.chipMuted} inline-flex max-w-full py-px text-[10px] leading-tight`
+                                    : `${UI_KIT.chipMuted} inline-flex max-w-full`
+                                }
+                              >
+                                {quickAddListing.cityLabel}
+                              </span>
+                            ) : null}
                           </div>
                           {showVariantPickers ? (
                             <div className="space-y-3">
@@ -15237,25 +17173,16 @@ function App() {
                                 </button>
                               </div>
                             </fieldset>
-                          ) : qaOffersPickup || qaOffersDelivery ? (
-                            <div className="space-y-1">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-                                Fulfillment
-                              </p>
-                              <p className="text-sm text-neutral-800 dark:text-slate-200">
-                                {listingCodAvailabilityLabel(qaOffersPickup ? ["pickup"] : ["delivery"])}
-                              </p>
-                            </div>
                           ) : null}
-                          <div className="space-y-1.5">
+                          <div className="space-y-1.5 rounded-xl border border-neutral-200/80 bg-neutral-50/70 px-2.5 py-2 dark:border-slate-700/70 dark:bg-slate-900/40">
                             <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                               Quantity
                             </p>
-                            <div className="flex min-w-0 flex-wrap items-center gap-2 md:gap-3">
-                              <div className="inline-flex items-center gap-1 md:gap-1.5">
+                            <div className="flex min-w-0 flex-col gap-2 md:gap-3">
+                              <div className="grid w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center gap-1.5 min-[390px]:w-auto min-[390px]:grid-cols-[2.75rem_4.5rem_2.75rem] min-[390px]:gap-2 md:grid-cols-[2.5rem_3.5rem_2.5rem] md:gap-2.5">
                                 <button
                                   type="button"
-                                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-10 md:w-10"
+                                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 min-[390px]:h-11 min-[390px]:w-11 md:h-10 md:w-10"
                                   aria-label="Decrease quantity"
                                   disabled={Number(quickAddQuantity) <= 1 || quickAddSubmitting}
                                   onClick={() =>
@@ -15268,39 +17195,15 @@ function App() {
                                 >
                                   −
                                 </button>
-                                <input
-                                  id="quick-add-qty"
-                                  type="number"
-                                  min={1}
-                                  max={Math.max(1, Number(quickAddListing.quantity) || 1)}
-                                  className="input-base h-11 w-16 px-1 text-center text-sm tabular-nums md:h-10 md:w-14"
-                                  value={quickAddQuantity}
-                                  disabled={quickAddSubmitting}
-                                  onChange={(e) => {
-                                    const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
-                                    const digitsOnly = String(e.target.value || "").replace(/\D/g, "");
-                                    if (!digitsOnly) {
-                                      setQuickAddQuantity("1");
-                                      return;
-                                    }
-                                    const next = Math.min(maxQty, Math.max(1, Number(digitsOnly)));
-                                    setQuickAddQuantity(String(next));
-                                  }}
-                                  onBlur={() => {
-                                    const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
-                                    const parsed = Number(quickAddQuantity);
-                                    if (!Number.isFinite(parsed) || parsed < 1) {
-                                      setQuickAddQuantity("1");
-                                      return;
-                                    }
-                                    if (parsed > maxQty) {
-                                      setQuickAddQuantity(String(maxQty));
-                                    }
-                                  }}
-                                />
+                                <span
+                                  className="inline-flex h-10 min-w-0 w-full items-center justify-center px-0 text-center text-sm font-semibold tabular-nums text-neutral-800 dark:text-slate-100 min-[390px]:h-11 md:h-10"
+                                  aria-live="polite"
+                                >
+                                  {quickAddQuantity}
+                                </span>
                                 <button
                                   type="button"
-                                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 md:h-10 md:w-10"
+                                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 min-[390px]:h-11 min-[390px]:w-11 md:h-10 md:w-10"
                                   aria-label="Increase quantity"
                                   disabled={
                                     Number(quickAddQuantity) >= Math.max(1, Number(quickAddListing.quantity) || 1) ||
@@ -15318,7 +17221,7 @@ function App() {
                                   +
                                 </button>
                               </div>
-                              <span className="text-[11px] text-neutral-500 dark:text-slate-500">
+                              <span className="text-[11px] text-neutral-500 min-[390px]:text-xs dark:text-slate-500">
                                 In stock: {Math.max(1, Number(quickAddListing.quantity) || 1)}
                               </span>
                             </div>
@@ -15411,42 +17314,116 @@ function App() {
                 <span aria-hidden>×</span>
               </button>
             </div>
-            <form onSubmit={handleCreateCommunity} className="space-y-3 rounded-lg border border-neutral-200/90 bg-neutral-50/60 p-3 dark:border-slate-600 dark:bg-slate-800/50">
+            <form onSubmit={handleCreateCommunity} className="space-y-3">
               <div>
-                <label className="label-base mb-1">Add image</label>
-                <input
-                  ref={communityImageInputRef}
-                  className="block w-full max-w-lg cursor-pointer text-sm text-neutral-700 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-brand-soft file:px-3 file:py-2 file:text-sm file:font-medium file:text-brand-primary dark:text-slate-300 dark:file:bg-slate-800 dark:file:text-slate-200"
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  onChange={async (e) => {
-                    const f = e.target.files?.[0] ?? null;
-                    e.target.value = "";
-                    if (!f) {
-                      setCommunityImageFile(null);
-                      return;
-                    }
-                    if (!String(f.type || "").startsWith("image/")) {
-                      pushMarketplaceToast("Please choose a JPEG, PNG, WebP, or GIF image.");
-                      return;
-                    }
-                    try {
-                      const ready = await ensureImageFileUnderMaxBytes(f, MAX_LISTING_COMMUNITY_IMAGE_BYTES, {
-                        maxLongEdge: 2560,
-                      });
-                      setCommunityImageFile(ready);
-                    } catch {
-                      pushMarketplaceToast("Could not process that image. Try a different file.");
-                    }
+                <div className="mb-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">
+                    Photo
+                  </p>
+                </div>
+                <div
+                  className={`rounded-xl border border-dashed bg-white/80 transition dark:bg-slate-900/60 ${
+                    communityImageDragActive
+                      ? "border-brand-primary text-brand-primary dark:border-brand-accent dark:text-brand-accent"
+                      : "border-neutral-300 text-neutral-500 dark:border-slate-600 dark:text-slate-400"
+                  } ${
+                    communityImagePreviewUrl
+                      ? "flex min-h-[12rem] cursor-default items-center justify-center p-3 md:min-h-[14rem] md:p-5"
+                      : "flex min-h-[9.5rem] cursor-pointer items-center justify-center px-4 py-5 text-center text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-900"
+                  }`}
+                  role={communityImagePreviewUrl ? undefined : "button"}
+                  tabIndex={communityImagePreviewUrl ? undefined : 0}
+                  aria-label={communityImagePreviewUrl ? undefined : "Upload community photo"}
+                  onClick={
+                    communityImagePreviewUrl
+                      ? undefined
+                      : () => {
+                          communityImageInputRef.current?.click();
+                        }
+                  }
+                  onKeyDown={
+                    communityImagePreviewUrl
+                      ? undefined
+                      : (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            communityImageInputRef.current?.click();
+                          }
+                        }
+                  }
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setCommunityImageDragActive(true);
                   }}
-                />
-                <p className="mt-1 text-[11px] text-neutral-500 dark:text-slate-500">
+                  onDragLeave={() => setCommunityImageDragActive(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setCommunityImageDragActive(false);
+                    const files = Array.from(e.dataTransfer?.files || []);
+                    const first = files.find((x) => String(x.type || "").startsWith("image/"));
+                    if (first) void applyCommunityImageFile(first);
+                  }}
+                >
+                  <input
+                    ref={communityImageInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] ?? null;
+                      e.target.value = "";
+                      if (f) void applyCommunityImageFile(f);
+                    }}
+                  />
+                  {communityImagePreviewUrl ? (
+                    <div className="flex w-full max-w-full justify-center">
+                      <div className="group relative aspect-square w-full max-w-[min(20rem,calc(100vw-3rem))] overflow-hidden rounded-xl border border-neutral-200/85 dark:border-slate-600 sm:max-w-[min(21rem,calc(100vw-3.5rem))] md:max-w-[min(22rem,100%)]">
+                        <StableMediaImage
+                          src={communityImagePreviewUrl}
+                          alt="Community cover preview"
+                          className="absolute inset-0 h-full w-full"
+                          objectFit="contain"
+                          decoding="async"
+                          sizes="(max-width:768px) min(90vw, 22rem), 352px"
+                          loading="eager"
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-1.5 top-1.5 z-[5] inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-xs font-semibold text-white transition hover:bg-rose-600"
+                          aria-label="Remove image"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            clearCommunityImageSelection();
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex w-full max-w-lg flex-col items-center px-2 text-center md:max-w-xl">
+                      <button
+                        type="button"
+                        className="group relative inline-flex h-28 w-28 items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white/60 text-center text-xs font-semibold text-neutral-500 transition hover:border-brand-primary/50 hover:text-brand-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:border-brand-accent/45 dark:hover:text-slate-100 dark:focus-visible:ring-brand-accent/50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          communityImageInputRef.current?.click();
+                        }}
+                      >
+                        <span className="pointer-events-none flex flex-col items-center gap-1">
+                          <span aria-hidden className="text-base leading-none">
+                            +
+                          </span>
+                          <span>Add image</span>
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <p className="mt-2 text-[11px] text-neutral-500 dark:text-slate-500">
                   JPEG, PNG, WebP, or GIF — large files are compressed to fit 5 MB. Optional; communities without a photo
                   use a color placeholder.
                 </p>
-                {communityImageFile ? (
-                  <p className="mt-1 text-xs text-neutral-600 dark:text-slate-400">Selected: {communityImageFile.name}</p>
-                ) : null}
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="md:col-span-2">
@@ -15701,6 +17678,172 @@ function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+      {listingCropEditor.open ? (
+        <div className="fixed inset-0 z-[118] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/50"
+            aria-label="Close crop editor"
+            onClick={() => closeListingCropEditor()}
+          />
+          <div className="relative z-10 w-full max-w-3xl rounded-2xl border border-neutral-200 bg-white p-4 shadow-2xl dark:border-slate-700 dark:bg-slate-900 md:p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Crop image</p>
+                <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">Move and resize the square crop before uploading.</p>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-300 text-sm text-neutral-600 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                aria-label="Close crop editor"
+                onClick={() => closeListingCropEditor()}
+              >
+                ×
+              </button>
+            </div>
+            <div className="mt-4">
+              <div>
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">Adjust crop</p>
+                <div
+                  ref={listingCropViewportRef}
+                  className="relative aspect-square w-full overflow-hidden rounded-xl border border-neutral-200 bg-black/90 touch-none dark:border-slate-700"
+                  onPointerDown={(e) => {
+                    if (!listingCropEditor.open) return;
+                    setListingCropApplyError("");
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                    setListingCropEditor((prev) => ({
+                      ...prev,
+                      dragging: true,
+                      dragStartX: e.clientX,
+                      dragStartY: e.clientY,
+                      dragStartLeft: prev.cropLeft,
+                      dragStartTop: prev.cropTop,
+                    }));
+                  }}
+                  onPointerMove={(e) => {
+                    if (!listingCropEditor.dragging) return;
+                    const viewportSize = Number(listingCropViewportRef.current?.clientWidth || 1);
+                    const dx = e.clientX - listingCropEditor.dragStartX;
+                    const dy = e.clientY - listingCropEditor.dragStartY;
+                    setListingCropEditor((prev) => ({
+                      ...prev,
+                      cropLeft: (() => {
+                        const w = Math.max(1, Number(prev.sourceWidth || 1));
+                        const h = Math.max(1, Number(prev.sourceHeight || 1));
+                        const renderedWidthFactor = w >= h ? 1 : w / h;
+                        const side = Math.max(1, Math.floor(Math.min(w, h) * clampNumber(prev.cropSize, 0.2, 1)));
+                        const maxLeft = Math.max(0, (w - side) / w);
+                        const next = prev.dragStartLeft + (dx / viewportSize) / renderedWidthFactor;
+                        return clampNumber(next, 0, maxLeft);
+                      })(),
+                      cropTop: (() => {
+                        const w = Math.max(1, Number(prev.sourceWidth || 1));
+                        const h = Math.max(1, Number(prev.sourceHeight || 1));
+                        const renderedHeightFactor = h >= w ? 1 : h / w;
+                        const side = Math.max(1, Math.floor(Math.min(w, h) * clampNumber(prev.cropSize, 0.2, 1)));
+                        const maxTop = Math.max(0, (h - side) / h);
+                        const next = prev.dragStartTop + (dy / viewportSize) / renderedHeightFactor;
+                        return clampNumber(next, 0, maxTop);
+                      })(),
+                    }));
+                  }}
+                  onPointerUp={(e) => {
+                    if (listingCropEditor.dragging) {
+                      try {
+                        e.currentTarget.releasePointerCapture(e.pointerId);
+                      } catch {
+                        // noop
+                      }
+                    }
+                    setListingCropEditor((prev) => ({ ...prev, dragging: false }));
+                  }}
+                  onPointerCancel={() => setListingCropEditor((prev) => ({ ...prev, dragging: false }))}
+                >
+                  {listingCropEditor.sourcePreviewUrl ? (
+                    <img
+                      src={listingCropEditor.sourcePreviewUrl}
+                      alt=""
+                      className="h-full w-full object-contain"
+                      draggable={false}
+                    />
+                  ) : null}
+                  {(() => {
+                    const w = Math.max(1, Number(listingCropEditor.sourceWidth || 1));
+                    const h = Math.max(1, Number(listingCropEditor.sourceHeight || 1));
+                    const renderW = w >= h ? 100 : (w / h) * 100;
+                    const renderH = h >= w ? 100 : (h / w) * 100;
+                    const offsetX = (100 - renderW) / 2;
+                    const offsetY = (100 - renderH) / 2;
+                    const side = Math.max(1, Math.floor(Math.min(w, h) * clampNumber(listingCropEditor.cropSize, 0.2, 1)));
+                    const cropWPercent = (side / w) * renderW;
+                    const cropHPercent = (side / h) * renderH;
+                    const leftPercent = offsetX + clampNumber(listingCropEditor.cropLeft, 0, 1) * renderW;
+                    const topPercent = offsetY + clampNumber(listingCropEditor.cropTop, 0, 1) * renderH;
+                    return (
+                      <div
+                        className="pointer-events-none absolute border-2 border-white/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]"
+                        style={{
+                          left: `${leftPercent}%`,
+                          top: `${topPercent}%`,
+                          width: `${cropWPercent}%`,
+                          height: `${cropHPercent}%`,
+                        }}
+                      />
+                    );
+                  })()}
+                </div>
+                <div className="mt-3">
+                  <div className="flex items-center justify-between text-[11px] font-medium text-neutral-600 dark:text-slate-400">
+                    <span>Crop size</span>
+                    <span>{Math.round(clampNumber(Number(listingCropEditor.cropSize) || 1, 0.2, 1) * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={20}
+                    max={100}
+                    step={1}
+                    className="mt-1 w-full"
+                    value={Math.round(clampNumber(Number(listingCropEditor.cropSize) || 1, 0.2, 1) * 100)}
+                    onChange={(e) => {
+                      setListingCropApplyError("");
+                      setListingCropEditor((prev) => {
+                        const w = Math.max(1, Number(prev.sourceWidth || 1));
+                        const h = Math.max(1, Number(prev.sourceHeight || 1));
+                        const nextCropSize = clampNumber((Number(e.target.value) || 80) / 100, 0.2, 1);
+                        const side = Math.max(1, Math.floor(Math.min(w, h) * nextCropSize));
+                        const maxLeft = Math.max(0, (w - side) / w);
+                        const maxTop = Math.max(0, (h - side) / h);
+                        return {
+                          ...prev,
+                          cropSize: nextCropSize,
+                          cropLeft: clampNumber(prev.cropLeft, 0, maxLeft),
+                          cropTop: clampNumber(prev.cropTop, 0, maxTop),
+                        };
+                      });
+                    }}
+                  />
+                  <p className="mt-1 text-[11px] text-neutral-500 dark:text-slate-400">Drag the square to reposition the crop area.</p>
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-col items-stretch gap-2">
+              <div className="flex items-center justify-end gap-2">
+                <button type="button" className="btn-secondary" onClick={() => closeListingCropEditor()}>
+                  Cancel
+                </button>
+                <button type="button" className="btn-primary" onClick={() => void applyListingCropEditor()}>
+                  Apply crop
+                </button>
+              </div>
+              {listingCropApplyError ? (
+                <p className="field-error-text text-right" role="alert">
+                  {listingCropApplyError}
+                </p>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}
