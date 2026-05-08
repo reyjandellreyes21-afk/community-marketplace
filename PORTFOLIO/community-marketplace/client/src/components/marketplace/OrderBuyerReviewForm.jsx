@@ -72,12 +72,20 @@ export function OrderBuyerReviewForm({
   const [sellerText, setSellerText] = useState(() => String(initialReview?.sellerReviewText || ""));
   const [savingProduct, setSavingProduct] = useState(false);
   const [savingSeller, setSavingSeller] = useState(false);
+  const [productRatingError, setProductRatingError] = useState(false);
+  const [sellerRatingError, setSellerRatingError] = useState(false);
+  const [productSubmitError, setProductSubmitError] = useState("");
+  const [sellerSubmitError, setSellerSubmitError] = useState("");
 
   useEffect(() => {
     setProductRating(initialReview?.productRating || 0);
     setProductText(String(initialReview?.productReviewText || ""));
     setSellerRating(initialReview?.sellerRating || 0);
     setSellerText(String(initialReview?.sellerReviewText || ""));
+    setProductRatingError(false);
+    setSellerRatingError(false);
+    setProductSubmitError("");
+    setSellerSubmitError("");
   }, [
     orderId,
     initialReview?.productRating,
@@ -86,15 +94,36 @@ export function OrderBuyerReviewForm({
     initialReview?.sellerReviewText,
   ]);
 
+  useEffect(() => {
+    if (productRating) {
+      setProductRatingError(false);
+      setProductSubmitError("");
+    }
+  }, [productRating]);
+
+  useEffect(() => {
+    if (sellerRating) {
+      setSellerRatingError(false);
+      setSellerSubmitError("");
+    }
+  }, [sellerRating]);
+
   const submitProduct = async (ev) => {
     ev.preventDefault();
-    if (!productRating || savingProduct || disabled) return;
+    if (savingProduct || disabled) return;
+    if (!productRating) {
+      setProductRatingError(true);
+      return;
+    }
+    setProductSubmitError("");
     setSavingProduct(true);
     try {
       await onSubmit(orderId, {
         productRating,
         productReviewText: productText.trim(),
       });
+    } catch (e) {
+      setProductSubmitError(String(e?.message || "Could not save purchase rating."));
     } finally {
       setSavingProduct(false);
     }
@@ -102,13 +131,20 @@ export function OrderBuyerReviewForm({
 
   const submitSeller = async (ev) => {
     ev.preventDefault();
-    if (!sellerRating || savingSeller || disabled) return;
+    if (savingSeller || disabled) return;
+    if (!sellerRating) {
+      setSellerRatingError(true);
+      return;
+    }
+    setSellerSubmitError("");
     setSavingSeller(true);
     try {
       await onSubmit(orderId, {
         sellerRating,
         sellerReviewText: sellerText.trim(),
       });
+    } catch (e) {
+      setSellerSubmitError(String(e?.message || "Could not save seller rating."));
     } finally {
       setSavingSeller(false);
     }
@@ -131,7 +167,7 @@ export function OrderBuyerReviewForm({
       >
         <p className={buyerReviewSectionTitle(compact)}>Rate this purchase</p>
         <p className={buyerReviewSectionSubtitle(compact)}>
-          Stars for the item you bought—counts toward this listing (each purchase).
+          Tap 1–5 stars for the item you bought (each purchase counts for this listing), then save.
         </p>
         <StarRow
           value={productRating}
@@ -141,6 +177,11 @@ export function OrderBuyerReviewForm({
           compact={compact}
           ariaLabel="Product star rating"
         />
+        {productRatingError ? (
+          <p role="alert" className="mt-1 text-xs font-medium text-rose-600 dark:text-rose-400">
+            Choose a star rating (1–5), then tap Save.
+          </p>
+        ) : null}
         <div className={compact ? "mt-1.5" : "mt-2"}>
           <label htmlFor={`order-review-product-${orderId}`} className="label-base">
             Comment (optional)
@@ -178,6 +219,11 @@ export function OrderBuyerReviewForm({
             )}
           </button>
         </div>
+        {productSubmitError ? (
+          <p role="alert" className="mt-1 text-xs font-medium text-rose-600 dark:text-rose-400">
+            {productSubmitError}
+          </p>
+        ) : null}
       </form>
       ) : null}
 
@@ -189,7 +235,7 @@ export function OrderBuyerReviewForm({
       >
         <p className={buyerReviewSectionTitle(compact)}>Rate the seller</p>
         <p className={buyerReviewSectionSubtitle(compact)}>
-          Stars for this completed purchase; affects the seller’s shop reputation.
+          Tap 1–5 stars for this seller, then save. This affects the seller’s shop reputation.
         </p>
         <StarRow
           value={sellerRating}
@@ -199,6 +245,11 @@ export function OrderBuyerReviewForm({
           compact={compact}
           ariaLabel="Seller star rating"
         />
+        {sellerRatingError ? (
+          <p role="alert" className="mt-1 text-xs font-medium text-rose-600 dark:text-rose-400">
+            Choose a star rating (1–5), then tap Save.
+          </p>
+        ) : null}
         <div className={compact ? "mt-1.5" : "mt-2"}>
           <label htmlFor={`order-review-seller-${orderId}`} className="label-base">
             Comment (optional)
@@ -236,6 +287,11 @@ export function OrderBuyerReviewForm({
             )}
           </button>
         </div>
+        {sellerSubmitError ? (
+          <p role="alert" className="mt-1 text-xs font-medium text-rose-600 dark:text-rose-400">
+            {sellerSubmitError}
+          </p>
+        ) : null}
       </form>
       ) : showSellerSection && sellerSaved && !sellerCanEdit ? (
         <div

@@ -39,6 +39,8 @@ export const VIEWS = {
 /** Sub-navigation for `VIEWS.SELLER` (stored in App state `sellerTab`). */
 export const SELLER_TABS = {
   PRODUCTS: "products",
+  /** Profile seller hub: income/expense/inventory overview and manual external entries. */
+  DASHBOARD: "dashboard",
   /** Profile seller hub: buyer feedback received (UI label: Feedback). */
   FEEDBACK: "feedback",
 };

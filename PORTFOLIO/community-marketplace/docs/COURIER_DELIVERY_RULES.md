@@ -36,10 +36,10 @@ Plain-language behavior for **delivery orders** when using **community couriers*
 - **Busy** is also the **effective** status while the courier has an **in-progress** delivery: order status is `courier_assigned` or `out_for_delivery` for an **accepted** assignment for that courier. In that state, **availability cannot be changed** until the order is completed or otherwise resolved (e.g. cancel rules as implemented).
 - When the run ends (e.g. buyer confirms receipt), the system returns the courier toward **available** as implemented in the order/courier cleanup path.
 
-## Transport mode (walk / run / bike)
+## Transport mode (walk / run / bike / others)
 
 - The profile stores **which modes** the courier uses (`profiles.courier_modes`).
-- Each claim records **one mode** on `courier_assignments.mode` for that run (for ETA, analytics, and gamification). The client sends an explicit `mode` on `POST /orders/:id/courier/claim`; the server checks it against the profile when the profile lists modes, and falls back to a default order (bike → run → walk) when no mode is sent.
+- Each claim records **one mode** on `courier_assignments.mode` for that run (for ETA, analytics, and gamification). The client sends an explicit `mode` on `POST /orders/:id/courier/claim`; the server checks it against the profile when the profile lists modes, and falls back to a default order (bike → run → walk → others) when no mode is sent.
 
 ## Summary
 

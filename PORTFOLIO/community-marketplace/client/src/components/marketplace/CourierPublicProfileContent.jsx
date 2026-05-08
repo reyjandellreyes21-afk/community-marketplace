@@ -105,6 +105,9 @@ export function CourierPublicProfileContent({ courier, variant = "inline", title
   const profileModeKeys = normalizedProfileModes(c.modes);
   /** Empty profile = unrestricted (any mode) — show all three in preview as “on” for first-time couriers. */
   const modeChipsActive = (m) => (profileModeKeys.length > 0 ? profileModeKeys.includes(m) : true);
+  /** With explicit modes saved, only show those chips (e.g. Run-only → hide Walk/Bike). */
+  const modesToPreview =
+    profileModeKeys.length > 0 ? profileModeKeys : MODE_ORDER;
   const singleProfileMatchesNext =
     profileModeKeys.length === 1 && nextModeRaw && profileModeKeys[0] === nextModeRaw;
   const showNextClaimLine =
@@ -121,7 +124,7 @@ export function CourierPublicProfileContent({ courier, variant = "inline", title
 
   const transportOfferSummary =
     profileModeKeys.length === 0
-      ? "You haven’t limited modes — neighbors see Walk, Run, and Bike as options. Limit modes in Edit if you only offer some ways to deliver."
+      ? "You haven’t limited modes — neighbors see Walk, Run, Bike, and Others as options. Limit modes in Edit if you only offer some ways to deliver."
       : `Neighbors see you for: ${profileModeKeys.map((m) => MODE_LABEL[m] ?? m).join(", ")}.`;
 
   const avatarRing = (
@@ -161,6 +164,16 @@ export function CourierPublicProfileContent({ courier, variant = "inline", title
               <h3 id={titleId} className="min-w-0 truncate text-sm font-semibold text-violet-900 dark:text-violet-100">
                 {displayName}
               </h3>
+              {sug ? (
+                <p
+                  className="mt-1 inline-flex max-w-full flex-wrap items-baseline gap-x-1 rounded-lg bg-violet-100/95 px-2 py-1 text-[11px] font-semibold leading-snug text-violet-950 ring-1 ring-violet-200/90 dark:bg-violet-950/55 dark:text-violet-50 dark:ring-violet-700/50"
+                  role="status"
+                >
+                  <span className="font-semibold">Suggested rate</span>{" "}
+                  <span className="tabular-nums font-bold">{sug}</span>{" "}
+                  <span className="text-[10px] font-medium text-violet-800/90 dark:text-violet-200/90">(reference)</span>
+                </p>
+              ) : null}
               <p className="mt-0.5 text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
                 {neighborDenseStatusLine(c.courierStatus)}
               </p>
@@ -185,7 +198,7 @@ export function CourierPublicProfileContent({ courier, variant = "inline", title
               ) : null}
               <p className="mt-2 text-[10px] leading-snug text-neutral-600 dark:text-slate-400">{transportOfferSummary}</p>
               <div className="mt-2 flex w-full gap-1.5" role="group" aria-label="Transport modes on your public card">
-                {MODE_ORDER.map((m) => {
+                {modesToPreview.map((m) => {
                   const on = modeChipsActive(m);
                   return (
                     <span
@@ -246,19 +259,11 @@ export function CourierPublicProfileContent({ courier, variant = "inline", title
             ) : null}
           </div>
 
-          {completed != null || sug ? (
+          {completed != null ? (
             <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 border-t border-neutral-200/80 pt-3 text-[11px] text-neutral-500 dark:border-slate-700/80 dark:text-slate-400">
-              {completed != null ? (
-                <span>
-                  <span className="font-medium text-neutral-700 dark:text-slate-300">{completed}</span> completed
-                </span>
-              ) : null}
-              {sug ? (
-                <span className="font-medium text-neutral-700 dark:text-slate-300">
-                  Suggested rate <span className="tabular-nums text-neutral-900 dark:text-slate-100">{sug}</span>{" "}
-                  <span className="font-normal text-neutral-500 dark:text-slate-500">(reference)</span>
-                </span>
-              ) : null}
+              <span>
+                <span className="font-medium text-neutral-700 dark:text-slate-300">{completed}</span> completed
+              </span>
             </div>
           ) : null}
         </div>

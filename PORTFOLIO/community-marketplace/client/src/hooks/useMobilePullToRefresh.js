@@ -9,8 +9,6 @@ const HORIZONTAL_INTENT_THRESHOLD_PX = 16;
 const HORIZONTAL_INTENT_RATIO = 1.25;
 const MAX_PULL_VISUAL_VIEWPORT_RATIO = 0.10;
 const MAX_PULL_VISUAL_FALLBACK_PX = 180;
-const GESTURE_STALE_TIMEOUT_MS = 1400;
-const DEBUG_PTR_FORENSICS = false;
 
 function getScrollTop(targetElement) {
   if (targetElement && typeof targetElement.scrollTop === "number") return targetElement.scrollTop;
@@ -18,13 +16,6 @@ function getScrollTop(targetElement) {
   return 0;
 }
 
-/**
- * Deterministic mobile pull-to-refresh handler.
- * Single gesture state + intent lock:
- * - Starts only when gesture begins at top.
- * - Vertical intent locks pull flow.
- * - Refresh fires only if released while armed.
- */
 export function useMobilePullToRefresh({
   enabled,
   onRefresh,
@@ -36,9 +27,7 @@ export function useMobilePullToRefresh({
   targetElementId = "main-content",
 }) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
-  /** Smoothed vertical offset for the floating indicator only. */
   const [pullDragPx, setPullDragPx] = useState(0);
-  /** Raw finger pull (px) for progress / armed UI so release threshold matches what the user feels. */
   const [pullPhysicsPx, setPullPhysicsPx] = useState(0);
   const [debugState, setDebugState] = useState({
     mode: null,
@@ -50,27 +39,29 @@ export function useMobilePullToRefresh({
     tracking: false,
     lastReason: "idle",
   });
+
   const lockRef = useRef(false);
   const cooldownRef = useRef(0);
-  const prevDyRef = useRef(0);
-  const prevMoveDyRef = useRef(0);
+  const prevDirectionRef = useRef(1);
+
   const onRefreshRef = useRef(onRefresh);
   const onErrorRef = useRef(onError);
   const onPullStateChangeRef = useRef(onPullStateChange);
   const pullThresholdRef = useRef(pullThresholdPx);
   const cooldownMsRef = useRef(cooldownMs);
   const topTouchMaxYRef = useRef(topTouchMaxY);
+
   const gestureRef = useRef({
     mode: null, // "touch" | "pointer"
+    pointerId: null,
+    tracking: false,
     intent: "none", // "none" | "vertical" | "horizontal"
+    startedAtTop: false,
+    armed: false,
     startX: 0,
     startY: 0,
     dx: 0,
     dy: 0,
-    startedAtTop: false,
-    armed: false,
-    tracking: false,
-    pointerId: null,
     currentPull: 0,
     maxPull: 0,
   });
@@ -78,22 +69,18 @@ export function useMobilePullToRefresh({
   useEffect(() => {
     onRefreshRef.current = onRefresh;
   }, [onRefresh]);
-
   useEffect(() => {
     onErrorRef.current = onError;
   }, [onError]);
   useEffect(() => {
     onPullStateChangeRef.current = onPullStateChange;
   }, [onPullStateChange]);
-
   useEffect(() => {
     pullThresholdRef.current = pullThresholdPx;
   }, [pullThresholdPx]);
-
   useEffect(() => {
     cooldownMsRef.current = cooldownMs;
   }, [cooldownMs]);
-
   useEffect(() => {
     topTouchMaxYRef.current = topTouchMaxY;
   }, [topTouchMaxY]);
@@ -103,12 +90,13 @@ export function useMobilePullToRefresh({
     [pullPhysicsPx, pullThresholdPx],
   );
   const isPullArmed = pullProgress >= 1;
-  const pullDirection = pullPhysicsPx > 0 ? (prevDyRef.current < 0 ? "up" : "down") : "idle";
+  const pullDirection = pullPhysicsPx > 0 ? (prevDirectionRef.current < 0 ? "up" : "down") : "idle";
 
   useEffect(() => {
     if (!enabled) {
       setPullDragPx(0);
       setPullPhysicsPx(0);
+      setDebugState((prev) => ({ ...prev, tracking: false, armed: false, lastReason: "disabled" }));
     }
   }, [enabled]);
 
@@ -116,131 +104,63 @@ export function useMobilePullToRefresh({
     if (!enabled) return undefined;
     if (typeof window === "undefined") return undefined;
 
-    const logGesture = (...args) => {
-      if (!DEBUG_PTR_FORENSICS) return;
-      console.debug("[pull-refresh]", ...args);
-    };
-    const emitDebugLog = (hypothesisId, location, message, data = {}) => {
-      if (!DEBUG_PTR_FORENSICS) return;
-      // #region agent log
-      fetch("http://127.0.0.1:7713/ingest/ca4f9b27-c5d1-4802-b31e-0e9faf85a336", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "004537",
-        },
-        body: JSON.stringify({
-          sessionId: "004537",
-          runId: "pre-fix-1",
-          hypothesisId,
-          location,
-          message,
-          data,
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-    };
-
     const scrollEl = document.getElementById(targetElementId);
     if (!scrollEl) return undefined;
-
-    const hasCoarseTouch = window.matchMedia?.("(pointer: coarse)")?.matches === true;
-    const hasTouchPoints = Number(navigator?.maxTouchPoints || 0) > 0;
-    const hasTouchEvents = "ontouchstart" in window;
-    const prefersTouchPath = hasCoarseTouch || hasTouchPoints || hasTouchEvents;
-    const useTouchPath = prefersTouchPath;
-    const usePointerPath = !prefersTouchPath && "PointerEvent" in window;
-    logGesture("input-policy", { hasCoarseTouch, hasTouchPoints, hasTouchEvents, useTouchPath, usePointerPath });
-    emitDebugLog("H2", "useMobilePullToRefresh.js:122", "Input path policy selected", {
-      hasCoarseTouch,
-      hasTouchPoints,
-      hasTouchEvents,
-      useTouchPath,
-      usePointerPath,
-    });
-
-    let staleTimerId = 0;
-    const clearStaleTimer = () => {
-      if (!staleTimerId) return;
-      window.clearTimeout(staleTimerId);
-      staleTimerId = 0;
-    };
-    const armStaleTimer = () => {
-      clearStaleTimer();
-      staleTimerId = window.setTimeout(() => {
-        const s = gestureRef.current;
-        if (!s.tracking) return;
-        logGesture("stale-timeout-reset", { mode: s.mode, intent: s.intent, dx: s.dx, dy: s.dy });
-        emitDebugLog("H5", "useMobilePullToRefresh.js:135", "Gesture reset by stale timeout", {
-          mode: s.mode,
-          intent: s.intent,
-          dx: s.dx,
-          dy: s.dy,
-        });
-        cancelGesture();
-      }, GESTURE_STALE_TIMEOUT_MS);
-    };
 
     const setPullLock = (active) => {
       if (active) scrollEl.setAttribute("data-pull-intent", "vertical");
       else scrollEl.removeAttribute("data-pull-intent");
     };
-    const reportPullState = (overrides = {}) => {
-      const state = gestureRef.current;
-      const payload = {
-        tracking: Boolean(state.tracking),
-        armed: Boolean(state.armed),
-        inProgress: Boolean(lockRef.current),
-        ...overrides,
-      };
+
+    const reportPullState = () => {
+      const s = gestureRef.current;
       try {
-        onPullStateChangeRef.current?.(payload);
+        onPullStateChangeRef.current?.({
+          tracking: Boolean(s.tracking),
+          armed: Boolean(s.armed),
+          inProgress: Boolean(lockRef.current),
+        });
       } catch {
-        /* ignore callback errors */
+        /* ignore callback failures */
       }
     };
-    const updateDebugState = (patch = {}) => {
-      if (!DEBUG_PTR_FORENSICS) return;
-      setDebugState((prev) => ({ ...prev, ...patch }));
-    };
 
-    const resetPullVisualsToZero = () => {
-      setPullDragPx(0);
-      setPullPhysicsPx(0);
-    };
-    const getMaxVisualPullPx = () => {
+    const maxVisualPullPx = () => {
       if (typeof window === "undefined") return MAX_PULL_VISUAL_FALLBACK_PX;
       return Math.max(72, Math.round(window.innerHeight * MAX_PULL_VISUAL_VIEWPORT_RATIO));
     };
+
     const computeVisualPullPx = (currentPull, maxPull) => {
-      const cap = getMaxVisualPullPx();
+      const cap = maxVisualPullPx();
       const current = Math.max(0, Number(currentPull || 0));
       const peak = Math.max(0, Number(maxPull || 0), current);
-      // Preserve a stable visual offset while finger is still pulling down.
-      // This avoids icon disappearing on slow release after a high peak pull.
-      const effectivePull = Math.max(current, Math.min(peak, cap));
-      return Math.max(0, Math.min(cap, effectivePull));
+      return Math.max(0, Math.min(cap, Math.max(current, Math.min(peak, cap))));
     };
 
-    const resetGestureState = () => {
+    const resetVisuals = () => {
+      setPullDragPx(0);
+      setPullPhysicsPx(0);
+    };
+
+    const resetGesture = (reason = "reset") => {
       gestureRef.current = {
         mode: null,
+        pointerId: null,
+        tracking: false,
         intent: "none",
+        startedAtTop: false,
+        armed: false,
         startX: 0,
         startY: 0,
         dx: 0,
         dy: 0,
-        startedAtTop: false,
-        armed: false,
-        tracking: false,
-        pointerId: null,
         currentPull: 0,
         maxPull: 0,
       };
       setPullLock(false);
-      reportPullState({ tracking: false, armed: false });
-      updateDebugState({
+      reportPullState();
+      setDebugState((prev) => ({
+        ...prev,
         mode: null,
         intent: "none",
         startedAtTop: false,
@@ -248,38 +168,34 @@ export function useMobilePullToRefresh({
         dy: 0,
         armed: false,
         tracking: false,
-      });
-      clearStaleTimer();
-      prevDyRef.current = 0;
-      prevMoveDyRef.current = 0;
+        lastReason: reason,
+      }));
     };
 
-    const beginGesture = (clientX, clientY, mode) => {
+    const beginGesture = (clientX, clientY, mode, pointerId = null) => {
       if (lockRef.current) return;
       const y = Number(clientY || 0);
       if (y <= 0 || y > topTouchMaxYRef.current) return;
-      resetPullVisualsToZero();
       const startedAtTop = getScrollTop(scrollEl) <= TOP_SCROLL_EPSILON;
       gestureRef.current = {
         mode,
+        pointerId,
+        tracking: true,
         intent: "none",
+        startedAtTop,
+        armed: false,
         startX: Number(clientX || 0),
         startY: y,
         dx: 0,
         dy: 0,
-        startedAtTop,
-        armed: false,
-        tracking: true,
-        pointerId: mode === "pointer" ? gestureRef.current.pointerId : null,
         currentPull: 0,
         maxPull: 0,
       };
+      resetVisuals();
       setPullLock(false);
-      reportPullState({ tracking: true, armed: false });
-      armStaleTimer();
-      prevDyRef.current = 0;
-      prevMoveDyRef.current = 0;
-      updateDebugState({
+      reportPullState();
+      setDebugState((prev) => ({
+        ...prev,
         mode,
         intent: "none",
         startedAtTop,
@@ -288,256 +204,114 @@ export function useMobilePullToRefresh({
         armed: false,
         tracking: true,
         lastReason: "start",
-      });
-      logGesture("start", { mode, startedAtTop, y });
-      emitDebugLog("H3", "useMobilePullToRefresh.js:230", "Gesture started", {
-        mode,
-        startedAtTop,
-        y,
-        scrollTop: getScrollTop(scrollEl),
-      });
+      }));
     };
 
     const updateGesture = (eventLike, clientX, clientY) => {
-      const state = gestureRef.current;
-      if (!state.tracking || lockRef.current) return;
-      armStaleTimer();
-      state.dx = Number(clientX || 0) - state.startX;
-      state.dy = Number(clientY || 0) - state.startY;
-      prevDyRef.current =
-        state.dy < prevMoveDyRef.current ? -1 : state.dy > prevMoveDyRef.current ? 1 : prevDyRef.current;
-      prevMoveDyRef.current = state.dy;
-      const absDx = Math.abs(state.dx);
-      const absDy = Math.abs(state.dy);
-      const hasActivePull = state.currentPull > 0 || state.maxPull > 0;
+      const s = gestureRef.current;
+      if (!s.tracking || lockRef.current) return;
 
-      if (state.intent === "none") {
-        if (state.startedAtTop && state.dy > VERTICAL_INTENT_THRESHOLD_PX && absDy >= absDx * 0.8) {
-          state.intent = "vertical";
+      s.dx = Number(clientX || 0) - s.startX;
+      s.dy = Number(clientY || 0) - s.startY;
+      const absDx = Math.abs(s.dx);
+      const absDy = Math.abs(s.dy);
+      prevDirectionRef.current = s.dy < 0 ? -1 : s.dy > 0 ? 1 : prevDirectionRef.current;
+
+      if (s.intent === "none") {
+        if (s.startedAtTop && s.dy > VERTICAL_INTENT_THRESHOLD_PX && absDy >= absDx * 0.85) {
+          s.intent = "vertical";
           setPullLock(true);
-          reportPullState({ tracking: true, armed: false });
-          updateDebugState({ intent: "vertical", lastReason: "intent-vertical" });
-          logGesture("intent", { intent: state.intent, dx: state.dx, dy: state.dy, startedAtTop: state.startedAtTop });
-          emitDebugLog("H4", "useMobilePullToRefresh.js:248", "Intent locked vertical", {
-            dx: state.dx,
-            dy: state.dy,
-            startedAtTop: state.startedAtTop,
-          });
-        } else if (!hasActivePull && absDx > HORIZONTAL_INTENT_THRESHOLD_PX && absDx > absDy * HORIZONTAL_INTENT_RATIO) {
-          state.intent = "horizontal";
+        } else if (absDx > HORIZONTAL_INTENT_THRESHOLD_PX && absDx > absDy * HORIZONTAL_INTENT_RATIO) {
+          s.intent = "horizontal";
           setPullLock(false);
-          updateDebugState({ intent: "horizontal", lastReason: "intent-horizontal" });
-          logGesture("intent", { intent: state.intent, dx: state.dx, dy: state.dy, startedAtTop: state.startedAtTop });
-          emitDebugLog("H4", "useMobilePullToRefresh.js:254", "Intent locked horizontal", {
-            dx: state.dx,
-            dy: state.dy,
-            startedAtTop: state.startedAtTop,
-          });
         } else {
           return;
         }
       }
 
-      if (state.intent !== "vertical" && hasActivePull && state.startedAtTop) {
-        const nextPull = Math.max(0, state.dy);
-        state.currentPull = nextPull;
-        state.maxPull = Math.max(state.maxPull, nextPull);
-        state.armed = false;
-        setPullPhysicsPx(nextPull);
-        const nextVisualPull = computeVisualPullPx(nextPull, state.maxPull);
-        setPullDragPx(nextVisualPull);
-        logGesture("drag-visual-decay", {
-          dx: state.dx,
-          dy: state.dy,
-          currentPull: nextPull,
-          maxPull: state.maxPull,
-          visualPull: nextVisualPull,
-        });
-        reportPullState({ tracking: true, armed: false });
-        updateDebugState({
-          mode: state.mode,
-          intent: state.intent,
-          startedAtTop: state.startedAtTop,
-          dx: state.dx,
-          dy: state.dy,
+      if (s.intent !== "vertical") {
+        resetVisuals();
+        s.currentPull = 0;
+        s.armed = false;
+        reportPullState();
+        setDebugState((prev) => ({
+          ...prev,
+          mode: s.mode,
+          intent: s.intent,
+          startedAtTop: s.startedAtTop,
+          dx: s.dx,
+          dy: s.dy,
           armed: false,
           tracking: true,
-          lastReason: nextPull > 0 ? "drag-visual-decay" : "drag-up",
-        });
-        if (nextPull <= 0) state.maxPull = 0;
+          lastReason: "horizontal-intent",
+        }));
         return;
       }
 
-      if (
-        state.intent === "vertical" &&
-        state.startedAtTop &&
-        (state.dy > 0 || state.currentPull > 0)
-      ) {
-        if (eventLike?.cancelable) eventLike.preventDefault();
-        try {
-          if (scrollEl.scrollTop > 0) scrollEl.scrollTop = 0;
-        } catch {
-          /* ignore */
-        }
+      if (!s.startedAtTop || getScrollTop(scrollEl) > TOP_SCROLL_EPSILON * 2) {
+        resetVisuals();
+        s.currentPull = 0;
+        s.armed = false;
+        reportPullState();
+        setDebugState((prev) => ({
+          ...prev,
+          mode: s.mode,
+          intent: s.intent,
+          startedAtTop: s.startedAtTop,
+          dx: s.dx,
+          dy: s.dy,
+          armed: false,
+          tracking: true,
+          lastReason: "not-top",
+        }));
+        return;
       }
 
-      if (state.intent !== "vertical") return;
-      if (!state.startedAtTop) {
-        resetPullVisualsToZero();
-        state.currentPull = 0;
-        state.armed = false;
-        reportPullState({ tracking: true, armed: false });
-        updateDebugState({
-          mode: state.mode,
-          intent: state.intent,
-          startedAtTop: state.startedAtTop,
-          dx: state.dx,
-          dy: state.dy,
-          armed: false,
-          tracking: true,
-          lastReason: "drag-not-at-top",
-        });
-        return;
+      if (s.dy > 0 && eventLike?.cancelable) {
+        eventLike.preventDefault();
       }
-      const scrollTop = getScrollTop(scrollEl);
-      if (scrollTop > TOP_SCROLL_EPSILON * 2) {
-        resetPullVisualsToZero();
-        state.currentPull = 0;
-        state.armed = false;
-        reportPullState({ tracking: true, armed: false });
-        updateDebugState({
-          mode: state.mode,
-          intent: state.intent,
-          startedAtTop: state.startedAtTop,
-          dx: state.dx,
-          dy: state.dy,
-          armed: false,
-          tracking: true,
-          lastReason: "drag-left-top",
-        });
-        return;
-      }
-      if (state.dy <= 0) {
-        state.currentPull = 0;
-        state.maxPull = 0;
-        state.armed = false;
-        resetPullVisualsToZero();
-        reportPullState({ tracking: true, armed: false });
-        updateDebugState({
-          mode: state.mode,
-          intent: state.intent,
-          startedAtTop: state.startedAtTop,
-          dx: state.dx,
-          dy: state.dy,
-          armed: false,
-          tracking: true,
-          lastReason: "drag-up",
-        });
-        logGesture("drag", { dx: state.dx, dy: state.dy, armed: state.armed, atTop: scrollTop <= TOP_SCROLL_EPSILON });
-        return;
-      }
-      state.currentPull = state.dy;
-      state.maxPull = Math.max(state.maxPull, state.currentPull);
-      const threshold = pullThresholdRef.current;
-      state.armed = state.currentPull >= threshold;
-      setPullPhysicsPx(state.currentPull);
-      const nextVisualPull = computeVisualPullPx(state.currentPull, state.maxPull);
-      setPullDragPx(nextVisualPull);
-      reportPullState({ tracking: true, armed: state.armed });
-      updateDebugState({
-        mode: state.mode,
-        intent: state.intent,
-        startedAtTop: state.startedAtTop,
-        dx: state.dx,
-        dy: state.dy,
-        armed: state.armed,
+
+      const nextPull = Math.max(0, s.dy);
+      s.currentPull = nextPull;
+      s.maxPull = Math.max(s.maxPull, nextPull);
+      s.armed = nextPull >= pullThresholdRef.current;
+
+      setPullPhysicsPx(nextPull);
+      setPullDragPx(computeVisualPullPx(nextPull, s.maxPull));
+      reportPullState();
+      setDebugState((prev) => ({
+        ...prev,
+        mode: s.mode,
+        intent: s.intent,
+        startedAtTop: s.startedAtTop,
+        dx: s.dx,
+        dy: s.dy,
+        armed: s.armed,
         tracking: true,
-        lastReason: state.armed ? "drag-armed" : "drag",
-      });
-      logGesture("drag", {
-        dx: state.dx,
-        dy: state.dy,
-        currentPull: state.currentPull,
-        maxPull: state.maxPull,
-        visualPull: nextVisualPull,
-        armedNow: state.armed,
-        atTop: scrollTop <= TOP_SCROLL_EPSILON,
-      });
+        lastReason: s.armed ? "drag-armed" : "drag",
+      }));
     };
 
     const endGesture = () => {
-      clearStaleTimer();
-      const state = gestureRef.current;
-      const visualAtRelease = computeVisualPullPx(state.currentPull, state.maxPull);
-      const visibleAtRelease = visualAtRelease > 0;
-      const armedAtRelease = state.currentPull >= pullThresholdRef.current;
+      const s = { ...gestureRef.current };
       const shouldRefresh =
-        state.tracking &&
-        state.intent === "vertical" &&
-        state.startedAtTop &&
-        armedAtRelease;
-      const reason = !state.tracking
-        ? "not-tracking"
-        : state.intent !== "vertical"
-          ? "non-vertical-intent"
-          : !state.startedAtTop
-            ? "not-started-top"
-            : !armedAtRelease
-              ? "not-armed"
-              : "ok";
-      resetPullVisualsToZero();
-      resetGestureState();
-      if (!shouldRefresh || lockRef.current) {
-        updateDebugState({ lastReason: reason, tracking: false, armed: false });
-        logGesture("end", {
-          committed: false,
-          reason,
-          currentPullAtRelease: state.currentPull,
-          maxPullDuringGesture: state.maxPull,
-          visualAtRelease,
-          visibleAtRelease,
-          armedAtRelease,
-        });
-        emitDebugLog("H5", "useMobilePullToRefresh.js:327", "Refresh rejected", {
-          reason,
-          shouldRefresh,
-          lockActive: lockRef.current,
-          currentPullAtRelease: state.currentPull,
-          maxPullDuringGesture: state.maxPull,
-          visualAtRelease,
-          visibleAtRelease,
-          armedAtRelease,
-        });
-        return;
-      }
+        s.tracking &&
+        s.intent === "vertical" &&
+        s.startedAtTop &&
+        s.currentPull >= pullThresholdRef.current &&
+        !lockRef.current;
+
+      resetVisuals();
+      resetGesture(shouldRefresh ? "release-refresh" : "release-no-refresh");
+      if (!shouldRefresh) return;
+
       const now = Date.now();
-      if (now - cooldownRef.current < cooldownMsRef.current) {
-        updateDebugState({ lastReason: "cooldown", tracking: false, armed: false });
-        logGesture("end", { committed: false, reason: "cooldown" });
-        return;
-      }
+      if (now - cooldownRef.current < cooldownMsRef.current) return;
       cooldownRef.current = now;
+
       lockRef.current = true;
       setIsPullRefreshing(true);
-      reportPullState({ tracking: false, armed: false, inProgress: true });
-      updateDebugState({ lastReason: "refresh-trigger", tracking: false, armed: true });
-      logGesture("end", {
-        committed: true,
-        reason: "refresh-trigger",
-        currentPullAtRelease: state.currentPull,
-        maxPullDuringGesture: state.maxPull,
-        visualAtRelease,
-        visibleAtRelease,
-        armedAtRelease,
-      });
-      emitDebugLog("H5", "useMobilePullToRefresh.js:342", "Refresh triggered", {
-        currentPullAtRelease: state.currentPull,
-        maxPull: state.maxPull,
-        threshold: pullThresholdRef.current,
-        visualAtRelease,
-        visibleAtRelease,
-        armedAtRelease,
-      });
+      reportPullState();
       Promise.resolve(onRefreshRef.current?.())
         .catch((error) => {
           if (typeof onErrorRef.current === "function") onErrorRef.current(error);
@@ -545,94 +319,55 @@ export function useMobilePullToRefresh({
         .finally(() => {
           lockRef.current = false;
           setIsPullRefreshing(false);
-          reportPullState({ tracking: false, armed: false, inProgress: false });
-          try {
-            const top = getScrollTop(scrollEl);
-            if (top > 0 && top <= TOP_SCROLL_EPSILON * 3) {
-              scrollEl.scrollTop = 0;
-            }
-          } catch {
-            /* ignore */
-          }
+          reportPullState();
         });
     };
 
     const cancelGesture = () => {
-      clearStaleTimer();
-      resetPullVisualsToZero();
-      resetGestureState();
-      updateDebugState({ lastReason: "cancel" });
-      logGesture("end", { committed: false, reason: "cancel" });
+      resetVisuals();
+      resetGesture("cancel");
     };
 
     const onTouchStart = (e) => {
-      if (!useTouchPath) return;
       if (gestureRef.current.mode && gestureRef.current.mode !== "touch") return;
       const t = e.touches?.[0];
       if (!t) return;
-      logGesture("event-touchstart", { y: t.clientY, scrollTop: getScrollTop(scrollEl) });
-      emitDebugLog("H1", "useMobilePullToRefresh.js:403", "touchstart received", {
-        y: t.clientY,
-        scrollTop: getScrollTop(scrollEl),
-        useTouchPath,
-      });
       beginGesture(t.clientX, t.clientY, "touch");
     };
     const onTouchMove = (e) => {
-      if (!useTouchPath) return;
       if (gestureRef.current.mode !== "touch") return;
       const t = e.touches?.[0];
       if (!t) return;
-      logGesture("event-touchmove", { y: t.clientY, scrollTop: getScrollTop(scrollEl) });
       updateGesture(e, t.clientX, t.clientY);
     };
     const onTouchEnd = () => {
-      if (!useTouchPath) return;
       if (gestureRef.current.mode !== "touch") return;
-      logGesture("event-touchend", { scrollTop: getScrollTop(scrollEl) });
       endGesture();
     };
     const onTouchCancel = () => {
-      if (!useTouchPath) return;
       if (gestureRef.current.mode !== "touch") return;
-      logGesture("event-touchcancel");
       cancelGesture();
     };
 
     const onPointerDown = (e) => {
-      if (!usePointerPath) return;
+      if (!("PointerEvent" in window)) return;
       if (gestureRef.current.mode && gestureRef.current.mode !== "pointer") return;
       if (!e.isPrimary) return;
-      gestureRef.current.pointerId = e.pointerId;
-      logGesture("event-pointerdown", { pointerType: e.pointerType, y: e.clientY, scrollTop: getScrollTop(scrollEl) });
-      emitDebugLog("H2", "useMobilePullToRefresh.js:433", "pointerdown received", {
-        pointerType: e.pointerType,
-        y: e.clientY,
-        scrollTop: getScrollTop(scrollEl),
-        usePointerPath,
-      });
-      beginGesture(e.clientX, e.clientY, "pointer");
-      gestureRef.current.pointerId = e.pointerId;
+      beginGesture(e.clientX, e.clientY, "pointer", e.pointerId);
     };
     const onPointerMove = (e) => {
-      if (!usePointerPath) return;
       if (gestureRef.current.mode !== "pointer") return;
       if (!e.isPrimary || gestureRef.current.pointerId !== e.pointerId) return;
-      logGesture("event-pointermove", { pointerType: e.pointerType, y: e.clientY, scrollTop: getScrollTop(scrollEl) });
       updateGesture(e, e.clientX, e.clientY);
     };
     const onPointerUp = (e) => {
-      if (!usePointerPath) return;
       if (gestureRef.current.mode !== "pointer") return;
       if (!e.isPrimary || gestureRef.current.pointerId !== e.pointerId) return;
-      logGesture("event-pointerup", { pointerType: e.pointerType, y: e.clientY, scrollTop: getScrollTop(scrollEl) });
       endGesture();
     };
     const onPointerCancel = (e) => {
-      if (!usePointerPath) return;
       if (gestureRef.current.mode !== "pointer") return;
       if (!e.isPrimary || gestureRef.current.pointerId !== e.pointerId) return;
-      logGesture("event-pointercancel", { pointerType: e.pointerType });
       cancelGesture();
     };
 
@@ -646,7 +381,6 @@ export function useMobilePullToRefresh({
     scrollEl.addEventListener("pointercancel", onPointerCancel, { passive: true });
 
     return () => {
-      clearStaleTimer();
       setPullLock(false);
       scrollEl.removeEventListener("touchstart", onTouchStart);
       scrollEl.removeEventListener("touchmove", onTouchMove);

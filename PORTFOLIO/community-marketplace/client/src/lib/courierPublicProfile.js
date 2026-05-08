@@ -12,6 +12,7 @@ const MODE_DISPLAY = {
   walk: "Walk",
   run: "Run",
   bike: "Bike",
+  others: "Others",
 };
 
 /**

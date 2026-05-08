@@ -9,12 +9,17 @@ import {
 } from "../../lib/listingSaleMeta.js";
 
 import { UI_KIT } from "../../lib/appUiKit.js";
+import { formatCents } from "../../marketplace/money.js";
 import { resolveListingGalleryUrls } from "../../lib/listingImageUrl.js";
 import { ChevronLeftIcon, ChevronRightIcon } from "../landing/LandingMarketing.jsx";
 import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
 import { ListingProductMetaExtras } from "./ListingProductMetaExtras.jsx";
 import { ListingDescriptionMarkdown } from "./ListingDescriptionMarkdown.jsx";
 import { OrderStatusMilestoneList } from "./OrderStatusMilestoneList.jsx";
+import {
+  OrderCourierPoolAdjust,
+  canAdjustCourierPoolForViewer,
+} from "./OrderCourierPoolAdjust.jsx";
 import { SellerBuyerRatingSummary } from "./SellerBuyerRatingSummary.jsx";
 import { buyerReviewSectionTitleSummary } from "./buyerReviewSectionClasses.js";
 
@@ -237,6 +242,9 @@ export function ProductInspectModal({
   orderTimelineContextTab = null,
   /** `"buyer"` | `"seller"` — who is viewing (cancellation wording). */
   orderTimelineViewerRole = null,
+  /** Auth token when inspect opened from a delivery order (enables tip pool adjust UI). */
+  orderCourierPoolToken = "",
+  onOrderCourierPoolUpdated,
 }) {
   const [salePickerOpen, setSalePickerOpen] = useState(false);
   const [showOtherSaleOptions, setShowOtherSaleOptions] = useState(false);
@@ -288,6 +296,22 @@ export function ProductInspectModal({
     const one = String(orderTimelineOrder?.id || "").trim();
     return one ? [one] : [];
   }, [orderTimelineOrderIds, orderTimelineOrder]);
+
+  const orderInspectCourierBuyerPoolCents = useMemo(() => {
+    if (!orderTimelineOrder) return 0;
+    return Math.max(
+      0,
+      Number(orderTimelineOrder.buyerCourierContributionCents ?? orderTimelineOrder.buyer_courier_contribution_cents) || 0,
+    );
+  }, [orderTimelineOrder]);
+
+  const orderInspectCourierSellerPoolCents = useMemo(() => {
+    if (!orderTimelineOrder) return 0;
+    return Math.max(
+      0,
+      Number(orderTimelineOrder.sellerCourierContributionCents ?? orderTimelineOrder.seller_courier_contribution_cents) || 0,
+    );
+  }, [orderTimelineOrder]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -1053,6 +1077,54 @@ export function ProductInspectModal({
                     viewerRole={orderTimelineViewerRole}
                     className="mt-2"
                   />
+                  {String(orderTimelineOrder?.fulfillmentType || "") === "delivery" ? (
+                    <div className="mt-2 space-y-1.5 rounded-lg border border-neutral-200/80 bg-neutral-50/90 px-2.5 py-2 dark:border-slate-600 dark:bg-slate-900/50">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                        Delivery tip
+                      </p>
+                      {String(orderTimelineContextTab || "").trim() === "processing" ? (
+                        <div className="space-y-1 text-pretty">
+                          <span
+                            className="inline-flex max-w-full flex-wrap items-center gap-1 rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-violet-950 ring-1 ring-inset ring-violet-200/90 dark:bg-violet-950/45 dark:text-violet-100 dark:ring-violet-800/45"
+                            title="Courier tip pool (cash at handoff)"
+                          >
+                            <span>Delivery tip</span>
+                            <span className="tabular-nums">
+                              {formatCents(orderInspectCourierBuyerPoolCents + orderInspectCourierSellerPoolCents)}
+                            </span>
+                          </span>
+                          <p className="text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
+                            ({formatCents(orderInspectCourierBuyerPoolCents)} buyer ·{" "}
+                            {formatCents(orderInspectCourierSellerPoolCents)} seller) · cash at handoff
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-pretty text-[11px] leading-snug text-neutral-700 dark:text-slate-300">
+                          <span className="font-medium">Delivery tip</span>{" "}
+                          <span className="tabular-nums font-semibold">
+                            {formatCents(orderInspectCourierBuyerPoolCents + orderInspectCourierSellerPoolCents)}
+                          </span>
+                          <span className="font-normal text-neutral-500 dark:text-slate-500">
+                            {" "}
+                            ({formatCents(orderInspectCourierBuyerPoolCents)} buyer ·{" "}
+                            {formatCents(orderInspectCourierSellerPoolCents)} seller) · cash at handoff
+                          </span>
+                        </p>
+                      )}
+                      {orderCourierPoolToken &&
+                      orderInspectDisplayIds.length === 1 &&
+                      canAdjustCourierPoolForViewer(orderTimelineOrder, orderTimelineViewerRole) ? (
+                        <OrderCourierPoolAdjust
+                          order={orderTimelineOrder}
+                          viewerRole={orderTimelineViewerRole}
+                          token={orderCourierPoolToken}
+                          onUpdated={
+                            typeof onOrderCourierPoolUpdated === "function" ? onOrderCourierPoolUpdated : undefined
+                          }
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
                   <OrderTimelineFeedbackBlocks order={orderTimelineOrder} viewerRole={orderTimelineViewerRole} />
                 </>
               ) : null}

@@ -12,7 +12,7 @@ export function normalizeCourierModesResponse(d) {
 }
 
 /**
- * Persist `profiles.courier_modes` (walk/run/bike). Used by neighbor lists and claim flow.
+ * Persist `profiles.courier_modes` (walk/run/bike/others). Used by neighbor lists and claim flow.
  *
  * @param {string} token
  * @param {string[]} modes

@@ -66,37 +66,22 @@ export function CourierBuyerFeedbackList({ token }) {
   }, [token]);
 
   if (!token) {
-    return (
-      <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 text-sm text-neutral-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-400">
-        Sign in to see courier feedback.
-      </div>
-    );
+    return <p className="text-sm text-neutral-600 dark:text-slate-400">Sign in to see courier feedback.</p>;
   }
 
   if (loading) {
-    return (
-      <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 dark:border-slate-700 dark:bg-slate-900/40">
-        <p className="text-sm text-neutral-600 dark:text-slate-400">Loading feedback…</p>
-      </div>
-    );
+    return <p className="text-sm text-neutral-600 dark:text-slate-400">Loading feedback…</p>;
   }
 
   if (error) {
-    return (
-      <div className="rounded-xl border border-rose-200/90 bg-rose-50/80 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-200">
-        {error}
-      </div>
-    );
+    return <p className="text-sm text-rose-600 dark:text-rose-300">{error}</p>;
   }
 
   if (items.length === 0) {
     return (
-      <div className="rounded-xl border border-neutral-200/90 bg-neutral-50/50 p-4 dark:border-slate-700 dark:bg-slate-900/40">
-        <p className="text-sm text-neutral-600 dark:text-slate-400">
-          <span className="font-medium text-neutral-800 dark:text-slate-200">No courier feedback yet.</span> Buyers can leave a rating after a completed
-          delivery.
-        </p>
-      </div>
+      <p className="text-sm text-neutral-600 dark:text-slate-400">
+        <span className="font-medium text-neutral-800 dark:text-slate-200">No courier feedback yet.</span> Buyers can leave a rating after a completed delivery.
+      </p>
     );
   }
 
@@ -113,6 +98,9 @@ export function CourierBuyerFeedbackList({ token }) {
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-neutral-900 dark:text-slate-100">
+                  {String(row.listingTitle || "Listing").trim() || "Listing"}
+                </p>
                 {row.reviewedAt ? (
                   <p className="text-xs text-neutral-500 dark:text-slate-400">
                     {new Date(row.reviewedAt).toLocaleString(undefined, {

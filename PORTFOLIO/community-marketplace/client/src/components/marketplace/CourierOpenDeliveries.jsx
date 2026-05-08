@@ -563,21 +563,7 @@ export function CourierOpenDeliveries({
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
           <h4 className="min-w-0 text-xs font-semibold text-violet-950 dark:text-violet-100">Open tasks</h4>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            {headerTrailing}
-            <Button
-              type="button"
-              variant="secondary"
-              size="compact"
-              className={cn("min-h-9 px-2.5 text-[10px]", courierChrome.recoverySecondary)}
-              disabled={loading}
-              loading={loading}
-              loadingLabel="…"
-              onClick={() => void load()}
-            >
-              Refresh
-            </Button>
-          </div>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{headerTrailing}</div>
         </div>
         <div className="min-w-0 space-y-0.5">
           <p className="text-[11px] text-neutral-600 dark:text-slate-400">
@@ -684,7 +670,7 @@ export function CourierOpenDeliveries({
         <div className="space-y-1">
           <p className="text-[11px] font-medium text-neutral-800 dark:text-slate-200">Nothing open yet</p>
           <p className="text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
-            Tasks show after a seller accepts a delivery and any tip rules are met. Refresh or check back later.
+            Tasks show after a seller accepts a delivery and any tip rules are met. Check back later.
           </p>
         </div>
       ) : openTasksOrders.length > 0 ? (

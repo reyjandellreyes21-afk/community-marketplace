@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS public.listings (
   vertical_id text NOT NULL DEFAULT 'COM',
   sub_id text,
   fulfillment_modes text[] NOT NULL DEFAULT ARRAY['pickup','delivery']::text[],
-  status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'sold')),
+  status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'sold', 'deleted')),
   city_label text NOT NULL DEFAULT '',
   lat double precision,
   lng double precision,
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS public.courier_assignments (
   courier_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   amount_cents integer NOT NULL CHECK (amount_cents > 0),
   eta_minutes integer,
-  mode text NOT NULL CHECK (mode IN ('walk', 'run', 'bike')),
+  mode text NOT NULL CHECK (mode IN ('walk', 'run', 'bike', 'others')),
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected', 'superseded')),
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (order_id, courier_id)

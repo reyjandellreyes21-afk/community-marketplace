@@ -10,6 +10,7 @@ export const listingsValidators = {
     query("verticalId").optional().isString(),
     query("subId").optional().isString(),
     query("communityId").optional().isUUID(),
+    query("includeOwn").optional().isIn(["true", "false", "1", "0"]),
     query("q").optional().isString().isLength({ min: 1, max: 120 }),
     query("lat").optional().isFloat(),
     query("lng").optional().isFloat(),
@@ -140,18 +141,50 @@ export const marketplaceRouteValidators = {
   ],
   orderReview: [
     param("id").isUUID(),
-    body("productRating").optional({ nullable: true }).isInt({ min: 1, max: 5 }),
-    body("sellerRating").optional({ nullable: true }).isInt({ min: 1, max: 5 }),
+    /** JSON bodies often send numbers; `validator.isInt` only accepts strings — use numeric check. */
+    body("productRating")
+      .optional({ nullable: true })
+      .custom((v) => {
+        if (v === undefined || v === null || v === "") return true;
+        const n = Number(v);
+        return Number.isInteger(n) && n >= 1 && n <= 5;
+      })
+      .withMessage("productRating must be an integer from 1 to 5"),
+    body("sellerRating")
+      .optional({ nullable: true })
+      .custom((v) => {
+        if (v === undefined || v === null || v === "") return true;
+        const n = Number(v);
+        return Number.isInteger(n) && n >= 1 && n <= 5;
+      })
+      .withMessage("sellerRating must be an integer from 1 to 5"),
     body("productReviewText").optional({ nullable: true }).isString().isLength({ max: 2000 }),
     body("sellerReviewText").optional({ nullable: true }).isString().isLength({ max: 2000 }),
-    body("product_rating").optional({ nullable: true }).isInt({ min: 1, max: 5 }),
-    body("seller_rating").optional({ nullable: true }).isInt({ min: 1, max: 5 }),
+    body("product_rating")
+      .optional({ nullable: true })
+      .custom((v) => {
+        if (v === undefined || v === null || v === "") return true;
+        const n = Number(v);
+        return Number.isInteger(n) && n >= 1 && n <= 5;
+      }),
+    body("seller_rating")
+      .optional({ nullable: true })
+      .custom((v) => {
+        if (v === undefined || v === null || v === "") return true;
+        const n = Number(v);
+        return Number.isInteger(n) && n >= 1 && n <= 5;
+      }),
     body("product_review_text").optional({ nullable: true }).isString().isLength({ max: 2000 }),
     body("seller_review_text").optional({ nullable: true }).isString().isLength({ max: 2000 }),
   ],
   orderCourierReview: [
     param("id").isUUID(),
-    body("rating").isInt({ min: 1, max: 5 }),
+    body("rating")
+      .custom((v) => {
+        const n = Number(v);
+        return Number.isInteger(n) && n >= 1 && n <= 5;
+      })
+      .withMessage("rating must be an integer from 1 to 5"),
     body("tags").optional().isArray(),
     body("abuseNote").optional({ nullable: true }).isString().isLength({ max: 500 }),
   ],
@@ -187,13 +220,13 @@ export const marketplaceRouteValidators = {
   assignCommunityCourier: [
     param("id").isUUID(),
     body("courierId").isUUID(),
-    body("mode").optional().isIn(["walk", "run", "bike"]),
+    body("mode").optional().isIn(["walk", "run", "bike", "others"]),
   ],
-  claimCommunityCourier: [param("id").isUUID(), body("mode").optional().isIn(["walk", "run", "bike"])],
+  claimCommunityCourier: [param("id").isUUID(), body("mode").optional().isIn(["walk", "run", "bike", "others"])],
   respondCourierInvitation: [
     param("id").isUUID(),
     body("accept").isBoolean(),
-    body("mode").optional().isIn(["walk", "run", "bike"]),
+    body("mode").optional().isIn(["walk", "run", "bike", "others"]),
   ],
   createExpense: [
     body("amountCents").isInt({ min: 0 }),
@@ -202,4 +235,20 @@ export const marketplaceRouteValidators = {
     body("occurredOn").optional().isString().trim(),
   ],
   expenseIdParam: [param("id").isUUID()],
+  sellerDashboardQuery: [
+    query("preset").optional().isIn(["today", "week", "month", "year", "custom"]),
+    query("startDate").optional().isISO8601(),
+    query("endDate").optional().isISO8601(),
+  ],
+  createSellerLedgerEntry: [
+    body("entryType").isIn(["income", "expense", "stock_in", "stock_out"]),
+    body("source").optional().isIn(["manual", "in_app"]),
+    body("amountCents").optional().isInt({ min: 0 }),
+    body("quantityDelta").optional().isInt({ min: -1000000, max: 1000000 }),
+    body("listingId").optional({ nullable: true }).isUUID(),
+    body("itemName").optional({ nullable: true }).isString().isLength({ max: 200 }),
+    body("category").optional({ nullable: true }).isString().isLength({ min: 1, max: 64 }),
+    body("note").optional({ nullable: true }).isString().isLength({ max: 2000 }),
+    body("occurredAt").optional({ nullable: true }).isISO8601(),
+  ],
 };

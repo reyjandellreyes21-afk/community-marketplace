@@ -535,7 +535,7 @@ export function CommunityCourierPanel({
                 {modeKeysOrdered.length === 0 ? (
                   <span
                     className={`${pillBase} bg-white/90 font-normal text-neutral-500 ring-neutral-200/80 dark:bg-slate-900/50 dark:text-slate-400 dark:ring-slate-600/60`}
-                    title="This courier has not saved Walk, Run, or Bike on their profile yet (Activity → Courier → Edit)."
+                    title="This courier has not saved Walk, Run, Bike, or Others on their profile yet (Activity → Courier → Edit)."
                   >
                     Modes not set
                   </span>

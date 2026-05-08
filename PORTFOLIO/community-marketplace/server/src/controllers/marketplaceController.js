@@ -17,15 +17,56 @@ const isSchemaMissingError = (error) =>
   Boolean(error) &&
   (error.code === "PGRST205" || /schema cache/i.test(String(error.message || "")));
 
-/** Missing table/columns on `order_reviews` (e.g. product_rating / seller_rating not applied). */
+/** Missing table/modern columns on `order_reviews` (split schema expected by current API). */
 const isOrderReviewsSchemaError = (error) => {
   if (!error) return false;
   if (isSchemaMissingError(error)) return true;
   const msg = String(error.message || "");
   const code = error.code;
-  if (code === "PGRST204" && /order_reviews|rating|product_rating|seller_rating/i.test(msg)) return true;
-  if (/order_reviews/i.test(msg) && /column|rating|product_rating|seller_rating|could not find/i.test(msg)) return true;
+  if (
+    code === "PGRST204" &&
+    /order_reviews|product_rating|seller_rating|product_review_text|seller_review_text|product_rating_started_at|seller_rating_started_at/i.test(
+      msg,
+    )
+  )
+    return true;
+  if (
+    /order_reviews/i.test(msg) &&
+    /column|product_rating|seller_rating|product_review_text|seller_review_text|product_rating_started_at|seller_rating_started_at|could not find/i.test(
+      msg,
+    )
+  )
+    return true;
   return false;
+};
+
+/** Legacy schema missing (`rating`/`review_text`) when compatibility fallback is attempted. */
+const isLegacyOrderReviewsSchemaError = (error) => {
+  if (!error) return false;
+  const msg = String(error.message || "");
+  const code = String(error.code || "");
+  if (code === "PGRST204" && /order_reviews|rating|review_text/i.test(msg)) return true;
+  if (/order_reviews/i.test(msg) && /could not find.*(rating|review_text)|column.*(rating|review_text)/i.test(msg)) return true;
+  return false;
+};
+
+/** Split schema present but 72h timer columns not yet migrated. */
+const isOrderReviewTimerColumnMissingError = (error) => {
+  if (!error) return false;
+  const msg = String(error.message || "");
+  const code = String(error.code || "");
+  if (code === "42703" && /product_rating_started_at|seller_rating_started_at/i.test(msg)) return true;
+  if (code === "PGRST204" && /product_rating_started_at|seller_rating_started_at/i.test(msg)) return true;
+  return /column|could not find/i.test(msg) && /product_rating_started_at|seller_rating_started_at/i.test(msg);
+};
+
+const isCourierReviewTimerColumnMissingError = (error) => {
+  if (!error) return false;
+  const msg = String(error.message || "");
+  const code = String(error.code || "");
+  if (code === "42703" && /rating_started_at/i.test(msg)) return true;
+  if (code === "PGRST204" && /rating_started_at/i.test(msg)) return true;
+  return /column|could not find/i.test(msg) && /rating_started_at/i.test(msg);
 };
 
 const ORDER_REVIEWS_SETUP_HINT =
@@ -33,6 +74,84 @@ const ORDER_REVIEWS_SETUP_HINT =
 
 const COURIER_DELIVERY_REVIEWS_SETUP_HINT =
   "Create table courier_delivery_reviews: in Supabase SQL Editor run supabase/migrations/20260507140000_ensure_courier_delivery_reviews.sql (includes NOTIFY). Or locally: set DATABASE_URL in server/.env then npm run db:apply-courier-reviews (from server/). Or supabase db push.";
+
+/**
+ * Legacy compatibility: pre-split `order_reviews` used `rating` + `review_text`.
+ * Keep saves working even if split columns are missing in the connected project.
+ */
+async function upsertOrderReviewLegacyRow({
+  id,
+  order,
+  existing,
+  pr,
+  sr,
+  productTextIn,
+  sellerTextIn,
+  productReviewText,
+  sellerReviewText,
+  now,
+  resolvedListingIdForReview,
+}) {
+  const existingRating = existing?.rating != null ? Number(existing.rating) : null;
+  const nextRating = pr.set ? pr.n : sr.set ? sr.n : Number.isFinite(existingRating) ? existingRating : null;
+  if (nextRating == null) {
+    throw new AppError(400, "At least one of product or seller ratings must be set.");
+  }
+  const existingText =
+    existing?.review_text != null && String(existing.review_text).trim()
+      ? String(existing.review_text).trim().slice(0, 2000)
+      : null;
+  const nextReviewText = sellerTextIn
+    ? sellerReviewText || null
+    : productTextIn
+      ? productReviewText || null
+      : existingText;
+
+  if (existing?.id) {
+    const { data: updated, error: uerr } = await supabaseAdmin
+      .from("order_reviews")
+      .update({
+        rating: nextRating,
+        review_text: nextReviewText,
+        updated_at: now,
+        buyer_id: order.buyer_id,
+        seller_id: order.seller_id,
+        listing_id: resolvedListingIdForReview,
+      })
+      .eq("order_id", id)
+      .select("*")
+      .single();
+    if (uerr) {
+      if (isLegacyOrderReviewsSchemaError(uerr)) {
+        throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
+      }
+      throw new AppError(500, uerr.message);
+    }
+    return updated;
+  }
+
+  const { data: inserted, error: ierr } = await supabaseAdmin
+    .from("order_reviews")
+    .insert({
+      order_id: id,
+      buyer_id: order.buyer_id,
+      seller_id: order.seller_id,
+      listing_id: resolvedListingIdForReview,
+      rating: nextRating,
+      review_text: nextReviewText,
+      created_at: now,
+      updated_at: now,
+    })
+    .select("*")
+    .single();
+  if (ierr) {
+    if (isLegacyOrderReviewsSchemaError(ierr)) {
+      throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
+    }
+    throw new AppError(500, ierr.message);
+  }
+  return inserted;
+}
 
 const isBuyerCommentMissingError = (error) => {
   if (!error) return false;
@@ -694,8 +813,9 @@ async function enrichListingsWithSellerProfile(rows) {
 
 const buyerReviewRowToApi = (row) => {
   if (!row) return null;
-  const productRating = row.product_rating != null ? Number(row.product_rating) : null;
-  const sellerRating = row.seller_rating != null ? Number(row.seller_rating) : null;
+  const legacyRating = row.rating != null ? Number(row.rating) : null;
+  const productRating = row.product_rating != null ? Number(row.product_rating) : legacyRating;
+  const sellerRating = row.seller_rating != null ? Number(row.seller_rating) : legacyRating;
   const REVIEW_EDIT_WINDOW_MS = 72 * 60 * 60 * 1000;
   const nowMs = Date.now();
   const readDeadline = (startedAt, fallbackCreatedAt = null) => {
@@ -722,8 +842,8 @@ const buyerReviewRowToApi = (row) => {
   return {
     productRating: Number.isFinite(productRating) ? productRating : null,
     sellerRating: Number.isFinite(sellerRating) ? sellerRating : null,
-    productReviewText: String(row.product_review_text ?? "").trim() || null,
-    sellerReviewText: String(row.seller_review_text ?? "").trim() || null,
+    productReviewText: String(row.product_review_text ?? row.review_text ?? "").trim() || null,
+    sellerReviewText: String(row.seller_review_text ?? row.review_text ?? "").trim() || null,
     productRatingStartedAt: row.product_rating_started_at ?? null,
     sellerRatingStartedAt: row.seller_rating_started_at ?? null,
     productEditableUntil,
@@ -1072,7 +1192,7 @@ async function markCourierBusy(courierId) {
   await setProfileCourierStatus(courierId, "busy");
 }
 
-const COURIER_TRANSPORT_MODES = ["walk", "run", "bike"];
+const COURIER_TRANSPORT_MODES = ["walk", "run", "bike", "others"];
 
 /** True when this courier has an accepted assignment on an order still in the delivery pipeline (not completed/cancelled). */
 async function courierHasInProgressDelivery(courierId) {
@@ -1098,14 +1218,14 @@ async function courierHasInProgressDelivery(courierId) {
 /**
  * Picks `courier_assignments.mode`: explicit request wins if allowed by profile; else bike → run → walk.
  * @param {string[]} profileModes normalized list from `profiles.courier_modes`
- * @param {string} [requestedRaw] optional `walk` | `run` | `bike` from claim/assign body
+ * @param {string} [requestedRaw] optional mode from claim/assign body
  */
 function resolveCourierAssignmentMode(profileModes, requestedRaw) {
   const modes = normalizeDbTextArray(profileModes);
   const req = requestedRaw != null ? String(requestedRaw).trim().toLowerCase() : "";
   if (req) {
     if (!COURIER_TRANSPORT_MODES.includes(req)) {
-      throw new AppError(400, "mode must be walk, run, or bike.");
+      throw new AppError(400, "mode must be walk, run, bike, or others.");
     }
     if (modes.length > 0 && !modes.includes(req)) {
       throw new AppError(400, "Choose a transport mode enabled on your courier profile.");
@@ -1115,6 +1235,7 @@ function resolveCourierAssignmentMode(profileModes, requestedRaw) {
   if (modes.includes("bike")) return "bike";
   if (modes.includes("run")) return "run";
   if (modes.includes("walk")) return "walk";
+  if (modes.includes("others")) return "others";
   return "walk";
 }
 
@@ -1559,6 +1680,7 @@ export const listListings = async (req, res, next) => {
       limit,
       offset,
       sellerId: sellerIdQuery,
+      includeOwn,
     } = req.query;
     const pageLimit = parsePositiveInt(limit, DEFAULT_LISTINGS_LIMIT, MAX_LISTINGS_LIMIT);
     const pageOffset = Math.max(0, Math.floor(Number(offset) || 0));
@@ -1574,6 +1696,11 @@ export const listListings = async (req, res, next) => {
     if (categoryFilter) q = q.eq("vertical_id", categoryFilter);
     if (subId && subId !== "all") q = q.eq("sub_id", String(subId));
     if (communityId) q = q.eq("community_id", String(communityId));
+    const includeOwnListings =
+      String(includeOwn || "").trim().toLowerCase() === "true" || String(includeOwn || "").trim() === "1";
+    if (!sellerFilter && req.user?.id && !includeOwnListings) {
+      q = q.neq("seller_id", req.user.id);
+    }
     const search = String(textQuery || "").trim();
     if (search) {
       const escaped = search.replace(/[%_,]/g, "\\$&");
@@ -1895,9 +2022,26 @@ export const updateListing = async (req, res, next) => {
 export const deleteListing = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { data: existing } = await supabaseAdmin.from("listings").select("id,seller_id").eq("id", id).maybeSingle();
+    const { data: existing } = await supabaseAdmin.from("listings").select("id,seller_id,status").eq("id", id).maybeSingle();
     if (!existing || existing.seller_id !== req.user.id) throw new AppError(404, "Listing not found.");
-    const { error } = await supabaseAdmin.from("listings").delete().eq("id", id);
+    if (String(existing.status || "").toLowerCase() === "deleted") {
+      res.status(204).send();
+      return;
+    }
+    // Keep historical orders/reviews intact: mark listing deleted instead of hard-delete.
+    const { error } = await supabaseAdmin
+      .from("listings")
+      .update({ status: "deleted", updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (
+      error &&
+      /status|check constraint|listings_status_check|violates check constraint/i.test(String(error.message || ""))
+    ) {
+      throw new AppError(
+        503,
+        "Database schema is outdated for listing delete. Apply migration `supabase/migrations/20260507153000_listings_allow_deleted_status_soft_delete.sql`, then run `NOTIFY pgrst, 'reload schema';`.",
+      );
+    }
     if (error) throw new AppError(500, error.message);
     res.status(204).send();
   } catch (e) {
@@ -1911,6 +2055,7 @@ export const listMyListings = async (req, res, next) => {
       .from("listings")
       .select("*")
       .eq("seller_id", req.user.id)
+      .neq("status", "deleted")
       .order("created_at", { ascending: false });
     const ratingMap = await aggregateSellerOrderRatingStatsBySellerId([req.user.id]);
     const rs = ratingMap.get(req.user.id) || { sellerAvgRating: null, sellerReviewCount: 0 };
@@ -2870,6 +3015,22 @@ export const upsertOrderReview = async (req, res, next) => {
 
     const touchesProductSection = pr.set || productTextIn;
     const touchesSellerSection = sr.set || sellerTextIn;
+
+    /** DB FK used to require `listings.id`; soft-deleted listings still exist. Hard-removed rows break inserts unless `listing_id` is nullable (see migration `20260517120000_order_reviews_listing_nullable_fk.sql`). */
+    const orderListingIdRaw = order.listing_id != null ? String(order.listing_id).trim() : "";
+    let resolvedListingIdForReview = orderListingIdRaw || null;
+    if (orderListingIdRaw) {
+      const { data: listingStillExists, error: listingLookupErr } = await supabaseAdmin
+        .from("listings")
+        .select("id")
+        .eq("id", orderListingIdRaw)
+        .maybeSingle();
+      if (!listingLookupErr && !listingStillExists) {
+        /** Allow product + seller saves with `listing_id` null (listing aggregates skip null); requires nullable FK migration. */
+        resolvedListingIdForReview = null;
+      }
+    }
+
     const productStartedAtRaw = existing?.product_rating_started_at ?? existing?.created_at ?? null;
     const sellerStartedAtRaw = existing?.seller_rating_started_at ?? existing?.created_at ?? null;
     const productDeadlineMs = existing?.product_rating != null ? new Date(productStartedAtRaw).getTime() + REVIEW_EDIT_WINDOW_MS : NaN;
@@ -2941,52 +3102,154 @@ export const upsertOrderReview = async (req, res, next) => {
 
     let reviewRow;
     if (existing?.id) {
-      const { data: updated, error: uerr } = await supabaseAdmin
+      const updatePayload = {
+        product_rating: nextProductRating,
+        seller_rating: nextSellerRating,
+        product_review_text: nextProductText,
+        seller_review_text: nextSellerText,
+        product_rating_started_at: nextProductRatingStartedAt,
+        seller_rating_started_at: nextSellerRatingStartedAt,
+        updated_at: now,
+        buyer_id: order.buyer_id,
+        seller_id: order.seller_id,
+        listing_id: resolvedListingIdForReview,
+      };
+      let { data: updated, error: uerr } = await supabaseAdmin
         .from("order_reviews")
-        .update({
-          product_rating: nextProductRating,
-          seller_rating: nextSellerRating,
-          product_review_text: nextProductText,
-          seller_review_text: nextSellerText,
-          product_rating_started_at: nextProductRatingStartedAt,
-          seller_rating_started_at: nextSellerRatingStartedAt,
-          updated_at: now,
-          buyer_id: order.buyer_id,
-          seller_id: order.seller_id,
-          listing_id: order.listing_id,
-        })
+        .update(updatePayload)
         .eq("order_id", id)
         .select("*")
         .single();
-      if (isOrderReviewsSchemaError(uerr)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
-      if (uerr) throw new AppError(500, uerr.message);
-      reviewRow = updated;
+      if (uerr && isOrderReviewTimerColumnMissingError(uerr)) {
+        const { product_rating_started_at, seller_rating_started_at, ...updateWithoutTimers } = updatePayload;
+        const retry = await supabaseAdmin
+          .from("order_reviews")
+          .update(updateWithoutTimers)
+          .eq("order_id", id)
+          .select("*")
+          .single();
+        updated = retry.data;
+        uerr = retry.error;
+      }
+      if (isOrderReviewsSchemaError(uerr)) {
+        reviewRow = await upsertOrderReviewLegacyRow({
+          id,
+          order,
+          existing,
+          pr,
+          sr,
+          productTextIn,
+          sellerTextIn,
+          productReviewText,
+          sellerReviewText,
+          now,
+          resolvedListingIdForReview,
+        });
+      }
+      if (reviewRow) {
+        // handled by legacy compatibility write
+      } else
+      if (uerr) {
+        const code = String(uerr.code || "");
+        const msg = String(uerr.message || "");
+        if (code === "23503" || /foreign key|violates foreign key/i.test(msg)) {
+          throw new AppError(
+            503,
+            `Could not link this review to the product listing (${ORDER_REVIEWS_SETUP_HINT}). If the listing was removed, run migration \`20260517120000_order_reviews_listing_nullable_fk.sql\` then NOTIFY pgrst.`,
+          );
+        }
+        if (code === "23502" && /listing_id/i.test(msg)) {
+          throw new AppError(
+            503,
+            "Apply migration `20260517120000_order_reviews_listing_nullable_fk.sql` so seller-only reviews save when the product listing row is missing.",
+          );
+        }
+        throw new AppError(500, uerr.message);
+      }
+      reviewRow = reviewRow || updated;
     } else {
-      const { data: inserted, error: ierr } = await supabaseAdmin
+      const insertPayload = {
+        order_id: id,
+        buyer_id: order.buyer_id,
+        seller_id: order.seller_id,
+        listing_id: resolvedListingIdForReview,
+        product_rating: nextProductRating,
+        seller_rating: nextSellerRating,
+        product_review_text: nextProductText,
+        seller_review_text: nextSellerText,
+        product_rating_started_at: nextProductRatingStartedAt,
+        seller_rating_started_at: nextSellerRatingStartedAt,
+        created_at: now,
+        updated_at: now,
+      };
+      let { data: inserted, error: ierr } = await supabaseAdmin
         .from("order_reviews")
-        .insert({
-          order_id: id,
-          buyer_id: order.buyer_id,
-          seller_id: order.seller_id,
-          listing_id: order.listing_id,
-          product_rating: nextProductRating,
-          seller_rating: nextSellerRating,
-          product_review_text: nextProductText,
-          seller_review_text: nextSellerText,
-          product_rating_started_at: nextProductRatingStartedAt,
-          seller_rating_started_at: nextSellerRatingStartedAt,
-          created_at: now,
-          updated_at: now,
-        })
+        .insert(insertPayload)
         .select("*")
         .single();
-      if (isOrderReviewsSchemaError(ierr)) throw new AppError(500, `Order reviews are not available (${ORDER_REVIEWS_SETUP_HINT})`);
-      if (ierr) throw new AppError(500, ierr.message);
-      reviewRow = inserted;
+      if (ierr && isOrderReviewTimerColumnMissingError(ierr)) {
+        const { product_rating_started_at, seller_rating_started_at, ...insertWithoutTimers } = insertPayload;
+        const retry = await supabaseAdmin
+          .from("order_reviews")
+          .insert(insertWithoutTimers)
+          .select("*")
+          .single();
+        inserted = retry.data;
+        ierr = retry.error;
+      }
+      if (isOrderReviewsSchemaError(ierr)) {
+        reviewRow = await upsertOrderReviewLegacyRow({
+          id,
+          order,
+          existing,
+          pr,
+          sr,
+          productTextIn,
+          sellerTextIn,
+          productReviewText,
+          sellerReviewText,
+          now,
+          resolvedListingIdForReview,
+        });
+      }
+      if (reviewRow) {
+        // handled by legacy compatibility write
+      } else
+      if (ierr) {
+        const code = String(ierr.code || "");
+        const msg = String(ierr.message || "");
+        if (code === "23503" || /foreign key|violates foreign key/i.test(msg)) {
+          throw new AppError(
+            503,
+            `Could not link this review to the product listing (${ORDER_REVIEWS_SETUP_HINT}). If the listing was removed, run migration \`20260517120000_order_reviews_listing_nullable_fk.sql\` then NOTIFY pgrst.`,
+          );
+        }
+        if (code === "23502" && /listing_id/i.test(msg)) {
+          throw new AppError(
+            503,
+            "Apply migration `20260517120000_order_reviews_listing_nullable_fk.sql` so seller-only reviews save when the product listing row is missing.",
+          );
+        }
+        throw new AppError(500, ierr.message);
+      }
+      reviewRow = reviewRow || inserted;
     }
 
-    const notifySeller = sr.set;
-    if (notifySeller) {
+    if (pr.set) {
+      const hadProduct = existing?.product_rating != null;
+      await notifyUserOrderEvent({
+        recipientUserId: order.seller_id,
+        actorUserId: req.user.id,
+        orderId: id,
+        recipientRole: "seller",
+        title: "New product rating",
+        body: hadProduct
+          ? "A buyer updated their product (item) rating on a completed order."
+          : "A buyer rated the product (item) on a completed order.",
+        orderStatusForTab: order.status,
+      });
+    }
+    if (sr.set) {
       const hadSeller = existing?.seller_rating != null;
       await notifyUserOrderEvent({
         recipientUserId: order.seller_id,
@@ -3000,8 +3263,9 @@ export const upsertOrderReview = async (req, res, next) => {
     }
     const hasCcDelivery = (await orderIdsWithAcceptedCommunityCourier([String(order.id)])).has(String(order.id));
     const elig = await buyerRatingEligibilityExtras(order, hasCcDelivery);
+    const listingMeta = await fetchListingMetaForOrder(order);
     res.json({
-      order: orderRowToApi(order, reviewRow, null, null, {
+      order: orderRowToApi(order, reviewRow, listingMeta, null, {
         hasCommunityCourierDelivery: hasCcDelivery,
         buyerMayRateSeller: elig.buyerMayRateSeller,
         buyerMayRateCourier: elig.buyerMayRateCourier,
@@ -3117,40 +3381,63 @@ export const upsertCourierDeliveryReview = async (req, res, next) => {
 
     let reviewRow;
     if (existing?.id) {
-      const { data: updated, error: uerr } = await supabaseAdmin
+      const updatePayload = {
+        rating,
+        tags,
+        abuse_note: abuseNote || null,
+        abuse_reported_at: abuseReportedAt,
+        rating_started_at: existing.rating_started_at ?? existing.created_at ?? now,
+        updated_at: now,
+      };
+      let { data: updated, error: uerr } = await supabaseAdmin
         .from("courier_delivery_reviews")
-        .update({
-          rating,
-          tags,
-          abuse_note: abuseNote || null,
-          abuse_reported_at: abuseReportedAt,
-          rating_started_at: existing.rating_started_at ?? existing.created_at ?? now,
-          updated_at: now,
-        })
+        .update(updatePayload)
         .eq("id", existing.id)
         .select("*")
         .single();
+      if (uerr && isCourierReviewTimerColumnMissingError(uerr)) {
+        const { rating_started_at, ...updateWithoutTimer } = updatePayload;
+        const retry = await supabaseAdmin
+          .from("courier_delivery_reviews")
+          .update(updateWithoutTimer)
+          .eq("id", existing.id)
+          .select("*")
+          .single();
+        updated = retry.data;
+        uerr = retry.error;
+      }
       if (isSchemaMissingError(uerr)) throw new AppError(500, `Courier reviews are not available (${COURIER_DELIVERY_REVIEWS_SETUP_HINT})`);
       if (uerr) throw new AppError(500, uerr.message);
       reviewRow = updated;
     } else {
-      const { data: inserted, error: ierr } = await supabaseAdmin
+      const insertPayload = {
+        courier_assignment_id: assignmentId,
+        order_id: id,
+        buyer_id: order.buyer_id,
+        courier_id: courierId,
+        rating,
+        tags,
+        abuse_note: abuseNote || null,
+        abuse_reported_at: abuseReportedAt,
+        rating_started_at: now,
+        created_at: now,
+        updated_at: now,
+      };
+      let { data: inserted, error: ierr } = await supabaseAdmin
         .from("courier_delivery_reviews")
-        .insert({
-          courier_assignment_id: assignmentId,
-          order_id: id,
-          buyer_id: order.buyer_id,
-          courier_id: courierId,
-          rating,
-          tags,
-          abuse_note: abuseNote || null,
-          abuse_reported_at: abuseReportedAt,
-          rating_started_at: now,
-          created_at: now,
-          updated_at: now,
-        })
+        .insert(insertPayload)
         .select("*")
         .single();
+      if (ierr && isCourierReviewTimerColumnMissingError(ierr)) {
+        const { rating_started_at, ...insertWithoutTimer } = insertPayload;
+        const retry = await supabaseAdmin
+          .from("courier_delivery_reviews")
+          .insert(insertWithoutTimer)
+          .select("*")
+          .single();
+        inserted = retry.data;
+        ierr = retry.error;
+      }
       if (isSchemaMissingError(ierr)) throw new AppError(500, `Courier reviews are not available (${COURIER_DELIVERY_REVIEWS_SETUP_HINT})`);
       if (ierr) {
         const code = String(ierr.code || "");
@@ -3319,18 +3606,19 @@ export const patchOrder = async (req, res, next) => {
     if (patch.status === "completed") {
       const { data: listing } = await supabaseAdmin
         .from("listings")
-        .select("quantity,sold_count")
+        .select("quantity,sold_count,status")
         .eq("id", order.listing_id)
         .maybeSingle();
       if (listing && typeof listing.quantity === "number") {
         const newQty = Math.max(0, listing.quantity - order.quantity);
         const soldCountBase = Math.max(0, Number(listing.sold_count) || 0);
         const nextSoldCount = soldCountBase + Math.max(0, Number(order.quantity) || 0);
+        const listingIsDeleted = String(listing.status || "").toLowerCase() === "deleted";
         const listingPatch = {
           quantity: newQty,
           sold_count: nextSoldCount,
           updated_at: new Date().toISOString(),
-          ...(newQty === 0 ? { status: "sold" } : {}),
+          ...(newQty === 0 && !listingIsDeleted ? { status: "sold" } : {}),
         };
         const { error: listingUpdateErr } = await supabaseAdmin
           .from("listings")
@@ -3712,7 +4000,9 @@ export const getCourierActiveDelivery = async (req, res, next) => {
 
 export const patchCourierModes = async (req, res, next) => {
   try {
-    const modes = Array.isArray(req.body.modes) ? req.body.modes.filter((m) => ["walk", "run", "bike"].includes(String(m))) : [];
+    const modes = Array.isArray(req.body.modes)
+      ? req.body.modes.filter((m) => COURIER_TRANSPORT_MODES.includes(String(m)))
+      : [];
     const { error } = await supabaseAdmin.from("profiles").update({ courier_modes: modes }).eq("id", req.user.id);
     if (error?.code === "PGRST204" || error?.message?.includes("courier_modes")) {
       return res.json({ modes, note: "Add courier_modes column via migration to persist." });
@@ -4556,38 +4846,199 @@ export const deleteExpense = async (req, res, next) => {
   }
 };
 
+function getDashboardDateRange(query = {}) {
+  const preset = String(query.preset || "today").trim().toLowerCase();
+  const now = new Date();
+  const end = new Date(now);
+  let start = new Date(now);
+  if (preset === "today") {
+    start.setHours(0, 0, 0, 0);
+  } else if (preset === "week") {
+    const day = start.getDay();
+    const diff = day === 0 ? 6 : day - 1;
+    start.setDate(start.getDate() - diff);
+    start.setHours(0, 0, 0, 0);
+  } else if (preset === "year") {
+    start = new Date(now.getFullYear(), 0, 1);
+  } else if (preset === "custom") {
+    const customStart = query.startDate ? new Date(query.startDate) : null;
+    const customEnd = query.endDate ? new Date(query.endDate) : null;
+    if (!customStart || !customEnd || Number.isNaN(customStart.getTime()) || Number.isNaN(customEnd.getTime())) {
+      throw new AppError(400, "Custom range requires valid startDate and endDate.");
+    }
+    start = customStart;
+    end.setTime(customEnd.getTime());
+    end.setHours(23, 59, 59, 999);
+  } else {
+    start = new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+  if (start > end) throw new AppError(400, "startDate cannot be later than endDate.");
+  return { preset, startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
+function toSellerLedgerApiRow(row) {
+  return {
+    id: row.id,
+    entryType: row.entry_type,
+    source: row.source,
+    amountCents: row.amount_cents || 0,
+    quantityDelta: row.quantity_delta || 0,
+    listingId: row.listing_id || null,
+    itemName: String(row.item_name || "").trim() || null,
+    category: String(row.category || "").trim() || "general",
+    note: String(row.note || "").trim() || null,
+    occurredAt: row.occurred_at,
+    createdAt: row.created_at,
+  };
+}
+
 export const sellerSummary = async (req, res, next) => {
   try {
+    const { preset, startIso, endIso } = getDashboardDateRange(req.query || {});
     const { data: orders, error: oerr } = await supabaseAdmin
       .from("orders")
       .select("cod_goods_cents, cod_delivery_cents, status, created_at")
-      .eq("seller_id", req.user.id);
+      .eq("seller_id", req.user.id)
+      .gte("created_at", startIso)
+      .lte("created_at", endIso);
     if (oerr && !isSchemaMissingError(oerr)) throw new AppError(500, oerr.message);
     const orderRows = isSchemaMissingError(oerr) ? [] : orders || [];
     const completed = orderRows.filter((o) => o.status === "completed");
-    const revenueCents = completed.reduce((s, o) => s + (o.cod_goods_cents || 0), 0);
+    const inAppRevenueCents = completed.reduce((s, o) => s + (o.cod_goods_cents || 0), 0);
+
     const { data: expenses, error: eerr } = await supabaseAdmin.from("seller_expenses").select("amount_cents").eq("seller_id", req.user.id);
     if (eerr && !isSchemaMissingError(eerr)) throw new AppError(500, eerr.message);
     const expenseRows = isSchemaMissingError(eerr) ? [] : expenses || [];
-    const expenseCents = expenseRows.reduce((s, e) => s + (e.amount_cents || 0), 0);
+    const inAppExpenseCents = expenseRows.reduce((s, e) => s + (e.amount_cents || 0), 0);
+
+    const { data: rangeExpenses, error: reerr } = await supabaseAdmin
+      .from("seller_expenses")
+      .select("id, amount_cents, category, note, occurred_on, created_at")
+      .eq("seller_id", req.user.id)
+      .gte("occurred_on", startIso.slice(0, 10))
+      .lte("occurred_on", endIso.slice(0, 10))
+      .order("occurred_on", { ascending: false });
+    if (reerr && !isSchemaMissingError(reerr)) throw new AppError(500, reerr.message);
+
+    const { data: ledger, error: lerr } = await supabaseAdmin
+      .from("seller_ledger_entries")
+      .select("*")
+      .eq("seller_id", req.user.id)
+      .gte("occurred_at", startIso)
+      .lte("occurred_at", endIso)
+      .order("occurred_at", { ascending: false });
+    if (lerr && !isSchemaMissingError(lerr)) throw new AppError(500, lerr.message);
+    const ledgerRows = isSchemaMissingError(lerr) ? [] : ledger || [];
+    const manualIncomeCents = ledgerRows.filter((r) => r.entry_type === "income").reduce((s, r) => s + (r.amount_cents || 0), 0);
+    const manualExpenseCents = ledgerRows.filter((r) => r.entry_type === "expense").reduce((s, r) => s + (r.amount_cents || 0), 0);
+    const externalStockIn = ledgerRows.filter((r) => r.entry_type === "stock_in").reduce((s, r) => s + Math.max(0, r.quantity_delta || 0), 0);
+    const externalStockOut = ledgerRows.filter((r) => r.entry_type === "stock_out").reduce((s, r) => s + Math.abs(Math.min(0, r.quantity_delta || 0)), 0);
+
     const { data: inv, error: ierr } = await supabaseAdmin
       .from("listings")
       .select("id,quantity,title,status")
       .eq("seller_id", req.user.id);
     if (ierr && !isSchemaMissingError(ierr)) throw new AppError(500, ierr.message);
     const invRows = isSchemaMissingError(ierr) ? [] : inv || [];
+    const totalStockUnits = invRows.reduce((sum, row) => sum + Math.max(0, Number(row.quantity) || 0), 0);
+    const lowStockItems = invRows.filter((row) => Number(row.quantity) > 0 && Number(row.quantity) <= 5).length;
+    const outOfStockItems = invRows.filter((row) => Number(row.quantity) <= 0).length;
+    const totalItems = invRows.length;
+
+    const revenueCents = inAppRevenueCents + manualIncomeCents;
+    const expenseCents = inAppExpenseCents + manualExpenseCents;
+    const recentExpenses = (isSchemaMissingError(reerr) ? [] : rangeExpenses || []).map((r) => ({
+      id: r.id,
+      kind: "expense",
+      source: "in_app",
+      amountCents: r.amount_cents || 0,
+      quantityDelta: 0,
+      category: String(r.category || "general"),
+      note: String(r.note || ""),
+      occurredAt: r.occurred_on,
+      createdAt: r.created_at,
+    }));
+    const recentManual = ledgerRows.map(toSellerLedgerApiRow);
+    const recentActivity = [...recentManual, ...recentExpenses]
+      .sort((a, b) => String(b.occurredAt || "").localeCompare(String(a.occurredAt || "")))
+      .slice(0, 20);
+
     res.json({
+      preset,
+      range: { startDate: startIso, endDate: endIso },
       revenueCents,
       expenseCents,
       profitCents: revenueCents - expenseCents,
+      inAppRevenueCents,
+      inAppExpenseCents,
+      manualIncomeCents,
+      manualExpenseCents,
       completedOrders: completed.length,
+      totalItems,
+      totalStockUnits,
+      lowStockItems,
+      outOfStockItems,
+      externalStockIn,
+      externalStockOut,
       inventory: invRows.map((r) => ({
         listingId: r.id,
         title: r.title,
         quantity: r.quantity,
         status: r.status,
       })),
+      recentActivity,
     });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const listSellerLedgerEntries = async (req, res, next) => {
+  try {
+    const { startIso, endIso } = getDashboardDateRange(req.query || {});
+    const { data, error } = await supabaseAdmin
+      .from("seller_ledger_entries")
+      .select("*")
+      .eq("seller_id", req.user.id)
+      .gte("occurred_at", startIso)
+      .lte("occurred_at", endIso)
+      .order("occurred_at", { ascending: false });
+    if (error?.code === "PGRST205") return res.json({ items: [] });
+    if (error) throw new AppError(500, error.message);
+    res.json({ items: (data || []).map(toSellerLedgerApiRow) });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const createSellerLedgerEntry = async (req, res, next) => {
+  try {
+    const entryType = String(req.body.entryType || "").trim();
+    const quantityRaw = req.body.quantityDelta ?? 0;
+    const quantityAbs = Math.max(0, Math.floor(Math.abs(Number(quantityRaw) || 0)));
+    const signedQuantity =
+      entryType === "stock_out" ? -quantityAbs : entryType === "stock_in" ? quantityAbs : Math.floor(Number(quantityRaw) || 0);
+    const row = {
+      seller_id: req.user.id,
+      entry_type: entryType,
+      source: String(req.body.source || "manual").trim() || "manual",
+      amount_cents: Math.max(0, Math.floor(Number(req.body.amountCents) || 0)),
+      quantity_delta: signedQuantity,
+      listing_id: req.body.listingId || null,
+      item_name: String(req.body.itemName || "").slice(0, 200),
+      category: String(req.body.category || "general").slice(0, 64),
+      note: String(req.body.note || "").slice(0, 2000),
+      occurred_at: req.body.occurredAt || new Date().toISOString(),
+    };
+    if ((entryType === "income" || entryType === "expense") && row.amount_cents <= 0) {
+      throw new AppError(400, "Amount is required for income or expense entries.");
+    }
+    if ((entryType === "stock_in" || entryType === "stock_out") && quantityAbs <= 0) {
+      throw new AppError(400, "Quantity is required for stock entries.");
+    }
+    const { data, error } = await supabaseAdmin.from("seller_ledger_entries").insert(row).select("*").single();
+    if (error) throw new AppError(400, error.message);
+    res.status(201).json({ item: toSellerLedgerApiRow(data) });
   } catch (e) {
     next(e);
   }

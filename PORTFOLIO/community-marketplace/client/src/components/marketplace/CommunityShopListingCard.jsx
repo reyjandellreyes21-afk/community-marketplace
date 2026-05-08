@@ -45,6 +45,8 @@ export function CommunityShopListingCard({
   onDelete,
   /** Home › Community & Profile › Products (mobile): entire card opens inspect like tapping Add to cart flow. */
   mobileEntireCardTappable = false,
+  /** Hide inline description text in the product card body. */
+  hideCardDescription = false,
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
@@ -429,7 +431,7 @@ export function CommunityShopListingCard({
             optionNameB=""
             optionValuesB={[]}
             quantityRow={readOnlyStockRow}
-            hideDescription={Boolean(isListMode || (gridMode && (compactGrid || browseSummaryGrid)))}
+            hideDescription={Boolean(hideCardDescription || isListMode || (gridMode && (compactGrid || browseSummaryGrid)))}
             listingAvgRating={listing.listingAvgRating}
             listingReviewCount={listing.listingReviewCount}
           />

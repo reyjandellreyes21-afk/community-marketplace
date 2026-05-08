@@ -24,12 +24,23 @@ export function CourierDeliveryReviewForm({ orderId, initialReview, onSubmit, di
   const [tagSet, setTagSet] = useState(() => new Set(Array.isArray(initialReview?.tags) ? initialReview.tags : []));
   const [abuseNote, setAbuseNote] = useState(() => String(initialReview?.abuseNote || ""));
   const [saving, setSaving] = useState(false);
+  const [ratingSubmitError, setRatingSubmitError] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   useEffect(() => {
     setRating(initialReview?.rating || 0);
     setTagSet(new Set(Array.isArray(initialReview?.tags) ? initialReview.tags : []));
     setAbuseNote(String(initialReview?.abuseNote || ""));
+    setRatingSubmitError(false);
+    setSubmitError("");
   }, [orderId, initialReview?.rating, initialReview?.tags, initialReview?.abuseNote]);
+
+  useEffect(() => {
+    if (rating) {
+      setRatingSubmitError(false);
+      setSubmitError("");
+    }
+  }, [rating]);
 
   const toggleTag = (id) => {
     setTagSet((prev) => {
@@ -42,11 +53,18 @@ export function CourierDeliveryReviewForm({ orderId, initialReview, onSubmit, di
 
   const handleSubmit = async (ev) => {
     ev.preventDefault();
-    if (!rating || saving || disabled) return;
+    if (saving || disabled) return;
+    if (!rating) {
+      setRatingSubmitError(true);
+      return;
+    }
+    setSubmitError("");
     setSaving(true);
     try {
       const tags = TAGS.map((t) => t.id).filter((id) => tagSet.has(id));
       await onSubmit(orderId, rating, tags, abuseNote.trim());
+    } catch (e) {
+      setSubmitError(String(e?.message || "Could not save courier rating."));
     } finally {
       setSaving(false);
     }
@@ -80,7 +98,7 @@ export function CourierDeliveryReviewForm({ orderId, initialReview, onSubmit, di
         {hasSaved ? "Your courier rating" : "Rate the community courier"}
       </p>
       <p className={buyerReviewSectionSubtitle(compact)}>
-        Rate the courier for this completed delivery order. This is separate from the product and seller reviews above.
+        Tap 1–5 stars for the courier on this delivery, then save. Separate from product and seller reviews above.
       </p>
 
       <div
@@ -117,6 +135,11 @@ export function CourierDeliveryReviewForm({ orderId, initialReview, onSubmit, di
           </span>
         ) : null}
       </div>
+      {ratingSubmitError ? (
+        <p role="alert" className="mt-1 text-xs font-medium text-rose-600 dark:text-rose-400">
+          Choose a star rating (1–5), then tap Save.
+        </p>
+      ) : null}
 
       <div className={compact ? "mt-1.5" : "mt-2"}>
         <p className="label-base">Tags</p>
@@ -180,6 +203,11 @@ export function CourierDeliveryReviewForm({ orderId, initialReview, onSubmit, di
           )}
         </button>
       </div>
+      {submitError ? (
+        <p role="alert" className="mt-1 text-xs font-medium text-rose-600 dark:text-rose-400">
+          {submitError}
+        </p>
+      ) : null}
     </form>
   );
 }

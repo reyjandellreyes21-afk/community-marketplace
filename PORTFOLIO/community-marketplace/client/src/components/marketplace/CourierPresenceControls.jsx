@@ -121,7 +121,7 @@ function CourierAvailabilityRadios({
         Pause or resume your listing for neighbor delivery tasks
       </p>
       <div
-        className={cn("flex flex-wrap items-center gap-1.5", className)}
+        className={cn("flex flex-wrap items-center gap-2", className)}
         role="radiogroup"
         aria-labelledby={legendId}
         aria-describedby={describeHint ? hintId : undefined}
@@ -133,10 +133,10 @@ function CourierAvailabilityRadios({
           aria-checked={!isOn}
           size="compact"
           className={cn(
-            "!min-h-9 shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50",
+            "!min-h-10 shrink-0 rounded-xl px-3 py-2 text-[11px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50",
             !isOn
-              ? "!border-0 !bg-slate-700 !text-white shadow-sm hover:!bg-slate-800 dark:!bg-slate-600 dark:hover:!bg-slate-500"
-              : "!border !border-slate-300/90 !bg-white !text-slate-700 hover:!bg-slate-50 dark:!border-slate-600 dark:!bg-slate-900 dark:!text-slate-200 dark:hover:!bg-slate-800",
+              ? "!border !border-slate-700 !bg-slate-800 !text-white shadow-sm hover:!bg-slate-900 dark:!border-slate-400 dark:!bg-slate-500 dark:hover:!bg-slate-400"
+              : "!border !border-slate-300 !bg-slate-100 !text-slate-700 hover:!bg-slate-200 dark:!border-slate-600 dark:!bg-slate-900 dark:!text-slate-200 dark:hover:!bg-slate-800",
           )}
           disabled={saving || availabilityLocked}
           onClick={() => saveStatus("offline")}
@@ -146,9 +146,9 @@ function CourierAvailabilityRadios({
               : "Pause listing — you won’t appear in Neighbor couriers or receive open tasks."
           }
         >
-          <span className="inline-flex items-center justify-center gap-1.5">
+          <span className="inline-flex items-center justify-center gap-2">
             <ListingPausedIcon className="h-4 w-4 shrink-0 opacity-95" />
-            <span className="max-w-[8.5rem] text-left leading-tight">Pause listing</span>
+            <span className="text-left leading-tight">Pause listing</span>
           </span>
         </Button>
         <Button
@@ -158,10 +158,10 @@ function CourierAvailabilityRadios({
           aria-checked={isOn}
           size="compact"
           className={cn(
-            "!min-h-9 shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
+            "!min-h-10 shrink-0 rounded-xl px-3 py-2 text-[11px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
             isOn
-              ? "!border-0 !bg-emerald-600 !text-white shadow-sm hover:!bg-emerald-700 dark:!bg-emerald-500 dark:hover:!bg-emerald-600"
-              : "!border !border-emerald-200 !bg-emerald-50 !text-emerald-900 hover:!bg-emerald-100/90 dark:!border-emerald-800 dark:!bg-emerald-950/45 dark:!text-emerald-100 dark:hover:!bg-emerald-950/65",
+              ? "!border !border-emerald-600 !bg-emerald-600 !text-white shadow-sm hover:!bg-emerald-700 dark:!border-emerald-400 dark:!bg-emerald-500 dark:hover:!bg-emerald-600"
+              : "!border !border-emerald-300 !bg-emerald-50 !text-emerald-800 hover:!bg-emerald-100 dark:!border-emerald-800 dark:!bg-emerald-950/30 dark:!text-emerald-100 dark:hover:!bg-emerald-950/50",
           )}
           disabled={saving || availabilityLocked || !canTurnOn}
           onClick={() => saveStatus("available")}
@@ -173,9 +173,9 @@ function CourierAvailabilityRadios({
                 : "List for deliveries — neighbors can suggest you and you’ll see open tasks."
           }
         >
-          <span className="inline-flex items-center justify-center gap-1.5">
+          <span className="inline-flex items-center justify-center gap-2">
             <DeliveriesListedIcon className="h-4 w-4 shrink-0 opacity-95" />
-            <span className="max-w-[8.5rem] text-left leading-tight">Take deliveries</span>
+            <span className="text-left leading-tight">Take deliveries</span>
           </span>
         </Button>
       </div>
@@ -320,8 +320,9 @@ export function CourierPresenceControls({
     };
   }, []);
 
+  /** Load saved transport modes whenever signed in — including while listing is paused — so Edit stays usable. */
   useEffect(() => {
-    if (!token || courierStatus === "offline") {
+    if (!token) {
       setProfileModes([]);
       setModesLoaded(false);
       return undefined;
@@ -349,7 +350,7 @@ export function CourierPresenceControls({
     return () => {
       cancelled = true;
     };
-  }, [token, courierStatus]);
+  }, [token]);
 
   useEffect(() => {
     if (!selectableModes.includes(claimMode)) {
@@ -469,7 +470,7 @@ export function CourierPresenceControls({
     setCourierModes(normalized);
   }, []);
 
-  /** Multi-select walk/run/bike for neighbor-facing profile (`courier_modes`). Empty DB means “any”; toggling from full set narrows the list. */
+  /** Multi-select transport modes for neighbor-facing profile (`courier_modes`). Empty DB means “any”; toggling from full set narrows the list. */
   const toggleProfileMode = useCallback(
     async (m) => {
       const mode = MODE_ORDER.includes(String(m || "").trim().toLowerCase()) ? String(m).trim().toLowerCase() : "walk";
@@ -477,7 +478,7 @@ export function CourierPresenceControls({
       const has = base.includes(mode);
       let nextModes = has ? base.filter((x) => x !== mode) : [...base, mode].sort((a, b) => MODE_ORDER.indexOf(a) - MODE_ORDER.indexOf(b));
       if (nextModes.length === 0) nextModes = [mode];
-      if (!token || courierStatus === "offline") return;
+      if (!token) return;
       try {
         const normalized = await persistCourierModesToProfile(token, nextModes);
         applyPersistedCourierModes(normalized);
@@ -488,7 +489,7 @@ export function CourierPresenceControls({
         setNote(e?.message || "Could not save transport modes.");
       }
     },
-    [token, courierStatus, profileModes, applyPersistedCourierModes],
+    [token, profileModes, applyPersistedCourierModes],
   );
 
   /** Next claim / invitation only — local until Post claim (does not replace profile modes). */
@@ -781,7 +782,6 @@ export function CourierPresenceControls({
                             )}
                             disabled={
                               availabilityLocked ||
-                              courierStatus === "offline" ||
                               saving ||
                               savingNotify ||
                               savingTags ||
@@ -816,7 +816,6 @@ export function CourierPresenceControls({
                             )}
                             disabled={
                               availabilityLocked ||
-                              courierStatus === "offline" ||
                               saving ||
                               savingNotify ||
                               savingTags ||

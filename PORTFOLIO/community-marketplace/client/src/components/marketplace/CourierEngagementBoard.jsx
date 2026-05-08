@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../../lib/appApi.js";
-import { getActivityTabChrome } from "../../lib/activityTabTheme.js";
-import { ACTIVITY_TABS } from "../../views.js";
 import { StableAvatar } from "../media/StableMediaImage.jsx";
-import { Button } from "../ui/Button.jsx";
 import { cn } from "../../lib/cn.js";
-
-const courierChrome = getActivityTabChrome(ACTIVITY_TABS.COURIER);
 
 function isLikelyOfflineError(e) {
   if (typeof navigator !== "undefined" && !navigator.onLine) return true;
@@ -98,16 +93,6 @@ export function CourierEngagementBoard({ token, communityId, leadDivider = true 
               This community · Weeks start Monday (UTC) · Informal stats only.
             </p>
           </div>
-          <Button
-            type="button"
-            variant="secondary"
-            size="compact"
-            className={cn("min-h-8 px-2.5 text-[10px] font-medium", courierChrome.recoverySecondary)}
-            disabled={loading}
-            onClick={() => void load()}
-          >
-            {loading ? "…" : "Refresh"}
-          </Button>
         </div>
 
         {error ? (

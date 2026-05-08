@@ -7,6 +7,7 @@ import {
   createCommunity,
   createExpense,
   createListing,
+  createSellerLedgerEntry,
   createOrder,
   deleteExpense,
   deleteListing,
@@ -32,6 +33,7 @@ import {
   getCourierActiveDelivery,
   getPublicMarketplaceStats,
   listOrders,
+  listSellerLedgerEntries,
   listUsersDirectory,
   patchCourierModes,
   patchCourierPresence,
@@ -214,7 +216,28 @@ marketplaceRouter.patch(
 marketplaceRouter.get("/me/order-attention", requireAuth, getMeOrderAttention);
 marketplaceRouter.put("/me/order-attention", requireAuth, writeLimiter, putMeOrderAttention);
 
-marketplaceRouter.get("/me/seller/summary", requireAuth, sellerSummary);
+marketplaceRouter.get(
+  "/me/seller/summary",
+  requireAuth,
+  marketplaceRouteValidators.sellerDashboardQuery,
+  validate,
+  sellerSummary,
+);
+marketplaceRouter.get(
+  "/me/seller/ledger",
+  requireAuth,
+  marketplaceRouteValidators.sellerDashboardQuery,
+  validate,
+  listSellerLedgerEntries,
+);
+marketplaceRouter.post(
+  "/me/seller/ledger",
+  requireAuth,
+  writeLimiter,
+  marketplaceRouteValidators.createSellerLedgerEntry,
+  validate,
+  createSellerLedgerEntry,
+);
 marketplaceRouter.get("/me/seller/ratings", requireAuth, getMySellerRatings);
 marketplaceRouter.get("/me/seller/buyer-feedback", requireAuth, listSellerBuyerFeedback);
 marketplaceRouter.get(

@@ -89,7 +89,7 @@ export function isNotificationNavigable(item) {
   if (etRaw && KNOWN_ENTITY_TYPES.has(etRaw)) return true;
 
   const t = String(item.type || "").toLowerCase();
-  if (t.includes("order") || t.includes("delivery") || t.includes("purchase")) return true;
+  if (t.includes("order") || t.includes("delivery") || t.includes("purchase") || t.includes("courier")) return true;
   if (t.includes("listing") || t.includes("product")) return true;
   if (t.includes("community")) return true;
   if (t.includes("message") || t.includes("chat")) return true;
