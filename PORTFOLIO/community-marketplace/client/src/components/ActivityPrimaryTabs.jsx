@@ -9,10 +9,11 @@ const TAB_BADGE_ROSE =
   "pointer-events-none absolute -right-0.5 -top-0.5 z-[1] inline-flex min-h-[1rem] min-w-[1rem] max-w-[min(2.75rem,calc(100%-0.35rem))] items-center justify-center rounded-full bg-rose-600 px-[3px] py-px text-[9px] font-bold leading-none text-white shadow-sm dark:bg-rose-500";
 
 /**
- * Buying / Selling / Courier strip — rose = unseen (or open courier tasks + buyer assign slice); slate = pipeline-only fallback.
+ * Buying / Selling / Booking / Courier strip — rose = unseen (or open courier tasks + buyer assign slice); slate = pipeline-only fallback.
  *
  * @param {{ count: number, rose?: boolean }} [props.buyingBadge]
  * @param {{ count: number, rose?: boolean }} [props.sellingBadge]
+ * @param {{ count: number, rose?: boolean }} [props.bookingBadge]
  * @param {{ count: number, rose?: boolean }} [props.courierBadge]
  * @param {boolean} [props.embedInActivityCard] When true, strip outer shell inset (desktop card layout)
  * @param {boolean} [props.desktopSidebar] When true, vertical rail (md+ Activity hub only — parent should not render on mobile)
@@ -23,6 +24,7 @@ export function ActivityPrimaryTabs({
   goActivity,
   buyingBadge = { count: 0, rose: false },
   sellingBadge = { count: 0, rose: false },
+  bookingBadge = { count: 0, rose: false },
   courierBadge = { count: 0, rose: false },
   embedInActivityCard = false,
   desktopSidebar = false,
@@ -42,6 +44,12 @@ export function ActivityPrimaryTabs({
       badge: sellingBadge,
     },
     {
+      id: ACTIVITY_TABS.BOOKING,
+      label: "Booking",
+      hint: "Service bookings you placed and bookings on your listings, together in one place.",
+      badge: bookingBadge,
+    },
+    {
       id: ACTIVITY_TABS.COURIER,
       label: "Courier",
       badge: courierBadge,
@@ -53,7 +61,7 @@ export function ActivityPrimaryTabs({
     ? "flex w-full min-w-0 flex-col gap-1"
     : embedInActivityCard
       ? "flex w-full min-w-0 flex-wrap justify-center gap-0.5 md:flex-nowrap md:gap-2 md:px-0"
-      : "grid w-full min-w-0 grid-cols-3 gap-0 max-md:shadow-none md:w-auto md:min-w-[min(22rem,calc(100vw-2rem))] md:max-w-[26rem] md:gap-0.5 md:rounded-2xl md:border md:border-neutral-200/90 md:bg-white/95 md:p-1 md:shadow-[0_8px_30px_-14px_rgba(15,23,42,0.18)] md:dark:border-slate-600 md:dark:bg-slate-900/92 md:dark:shadow-[0_12px_36px_-16px_rgba(0,0,0,0.55)]";
+      : "grid w-full min-w-0 grid-cols-4 gap-0 max-md:shadow-none md:w-auto md:min-w-[min(22rem,calc(100vw-2rem))] md:max-w-[30rem] md:gap-0.5 md:rounded-2xl md:border md:border-neutral-200/90 md:bg-white/95 md:p-1 md:shadow-[0_8px_30px_-14px_rgba(15,23,42,0.18)] md:dark:border-slate-600 md:dark:bg-slate-900/92 md:dark:shadow-[0_12px_36px_-16px_rgba(0,0,0,0.55)]";
 
   const outerWrapClass = desktopSidebar
     ? "flex w-full min-w-0 justify-stretch py-0"
@@ -64,6 +72,7 @@ export function ActivityPrimaryTabs({
   const sidebarSelectedBorder = (id) => {
     if (id === ACTIVITY_TABS.BUYING) return "border-emerald-500 dark:border-emerald-400";
     if (id === ACTIVITY_TABS.SELLING) return "border-amber-500 dark:border-amber-400";
+    if (id === ACTIVITY_TABS.BOOKING) return "border-sky-500 dark:border-sky-400";
     return "border-violet-500 dark:border-violet-400";
   };
 
@@ -75,7 +84,7 @@ export function ActivityPrimaryTabs({
         aria-label="Activity sections"
         aria-orientation={desktopSidebar ? "vertical" : undefined}
         onKeyDown={(e) => {
-          const ids = [ACTIVITY_TABS.BUYING, ACTIVITY_TABS.SELLING, ACTIVITY_TABS.COURIER];
+          const ids = [ACTIVITY_TABS.BUYING, ACTIVITY_TABS.SELLING, ACTIVITY_TABS.BOOKING, ACTIVITY_TABS.COURIER];
           const { key } = e;
           const vertical = desktopSidebar;
           const prevKey = vertical ? "ArrowUp" : "ArrowLeft";

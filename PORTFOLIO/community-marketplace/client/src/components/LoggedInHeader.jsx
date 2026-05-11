@@ -525,6 +525,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {number} [props.courierPipelineCount] Full courier pipeline for muted Activity fallback (open tasks + sales + purchases coordination).
  * @param {{ count: number, rose: boolean }} [props.activityPrimaryBuyingBadge] Activity strip Buying glyph count + rose/slate.
  * @param {{ count: number, rose: boolean }} [props.activityPrimarySellingBadge]
+ * @param {{ count: number, rose: boolean }} [props.activityPrimaryBookingBadge]
  * @param {{ count: number, rose: boolean }} [props.activityPrimaryCourierBadge]
  * @param {() => void} [props.goOrders]
  * @param {() => void} [props.goMyPurchases]
@@ -570,6 +571,7 @@ export function LoggedInHeader({
   courierPipelineCount = 0,
   activityPrimaryBuyingBadge = { count: 0, rose: false },
   activityPrimarySellingBadge = { count: 0, rose: false },
+  activityPrimaryBookingBadge = { count: 0, rose: false },
   activityPrimaryCourierBadge = { count: 0, rose: false },
   courierProfileIncomplete = false,
   goOrders = () => {},
@@ -1897,6 +1899,7 @@ export function LoggedInHeader({
             goActivity={openActivity}
             buyingBadge={activityPrimaryBuyingBadge}
             sellingBadge={activityPrimarySellingBadge}
+            bookingBadge={activityPrimaryBookingBadge}
             courierBadge={activityPrimaryCourierBadge}
             courierProfileIncomplete={courierProfileIncomplete}
           />

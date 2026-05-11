@@ -26,7 +26,10 @@ import {
 import { ActivityHubOrderStatusStrip } from "./components/ActivityHubOrderStatusStrip.jsx";
 import { ActivityPrimaryTabs } from "./components/ActivityPrimaryTabs.jsx";
 import { CommunityCourierPanel } from "./components/marketplace/CommunityCourierPanel.jsx";
+import { ServiceAvailabilityPicker } from "./components/marketplace/ServiceAvailabilityPicker.jsx";
+import { isWeeklyAvailabilityComplete } from "./lib/serviceAvailabilitySchedule.js";
 import { SellerBuyerRatingSummary } from "./components/marketplace/SellerBuyerRatingSummary.jsx";
+import { ListingServiceCardSummary } from "./components/marketplace/ListingServiceCardSummary.jsx";
 import { SellerDashboardPanel } from "./components/marketplace/SellerDashboardPanel.jsx";
 import {
   LazyPublicListingPage,
@@ -53,13 +56,16 @@ import { orderLineUnitPriceCents } from "./lib/orderLineCents.js";
 import { ACTIVITY_COURIER_SUBTABS, ACTIVITY_TABS, SELLER_TABS, VIEWS } from "./views.js";
 import {
   clearActiveView,
+  clearListingUploadKind,
   readActiveView,
   readActivityTab,
   readAuthToken,
+  readListingUploadKind,
   readThemeMode,
   writeActiveView,
   writeActivityTab,
   writeAuthToken,
+  writeListingUploadKind,
   writeThemeMode,
 } from "./lib/appSession.js";
 import { apiRequest, isUnauthorizedApiError } from "./lib/appApi.js";
@@ -89,6 +95,22 @@ import {
 import { CHAT_QUICK_EMOJIS } from "./lib/chatComposerEmojis.js";
 import { UI_KIT } from "./lib/appUiKit.js";
 import {
+  getProfileSellerListingSections,
+  getServiceCardHeadlinePriceLabel,
+  getServiceCardProfileHeader,
+  isServiceListing,
+  orderIsServiceListingBooking,
+  orderIsTransportServiceBooking,
+  orderUsesAppointmentServiceFlow,
+} from "./lib/listingServiceCardMeta.js";
+import {
+  formatIsoDateForBookingDisplay,
+  formatServiceBookingRequestLine,
+  formatTimeHmTo12HourLabel,
+  slotOptionsForServiceListing,
+  validateServiceBookingSelection,
+} from "./lib/serviceBookingSlot.js";
+import {
   formatDisplayName,
   getDisplayNameFromUser,
   getAvatarInitialsFromUser,
@@ -115,6 +137,7 @@ import {
   toTitleCase,
 } from "./lib/philippinesAddress.js";
 import {
+  formatPesoWhole,
   parseSaleMetaFromDescription,
   removeSaleMetaLines,
   normalizeListingOptionValues,
@@ -140,7 +163,9 @@ import {
   emptyOrderAttentionByTab,
   RECENT_ORDER_TAB_KEYS,
   ORDERS_STATUS_TABS,
+  BOOKING_STATUS_TABS,
   orderMatchesOrdersStatusTab,
+  orderMatchesBookingStatusTab,
   mergeDismissedIdsByTab,
   attentionApiSideToDismissed,
   fetchOrderAttentionFromApi,
@@ -209,6 +234,16 @@ import { useBodyScrollLock } from "./hooks/useBodyScrollLock.js";
 import { useVisualViewportBottomOverlap } from "./hooks/useVisualViewportBottomOverlap.js";
 import { useMobileViewport } from "./hooks/useMobileViewport.js";
 import { useMobilePullToRefresh } from "./hooks/useMobilePullToRefresh.js";
+import {
+  SERVICE_CATEGORY_OPTIONS,
+  SERVICE_DYNAMIC_FIELDS_BY_CATEGORY,
+  SERVICE_RATE_TYPE_OPTIONS,
+  TRANSPORT_SERVICES_MODE_FIELD,
+  createServiceDynamicDefaults,
+  deriveServiceDynamicPayloadFromTitle,
+  getServiceDetailGridDynamicFields,
+  getServiceTitleQuickPickOptions,
+} from "./lib/serviceUploadConfig.js";
 import {
   communityBrowseGridClass,
   favoritesGridClass,
@@ -356,6 +391,78 @@ const LISTING_PROCESSING_TIME_PRESETS = ["1 day", "2-3 days", "5-7 days", "2 wee
 const LISTING_READY_IN_PRESETS = ["Same day", "2 hours", "Tomorrow", "1–2 days"];
 /** Upload form: one-tap quantity quick picks — low counts + common stock levels. */
 const LISTING_QUANTITY_PRESETS = [1, 2, 5, 10, 25, 50, 100];
+
+/** Service listings: two cells (low / high). One value = fixed price; both = range (midpoint used for `priceCents`). */
+function resolveTransportListingPricePesos(minStr, maxStr) {
+  const minRaw = String(minStr ?? "").trim();
+  const maxRaw = String(maxStr ?? "").trim();
+  const min = minRaw ? parsePhpPricePesos(minStr) : NaN;
+  const max = maxRaw ? parsePhpPricePesos(maxStr) : NaN;
+  const hasMin = minRaw !== "" && Number.isFinite(min) && min >= 0;
+  const hasMax = maxRaw !== "" && Number.isFinite(max) && max >= 0;
+  if (!hasMin && !hasMax) return NaN;
+  if (hasMin && !hasMax) return min;
+  if (!hasMin && hasMax) return max;
+  const lo = Math.min(min, max);
+  const hi = Math.max(min, max);
+  return (lo + hi) / 2;
+}
+
+function createInitialListingForm() {
+  return {
+    title: "",
+    description: "",
+    pricePesos: "",
+    transportPriceMinPesos: "",
+    transportPriceMaxPesos: "",
+    quantity: "",
+    categories: "",
+    subId: "all",
+    optionNameA: "",
+    optionValuesA: "",
+    optionNameB: "",
+    optionValuesB: "",
+    orderType: "in_stock",
+    processingTime: "",
+    pickup: false,
+    delivery: false,
+    serviceCategoryId: "",
+    serviceRateType: "",
+    serviceArea: "",
+    serviceAvailability: "",
+    serviceContactPreference: "",
+    serviceTags: "",
+    serviceVerifiedProvider: false,
+    serviceDynamicFields: createServiceDynamicDefaults(),
+  };
+}
+
+/** API stores `serviceMeta.dynamicFields` with human-readable labels as keys; form state uses field keys. */
+function mapServiceMetaDynamicToFormFields(categoryId, apiDynamic) {
+  const base = createServiceDynamicDefaults();
+  if (!apiDynamic || typeof apiDynamic !== "object" || Array.isArray(apiDynamic)) return base;
+  const fields = SERVICE_DYNAMIC_FIELDS_BY_CATEGORY[String(categoryId || "")] || [];
+  const out = { ...base };
+  for (const field of fields) {
+    const v = apiDynamic[field.label] ?? apiDynamic[field.key];
+    if (v === undefined) continue;
+    if (field.type === "multiselect") {
+      out[field.key] = Array.isArray(v) ? v : typeof v === "string" && String(v).trim() ? [String(v).trim()] : [];
+    } else if (field.type === "toggle") {
+      out[field.key] = Boolean(v);
+    } else {
+      out[field.key] = v == null ? "" : String(v);
+    }
+  }
+  if (String(categoryId || "") === "transport_services") {
+    const legacyVehicle = apiDynamic["Vehicle Type"] ?? apiDynamic.vehicleType;
+    const legacyStr = legacyVehicle == null ? "" : String(legacyVehicle).trim();
+    if (legacyStr && (!Array.isArray(out.transportModes) || out.transportModes.length === 0)) {
+      out.transportModes = [legacyStr];
+    }
+  }
+  return out;
+}
 
 function normalizeListingImageUrlKey(url) {
   const s = String(url || "").trim();
@@ -534,6 +641,20 @@ async function cropImageFileToSquareByRect(file, cropLeft = 0.1, cropTop = 0.1, 
   });
   const baseName = String(file?.name || "listing-image").replace(/\.[^.]+$/, "");
   return new File([blob], `${baseName}-square.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+}
+
+/** Merges buyer + seller order rows for Activity → Booking (same id at most once; buyer list wins ties). */
+function dedupeOrdersByIdPreferLeft(left, right) {
+  const out = new Map();
+  for (const o of left || []) {
+    const id = String(o?.id ?? "").trim();
+    if (id) out.set(id, o);
+  }
+  for (const o of right || []) {
+    const id = String(o?.id ?? "").trim();
+    if (id && !out.has(id)) out.set(id, o);
+  }
+  return Array.from(out.values());
 }
 
 /** Mobile: honor list + grid; map legacy dense (compact) to grid. */
@@ -1101,6 +1222,7 @@ function App() {
   const [courierHubTab, setCourierHubTab] = useState(readInitialCourierHubTab);
   const activityBuying = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.BUYING;
   const activitySelling = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.SELLING;
+  const activityBooking = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.BOOKING;
   const activityCourier = activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.COURIER;
   const courierHubTasks = activityCourier && courierHubTab === ACTIVITY_COURIER_SUBTABS.TASKS;
   const courierHubStats = activityCourier && courierHubTab === ACTIVITY_COURIER_SUBTABS.STATS;
@@ -1211,6 +1333,12 @@ function App() {
   const [sellerProfileShopLoading, setSellerProfileShopLoading] = useState(false);
   const [sellerProfileShopError, setSellerProfileShopError] = useState("");
   const [sellerProfileShopFetchKey, setSellerProfileShopFetchKey] = useState(0);
+  /** Own profile + other seller profile: sections Products → Service → Shop (see `getProfileSellerListingSections`). */
+  const profileSellerHubSections = useMemo(() => getProfileSellerListingSections(sellerListings), [sellerListings]);
+  const otherSellerHubSections = useMemo(
+    () => getProfileSellerListingSections(sellerProfileShopListings),
+    [sellerProfileShopListings],
+  );
   /** Buyer→seller averages from `order_reviews` for Profile header (own vs another member’s shop). */
   const [profileSellerRatingSelf, setProfileSellerRatingSelf] = useState({
     sellerAvgRating: null,
@@ -1249,6 +1377,12 @@ function App() {
   useEffect(() => {
     ordersStatusTabRef.current = ordersStatusTab;
   }, [ordersStatusTab]);
+  /** Activity → Booking: Active / Past / Declined (maps to the same order statuses as product tabs). */
+  const [bookingOrdersStatusTab, setBookingOrdersStatusTab] = useState("active");
+  const bookingOrdersStatusTabRef = useRef(bookingOrdersStatusTab);
+  useEffect(() => {
+    bookingOrdersStatusTabRef.current = bookingOrdersStatusTab;
+  }, [bookingOrdersStatusTab]);
   const activeViewRef = useRef(activeView);
   const ordersRoleRef = useRef(ordersRole);
   const activityTabRef = useRef(activityTab);
@@ -1273,6 +1407,10 @@ function App() {
   }, [activeView, activityTab]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersFetchError, setOrdersFetchError] = useState("");
+  /** Activity → Booking: both roles loaded and merged for one-screen UX. */
+  const [bookingHubBuyerOrders, setBookingHubBuyerOrders] = useState([]);
+  const [bookingHubSellerOrders, setBookingHubSellerOrders] = useState([]);
+  const [bookingHubLoading, setBookingHubLoading] = useState(false);
   /** `orderId` -> selected (orders screen only). */
   const [orderSelection, setOrderSelection] = useState({});
   /** Which bulk order transition is in flight (`seller_accept` | `cancel`) — only that action shows loading on its button. */
@@ -1424,16 +1562,18 @@ function App() {
   polledBuyerOrdersRef.current = polledBuyerOrders;
 
   const sellerOrdersForBadges = useMemo(() => {
+    if (activityBooking) return bookingHubSellerOrders;
     if (ordersRole === "seller" && activitySelling) return orders;
     if (polledSellerOrders === null) return null;
     return polledSellerOrders;
-  }, [ordersRole, activitySelling, orders, polledSellerOrders]);
+  }, [activityBooking, bookingHubSellerOrders, ordersRole, activitySelling, orders, polledSellerOrders]);
 
   const buyerOrdersForBadges = useMemo(() => {
+    if (activityBooking) return bookingHubBuyerOrders;
     if (ordersRole === "buyer") return orders;
     if (polledBuyerOrders === null) return null;
     return polledBuyerOrders;
-  }, [ordersRole, orders, polledBuyerOrders]);
+  }, [activityBooking, bookingHubBuyerOrders, ordersRole, orders, polledBuyerOrders]);
   const buyerOrdersForBadgesRef = useRef(buyerOrdersForBadges);
   const sellerOrdersForBadgesRef = useRef(sellerOrdersForBadges);
   useEffect(() => {
@@ -1469,23 +1609,72 @@ function App() {
     });
   }, []);
 
+  const dismissBookingAttentionForGrouping = useCallback(
+    (role, grouping, buyerList, sellerList) => {
+      const g = String(grouping || "active");
+      const buyerSvc = (buyerList || []).filter((o) => orderIsServiceListingBooking(o));
+      const sellerSvc = (sellerList || []).filter((o) => orderIsServiceListingBooking(o));
+      if (role === "buyer") {
+        if (g === "active") {
+          dismissBuyerOrdersForTab("pending", buyerSvc);
+          dismissBuyerOrdersForTab("processing", buyerSvc);
+        } else if (g === "past") dismissBuyerOrdersForTab("completed", buyerSvc);
+        else if (g === "declined") dismissBuyerOrdersForTab("cancelled", buyerSvc);
+        return;
+      }
+      if (g === "active") {
+        dismissSellerOrdersForTab("pending", sellerSvc);
+        dismissSellerOrdersForTab("processing", sellerSvc);
+      } else if (g === "past") dismissSellerOrdersForTab("completed", sellerSvc);
+      else if (g === "declined") dismissSellerOrdersForTab("cancelled", sellerSvc);
+    },
+    [dismissBuyerOrdersForTab, dismissSellerOrdersForTab],
+  );
+
   /** Mark specific order ids as seen for the active Purchases/Orders status tab (clears row highlight + pills). */
   const dismissOrderAttentionIdsForActiveCommerceTab = useCallback(
     (orderIds) => {
-      const tabId = String(ordersStatusTab || "");
-      if (!RECENT_ORDER_TAB_KEYS.includes(tabId)) return;
       const ids = [...new Set((orderIds || []).map((x) => String(x || "").trim()).filter(Boolean))];
       if (!ids.length) return;
-      const merge = (setter) =>
+      const merge = (setter, tabId, idSubset = ids) =>
         setter((prev) => {
           const set = new Set(prev[tabId] ?? []);
-          ids.forEach((id) => set.add(id));
+          idSubset.forEach((id) => set.add(id));
           return { ...prev, [tabId]: Array.from(set) };
         });
-      if (ordersRole === "seller") merge(setSellerOrderDismissedIdsByTab);
-      else merge(setBuyerOrderDismissedIdsByTab);
+      if (activityBooking) {
+        const idSet = new Set(ids);
+        const byTab = { pending: [], processing: [], completed: [], cancelled: [] };
+        const buyerIdSet = new Set((bookingHubBuyerOrders ?? []).map((x) => String(x?.id || "")));
+        const pool = dedupeOrdersByIdPreferLeft(bookingHubBuyerOrders, bookingHubSellerOrders);
+        for (const o of pool) {
+          const oid = String(o?.id || "");
+          if (!idSet.has(oid)) continue;
+          if (!orderIsServiceListingBooking(o)) continue;
+          const tid = orderStatusToTabId(o.status);
+          if (tid && RECENT_ORDER_TAB_KEYS.includes(tid)) byTab[tid].push(oid);
+        }
+        for (const t of RECENT_ORDER_TAB_KEYS) {
+          if (!byTab[t].length) continue;
+          const buyerIdsThisTab = byTab[t].filter((oid) => buyerIdSet.has(String(oid)));
+          const sellerIdsThisTab = byTab[t].filter((oid) => !buyerIdSet.has(String(oid)));
+          if (buyerIdsThisTab.length) merge(setBuyerOrderDismissedIdsByTab, t, buyerIdsThisTab);
+          if (sellerIdsThisTab.length) merge(setSellerOrderDismissedIdsByTab, t, sellerIdsThisTab);
+        }
+        return;
+      }
+      const tabId = String(ordersStatusTab || "");
+      if (!RECENT_ORDER_TAB_KEYS.includes(tabId)) return;
+      const idSet = new Set(ids);
+      const productIds = (orders || [])
+        .filter((o) => idSet.has(String(o?.id || "")) && !orderIsServiceListingBooking(o))
+        .map((o) => String(o?.id || ""))
+        .filter(Boolean);
+      if (!productIds.length) return;
+      if (ordersRole === "seller") merge(setSellerOrderDismissedIdsByTab, tabId, productIds);
+      else merge(setBuyerOrderDismissedIdsByTab, tabId, productIds);
     },
-    [ordersRole, ordersStatusTab],
+    [ordersRole, ordersStatusTab, activityBooking, orders, bookingHubBuyerOrders, bookingHubSellerOrders],
   );
 
   const markBuyerOrderAsUnseenInTab = useCallback((tabId, orderId) => {
@@ -1517,22 +1706,13 @@ function App() {
     occurredAt: new Date().toISOString().slice(0, 10),
   });
   const [sellerLedgerSaving, setSellerLedgerSaving] = useState(false);
-  const [listingForm, setListingForm] = useState({
-    title: "",
-    description: "",
-    pricePesos: "",
-    quantity: "",
-    categories: "",
-    subId: "all",
-    optionNameA: "",
-    optionValuesA: "",
-    optionNameB: "",
-    optionValuesB: "",
-    orderType: "in_stock",
-    processingTime: "",
-    pickup: false,
-    delivery: false,
-  });
+  const [listingForm, setListingForm] = useState(() => createInitialListingForm());
+  /** Typing buffer for service dynamic fields that allow custom multiselect tags */
+  const [serviceDynamicMultiselectDraft, setServiceDynamicMultiselectDraft] = useState({});
+  /** Service listing price: second PHP cell only after user chooses a range (all service categories). */
+  const [transportPriceRangeOpen, setTransportPriceRangeOpen] = useState(false);
+  /** Service listing: weekly availability UI starts collapsed until the seller opens it. */
+  const [listingAvailabilityScheduleOpen, setListingAvailabilityScheduleOpen] = useState(false);
   const [listingImageFile, setListingImageFile] = useState(null);
   const [listingImagePreviewUrl, setListingImagePreviewUrl] = useState("");
   const [listingCoverContentHash, setListingCoverContentHash] = useState("");
@@ -2107,11 +2287,17 @@ function App() {
   const [quickAddSelectedVariantA, setQuickAddSelectedVariantA] = useState("");
   const [quickAddSelectedVariantB, setQuickAddSelectedVariantB] = useState("");
   const [quickAddComment, setQuickAddComment] = useState("");
+  const [quickAddServiceBookingDate, setQuickAddServiceBookingDate] = useState("");
+  const [quickAddServiceBookingTime, setQuickAddServiceBookingTime] = useState("");
   const [quickOrderFulfillmentType, setQuickOrderFulfillmentType] = useState("pickup");
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
   const [quickAddInlineError, setQuickAddInlineError] = useState("");
   /** Snapshot Home › Community (or Favorites) browse mode when opening quick-add — mirrors `CommunityShopListingCard` layout rules. */
   const [quickAddBrowseSnapshot, setQuickAddBrowseSnapshot] = useState(null);
+  const quickAddTargetIsService = useMemo(
+    () => Boolean(quickAddListing && isServiceListing(quickAddListing)),
+    [quickAddListing],
+  );
   const productFlowOriginRef = useRef({ listingId: "", view: VIEWS.BROWSE, shopCommunityId: null });
   const productInspectReturnRef = useRef({ view: VIEWS.BROWSE, shopCommunityId: null, scrollTop: 0, listingId: "" });
   /** Read-only modal: full listing text + cart/order buyer note. */
@@ -2242,37 +2428,71 @@ function App() {
     key:
       ordersRole === "buyer" && activityBuying
         ? "buyer-mp"
-        : ordersRole === "seller" && activitySelling
-          ? "seller-ord"
-          : "other",
+        : activityBooking
+          ? "booking-hub"
+          : ordersRole === "seller" && activitySelling
+            ? "seller-ord"
+            : "other",
     tab: ordersStatusTab,
+    bookingGrouping: activityBooking ? bookingOrdersStatusTab : null,
   });
   useEffect(() => {
     const prev = ordersNavPrevRef.current;
     const currentKey =
       ordersRole === "buyer" && activityBuying
         ? "buyer-mp"
-        : ordersRole === "seller" && activitySelling
-          ? "seller-ord"
-          : "other";
+        : activityBooking
+          ? "booking-hub"
+          : ordersRole === "seller" && activitySelling
+            ? "seller-ord"
+            : "other";
     const currentTab = ordersStatusTab;
+    const currentBookingGrouping = activityBooking ? bookingOrdersStatusTab : null;
     const keyChanged = prev.key !== currentKey;
     if (keyChanged) {
       if (prev.key === "buyer-mp" && RECENT_ORDER_TAB_KEYS.includes(prev.tab)) {
-        dismissBuyerOrdersForTab(prev.tab, buyerOrdersForBadgesRef.current ?? []);
+        dismissBuyerOrdersForTab(
+          prev.tab,
+          (buyerOrdersForBadgesRef.current ?? []).filter((o) => !orderIsServiceListingBooking(o)),
+        );
+      }
+      if (prev.key === "booking-hub") {
+        const g = prev.bookingGrouping || "active";
+        dismissBookingAttentionForGrouping(
+          "buyer",
+          g,
+          buyerOrdersForBadgesRef.current ?? [],
+          null,
+        );
+        dismissBookingAttentionForGrouping(
+          "seller",
+          g,
+          null,
+          sellerOrdersForBadgesRef.current ?? [],
+        );
       }
       if (prev.key === "seller-ord" && RECENT_ORDER_TAB_KEYS.includes(prev.tab)) {
-        dismissSellerOrdersForTab(prev.tab, sellerOrdersForBadgesRef.current ?? []);
+        dismissSellerOrdersForTab(
+          prev.tab,
+          (sellerOrdersForBadgesRef.current ?? []).filter((o) => !orderIsServiceListingBooking(o)),
+        );
       }
     }
-    ordersNavPrevRef.current = { key: currentKey, tab: currentTab };
+    ordersNavPrevRef.current = {
+      key: currentKey,
+      tab: currentTab,
+      bookingGrouping: currentBookingGrouping,
+    };
   }, [
     activityBuying,
     activitySelling,
+    activityBooking,
     ordersRole,
     ordersStatusTab,
+    bookingOrdersStatusTab,
     dismissBuyerOrdersForTab,
     dismissSellerOrdersForTab,
+    dismissBookingAttentionForGrouping,
   ]);
 
   /** Changing Pending–Cancelled dismisses the previous tab synchronously so badges don’t flash rose one frame behind. */
@@ -2281,20 +2501,34 @@ function App() {
       const next = String(nextTab || "");
       if (!next || next === String(ordersStatusTab)) return;
       if (activityBuying && RECENT_ORDER_TAB_KEYS.includes(ordersStatusTab)) {
-        dismissBuyerOrdersForTab(ordersStatusTab, buyerOrdersForBadgesRef.current ?? []);
+        dismissBuyerOrdersForTab(
+          ordersStatusTab,
+          (buyerOrdersForBadgesRef.current ?? []).filter((o) => !orderIsServiceListingBooking(o)),
+        );
       }
       if (activitySelling && RECENT_ORDER_TAB_KEYS.includes(ordersStatusTab)) {
-        dismissSellerOrdersForTab(ordersStatusTab, sellerOrdersForBadgesRef.current ?? []);
+        dismissSellerOrdersForTab(
+          ordersStatusTab,
+          (sellerOrdersForBadgesRef.current ?? []).filter((o) => !orderIsServiceListingBooking(o)),
+        );
       }
       setOrdersStatusTab(next);
     },
-    [
-      activityBuying,
-      activitySelling,
-      ordersStatusTab,
-      dismissBuyerOrdersForTab,
-      dismissSellerOrdersForTab,
-    ],
+    [activityBuying, activitySelling, ordersStatusTab, dismissBuyerOrdersForTab, dismissSellerOrdersForTab],
+  );
+
+  const commitBookingOrdersStatusTab = useCallback(
+    (nextTab) => {
+      const next = String(nextTab || "");
+      if (!["active", "past", "declined"].includes(next) || next === bookingOrdersStatusTab) return;
+      const g = bookingOrdersStatusTab;
+      const buyerList = buyerOrdersForBadgesRef.current ?? [];
+      const sellerList = sellerOrdersForBadgesRef.current ?? [];
+      dismissBookingAttentionForGrouping("buyer", g, buyerList, null);
+      dismissBookingAttentionForGrouping("seller", g, null, sellerList);
+      setBookingOrdersStatusTab(next);
+    },
+    [bookingOrdersStatusTab, dismissBookingAttentionForGrouping],
   );
 
   useEffect(() => {
@@ -2365,6 +2599,17 @@ function App() {
   }, [commerceFlowViewSeller]);
   /** Inline notice by Upload on Profile (not the global marketplace banner). */
   const [profileUploadProductNotice, setProfileUploadProductNotice] = useState("");
+  const [profileUploadChooserOpen, setProfileUploadChooserOpen] = useState(false);
+  const [listingUploadKind, setListingUploadKind] = useState(() => {
+    const savedView = readActiveView();
+    if (savedView === VIEWS.MY_LISTINGS) {
+      return readListingUploadKind();
+    }
+    return "product";
+  });
+  useEffect(() => {
+    writeListingUploadKind(listingUploadKind);
+  }, [listingUploadKind]);
 
   const mergeIncomingUserWithMembership = useCallback((incomingUser, prevUser) => {
     const incoming = incomingUser && typeof incomingUser === "object" ? incomingUser : {};
@@ -3771,6 +4016,7 @@ function App() {
   const logout = () => {
     writeAuthToken("");
     clearActiveView();
+    clearListingUploadKind();
     setToken("");
     setUser(null);
     setAuthPanelVisible(false);
@@ -3801,12 +4047,18 @@ function App() {
 
       if (onActivity && prevActivity === ACTIVITY_TABS.BUYING && tab !== ACTIVITY_TABS.BUYING) {
         if (RECENT_ORDER_TAB_KEYS.includes(prevStatus)) {
-          dismissBuyerOrdersForTab(prevStatus, buyerOrdersForBadgesRef.current ?? []);
+          dismissBuyerOrdersForTab(
+            prevStatus,
+            (buyerOrdersForBadgesRef.current ?? []).filter((o) => !orderIsServiceListingBooking(o)),
+          );
         }
       }
       if (onActivity && prevActivity === ACTIVITY_TABS.SELLING && tab !== ACTIVITY_TABS.SELLING) {
         if (RECENT_ORDER_TAB_KEYS.includes(prevStatus)) {
-          dismissSellerOrdersForTab(prevStatus, sellerOrdersForBadgesRef.current ?? []);
+          dismissSellerOrdersForTab(
+            prevStatus,
+            (sellerOrdersForBadgesRef.current ?? []).filter((o) => !orderIsServiceListingBooking(o)),
+          );
         }
       }
 
@@ -3817,6 +4069,9 @@ function App() {
       if (tab === ACTIVITY_TABS.COURIER) setCourierHubTab(ACTIVITY_COURIER_SUBTABS.TASKS);
       if (tab === ACTIVITY_TABS.BUYING) setOrdersRole("buyer");
       else if (tab === ACTIVITY_TABS.SELLING) setOrdersRole("seller");
+      else if (tab === ACTIVITY_TABS.BOOKING) {
+        setBookingOrdersStatusTab("active");
+      }
       if (typeof window !== "undefined") {
         window.requestAnimationFrame(() => {
           window.scrollTo(0, 0);
@@ -3833,7 +4088,6 @@ function App() {
   const goMyPurchases = useCallback(() => {
     goActivity(ACTIVITY_TABS.BUYING);
   }, [goActivity]);
-
 
   const goCart = useCallback(() => {
     setActiveView(VIEWS.CART);
@@ -3910,8 +4164,27 @@ function App() {
       });
     }
   }, []);
-  const openUploadAtTop = useCallback(() => {
+  const openUploadAtTop = useCallback((kind = "product") => {
     listingDraftBaselineRef.current = null;
+    if ([VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(activeView)) {
+      productFlowOriginRef.current = {
+        listingId: "",
+        view: activeView,
+        shopCommunityId: shopCommunityId ? String(shopCommunityId) : null,
+      };
+    } else {
+      productFlowOriginRef.current = { listingId: "", view: "", shopCommunityId: null };
+    }
+    const normalizedKind = kind === "service" ? "service" : "product";
+    setListingUploadKind(normalizedKind);
+    setListingForm(() => {
+      const base = createInitialListingForm();
+      if (normalizedKind === "service") return { ...base, categories: "services", subId: "all" };
+      return base;
+    });
+    setListingAvailabilityScheduleOpen(false);
+    setServiceDynamicMultiselectDraft({});
+    setListingFieldErrors((prev) => (prev.categories ? { ...prev, categories: "" } : prev));
     setActiveView(VIEWS.MY_LISTINGS);
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
@@ -3920,7 +4193,35 @@ function App() {
         window.scrollTo(0, 0);
       });
     }
+  }, [activeView, shopCommunityId]);
+  const openProfileUploadChooser = useCallback(() => {
+    if (!String(profileCommunityName || "").trim()) {
+      setProfileUploadProductNotice("Tip: set your community in Profile so uploads can be matched to your local shop.");
+    } else {
+      setProfileUploadProductNotice("");
+    }
+    setProfileUploadChooserOpen(true);
+  }, [profileCommunityName]);
+  const handleProfileUploadProduct = useCallback(() => {
+    setProfileUploadChooserOpen(false);
+    openUploadAtTop("product");
+  }, [openUploadAtTop]);
+  const handleProfileUploadShop = useCallback(() => {
+    setProfileUploadChooserOpen(false);
+    openProfileEdit({ navigateToOwnProfile: true });
   }, []);
+  const handleProfileUploadService = useCallback(() => {
+    setProfileUploadChooserOpen(false);
+    openUploadAtTop("service");
+  }, [openUploadAtTop]);
+  useEffect(() => {
+    if (!profileUploadChooserOpen || typeof window === "undefined") return undefined;
+    const handleEscape = (event) => {
+      if (event.key === "Escape") setProfileUploadChooserOpen(false);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [profileUploadChooserOpen]);
 
   const goInbox = useCallback(() => {
     setMobileCommunityFiltersOpen(false);
@@ -5085,6 +5386,12 @@ function App() {
     return rows;
   }, [browseQuickFilter, listings, activeView, communityListingsQuery, listingSort]);
 
+  /** Home › Community: same stacked sections as Profile › Listings (Products → Services → Shop). */
+  const communityShopHubSections = useMemo(
+    () => getProfileSellerListingSections(visibleBrowseListings),
+    [visibleBrowseListings],
+  );
+
   const strictFavoritesList = useMemo(() => {
     const favoriteIdStrings = new Set(Array.from(favoriteIds).map((id) => String(id)));
     return favoritesList.filter((listing) => favoriteIdStrings.has(String(listing?.id ?? "")));
@@ -5157,9 +5464,41 @@ function App() {
     () => orders.filter((o) => orderMatchesOrdersStatusTab(o.status, ordersStatusTab)),
     [orders, ordersStatusTab],
   );
+  const commerceFlowOrdersPool = useMemo(() => {
+    if (activityBooking) return dedupeOrdersByIdPreferLeft(bookingHubBuyerOrders, bookingHubSellerOrders);
+    return (orders || []).filter((o) => !orderIsServiceListingBooking(o));
+  }, [activityBooking, bookingHubBuyerOrders, bookingHubSellerOrders, orders]);
+  const commerceOrdersInitialLoading = useMemo(
+    () =>
+      activityBooking
+        ? bookingHubLoading && commerceFlowOrdersPool.length === 0
+        : ordersLoading && orders.length === 0,
+    [activityBooking, bookingHubLoading, commerceFlowOrdersPool.length, ordersLoading, orders.length],
+  );
+  const commerceOrdersHasPoolRows = useMemo(
+    () => commerceFlowOrdersPool.length > 0,
+    [commerceFlowOrdersPool.length],
+  );
+  const ordersForStatusTabView = useMemo(() => {
+    if (!activityBooking) return ordersForStatusTab.filter((o) => !orderIsServiceListingBooking(o));
+    const tab = bookingOrdersStatusTab;
+    const filterSvc = (o) => orderIsServiceListingBooking(o) && orderMatchesBookingStatusTab(o.status, tab);
+    const out = [];
+    for (const o of bookingHubBuyerOrders) {
+      if (!filterSvc(o)) continue;
+      out.push({ ...o, __bookingRowRole: "buyer" });
+    }
+    const buyerIds = new Set(out.map((x) => String(x.id)));
+    for (const o of bookingHubSellerOrders) {
+      if (!filterSvc(o) || buyerIds.has(String(o.id))) continue;
+      out.push({ ...o, __bookingRowRole: "seller" });
+    }
+    out.sort((a, b) => orderRowSortMs(b) - orderRowSortMs(a));
+    return out;
+  }, [activityBooking, bookingHubBuyerOrders, bookingHubSellerOrders, bookingOrdersStatusTab, ordersForStatusTab]);
 
   const buyerUnseenIdsByTab = useMemo(() => {
-    const list = buyerOrdersForBadges ?? [];
+    const list = (buyerOrdersForBadges ?? []).filter((o) => !orderIsServiceListingBooking(o));
     const out = emptyOrderAttentionByTab();
     for (const tab of RECENT_ORDER_TAB_KEYS) {
       const dismissed = new Set((buyerOrderDismissedIdsByTab[tab] || []).map(String));
@@ -5173,7 +5512,7 @@ function App() {
   }, [buyerOrdersForBadges, buyerOrderDismissedIdsByTab]);
 
   const sellerUnseenIdsByTab = useMemo(() => {
-    const list = sellerOrdersForBadges ?? [];
+    const list = (sellerOrdersForBadges ?? []).filter((o) => !orderIsServiceListingBooking(o));
     const out = emptyOrderAttentionByTab();
     for (const tab of RECENT_ORDER_TAB_KEYS) {
       const dismissed = new Set((sellerOrderDismissedIdsByTab[tab] || []).map(String));
@@ -5185,6 +5524,110 @@ function App() {
     }
     return out;
   }, [sellerOrdersForBadges, sellerOrderDismissedIdsByTab]);
+
+  /** Buyer vs seller unseen ids for the active commerce role — must be defined before `ordersTabBadgeIdsByTabCommerce`. */
+  const ordersTabBadgeIdsByTab = ordersRole === "seller" ? sellerUnseenIdsByTab : buyerUnseenIdsByTab;
+
+  const bookingBuyerUnseenIdsByTab = useMemo(() => {
+    const list = (buyerOrdersForBadges ?? []).filter((o) => orderIsServiceListingBooking(o));
+    const out = emptyOrderAttentionByTab();
+    for (const tab of RECENT_ORDER_TAB_KEYS) {
+      const dismissed = new Set((buyerOrderDismissedIdsByTab[tab] || []).map(String));
+      const rows = list.filter(
+        (o) => orderMatchesOrdersStatusTab(o.status, tab) && !dismissed.has(String(o.id || "")),
+      );
+      rows.sort((a, b) => orderRowSortMs(b) - orderRowSortMs(a));
+      out[tab] = rows.map((o) => String(o.id || "")).filter(Boolean);
+    }
+    return out;
+  }, [buyerOrdersForBadges, buyerOrderDismissedIdsByTab]);
+
+  const bookingSellerUnseenIdsByTab = useMemo(() => {
+    const list = (sellerOrdersForBadges ?? []).filter((o) => orderIsServiceListingBooking(o));
+    const out = emptyOrderAttentionByTab();
+    for (const tab of RECENT_ORDER_TAB_KEYS) {
+      const dismissed = new Set((sellerOrderDismissedIdsByTab[tab] || []).map(String));
+      const rows = list.filter(
+        (o) => orderMatchesOrdersStatusTab(o.status, tab) && !dismissed.has(String(o.id || "")),
+      );
+      rows.sort((a, b) => orderRowSortMs(b) - orderRowSortMs(a));
+      out[tab] = rows.map((o) => String(o.id || "")).filter(Boolean);
+    }
+    return out;
+  }, [sellerOrdersForBadges, sellerOrderDismissedIdsByTab]);
+
+  const ordersTabBadgeIdsByTabCommerce = useMemo(() => {
+    if (!activityBooking) return ordersTabBadgeIdsByTab;
+    const mergeIds = (tab) => {
+      const a = bookingBuyerUnseenIdsByTab[tab] || [];
+      const b = bookingSellerUnseenIdsByTab[tab] || [];
+      return [...new Set([...a, ...b].map(String))].filter(Boolean);
+    };
+    return {
+      pending: mergeIds("pending"),
+      processing: mergeIds("processing"),
+      completed: mergeIds("completed"),
+      cancelled: mergeIds("cancelled"),
+    };
+  }, [activityBooking, ordersTabBadgeIdsByTab, bookingBuyerUnseenIdsByTab, bookingSellerUnseenIdsByTab]);
+
+  const commerceFlowOnPendingBulkTab = useMemo(() => {
+    if (activityBooking) return bookingOrdersStatusTab === "active";
+    return ordersStatusTab === "pending";
+  }, [activityBooking, bookingOrdersStatusTab, ordersStatusTab]);
+
+  const unseenIdsForCommerceStatusTab = useMemo(() => {
+    if (activityBooking) {
+      if (bookingOrdersStatusTab === "active") {
+        const a = ordersTabBadgeIdsByTabCommerce.pending || [];
+        const b = ordersTabBadgeIdsByTabCommerce.processing || [];
+        return [...new Set([...a, ...b].map(String))].filter(Boolean);
+      }
+      const k = bookingOrdersStatusTab === "past" ? "completed" : "cancelled";
+      return (ordersTabBadgeIdsByTabCommerce[k] || []).map(String);
+    }
+    const tab = String(ordersStatusTab || "");
+    return ((ordersTabBadgeIdsByTab || {})[tab] || []).map(String);
+  }, [activityBooking, bookingOrdersStatusTab, ordersTabBadgeIdsByTabCommerce, ordersTabBadgeIdsByTab, ordersStatusTab]);
+
+  const commerceShowCompletedContext = useMemo(
+    () => (activityBooking ? bookingOrdersStatusTab === "past" : ordersStatusTab === "completed"),
+    [activityBooking, bookingOrdersStatusTab, ordersStatusTab],
+  );
+
+  const bookingActiveTabBadgeDisplayCount = useMemo(() => {
+    const unseenP = ordersTabBadgeIdsByTabCommerce.pending?.length || 0;
+    const unseenPr = ordersTabBadgeIdsByTabCommerce.processing?.length || 0;
+    const totalP = commerceFlowOrdersPool.filter(
+      (o) => orderIsServiceListingBooking(o) && orderMatchesOrdersStatusTab(o.status, "pending"),
+    ).length;
+    const totalPr = commerceFlowOrdersPool.filter(
+      (o) => orderIsServiceListingBooking(o) && orderMatchesOrdersStatusTab(o.status, "processing"),
+    ).length;
+    if (unseenP + unseenPr > 0) return unseenP + unseenPr;
+    if (totalP + totalPr > 0) return totalP + totalPr;
+    return 0;
+  }, [commerceFlowOrdersPool, ordersTabBadgeIdsByTabCommerce.pending, ordersTabBadgeIdsByTabCommerce.processing]);
+
+  const bookingPastTabBadgeDisplayCount = useMemo(() => {
+    const unseenLen = ordersTabBadgeIdsByTabCommerce.completed?.length || 0;
+    const totalInTab = commerceFlowOrdersPool.filter(
+      (o) => orderIsServiceListingBooking(o) && orderMatchesOrdersStatusTab(o.status, "completed"),
+    ).length;
+    if (unseenLen > 0) return unseenLen;
+    if (totalInTab > 0) return totalInTab;
+    return 0;
+  }, [commerceFlowOrdersPool, ordersTabBadgeIdsByTabCommerce.completed]);
+
+  const bookingDeclinedTabBadgeDisplayCount = useMemo(() => {
+    const unseenLen = ordersTabBadgeIdsByTabCommerce.cancelled?.length || 0;
+    const totalInTab = commerceFlowOrdersPool.filter(
+      (o) => orderIsServiceListingBooking(o) && orderMatchesOrdersStatusTab(o.status, "cancelled"),
+    ).length;
+    if (unseenLen > 0) return unseenLen;
+    if (totalInTab > 0) return totalInTab;
+    return 0;
+  }, [commerceFlowOrdersPool, ordersTabBadgeIdsByTabCommerce.cancelled]);
 
   /** Buying/Selling: total unseen across Pending–Cancelled (drives Activity hub rose + inbox order slice). */
   const purchaseNavBadgeCount = useMemo(() => {
@@ -5216,7 +5659,7 @@ function App() {
   const headerTotalCartCount = useMemo(() => cartItems.length, [cartItems]);
   /** Purchases/Orders: muted count excludes Completed/Cancelled — only Pending + Processing. */
   const headerTotalPurchasesCount = useMemo(() => {
-    const list = buyerOrdersForBadges ?? [];
+    const list = (buyerOrdersForBadges ?? []).filter((o) => !orderIsServiceListingBooking(o));
     return list.filter(
       (o) =>
         orderMatchesOrdersStatusTab(o.status, "pending") ||
@@ -5224,7 +5667,7 @@ function App() {
     ).length;
   }, [buyerOrdersForBadges]);
   const headerTotalOrdersCount = useMemo(() => {
-    const list = sellerOrdersForBadges ?? [];
+    const list = (sellerOrdersForBadges ?? []).filter((o) => !orderIsServiceListingBooking(o));
     return list.filter(
       (o) =>
         orderMatchesOrdersStatusTab(o.status, "pending") ||
@@ -5249,6 +5692,26 @@ function App() {
     };
   }, [sellerUnseenIdsByTab, headerTotalOrdersCount]);
 
+  const headerTotalBookingCount = useMemo(() => {
+    const inPipe = (o) =>
+      orderIsServiceListingBooking(o) &&
+      (orderMatchesOrdersStatusTab(o.status, "pending") || orderMatchesOrdersStatusTab(o.status, "processing"));
+    const buyerN = (buyerOrdersForBadges ?? []).filter(inPipe).length;
+    const sellerN = (sellerOrdersForBadges ?? []).filter(inPipe).length;
+    return Math.min(99, Math.max(0, buyerN + sellerN));
+  }, [buyerOrdersForBadges, sellerOrdersForBadges]);
+
+  const activityPrimaryBookingBadge = useMemo(() => {
+    const unseenTotal = RECENT_ORDER_TAB_KEYS.reduce(
+      (s, tab) => s + (bookingBuyerUnseenIdsByTab[tab]?.length || 0) + (bookingSellerUnseenIdsByTab[tab]?.length || 0),
+      0,
+    );
+    return {
+      count: Math.min(99, unseenTotal > 0 ? unseenTotal : headerTotalBookingCount),
+      rose: unseenTotal > 0,
+    };
+  }, [bookingBuyerUnseenIdsByTab, bookingSellerUnseenIdsByTab, headerTotalBookingCount]);
+
   /** Mobile bottom “Inbox” tab badge: chats + buyer/seller attention + unread notifications. */
   const inboxNavBadgeCount = useMemo(() => {
     const raw =
@@ -5264,48 +5727,129 @@ function App() {
     unreadNotificationCount,
   ]);
 
-  const ordersTabBadgeIdsByTab = ordersRole === "seller" ? sellerUnseenIdsByTab : buyerUnseenIdsByTab;
-  const ordersTabRecentPendingIds = ordersTabBadgeIdsByTab.pending;
+  const ordersTabRecentPendingIds = ordersTabBadgeIdsByTabCommerce.pending;
 
   const pendingTabPillCount = useMemo(() => {
     const placedIds = new Set(
-      orders
+      commerceFlowOrdersPool
         .filter((o) => orderMatchesOrdersStatusTab(o.status, "pending"))
+        .filter((o) => !activityBooking || orderIsServiceListingBooking(o))
         .map((o) => String(o?.id || ""))
         .filter(Boolean),
     );
     let n = 0;
-    for (const id of ordersTabBadgeIdsByTab.pending || []) {
+    for (const id of ordersTabBadgeIdsByTabCommerce.pending || []) {
       if (placedIds.has(String(id))) n += 1;
     }
     return n;
-  }, [orders, ordersTabBadgeIdsByTab.pending]);
+  }, [commerceFlowOrdersPool, ordersTabBadgeIdsByTabCommerce.pending, activityBooking]);
 
   /** Pending/Processing tab pills: rose = unseen count; slate = queue depth when all dismissed but rows remain (`badgeIsRose` uses unseen only). */
   const pendingTabBadgeDisplayCount = useMemo(() => {
-    const totalInTab = orders.filter((o) => orderMatchesOrdersStatusTab(o.status, "pending")).length;
+    const totalInTab = commerceFlowOrdersPool.filter(
+      (o) =>
+        orderMatchesOrdersStatusTab(o.status, "pending") &&
+        (!activityBooking || orderIsServiceListingBooking(o)),
+    ).length;
     if (pendingTabPillCount > 0) return pendingTabPillCount;
     if (totalInTab > 0) return totalInTab;
     return 0;
-  }, [orders, pendingTabPillCount]);
+  }, [commerceFlowOrdersPool, pendingTabPillCount, activityBooking]);
 
   const processingTabBadgeDisplayCount = useMemo(() => {
-    const unseenLen = ordersTabBadgeIdsByTab.processing?.length || 0;
-    const totalInTab = orders.filter((o) => orderMatchesOrdersStatusTab(o.status, "processing")).length;
+    const unseenLen = ordersTabBadgeIdsByTabCommerce.processing?.length || 0;
+    const totalInTab = commerceFlowOrdersPool.filter(
+      (o) =>
+        orderMatchesOrdersStatusTab(o.status, "processing") &&
+        (!activityBooking || orderIsServiceListingBooking(o)),
+    ).length;
     if (unseenLen > 0) return unseenLen;
     if (totalInTab > 0) return totalInTab;
     return 0;
-  }, [orders, ordersTabBadgeIdsByTab.processing]);
+  }, [commerceFlowOrdersPool, ordersTabBadgeIdsByTabCommerce.processing, activityBooking]);
 
   const listingDescriptionCount = useMemo(() => String(listingForm.description || "").length, [listingForm.description]);
+  const isServiceUpload = listingUploadKind === "service";
+  const selectedServiceCategory = useMemo(
+    () => SERVICE_CATEGORY_OPTIONS.find((cat) => cat.id === String(listingForm.serviceCategoryId || "")) || null,
+    [listingForm.serviceCategoryId],
+  );
+  const serviceCategorySelected = Boolean(String(listingForm.serviceCategoryId || "").trim());
+  const activeServiceDynamicFields = useMemo(
+    () => SERVICE_DYNAMIC_FIELDS_BY_CATEGORY[String(listingForm.serviceCategoryId || "")] || [],
+    [listingForm.serviceCategoryId],
+  );
+  /** Omits transport modes + select/multiselect already covered by service title quick picks. */
+  const serviceDynamicFieldsForCategoryCard = useMemo(
+    () => getServiceDetailGridDynamicFields(String(listingForm.serviceCategoryId || "")),
+    [listingForm.serviceCategoryId],
+  );
+  const transportModesSelection = useMemo(() => {
+    const raw = listingForm.serviceDynamicFields?.[TRANSPORT_SERVICES_MODE_FIELD.key];
+    return Array.isArray(raw) ? raw : [];
+  }, [listingForm.serviceDynamicFields]);
+  const serviceTitleQuickPickOptions = useMemo(
+    () => getServiceTitleQuickPickOptions(String(listingForm.serviceCategoryId || "")),
+    [listingForm.serviceCategoryId],
+  );
+  const nonTransportServiceTitleSegments = useMemo(() => {
+    const raw = String(listingForm.title || "");
+    const next = [];
+    const seen = new Set();
+    for (const seg of raw.split(",")) {
+      const t = seg.trim();
+      if (!t) continue;
+      const k = t.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      next.push(t);
+    }
+    return next;
+  }, [listingForm.title]);
+  const listingCategoryOptions = useMemo(
+    () => (listingUploadKind === "service" ? VERTICALS.filter((v) => v.id === "services") : VERTICALS.filter((v) => v.id !== "services")),
+    [listingUploadKind],
+  );
   const listingRequiredCompletedCount = useMemo(() => {
+    const transportListing =
+      isServiceUpload && String(listingForm.serviceCategoryId || "") === "transport_services";
+
+    if (!isServiceUpload) {
+      let done = 0;
+      if (String(listingForm.categories || "").trim()) done += 1;
+      if (String(listingForm.title || "").trim()) done += 1;
+      if (String(listingForm.pricePesos || "").trim()) done += 1;
+      if (String(listingForm.quantity || "").trim()) done += 1;
+      return done;
+    }
+
     let done = 0;
-    if (String(listingForm.title || "").trim()) done += 1;
-    if (String(listingForm.categories || "").trim()) done += 1;
-    if (String(listingForm.pricePesos || "").trim()) done += 1;
-    if (String(listingForm.quantity || "").trim()) done += 1;
+    if (String(listingForm.serviceCategoryId || "").trim()) done += 1;
+    if (transportListing) {
+      if (transportModesSelection.length > 0) done += 1;
+    } else if (String(listingForm.title || "").trim()) {
+      done += 1;
+    }
+    if (String(listingForm.serviceRateType || "").trim()) done += 1;
+    if (
+      String(listingForm.transportPriceMinPesos || "").trim() ||
+      String(listingForm.transportPriceMaxPesos || "").trim()
+    ) {
+      done += 1;
+    }
     return done;
-  }, [listingForm.title, listingForm.categories, listingForm.pricePesos, listingForm.quantity]);
+  }, [
+    isServiceUpload,
+    listingForm.title,
+    listingForm.categories,
+    listingForm.pricePesos,
+    listingForm.quantity,
+    listingForm.serviceCategoryId,
+    listingForm.serviceRateType,
+    listingForm.transportPriceMinPesos,
+    listingForm.transportPriceMaxPesos,
+    transportModesSelection.length,
+  ]);
   const listingRequiredTotalCount = 4;
   const buildListingDraftSnapshot = useCallback((form, { coverPreviewUrl = "", coverFile = null, extraItems = [] } = {}) => {
     const extra = Array.isArray(extraItems)
@@ -5329,6 +5873,16 @@ function App() {
       processingTime: String(form?.processingTime || "").trim(),
       pickup: Boolean(form?.pickup),
       delivery: Boolean(form?.delivery),
+      serviceCategoryId: String(form?.serviceCategoryId || "").trim(),
+      serviceRateType: String(form?.serviceRateType || "").trim(),
+      serviceArea: String(form?.serviceArea || "").trim(),
+      serviceAvailability: String(form?.serviceAvailability || "").trim(),
+      serviceContactPreference: String(form?.serviceContactPreference || "").trim(),
+      serviceTags: String(form?.serviceTags || "").trim(),
+      serviceVerifiedProvider: Boolean(form?.serviceVerifiedProvider),
+      serviceDynamicFields: form?.serviceDynamicFields || {},
+      transportPriceMinPesos: String(form?.transportPriceMinPesos || "").trim(),
+      transportPriceMaxPesos: String(form?.transportPriceMaxPesos || "").trim(),
       coverPreviewUrl: String(coverPreviewUrl || "").trim(),
       hasCoverFile: Boolean(coverFile),
       extra,
@@ -5349,6 +5903,20 @@ function App() {
         String(listingForm.orderType || "in_stock") !== "in_stock" ||
         listingForm.pickup ||
         listingForm.delivery ||
+        String(listingForm.serviceCategoryId || "").trim() ||
+        String(listingForm.serviceRateType || "").trim() ||
+        String(listingForm.serviceArea || "").trim() ||
+        String(listingForm.serviceAvailability || "").trim() ||
+        String(listingForm.serviceContactPreference || "").trim() ||
+        String(listingForm.serviceTags || "").trim() ||
+        listingForm.serviceVerifiedProvider ||
+        String(listingForm.transportPriceMinPesos || "").trim() ||
+        String(listingForm.transportPriceMaxPesos || "").trim() ||
+        Object.values(listingForm.serviceDynamicFields || {}).some((v) => {
+          if (Array.isArray(v)) return v.length > 0;
+          if (typeof v === "boolean") return v;
+          return String(v || "").trim() !== "";
+        }) ||
         listingImageFile ||
         listingImagePreviewUrl ||
         listingExtraImages.length > 0,
@@ -5391,13 +5959,6 @@ function App() {
   const closeDiscardListingChangesModal = useCallback(() => {
     pendingDiscardListingActionRef.current = null;
     setDiscardListingChangesModalOpen(false);
-  }, []);
-
-  const confirmDiscardListingChangesModal = useCallback(() => {
-    const next = pendingDiscardListingActionRef.current;
-    pendingDiscardListingActionRef.current = null;
-    setDiscardListingChangesModalOpen(false);
-    if (typeof next === "function") next();
   }, []);
 
   useEffect(() => {
@@ -5611,7 +6172,7 @@ function App() {
   }, [cartItems]);
 
   useEffect(() => {
-    const valid = new Set(ordersForStatusTab.map((o) => String(o.id || "")));
+    const valid = new Set(ordersForStatusTabView.map((o) => String(o.id || "")));
     setOrderSelection((prev) => {
       const next = {};
       for (const id of valid) {
@@ -5623,27 +6184,29 @@ function App() {
       }
       return next;
     });
-  }, [ordersForStatusTab]);
+  }, [ordersForStatusTabView]);
 
   const selectedCartItems = useMemo(
     () => cartItems.filter((item) => cartItemSelection[cartLineKeyFromItem(item)]),
     [cartItems, cartItemSelection],
   );
   const selectedOrders = useMemo(
-    () => ordersForStatusTab.filter((order) => orderSelection[String(order.id || "")]),
-    [ordersForStatusTab, orderSelection],
+    () => ordersForStatusTabView.filter((order) => orderSelection[String(order.id || "")]),
+    [ordersForStatusTabView, orderSelection],
   );
   const ordersAcceptEnabled = useMemo(() => {
     if (!selectedOrders.length) return false;
-    if (ordersRole !== "seller") return false;
-    if (ordersStatusTab !== "pending") return false;
+    if (!commerceFlowOnPendingBulkTab) return false;
+    if (activityBooking) {
+      if (!selectedOrders.every((o) => o.__bookingRowRole === "seller")) return false;
+    } else if (ordersRole !== "seller") return false;
     return selectedOrders.every((o) => String(o.status || "").toLowerCase() === "placed");
-  }, [selectedOrders, ordersRole, ordersStatusTab]);
+  }, [selectedOrders, ordersRole, commerceFlowOnPendingBulkTab, activityBooking]);
   const ordersDeclineEnabled = useMemo(() => {
     if (!selectedOrders.length) return false;
-    if (ordersStatusTab !== "pending") return false;
+    if (!commerceFlowOnPendingBulkTab) return false;
     return selectedOrders.every((o) => String(o.status || "").toLowerCase() === "placed");
-  }, [selectedOrders, ordersStatusTab]);
+  }, [selectedOrders, commerceFlowOnPendingBulkTab]);
   const selectedCartTotals = useMemo(() => {
     let currentTotalCents = 0;
     let originalTotalCents = 0;
@@ -5687,7 +6250,8 @@ function App() {
       const listingId = String(item?.listingId || "");
       if (!listingId) continue;
       const lineKey = cartLineKeyFromItem(item);
-      const qty = Math.max(1, Math.floor(Number(item?.quantity) || 1));
+      const cartLineIsService = isServiceListing(item);
+      const qty = cartLineIsService ? 1 : Math.max(1, Math.floor(Number(item?.quantity) || 1));
       const modes = Array.isArray(item?.fulfillmentModes) ? item.fulfillmentModes.map(String) : [];
       const storedFt = String(item?.fulfillmentType || "").trim();
       const fulfillmentType =
@@ -5763,15 +6327,19 @@ function App() {
         let firstFailureMessage = "";
         let extraFields = /** @type {Record<string, unknown>} */ ({});
         if (transitionNorm === "seller_accept") {
-          const raw = String(sellerAcceptCourierPesos || "").trim();
-          if (raw !== "") {
-            const pesos = Number(raw);
-            if (!Number.isFinite(pesos) || pesos < 0) {
-              pushMarketplaceToast("Enter a valid peso amount for the courier add-on, or leave it blank.");
-              return;
+          const allServiceBookings =
+            selectedOrders.length > 0 && selectedOrders.every((o) => orderIsServiceListingBooking(o));
+          if (!allServiceBookings) {
+            const raw = String(sellerAcceptCourierPesos || "").trim();
+            if (raw !== "") {
+              const pesos = Number(raw);
+              if (!Number.isFinite(pesos) || pesos < 0) {
+                pushMarketplaceToast("Enter a valid peso amount for the courier add-on, or leave it blank.");
+                return;
+              }
+              const cents = Math.round(pesos * 100);
+              if (cents > 0) extraFields = { sellerCourierContributionCents: cents };
             }
-            const cents = Math.round(pesos * 100);
-            if (cents > 0) extraFields = { sellerCourierContributionCents: cents };
           }
         }
         for (const order of selectedOrders) {
@@ -5798,8 +6366,20 @@ function App() {
           }
         }
         try {
-          const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-          setOrders(data.orders || []);
+          if (activityTabRef.current === ACTIVITY_TABS.BOOKING) {
+            const [buyerData, sellerData] = await Promise.all([
+              apiRequest("/orders?role=buyer", { token }),
+              apiRequest("/orders?role=seller", { token }),
+            ]);
+            const b = buyerData.orders || [];
+            const s = sellerData.orders || [];
+            setBookingHubBuyerOrders(b);
+            setBookingHubSellerOrders(s);
+            setOrders(dedupeOrdersByIdPreferLeft(b, s));
+          } else {
+            const data = await apiRequest(`/orders?role=${ordersRoleRef.current}`, { token });
+            setOrders(data.orders || []);
+          }
         } catch {
           // Keep prior rows if refresh fails; result banner still informs user.
         }
@@ -5825,7 +6405,7 @@ function App() {
         setOrdersBulkActionLoadingTransition(null);
       }
     },
-    [selectedOrders, token, ordersRole, sellerAcceptCourierPesos],
+    [selectedOrders, token, sellerAcceptCourierPesos],
   );
 
   useEffect(() => {
@@ -5969,6 +6549,28 @@ function App() {
   const refetchOrders = useCallback(async () => {
     if (!token) return;
     setOrdersFetchError("");
+    if (activityTabRef.current === ACTIVITY_TABS.BOOKING) {
+      setBookingHubLoading(true);
+      try {
+        const [buyerData, sellerData] = await Promise.all([
+          apiRequest("/orders?role=buyer", { token }),
+          apiRequest("/orders?role=seller", { token }),
+        ]);
+        const b = buyerData.orders || [];
+        const s = sellerData.orders || [];
+        setBookingHubBuyerOrders(b);
+        setBookingHubSellerOrders(s);
+        setOrders(dedupeOrdersByIdPreferLeft(b, s));
+      } catch (e) {
+        setOrdersFetchError(e?.message || "Could not load orders.");
+        setBookingHubBuyerOrders([]);
+        setBookingHubSellerOrders([]);
+        setOrders([]);
+      } finally {
+        setBookingHubLoading(false);
+      }
+      return;
+    }
     setOrdersLoading(true);
     try {
       const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
@@ -6027,6 +6629,9 @@ function App() {
 
   useEffect(() => {
     if (!token) return undefined;
+    if (activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.BOOKING) {
+      return undefined;
+    }
     if (ordersRole === "seller") {
       if (activeView !== VIEWS.ACTIVITY || activityTab !== ACTIVITY_TABS.SELLING) return undefined;
     } else if (ordersRole !== "buyer") {
@@ -6060,6 +6665,44 @@ function App() {
     };
   }, [token, activeView, ordersRole, activityTab]);
 
+  useEffect(() => {
+    if (!token || activeView !== VIEWS.ACTIVITY || activityTab !== ACTIVITY_TABS.BOOKING) return undefined;
+    let cancelled = false;
+    setBookingHubLoading(true);
+    setOrdersFetchError("");
+    (async () => {
+      try {
+        const [buyerData, sellerData] = await Promise.all([
+          apiRequest("/orders?role=buyer", { token }),
+          apiRequest("/orders?role=seller", { token }),
+        ]);
+        if (cancelled) return;
+        const b = buyerData.orders || [];
+        const s = sellerData.orders || [];
+        setBookingHubBuyerOrders(b);
+        setBookingHubSellerOrders(s);
+        setOrders(dedupeOrdersByIdPreferLeft(b, s));
+      } catch (e) {
+        if (!cancelled) {
+          setOrdersFetchError(e?.message || "Could not load orders.");
+          setBookingHubBuyerOrders([]);
+          setBookingHubSellerOrders([]);
+          setOrders([]);
+        }
+      } finally {
+        if (!cancelled) setBookingHubLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeView, activityTab]);
+
+  useEffect(() => {
+    if (activeView !== VIEWS.ACTIVITY || activityTab !== ACTIVITY_TABS.BOOKING) return;
+    setOrders(dedupeOrdersByIdPreferLeft(bookingHubBuyerOrders, bookingHubSellerOrders));
+  }, [activeView, activityTab, bookingHubBuyerOrders, bookingHubSellerOrders]);
+
   /** Keep buyer `orders` fresh on any screen so Processing/Cancelled tab badges update when the seller accepts or declines. */
   useEffect(() => {
     if (!token) return undefined;
@@ -6068,7 +6711,13 @@ function App() {
     const run = async () => {
       try {
         const data = await apiRequest("/orders?role=buyer", { token });
-        if (!cancelled) setOrders(data.orders || []);
+        if (cancelled) return;
+        const list = data.orders || [];
+        if (activeViewRef.current === VIEWS.ACTIVITY && activityTabRef.current === ACTIVITY_TABS.BOOKING) {
+          setBookingHubBuyerOrders(list);
+        } else {
+          setOrders(list);
+        }
       } catch {
         // Keep existing rows on transient errors; initial load still clears via the main orders effect on role change.
       }
@@ -6095,6 +6744,12 @@ function App() {
       const data = await apiRequest("/orders?role=seller", { token: t });
       if (cancelledFn()) return;
       const list = data.orders || [];
+      const onBookingHub =
+        activeViewRef.current === VIEWS.ACTIVITY && activityTabRef.current === ACTIVITY_TABS.BOOKING;
+      if (onBookingHub) {
+        setBookingHubSellerOrders(list);
+        return;
+      }
       const onSellerOrdersScreen =
         ordersRoleRef.current === "seller" &&
         activeViewRef.current === VIEWS.ACTIVITY &&
@@ -6103,6 +6758,9 @@ function App() {
       else setPolledSellerOrders(list);
     } catch {
       if (cancelledFn()) return;
+      const onBookingHub =
+        activeViewRef.current === VIEWS.ACTIVITY && activityTabRef.current === ACTIVITY_TABS.BOOKING;
+      if (onBookingHub) return;
       const onSellerOrdersScreen =
         ordersRoleRef.current === "seller" &&
         activeViewRef.current === VIEWS.ACTIVITY &&
@@ -6120,13 +6778,53 @@ function App() {
       const data = await apiRequest("/orders?role=buyer", { token: t });
       if (cancelledFn()) return;
       const list = data.orders || [];
+      const onBookingHub =
+        activeViewRef.current === VIEWS.ACTIVITY && activityTabRef.current === ACTIVITY_TABS.BOOKING;
+      if (onBookingHub) {
+        setBookingHubBuyerOrders(list);
+        return;
+      }
       if (ordersRoleRef.current === "buyer") setOrders(list);
       else setPolledBuyerOrders(list);
     } catch {
       if (cancelledFn()) return;
+      const onBookingHub =
+        activeViewRef.current === VIEWS.ACTIVITY && activityTabRef.current === ACTIVITY_TABS.BOOKING;
+      if (onBookingHub) return;
       if (ordersRoleRef.current !== "buyer") setPolledBuyerOrders([]);
     }
   }, []);
+
+  /** Activity → Booking: poll both roles while the hub is open. */
+  useEffect(() => {
+    if (!token) return undefined;
+    if (activeView !== VIEWS.ACTIVITY || activityTab !== ACTIVITY_TABS.BOOKING) return undefined;
+    let cancelled = false;
+    const isCancelled = () => cancelled;
+    const tickBoth = () => {
+      void refreshBuyerOrdersSnapshot(isCancelled);
+      void refreshSellerOrdersSnapshot(isCancelled);
+    };
+    void runNonCriticalRefresh("orders:booking-hub-screen-mount", tickBoth);
+    const id = window.setInterval(
+      () => void runNonCriticalRefresh("orders:booking-hub-screen-poll", tickBoth),
+      SELLER_ORDERS_POLL_MS,
+    );
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void runNonCriticalRefresh("orders:booking-hub-screen-vis", tickBoth);
+      }
+    };
+    const onFocus = () => void runNonCriticalRefresh("orders:booking-hub-screen-focus", tickBoth);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [token, activeView, activityTab, refreshBuyerOrdersSnapshot, refreshSellerOrdersSnapshot, runNonCriticalRefresh]);
 
   /** Keep seller `orders` fresh on the Orders screen (off-screen seller poll skips this view). */
   useEffect(() => {
@@ -6181,7 +6879,7 @@ function App() {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onFocus);
     };
-  }, [token, activitySelling, ordersRole, refreshSellerOrdersSnapshot, runNonCriticalRefresh]);
+  }, [token, activitySelling, activityBooking, ordersRole, refreshSellerOrdersSnapshot, runNonCriticalRefresh]);
 
   /** While Selling, keep a buyer order snapshot for Buying nav badges (mirrors off-screen seller poll). */
   useEffect(() => {
@@ -6238,7 +6936,7 @@ function App() {
   }, [token, user?.id, refreshSellerOrdersSnapshot, refreshBuyerOrdersSnapshot, runNonCriticalRefresh]);
 
   useEffect(() => {
-    if (!token || activeView !== VIEWS.ACTIVITY || !(activityBuying || activitySelling) || !orders.length)
+    if (!token || activeView !== VIEWS.ACTIVITY || !(activityBuying || activitySelling || activityBooking) || !orders.length)
       return undefined;
     const missingIds = Array.from(
       new Set(
@@ -6276,7 +6974,7 @@ function App() {
     if (
       !token ||
       activeView !== VIEWS.ACTIVITY ||
-      !(activityBuying || activitySelling) ||
+      !(activityBuying || activitySelling || activityBooking) ||
       usersList.length > 0
     )
       return undefined;
@@ -6858,8 +7556,20 @@ function App() {
   const refreshOrdersList = useCallback(async () => {
     if (!token) return;
     try {
-      const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-      setOrders(data.orders || []);
+      if (activityTabRef.current === ACTIVITY_TABS.BOOKING) {
+        const [buyerData, sellerData] = await Promise.all([
+          apiRequest("/orders?role=buyer", { token }),
+          apiRequest("/orders?role=seller", { token }),
+        ]);
+        const b = buyerData.orders || [];
+        const s = sellerData.orders || [];
+        setBookingHubBuyerOrders(b);
+        setBookingHubSellerOrders(s);
+        setOrders(dedupeOrdersByIdPreferLeft(b, s));
+      } else {
+        const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+        setOrders(data.orders || []);
+      }
     } catch {
       /* ignore */
     }
@@ -6982,8 +7692,20 @@ function App() {
         const body = { transition: transitionNorm, ...(options.extraBody || {}) };
         await apiRequest(`/orders/${id}`, { method: "PATCH", token, body });
       }
-      const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-      setOrders(data.orders || []);
+      if (activityTabRef.current === ACTIVITY_TABS.BOOKING) {
+        const [buyerData, sellerData] = await Promise.all([
+          apiRequest("/orders?role=buyer", { token }),
+          apiRequest("/orders?role=seller", { token }),
+        ]);
+        const b = buyerData.orders || [];
+        const s = sellerData.orders || [];
+        setBookingHubBuyerOrders(b);
+        setBookingHubSellerOrders(s);
+        setOrders(dedupeOrdersByIdPreferLeft(b, s));
+      } else {
+        const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
+        setOrders(data.orders || []);
+      }
       void refreshCourierHub();
       pushMarketplaceToast(successMessage || "Order updated.");
     } catch (e) {
@@ -7160,22 +7882,9 @@ function App() {
       if (editingListingId && String(editingListingId) === String(id)) {
         setEditingListingId(null);
         listingDraftBaselineRef.current = null;
-        setListingForm({
-          title: "",
-          description: "",
-          pricePesos: "",
-          quantity: "",
-          categories: "",
-          subId: "all",
-          optionNameA: "",
-          optionValuesA: "",
-          optionNameB: "",
-          optionValuesB: "",
-          orderType: "in_stock",
-          processingTime: "",
-          pickup: false,
-          delivery: false,
-        });
+        setListingForm(createInitialListingForm());
+        setServiceDynamicMultiselectDraft({});
+        setListingAvailabilityScheduleOpen(false);
         setListingFieldErrors({});
         setListingImageFile(null);
         setListingCoverContentHash("");
@@ -7264,27 +7973,31 @@ function App() {
 
   const openQuickAddModal = (listing, actionType = "cart") => {
     if (!listing?.id) return;
+    const listingIsService = isServiceListing(listing);
     const stock = Math.max(0, Number(listing.quantity) || 0);
-    if (stock <= 0) {
+    if (!listingIsService && stock <= 0) {
       pushMarketplaceToast("This item is currently out of stock.");
       return;
     }
     const mode = actionType === "buy" ? "buy" : "cart";
     if (mode === "buy") {
       if (!token) {
-        pushMarketplaceToast("Sign in to buy.");
+        pushMarketplaceToast(listingIsService ? "Sign in to book." : "Sign in to buy.");
         return;
       }
       if (!buyNowFromProfile.ready) {
-        pushMarketplaceToast("Complete your profile to buy.");
+        pushMarketplaceToast(listingIsService ? "Complete your profile to book." : "Complete your profile to buy.");
         return;
       }
     }
     const listingModes = Array.isArray(listing.fulfillmentModes) && listing.fulfillmentModes.length ? listing.fulfillmentModes : ["pickup"];
     const defaultFulfillment = listingModes.includes("pickup") ? "pickup" : listingModes[0];
     const savedPref = readQuickOrderFulfillmentPref();
-    const initialFulfillment =
-      savedPref && listingModes.includes(savedPref) ? savedPref : defaultFulfillment;
+    const initialFulfillment = listingIsService
+      ? defaultFulfillment
+      : savedPref && listingModes.includes(savedPref)
+        ? savedPref
+        : defaultFulfillment;
     const sourceView =
       activeView === VIEWS.PRODUCT_DETAIL
         ? String(productInspectReturnRef.current?.view || VIEWS.BROWSE)
@@ -7324,6 +8037,11 @@ function App() {
     setQuickAddSelectedVariantB(optNameB && valsB.length ? valsB[0] : "");
     setQuickAddComment("");
     setQuickAddInlineError("");
+    {
+      const slotOpts = slotOptionsForServiceListing(listing);
+      setQuickAddServiceBookingDate(slotOpts.dates[0] || "");
+      setQuickAddServiceBookingTime(slotOpts.times[0] || "");
+    }
     setQuickAddModalOpen(true);
   };
 
@@ -7334,6 +8052,10 @@ function App() {
     }
     const stock = Math.max(0, Number(listing.quantity) || 0);
     const hasPrice = Number.isFinite(Number(listing.priceCents));
+    if (isServiceListing(listing) && hasPrice) {
+      openQuickAddModal(listing, "buy");
+      return;
+    }
     if (stock > 0 && hasPrice) {
       openQuickAddModal(listing, "buy");
       return;
@@ -7382,6 +8104,8 @@ function App() {
     setQuickAddSelectedVariantB("");
     setQuickAddComment("");
     setQuickAddInlineError("");
+    setQuickAddServiceBookingDate("");
+    setQuickAddServiceBookingTime("");
     const originListingId = String(productFlowOriginRef.current?.listingId || "");
     if (originListingId && typeof document !== "undefined") {
       window.requestAnimationFrame(() => {
@@ -7472,6 +8196,12 @@ function App() {
       extra.sellerAvatarUrl ?? listingLike.sellerAvatarUrl ?? sellerFromDirectory?.avatarUrl ?? "",
     ).trim();
     const openGallery = resolveListingGalleryUrls(listingLike);
+    const openedServiceListing =
+      String(listingLike.verticalId || listingLike.categories || "").trim().toLowerCase() === "services";
+    const openedServiceMeta =
+      listingLike.serviceMeta != null && typeof listingLike.serviceMeta === "object" && !Array.isArray(listingLike.serviceMeta)
+        ? listingLike.serviceMeta
+        : null;
     setProductInspect({
       listingId: String(listingLike.id || ""),
       title: String(listingLike.title || "Product"),
@@ -7540,9 +8270,12 @@ function App() {
         typeof listingLike.listingReviewCount === "number" && Number.isFinite(listingLike.listingReviewCount)
           ? Math.max(0, Math.floor(listingLike.listingReviewCount))
           : 0,
+      serviceListing: openedServiceListing,
+      serviceMeta: openedServiceMeta,
       showBuyerCommerceActions: Boolean(extra.showBuyerCommerceActions),
       showSellerCommerceActions: Boolean(extra.showSellerCommerceActions),
-      onAddToCart: typeof extra.onAddToCart === "function" ? extra.onAddToCart : undefined,
+      onAddToCart:
+        openedServiceListing || typeof extra.onAddToCart !== "function" ? undefined : extra.onAddToCart,
       onBuyNow: typeof extra.onBuyNow === "function" ? extra.onBuyNow : undefined,
       onEditListing: typeof extra.onEditListing === "function" ? extra.onEditListing : undefined,
       onSaleSelect: typeof extra.onSaleSelect === "function" ? extra.onSaleSelect : undefined,
@@ -7554,9 +8287,12 @@ function App() {
       orderTimelineOrderIds: Array.isArray(extra.orderTimelineOrderIds)
         ? extra.orderTimelineOrderIds.map((x) => String(x || "").trim()).filter(Boolean)
         : undefined,
-      orderCourierPoolToken: extra.orderCourierPoolToken ? String(extra.orderCourierPoolToken) : undefined,
+      orderCourierPoolToken:
+        openedServiceListing || !extra.orderCourierPoolToken ? undefined : String(extra.orderCourierPoolToken),
       onOrderCourierPoolUpdated:
-        typeof extra.onOrderCourierPoolUpdated === "function" ? extra.onOrderCourierPoolUpdated : undefined,
+        openedServiceListing || typeof extra.onOrderCourierPoolUpdated !== "function"
+          ? undefined
+          : extra.onOrderCourierPoolUpdated,
       isFavorite: favoriteIds.has(String(listingLike.id || "")),
       onToggleFavorite:
         listingLike?.id
@@ -7650,6 +8386,12 @@ function App() {
                 typeof fresh.listingReviewCount === "number" && Number.isFinite(fresh.listingReviewCount)
                   ? Math.max(0, Math.floor(fresh.listingReviewCount))
                   : prev.listingReviewCount ?? 0,
+              serviceListing:
+                String(fresh.verticalId || fresh.categories || "").trim().toLowerCase() === "services",
+              serviceMeta:
+                fresh.serviceMeta != null && typeof fresh.serviceMeta === "object" && !Array.isArray(fresh.serviceMeta)
+                  ? fresh.serviceMeta
+                  : prev.serviceMeta,
               quantity:
                 String(prev.quantityLabel || "")
                   .trim()
@@ -7713,13 +8455,19 @@ function App() {
           else setCourierHubTab(ACTIVITY_COURIER_SUBTABS.TASKS);
           return;
         }
-        const sr = String(meta.ordersRole || meta.role || "").toLowerCase();
-        if (sr === "seller") {
-          setActivityTab(ACTIVITY_TABS.SELLING);
-          setOrdersRole("seller");
+        if (actTab === "booking") {
+          const sr = String(meta.ordersRole || meta.role || "").toLowerCase();
+          setActivityTab(ACTIVITY_TABS.BOOKING);
+          setOrdersRole(sr === "seller" ? "seller" : "buyer");
         } else {
-          setActivityTab(ACTIVITY_TABS.BUYING);
-          setOrdersRole("buyer");
+          const sr = String(meta.ordersRole || meta.role || "").toLowerCase();
+          if (sr === "seller") {
+            setActivityTab(ACTIVITY_TABS.SELLING);
+            setOrdersRole("seller");
+          } else {
+            setActivityTab(ACTIVITY_TABS.BUYING);
+            setOrdersRole("buyer");
+          }
         }
         const ot = meta.ordersTab || meta.ordersStatusTab;
         if (ot && RECENT_ORDER_TAB_KEYS.includes(String(ot))) setOrdersStatusTab(String(ot));
@@ -7761,7 +8509,10 @@ function App() {
               ? orderStatusToTabId(order.status)
               : "pending";
         setActiveView(VIEWS.ACTIVITY);
-        setActivityTab(role === "seller" ? ACTIVITY_TABS.SELLING : ACTIVITY_TABS.BUYING);
+        const serviceOrder = order && orderIsServiceListingBooking(order);
+        setActivityTab(
+          serviceOrder ? ACTIVITY_TABS.BOOKING : role === "seller" ? ACTIVITY_TABS.SELLING : ACTIVITY_TABS.BUYING,
+        );
         setOrdersRole(role);
         setOrdersStatusTab(tab);
         setOrderSelection({ [entityId]: true });
@@ -7858,10 +8609,22 @@ function App() {
     };
     setQuickAddInlineError("");
     const parsedQty = Number(quickAddQuantity);
-    const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
+    const quickSvc = isServiceListing(quickAddListing);
+    const maxQty = quickSvc ? 1 : Math.max(1, Number(quickAddListing.quantity) || 1);
     if (!Number.isFinite(parsedQty) || parsedQty < 1 || parsedQty > maxQty) {
       showQuickAddError(`Quantity must be between 1 and ${maxQty}.`);
       return;
+    }
+    if (quickSvc) {
+      const slotErr = validateServiceBookingSelection(
+        quickAddListing,
+        quickAddServiceBookingDate,
+        quickAddServiceBookingTime,
+      );
+      if (slotErr) {
+        showQuickAddError(slotErr);
+        return;
+      }
     }
     const valsA = normalizeListingOptionValues(quickAddListing.optionValuesA);
     const valsB = normalizeListingOptionValues(quickAddListing.optionValuesB);
@@ -7888,40 +8651,67 @@ function App() {
       return;
     }
     const maxCommentLen = quickActionType === "buy" ? 2000 : 250;
-    const mergedComment = buildQuickAddMergedComment(
+    let mergedComment = buildQuickAddMergedComment(
       quickAddListing,
       quickAddComment,
       selA,
       selB,
       maxCommentLen,
     );
+    if (
+      quickActionType !== "buy" &&
+      quickSvc &&
+      quickAddServiceBookingDate &&
+      quickAddServiceBookingTime
+    ) {
+      const line = formatServiceBookingRequestLine(quickAddServiceBookingDate, quickAddServiceBookingTime);
+      mergedComment = `${line}\n${mergedComment}`.trim().slice(0, maxCommentLen);
+    }
     const variantSig = buildVariantSignatureFromSelections(quickAddListing, selA, selB);
+    const listingModesSubmit = Array.isArray(quickAddListing.fulfillmentModes)
+      ? quickAddListing.fulfillmentModes.map(String)
+      : [];
+    const fulfillmentForSubmit = quickSvc
+      ? listingModesSubmit.includes("pickup")
+        ? "pickup"
+        : listingModesSubmit.includes("delivery")
+          ? "delivery"
+          : "pickup"
+      : quickOrderFulfillmentType;
     setQuickAddSubmitting(true);
     try {
       if (quickActionType === "buy") {
         if (!token) {
-          showQuickAddError("Sign in to buy.");
+          showQuickAddError(quickSvc ? "Sign in to book." : "Sign in to buy.");
           return;
         }
         if (!buyNowFromProfile.ready) {
-          showQuickAddError("Complete your profile to buy.");
+          showQuickAddError(quickSvc ? "Complete your profile to book." : "Complete your profile to buy.");
           return;
         }
         try {
+          const bookingBody =
+            quickSvc && quickAddServiceBookingDate && quickAddServiceBookingTime
+              ? {
+                  serviceBookingDate: quickAddServiceBookingDate,
+                  serviceBookingTime: quickAddServiceBookingTime,
+                }
+              : {};
           const created = await apiRequest("/orders", {
             method: "POST",
             token,
             body: {
               listingId: String(quickAddListing.id),
-              quantity: parsedQty,
-              fulfillmentType: quickOrderFulfillmentType,
+              quantity: quickSvc ? 1 : parsedQty,
+              fulfillmentType: fulfillmentForSubmit,
               comment: mergedComment,
               variantSignature: variantSig,
+              ...bookingBody,
             },
           });
           markBuyerOrderAsUnseenInTab("pending", created?.order?.id);
         } catch (e) {
-          showQuickAddError(e.message || "Could not place order.");
+          showQuickAddError(e.message || (quickSvc ? "Could not submit booking." : "Could not place order."));
           return;
         }
         setQuickAddModalOpen(false);
@@ -7936,12 +8726,14 @@ function App() {
         // Keep user in current marketplace/community view after successful buy.
         setOrdersRole("buyer");
         setOrdersStatusTab("pending");
-        writeQuickOrderFulfillmentPref(quickOrderFulfillmentType);
+        writeQuickOrderFulfillmentPref(fulfillmentForSubmit);
         {
           const titleForToast = String(quickAddListing.title || "Item").trim();
           const shortTitle = titleForToast.length > 52 ? `${titleForToast.slice(0, 52)}…` : titleForToast;
           pushMarketplaceToast(
-            `Order placed: ${shortTitle} ×${parsedQty}. Pay COD at pickup or when delivery is completed.`,
+            quickSvc
+              ? `Booking request sent: ${shortTitle}. The provider will confirm meetup details; pay COD when you meet.`
+              : `Order placed: ${shortTitle} ×${parsedQty}. Pay COD at pickup or when delivery is completed.`,
           );
         }
         return;
@@ -7957,7 +8749,7 @@ function App() {
               quantity: parsedQty,
               comment: mergedComment,
               variantSignature: variantSig,
-              fulfillmentType: quickOrderFulfillmentType,
+              fulfillmentType: fulfillmentForSubmit,
             },
           });
           const incoming = Array.isArray(cartData?.items) ? cartData.items : [];
@@ -8096,15 +8888,47 @@ function App() {
     const normalizedImageUrls = dedupeListingImageUrlsOrdered(
       Array.isArray(listing.imageUrls) ? listing.imageUrls.map((url) => String(url || "").trim()).filter(Boolean) : [],
     ).slice(0, LISTING_MAX_IMAGES);
+    const serviceMeta =
+      listing && typeof listing.serviceMeta === "object" && !Array.isArray(listing.serviceMeta) ? listing.serviceMeta : null;
+    const serviceCommon = serviceMeta && typeof serviceMeta.common === "object" && !Array.isArray(serviceMeta.common) ? serviceMeta.common : {};
+    const serviceDynamic =
+      serviceMeta && typeof serviceMeta.dynamicFields === "object" && !Array.isArray(serviceMeta.dynamicFields)
+        ? serviceMeta.dynamicFields
+        : {};
     const nextListingForm = {
+      ...createInitialListingForm(),
       title: String(listing.title || ""),
       description: String(listing.description || ""),
-      pricePesos: Number.isFinite(Number(listing.priceCents))
-        ? formatPhpPriceFromNumber(Number(listing.priceCents) / 100)
-        : "",
+      pricePesos:
+        String(listing.categories || listing.verticalId || "") === "services"
+          ? ""
+          : Number.isFinite(Number(listing.priceCents))
+            ? formatPhpPriceFromNumber(Number(listing.priceCents) / 100)
+            : "",
       quantity: Number.isFinite(Number(listing.quantity)) ? String(Number(listing.quantity)) : "",
       categories: String(listing.categories || listing.verticalId || ""),
       subId: String(listing.subId || "all"),
+      serviceCategoryId: String(listing.categories || listing.verticalId || "") === "services" ? String(listing.subId || "") : "",
+      serviceRateType: String(serviceCommon.rateType || ""),
+      serviceArea: String(serviceCommon.serviceArea || ""),
+      serviceAvailability: String(serviceCommon.availabilitySchedule || ""),
+      serviceContactPreference: String(serviceCommon.contactPreference || ""),
+      serviceTags: Array.isArray(serviceCommon.tags) ? serviceCommon.tags.map((x) => String(x || "").trim()).filter(Boolean).join(", ") : "",
+      serviceVerifiedProvider: Boolean(serviceCommon.verifiedProvider),
+      transportPriceMinPesos: (() => {
+        if (Number.isFinite(Number(serviceCommon.priceRangeMinPesos))) {
+          return formatPhpPriceFromNumber(Number(serviceCommon.priceRangeMinPesos));
+        }
+        const isSvc = String(listing.categories || listing.verticalId || "") === "services";
+        if (isSvc && Number.isFinite(Number(listing.priceCents))) {
+          return formatPhpPriceFromNumber(Number(listing.priceCents) / 100);
+        }
+        return "";
+      })(),
+      transportPriceMaxPesos: Number.isFinite(Number(serviceCommon.priceRangeMaxPesos))
+        ? formatPhpPriceFromNumber(Number(serviceCommon.priceRangeMaxPesos))
+        : "",
+      serviceDynamicFields: mapServiceMetaDynamicToFormFields(String(listing.subId || ""), serviceDynamic),
       optionNameA: String(listing.optionNameA || "").trim(),
       optionValuesA: Array.isArray(listing.optionValuesA) ? listing.optionValuesA.map((v) => String(v || "").trim()).filter(Boolean).join(", ") : "",
       optionNameB: String(listing.optionNameB || "").trim(),
@@ -8114,8 +8938,18 @@ function App() {
       pickup: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("pickup") : true,
       delivery: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("delivery") : true,
     };
+    const editingService = String(listing.categories || listing.verticalId || "") === "services";
+    setListingUploadKind(editingService ? "service" : "product");
     setEditingListingId(String(listing.id));
     setListingForm(nextListingForm);
+    setListingAvailabilityScheduleOpen(
+      isWeeklyAvailabilityComplete(String(nextListingForm.serviceAvailability || "")),
+    );
+    {
+      const hasMin = String(nextListingForm.transportPriceMinPesos || "").trim();
+      const hasMax = String(nextListingForm.transportPriceMaxPesos || "").trim();
+      setTransportPriceRangeOpen(Boolean(hasMin && hasMax));
+    }
     setListingFieldErrors({});
     setListingImageFile(null);
     setListingCoverContentHash("");
@@ -8200,23 +9034,63 @@ function App() {
     if (nameATrim && nameBTrim && nameATrim.toLowerCase() === nameBTrim.toLowerCase()) {
       nextErrors.optionNameB = "Choose a different variant type than the first group.";
     }
-    if (!String(listingForm.title || "").trim()) {
+    const isTransportServiceListing =
+      isServiceUpload && String(listingForm.serviceCategoryId || "").trim() === "transport_services";
+    if (!isTransportServiceListing && !String(listingForm.title || "").trim()) {
       nextErrors.title = "Add a short title so buyers recognize your listing.";
+    }
+    if (isServiceUpload && !String(listingForm.description || "").trim()) {
+      nextErrors.description = "Add a short service description so people know what to expect.";
     }
     if (!String(listingForm.categories || "").trim()) {
       nextErrors.categories = "Choose a category so shoppers can find your item.";
     }
-    if (String(listingForm.quantity ?? "").trim() === "") {
+    if (!isServiceUpload && String(listingForm.quantity ?? "").trim() === "") {
       nextErrors.quantity = "Enter how many you have in stock (use 0 if none).";
     }
-    if (String(listingForm.pricePesos ?? "").trim() === "") {
+    if (isServiceUpload) {
+      const minEmpty = !String(listingForm.transportPriceMinPesos ?? "").trim();
+      const maxEmpty = !String(listingForm.transportPriceMaxPesos ?? "").trim();
+      if (minEmpty && maxEmpty) {
+        nextErrors.transportPrice = "Enter at least one price.";
+      } else {
+        if (!minEmpty) {
+          const m = parsePhpPricePesos(listingForm.transportPriceMinPesos);
+          if (!Number.isFinite(m) || m < 0) {
+            nextErrors.transportPriceMin = "Enter a valid amount.";
+          }
+        }
+        if (!maxEmpty) {
+          const m = parsePhpPricePesos(listingForm.transportPriceMaxPesos);
+          if (!Number.isFinite(m) || m < 0) {
+            nextErrors.transportPriceMax = "Enter a valid amount.";
+          }
+        }
+      }
+    } else if (String(listingForm.pricePesos ?? "").trim() === "") {
       nextErrors.pricePesos = "Enter the price in pesos using numbers and a decimal if needed.";
     }
-    if (String(listingForm.orderType || "in_stock") === "pre_order" && !String(listingForm.processingTime || "").trim()) {
+    if (!isServiceUpload && String(listingForm.orderType || "in_stock") === "pre_order" && !String(listingForm.processingTime || "").trim()) {
       nextErrors.processingTime = "Add how long pre-orders take (for example: 7 days or 2 weeks).";
     }
-    if (!listingForm.pickup && !listingForm.delivery) {
+    if (!isServiceUpload && !listingForm.pickup && !listingForm.delivery) {
       nextErrors.fulfillment = "Turn on Pick-up and/or COD Delivery so buyers know how to receive the item.";
+    }
+    if (isServiceUpload) {
+      if (!String(listingForm.serviceCategoryId || "").trim()) {
+        nextErrors.serviceCategoryId = "Pick a service category to continue.";
+      }
+      if (isTransportServiceListing) {
+        if (
+          !Array.isArray(listingForm.serviceDynamicFields?.transportModes) ||
+          listingForm.serviceDynamicFields.transportModes.length === 0
+        ) {
+          nextErrors.transportModes = "Pick at least one transport type, or add your own.";
+        }
+      }
+      if (!String(listingForm.serviceRateType || "").trim()) {
+        nextErrors.serviceRateType = "Choose how your service is priced.";
+      }
     }
 
     const hasImage = Boolean(String(listingImagePreviewUrl || "").trim() || listingImageFile);
@@ -8230,7 +9104,7 @@ function App() {
     setListingFieldErrors({});
     const catMissing = !String(listingForm.categories || "").trim();
     const qtyStr = String(listingForm.quantity ?? "").trim();
-    const qtyMissing = qtyStr === "";
+    const qtyMissing = !isServiceUpload && qtyStr === "";
     if (catMissing && qtyMissing) {
       pushMarketplaceToast("Select a category and enter a quantity before publishing.");
       return;
@@ -8243,20 +9117,28 @@ function App() {
       pushMarketplaceToast("Enter a quantity before publishing.");
       return;
     }
-    const qtyNum = Number(qtyStr);
-    if (!Number.isFinite(qtyNum) || qtyNum < 0 || !Number.isInteger(qtyNum)) {
+    const qtyNum = isServiceUpload ? 1 : Number(qtyStr);
+    if (!isServiceUpload && (!Number.isFinite(qtyNum) || qtyNum < 0 || !Number.isInteger(qtyNum))) {
       pushMarketplaceToast("Enter a valid whole number for quantity (0 or more).");
       return;
     }
 
-    const pesos = parsePhpPricePesos(listingForm.pricePesos);
+    const pesos = isServiceUpload
+      ? resolveTransportListingPricePesos(listingForm.transportPriceMinPesos, listingForm.transportPriceMaxPesos)
+      : parsePhpPricePesos(listingForm.pricePesos);
     if (!Number.isFinite(pesos) || pesos < 0) {
       pushMarketplaceToast("Enter a valid price in pesos.");
       return;
     }
+    const transportServiceListing =
+      isServiceUpload && String(listingForm.serviceCategoryId || "") === "transport_services";
     const modes = [];
-    if (listingForm.pickup) modes.push("pickup");
-    if (listingForm.delivery) modes.push("delivery");
+    if (!isServiceUpload && listingForm.pickup) modes.push("pickup");
+    if (!isServiceUpload && listingForm.delivery) modes.push("delivery");
+    if (isServiceUpload) {
+      if (transportServiceListing) modes.push("delivery");
+      else modes.push("pickup");
+    }
     if (modes.length === 0) {
       setListingFieldErrors((prev) => ({
         ...prev,
@@ -8276,22 +9158,101 @@ function App() {
         (urls) => dedupeListingImageUrlsOrdered(urls).slice(0, LISTING_MAX_IMAGES),
       );
       const primaryImageUrl = imageUrls[0] || "";
-      const optionNameA = String(listingForm.optionNameA || "").trim();
-      const optionNameB = listingSecondOptionOpen ? String(listingForm.optionNameB || "").trim() : "";
-      const optionValuesA = optValsA.slice(0, 30);
-      const optionValuesB = listingSecondOptionOpen ? optValsB.slice(0, 30) : [];
+      const optionNameA = isServiceUpload ? "" : String(listingForm.optionNameA || "").trim();
+      const optionNameB = isServiceUpload ? "" : (listingSecondOptionOpen ? String(listingForm.optionNameB || "").trim() : "");
+      const optionValuesA = isServiceUpload ? [] : optValsA.slice(0, 30);
+      const optionValuesB = isServiceUpload ? [] : (listingSecondOptionOpen ? optValsB.slice(0, 30) : []);
       const variantsPayload = [];
       if (optionNameA && optionValuesA.length) variantsPayload.push({ type: optionNameA, choices: optionValuesA });
-      if (listingSecondOptionOpen && optionNameB && optionValuesB.length) {
+      if (!isServiceUpload && listingSecondOptionOpen && optionNameB && optionValuesB.length) {
         variantsPayload.push({ type: optionNameB, choices: optionValuesB });
       }
-      const orderType = String(listingForm.orderType || "in_stock").trim() === "pre_order" ? "pre_order" : "in_stock";
-      const processingTime = String(listingForm.processingTime || "")
+      const orderType = isServiceUpload ? "in_stock" : (String(listingForm.orderType || "in_stock").trim() === "pre_order" ? "pre_order" : "in_stock");
+      const processingTime = (isServiceUpload ? "" : String(listingForm.processingTime || ""))
         .trim()
         .slice(0, 120);
       const subIdNormalized =
         listingForm.subId && String(listingForm.subId).trim() !== "" && listingForm.subId !== "all"
           ? String(listingForm.subId).trim()
+          : null;
+      const dynamicPayload = {};
+      for (const field of activeServiceDynamicFields) {
+        const raw = listingForm.serviceDynamicFields?.[field.key];
+        if (field.type === "multiselect") {
+          if (Array.isArray(raw) && raw.length) dynamicPayload[field.label] = raw;
+          continue;
+        }
+        if (field.type === "toggle") {
+          dynamicPayload[field.label] = Boolean(raw);
+          continue;
+        }
+        const trimmed = String(raw || "").trim();
+        if (trimmed) dynamicPayload[field.label] = trimmed;
+      }
+      if (
+        isServiceUpload &&
+        String(listingForm.serviceCategoryId || "").trim() &&
+        String(listingForm.serviceCategoryId || "") !== "transport_services"
+      ) {
+        const fromTitle = deriveServiceDynamicPayloadFromTitle(
+          String(listingForm.serviceCategoryId || ""),
+          String(listingForm.title || ""),
+        );
+        for (const field of activeServiceDynamicFields) {
+          if (field.excludeFromServiceTitleQuickPicks) continue;
+          if (field.type !== "select" && field.type !== "multiselect") continue;
+          const v = fromTitle[field.label];
+          if (v === undefined) continue;
+          if (field.type === "multiselect") {
+            if (Array.isArray(v) && v.length) dynamicPayload[field.label] = v;
+          } else {
+            dynamicPayload[field.label] = v;
+          }
+        }
+      }
+      const transportModesForTitle = Array.isArray(listingForm.serviceDynamicFields?.transportModes)
+        ? listingForm.serviceDynamicFields.transportModes
+        : [];
+      const isTransportServicePayload =
+        isServiceUpload && String(listingForm.serviceCategoryId || "").trim() === "transport_services";
+      const resolvedListingTitle = isTransportServicePayload
+        ? transportModesForTitle.map((x) => String(x || "").trim()).filter(Boolean).join(", ")
+        : String(listingForm.title || "").trim();
+      const serviceMeta =
+        isServiceUpload
+          ? {
+              schemaVersion: 1,
+              categoryId: String(listingForm.serviceCategoryId || "").trim() || null,
+              common: {
+                rateType: String(listingForm.serviceRateType || "").trim(),
+                serviceArea: String(listingForm.serviceArea || "").trim(),
+                availabilitySchedule: String(listingForm.serviceAvailability || "").trim(),
+                contactPreference: String(listingForm.serviceContactPreference || "").trim(),
+                tags: String(listingForm.serviceTags || "")
+                  .split(",")
+                  .map((x) => x.trim())
+                  .filter(Boolean)
+                  .slice(0, 30),
+                verifiedProvider: Boolean(listingForm.serviceVerifiedProvider),
+                priceRangeMinPesos: isServiceUpload
+                  ? (() => {
+                      const raw = String(listingForm.transportPriceMinPesos || "").trim();
+                      if (!raw) return null;
+                      const n = parsePhpPricePesos(listingForm.transportPriceMinPesos);
+                      return Number.isFinite(n) && n >= 0 ? n : null;
+                    })()
+                  : null,
+                priceRangeMaxPesos: isServiceUpload
+                  ? (() => {
+                      const raw = String(listingForm.transportPriceMaxPesos || "").trim();
+                      if (!raw) return null;
+                      const n = parsePhpPricePesos(listingForm.transportPriceMaxPesos);
+                      return Number.isFinite(n) && n >= 0 ? n : null;
+                    })()
+                  : null,
+              },
+              dynamicFields: dynamicPayload,
+            }
           : null;
       const shopScopedCommunityId =
         shopCommunityId && (isMemberOfOpenCommunity || isOwnerOfOpenCommunity)
@@ -8300,13 +9261,13 @@ function App() {
       const profileCommunityId = String(user?.communityId || "").trim();
       const listingCommunityId = shopScopedCommunityId || profileCommunityId;
       const payload = {
-        title: listingForm.title.trim(),
+        title: resolvedListingTitle,
         description: listingForm.description.trim(),
         priceCents: Math.round(pesos * 100),
         quantity: qtyNum,
-        categories: String(listingForm.categories).trim(),
-        verticalId: String(listingForm.categories).trim(),
-        subId: subIdNormalized,
+        categories: isServiceUpload ? "services" : String(listingForm.categories).trim(),
+        verticalId: isServiceUpload ? "services" : String(listingForm.categories).trim(),
+        subId: isServiceUpload ? String(listingForm.serviceCategoryId || "").trim() || null : subIdNormalized,
         fulfillmentModes: modes,
         cityLabel: "",
         imageUrl: primaryImageUrl,
@@ -8318,6 +9279,7 @@ function App() {
         variants: variantsPayload,
         orderType,
         processingTime,
+        serviceMeta,
         ...(listingCommunityId ? { communityId: listingCommunityId } : {}),
       };
       const createRes = editingListingId
@@ -8334,22 +9296,9 @@ function App() {
       const listRes = await apiRequest("/me/listings", { token });
       const latestListings = listRes.listings || [];
       setSellerListings(latestListings.length ? latestListings : createRes?.listing ? [createRes.listing] : []);
-      setListingForm({
-        title: "",
-        description: "",
-        pricePesos: "",
-        quantity: "",
-        categories: "",
-        subId: "all",
-        optionNameA: "",
-        optionValuesA: "",
-        optionNameB: "",
-        optionValuesB: "",
-        orderType: "in_stock",
-        processingTime: "",
-        pickup: false,
-        delivery: false,
-      });
+      setListingForm(createInitialListingForm());
+      setServiceDynamicMultiselectDraft({});
+      setListingAvailabilityScheduleOpen(false);
       setListingFieldErrors({});
       setListingImageFile(null);
       setListingCoverContentHash("");
@@ -8370,8 +9319,7 @@ function App() {
       setSellerTab(SELLER_TABS.PRODUCTS);
       const origin = productFlowOriginRef.current || {};
       const originView = String(origin.view || "");
-      const shouldReturnToProductFlow =
-        Boolean(editingListingId) && [VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(originView);
+      const shouldReturnToProductFlow = [VIEWS.BROWSE, VIEWS.COMMUNITY_SHOP, VIEWS.FAVORITES].includes(originView);
       if (shouldReturnToProductFlow) {
         const originCommunityId = origin.shopCommunityId ? String(origin.shopCommunityId) : null;
         setShopCommunityId(originCommunityId);
@@ -8386,6 +9334,7 @@ function App() {
         }
         if (token) {
           if (originView === VIEWS.COMMUNITY_SHOP) {
+            setCommunityIncludeOwnListings(true);
             void loadCommunityShopListings({ preserveExistingRows: false, force: true });
           }
           if (originView === VIEWS.FAVORITES) {
@@ -8518,6 +9467,44 @@ function App() {
   const closeListingPhotoActionModal = useCallback(() => {
     setListingPhotoActionModal({ open: false, variant: "cover", extraId: "" });
   }, []);
+
+  /** Clears listing draft UI state when the user confirms discarding from the unsaved-changes modal (any navigation path). */
+  const resetListingDraftAfterDiscardLeave = useCallback(() => {
+    setListingForm(createInitialListingForm());
+    setServiceDynamicMultiselectDraft({});
+    setListingAvailabilityScheduleOpen(false);
+    setTransportPriceRangeOpen(false);
+    setListingPublishError("");
+    setListingFieldErrors({});
+    setListingImageFile(null);
+    setListingCoverContentHash("");
+    if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+    setListingImagePreviewUrl("");
+    clearListingExtraImages();
+    setListingCropQueue([]);
+    closeListingCropEditor();
+    closeListingPhotoActionModal();
+    setListingAdvancedOpen(false);
+    setListingOptionValueDraftA("");
+    setListingOptionValueDraftB("");
+    setListingSecondOptionOpen(false);
+    setEditingListingId(null);
+    listingDraftBaselineRef.current = null;
+    setListingEditOverlayOpen(false);
+  }, [
+    clearListingExtraImages,
+    closeListingCropEditor,
+    closeListingPhotoActionModal,
+    listingImagePreviewUrl,
+  ]);
+
+  const confirmDiscardListingChangesModal = useCallback(() => {
+    const next = pendingDiscardListingActionRef.current;
+    pendingDiscardListingActionRef.current = null;
+    setDiscardListingChangesModalOpen(false);
+    resetListingDraftAfterDiscardLeave();
+    if (typeof next === "function") next();
+  }, [resetListingDraftAfterDiscardLeave]);
 
   const promoteListingExtraToCover = useCallback(
     (extraId) => {
@@ -10095,6 +11082,7 @@ function App() {
         courierPipelineCount={courierFullPipelineCount}
         activityPrimaryBuyingBadge={activityPrimaryBuyingBadge}
         activityPrimarySellingBadge={activityPrimarySellingBadge}
+        activityPrimaryBookingBadge={activityPrimaryBookingBadge}
         activityPrimaryCourierBadge={activityPrimaryCourierBadge}
         courierProfileIncomplete={!buyNowFromProfile.ready}
         goCart={goCartGuarded}
@@ -11185,94 +12173,169 @@ function App() {
                       )
                     }
                   >
-                  <div
-                    className={`${
-                      activeView === VIEWS.FAVORITES
-                        ? favoritesGridClass(effectiveFavoriteBrowseView)
-                        : communityBrowseGridClass(effectiveCommunityBrowseView, isMobileViewport)
-                    } w-full min-w-0 ${lmBrowseViewShellClass(
-                      activeView === VIEWS.FAVORITES ? effectiveFavoriteBrowseView : effectiveCommunityBrowseView,
-                    )}`}
-                  >
-                    {(activeView === VIEWS.FAVORITES ? visibleFavoritesListings : visibleBrowseListings).map((l) => (
-                      <LazyCommunityShopListingCard
-                        key={l.id}
-                        listing={l}
-                        gridMode={
-                          (activeView === VIEWS.FAVORITES ? effectiveFavoriteBrowseView : effectiveCommunityBrowseView) !==
-                          "list"
-                        }
-                        compactGrid={
-                          (activeView === VIEWS.FAVORITES ? effectiveFavoriteBrowseView : effectiveCommunityBrowseView) ===
-                          "compact"
-                        }
-                        mobileOwnerActionsInMenu={
-                          isMobileViewport &&
-                          activeView === VIEWS.COMMUNITY_SHOP &&
-                          effectiveCommunityBrowseView !== "list"
-                        }
-                        disableGallerySwipe={activeView === VIEWS.COMMUNITY_SHOP}
-                        hideGalleryPageIndicators={activeView === VIEWS.FAVORITES}
-                        softBrowseChrome={isMobileViewport && activeView === VIEWS.COMMUNITY_SHOP}
-                        browseSummaryGrid={
-                          isMobileViewport &&
-                          (activeView === VIEWS.FAVORITES
-                            ? effectiveFavoriteBrowseView === "grid"
-                            : effectiveCommunityBrowseView === "grid")
-                        }
-                        mobileCardUx={isMobileViewport}
-                        hideCardDescription={activeView === VIEWS.COMMUNITY_SHOP && !isMobileViewport}
-                        mobileEntireCardTappable={
-                          isMobileViewport && (activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP)
-                        }
-                        isFavorite={favoriteIds.has(l.id)}
-                        showActions
-                        currentUserId={user?.id || ""}
-                        buyNowDisabled={buyNowBlocked}
-                        buyNowDisabledReason={buyNowBlockedReason}
-                        onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
-                        onEdit={() => beginEditSellerListing(l)}
-                        onBuy={() => openQuickAddModal(l, "buy")}
-                        onAdd={() => openQuickAddModal(l, "cart")}
-                        onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
-                        onInspect={() => {
-                          const isOwn = String(l.sellerId || "") === String(user?.id || "");
-                          const stockListed = Math.max(0, Number(l.quantity) || 0);
-                          openProductInspect(l, {
-                            quantity: stockListed,
-                            quantityLabel: "Stock listed",
-                            subtitle: activeView === VIEWS.FAVORITES ? "Saved listing" : "",
-                            listingStockQty: stockListed,
-                            showBuyerCommerceActions: !isOwn,
-                            showSellerCommerceActions: isOwn,
-                            onAddToCart: isOwn
-                              ? undefined
-                              : () => {
-                                  openQuickAddModal(l, "cart");
-                                },
-                            onBuyNow: isOwn
-                              ? undefined
-                              : () => {
-                                  openQuickAddModal(l, "buy");
-                                },
-                            buyNowDisabled: !isOwn && buyNowBlocked,
-                            buyNowDisabledReason: !isOwn ? buyNowBlockedReason : "",
-                            onEditListing: isOwn
-                              ? () => {
-                                  beginEditSellerListing(l);
-                                }
-                              : undefined,
-                            onSaleSelect: isOwn
-                              ? (pct) => {
-                                  closeProductInspect();
-                                  void applySellerListingDiscount(l, pct);
-                                }
-                              : undefined,
-                          });
-                        }}
-                      />
-                    ))}
-                  </div>
+                  {activeView === VIEWS.COMMUNITY_SHOP ? (
+                    <div className="w-full min-w-0 space-y-8">
+                      {communityShopHubSections.map((section) => (
+                        <section
+                          key={section.id}
+                          className="space-y-3"
+                          aria-labelledby={`community-shop-hub-${section.id}`}
+                        >
+                          <h3
+                            id={`community-shop-hub-${section.id}`}
+                            className="text-sm font-semibold tracking-tight text-neutral-800 dark:text-slate-100"
+                          >
+                            {section.title}
+                          </h3>
+                          {section.id === "shop" && section.listings.length === 0 ? (
+                            <p className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/80 px-4 py-6 text-center text-sm text-neutral-600 dark:border-slate-600/70 dark:bg-slate-800/40 dark:text-slate-400">
+                              No shop listings yet. Community shop upload is not available yet — listings will appear here
+                              when it is.
+                            </p>
+                          ) : null}
+                          {section.listings.length > 0 ? (
+                            <div
+                              className={`${communityBrowseGridClass(effectiveCommunityBrowseView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(
+                                effectiveCommunityBrowseView,
+                              )}`}
+                            >
+                              {section.listings.map((l) => (
+                                <LazyCommunityShopListingCard
+                                  key={l.id}
+                                  listing={l}
+                                  gridMode={effectiveCommunityBrowseView !== "list"}
+                                  compactGrid={effectiveCommunityBrowseView === "compact"}
+                                  mobileOwnerActionsInMenu={
+                                    isMobileViewport && effectiveCommunityBrowseView !== "list"
+                                  }
+                                  disableGallerySwipe
+                                  hideGalleryPageIndicators={false}
+                                  softBrowseChrome={isMobileViewport}
+                                  browseSummaryGrid={isMobileViewport && effectiveCommunityBrowseView === "grid"}
+                                  mobileCardUx={isMobileViewport}
+                                  hideCardDescription={!isMobileViewport}
+                                  mobileEntireCardTappable={isMobileViewport}
+                                  isFavorite={favoriteIds.has(l.id)}
+                                  showActions
+                                  currentUserId={user?.id || ""}
+                                  buyNowDisabled={buyNowBlocked}
+                                  buyNowDisabledReason={buyNowBlockedReason}
+                                  onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
+                                  onEdit={() => beginEditSellerListing(l)}
+                                  onBuy={() => openQuickAddModal(l, "buy")}
+                                  onAdd={() => openQuickAddModal(l, "cart")}
+                                  onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
+                                  onInspect={() => {
+                                    const isOwn = String(l.sellerId || "") === String(user?.id || "");
+                                    const stockListed = Math.max(0, Number(l.quantity) || 0);
+                                    openProductInspect(l, {
+                                      quantity: stockListed,
+                                      quantityLabel: "Stock listed",
+                                      subtitle: "",
+                                      listingStockQty: stockListed,
+                                      showBuyerCommerceActions: !isOwn,
+                                      showSellerCommerceActions: isOwn,
+                                      onAddToCart: isOwn
+                                        ? undefined
+                                        : () => {
+                                            openQuickAddModal(l, "cart");
+                                          },
+                                      onBuyNow: isOwn
+                                        ? undefined
+                                        : () => {
+                                            openQuickAddModal(l, "buy");
+                                          },
+                                      buyNowDisabled: !isOwn && buyNowBlocked,
+                                      buyNowDisabledReason: !isOwn ? buyNowBlockedReason : "",
+                                      onEditListing: isOwn
+                                        ? () => {
+                                            beginEditSellerListing(l);
+                                          }
+                                        : undefined,
+                                      onSaleSelect: isOwn
+                                        ? (pct) => {
+                                            closeProductInspect();
+                                            void applySellerListingDiscount(l, pct);
+                                          }
+                                        : undefined,
+                                    });
+                                  }}
+                                />
+                              ))}
+                            </div>
+                          ) : null}
+                        </section>
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      className={`${favoritesGridClass(effectiveFavoriteBrowseView)} w-full min-w-0 ${lmBrowseViewShellClass(
+                        effectiveFavoriteBrowseView,
+                      )}`}
+                    >
+                      {visibleFavoritesListings.map((l) => (
+                        <LazyCommunityShopListingCard
+                          key={l.id}
+                          listing={l}
+                          gridMode={effectiveFavoriteBrowseView !== "list"}
+                          compactGrid={effectiveFavoriteBrowseView === "compact"}
+                          mobileOwnerActionsInMenu={false}
+                          disableGallerySwipe={false}
+                          hideGalleryPageIndicators
+                          softBrowseChrome={false}
+                          browseSummaryGrid={isMobileViewport && effectiveFavoriteBrowseView === "grid"}
+                          mobileCardUx={isMobileViewport}
+                          hideCardDescription={false}
+                          mobileEntireCardTappable={false}
+                          isFavorite={favoriteIds.has(l.id)}
+                          showActions
+                          currentUserId={user?.id || ""}
+                          buyNowDisabled={buyNowBlocked}
+                          buyNowDisabledReason={buyNowBlockedReason}
+                          onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
+                          onEdit={() => beginEditSellerListing(l)}
+                          onBuy={() => openQuickAddModal(l, "buy")}
+                          onAdd={() => openQuickAddModal(l, "cart")}
+                          onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
+                          onInspect={() => {
+                            const isOwn = String(l.sellerId || "") === String(user?.id || "");
+                            const stockListed = Math.max(0, Number(l.quantity) || 0);
+                            openProductInspect(l, {
+                              quantity: stockListed,
+                              quantityLabel: "Stock listed",
+                              subtitle: "Saved listing",
+                              listingStockQty: stockListed,
+                              showBuyerCommerceActions: !isOwn,
+                              showSellerCommerceActions: isOwn,
+                              onAddToCart: isOwn
+                                ? undefined
+                                : () => {
+                                    openQuickAddModal(l, "cart");
+                                  },
+                              onBuyNow: isOwn
+                                ? undefined
+                                : () => {
+                                    openQuickAddModal(l, "buy");
+                                  },
+                              buyNowDisabled: !isOwn && buyNowBlocked,
+                              buyNowDisabledReason: !isOwn ? buyNowBlockedReason : "",
+                              onEditListing: isOwn
+                                ? () => {
+                                    beginEditSellerListing(l);
+                                  }
+                                : undefined,
+                              onSaleSelect: isOwn
+                                ? (pct) => {
+                                    closeProductInspect();
+                                    void applySellerListingDiscount(l, pct);
+                                  }
+                                : undefined,
+                            });
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
                   </Suspense>
                 ) : null}
                 {(activeView === VIEWS.FAVORITES
@@ -12227,7 +13290,7 @@ function App() {
             className={
               listingEditOverlayOpen
                 ? "fixed inset-0 z-[130] h-[100dvh] overflow-y-auto bg-white px-4 pt-0 pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-slate-950 md:px-4 md:pb-[max(1rem,env(safe-area-inset-bottom))]"
-                : "w-full min-w-0 max-w-none space-y-6 md:space-y-8"
+                : `w-full min-w-0 max-w-none space-y-6 md:space-y-8 ${isServiceUpload ? "md:min-h-[70vh]" : ""}`
             }
           >
             {listingEditOverlayOpen ? (
@@ -12239,22 +13302,9 @@ function App() {
                   onClick={() => {
                     if (listingSaving) return;
                     requestDiscardListingChanges(() => {
-                      setListingForm({
-                        title: "",
-                        description: "",
-                        pricePesos: "",
-                        quantity: "",
-                        categories: "",
-                        subId: "all",
-                        optionNameA: "",
-                        optionValuesA: "",
-                        optionNameB: "",
-                        optionValuesB: "",
-                        orderType: "in_stock",
-                        processingTime: "",
-                        pickup: false,
-                        delivery: false,
-                      });
+                      setListingForm(createInitialListingForm());
+                      setServiceDynamicMultiselectDraft({});
+                      setListingAvailabilityScheduleOpen(false);
                       setListingFieldErrors({});
                       setListingImageFile(null);
                       setListingCoverContentHash("");
@@ -12323,69 +13373,348 @@ function App() {
               noValidate
               onSubmit={handleCreateListing}
               aria-busy={listingSaving || undefined}
-              className="grid w-full min-w-0 max-w-none gap-5 md:grid-cols-2 md:gap-4"
+              className="grid w-full min-w-0 max-w-none items-start gap-5 md:grid-cols-2 md:auto-rows-min md:gap-4"
             >
-              <div id="listing-section-photos" className="md:col-span-2">
-                <div className="mb-2">
+              {isServiceUpload ? (
+                <div className="md:col-span-2">
                   {!listingEditOverlayOpen ? (
-                    <button
-                      type="button"
-                      className="z-10 inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-50 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
-                      aria-label="Back"
-                      onClick={() => {
-                        if (listingSaving) return;
-                        requestDiscardListingChanges(() => {
-                          setListingForm({
-                            title: "",
-                            description: "",
-                            pricePesos: "",
-                            quantity: "",
-                            categories: "",
-                            subId: "all",
-                            optionNameA: "",
-                            optionValuesA: "",
-                            optionNameB: "",
-                            optionValuesB: "",
-                            orderType: "in_stock",
-                            processingTime: "",
-                            pickup: false,
-                            delivery: false,
-                          });
-                          setListingFieldErrors({});
-                          setListingImageFile(null);
-                          setListingCoverContentHash("");
-                          if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
-                          setListingImagePreviewUrl("");
-                          clearListingExtraImages();
-                          setListingCropQueue([]);
-                          closeListingCropEditor();
-                          closeListingPhotoActionModal();
-                          setListingAdvancedOpen(false);
-                          setListingOptionValueDraftA("");
-                          setListingOptionValueDraftB("");
-                          setListingSecondOptionOpen(false);
-                          setEditingListingId(null);
-                          listingDraftBaselineRef.current = null;
+                    <div className="mb-4 flex min-w-0 items-center gap-2">
+                      <button
+                        type="button"
+                        className="z-10 inline-flex h-11 w-11 shrink-0 min-h-[44px] min-w-[44px] items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-50 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
+                        aria-label="Back"
+                        onClick={() => {
+                          if (listingSaving) return;
+                          requestDiscardListingChanges(() => {
+                            setListingForm(createInitialListingForm());
+                            setServiceDynamicMultiselectDraft({});
+                            setListingAvailabilityScheduleOpen(false);
+                            setListingFieldErrors({});
+                            setListingImageFile(null);
+                            setListingCoverContentHash("");
+                            if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+                            setListingImagePreviewUrl("");
+                            clearListingExtraImages();
+                            setListingCropQueue([]);
+                            closeListingCropEditor();
+                            closeListingPhotoActionModal();
+                            setListingAdvancedOpen(false);
+                            setListingOptionValueDraftA("");
+                            setListingOptionValueDraftB("");
+                            setListingSecondOptionOpen(false);
+                            setEditingListingId(null);
+                            listingDraftBaselineRef.current = null;
 
-                          setActiveView(VIEWS.PROFILE);
-                        });
-                      }}
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.25"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="h-7 w-7"
-                        aria-hidden
+                            setActiveView(VIEWS.PROFILE);
+                          });
+                        }}
                       >
-                        <path d="M19 12H5" />
-                        <path d="M11 6l-6 6 6 6" />
-                      </svg>
-                    </button>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.25"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="h-7 w-7"
+                          aria-hidden
+                        >
+                          <path d="M19 12H5" />
+                          <path d="M11 6l-6 6 6 6" />
+                        </svg>
+                      </button>
+                      <span className="min-w-0 truncate text-base font-semibold text-neutral-900 dark:text-slate-100">
+                        Add Service
+                      </span>
+                    </div>
+                  ) : null}
+                  <label htmlFor="service-category-select" className="label-base">
+                    Service category *
+                  </label>
+                  <SimpleSelect
+                    id="service-category-select"
+                    className="mt-1.5 w-full"
+                    triggerClassName={
+                      listingFieldErrors.serviceCategoryId
+                        ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30"
+                        : "rounded-xl border-neutral-200/95 bg-white/95 shadow-sm dark:border-slate-600 dark:bg-slate-950"
+                    }
+                    value={String(listingForm.serviceCategoryId || "")}
+                    options={[
+                      { value: "", label: "Select a service category" },
+                      ...SERVICE_CATEGORY_OPTIONS.map((category) => ({ value: category.id, label: category.label })),
+                    ]}
+                    onChange={(categoryId) => {
+                      const nextValue = String(categoryId || "");
+                      setListingForm((p) => ({
+                        ...p,
+                        categories: "services",
+                        serviceCategoryId: nextValue,
+                        pricePesos: "",
+                      }));
+                      if (listingFieldErrors.serviceCategoryId) {
+                        setListingFieldErrors((prev) => ({ ...prev, serviceCategoryId: "" }));
+                      }
+                    }}
+                  />
+                  {selectedServiceCategory && String(selectedServiceCategory.examples || "").trim() ? (
+                    <p className="mt-1.5 text-xs text-neutral-500 dark:text-slate-400">{selectedServiceCategory.examples}</p>
+                  ) : null}
+                  {listingFieldErrors.serviceCategoryId ? (
+                    <p className="field-error-text mt-1" role="alert">
+                      {listingFieldErrors.serviceCategoryId}
+                    </p>
+                  ) : null}
+                  {serviceCategorySelected ? (
+                    <div className="mt-4 border-t border-neutral-200/65 pt-4 dark:border-slate-700">
+                      <div className="min-w-0 space-y-2">
+                        <label
+                          className="label-base"
+                          id="service-title-field-label"
+                          htmlFor={
+                            String(listingForm.serviceCategoryId || "") === "transport_services"
+                              ? "transport-service-title-input"
+                              : "non-transport-service-title-input"
+                          }
+                        >
+                          Service title *
+                        </label>
+                        <p className="text-xs leading-snug text-neutral-600 dark:text-slate-400" id="service-title-field-hint">
+                          One line buyers will see as your listing name. Separate items with commas, or tap a suggestion to add it.
+                        </p>
+                        {String(listingForm.serviceCategoryId || "") === "transport_services" ? (
+                          <>
+                            <input
+                              id="transport-service-title-input"
+                              type="text"
+                              enterKeyHint="next"
+                              autoComplete="off"
+                              aria-labelledby="service-title-field-label"
+                              aria-describedby="service-title-field-hint"
+                              aria-invalid={listingFieldErrors.transportModes ? true : undefined}
+                              placeholder="e.g. Tricycle, Jeepney, Padala / Pasabuy"
+                              className={`input-base w-full ${
+                                listingFieldErrors.transportModes
+                                  ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30"
+                                  : ""
+                              }`}
+                              value={transportModesSelection.join(", ")}
+                              onChange={(e) => {
+                                const segments = String(e.target.value || "").split(",");
+                                const nextModes = [];
+                                const seen = new Set();
+                                for (const seg of segments) {
+                                  const t = seg.trim();
+                                  if (!t) continue;
+                                  const k = t.toLowerCase();
+                                  if (seen.has(k)) continue;
+                                  seen.add(k);
+                                  nextModes.push(t);
+                                }
+                                setListingForm((p) => ({
+                                  ...p,
+                                  serviceDynamicFields: {
+                                    ...p.serviceDynamicFields,
+                                    transportModes: nextModes,
+                                  },
+                                }));
+                                setListingFieldErrors((prev) => ({ ...prev, transportModes: "" }));
+                              }}
+                            />
+                            {transportModesSelection.length === 0 ? (
+                              <div className="flex flex-wrap gap-2 pt-1">
+                                <span className="sr-only">Quick-add suggestions</span>
+                                {(TRANSPORT_SERVICES_MODE_FIELD.options || [])
+                                  .filter((opt) => !transportModesSelection.some((s) => String(s).toLowerCase() === opt.toLowerCase()))
+                                  .map((opt) => (
+                                    <button
+                                      key={opt}
+                                      type="button"
+                                      className="min-h-10 rounded-full border border-brand-primary/35 px-2.5 py-1.5 text-xs font-medium text-brand-primary transition hover:bg-brand-soft/50 dark:border-brand-accent/35 dark:text-slate-200 dark:hover:bg-slate-800"
+                                      onClick={() => {
+                                        setListingForm((p) => {
+                                          const prev = Array.isArray(p.serviceDynamicFields?.transportModes)
+                                            ? p.serviceDynamicFields.transportModes
+                                            : [];
+                                          if (prev.some((s) => String(s).toLowerCase() === opt.toLowerCase())) return p;
+                                          return {
+                                            ...p,
+                                            serviceDynamicFields: {
+                                              ...p.serviceDynamicFields,
+                                              transportModes: [...prev, opt],
+                                            },
+                                          };
+                                        });
+                                        setListingFieldErrors((prev) => ({ ...prev, transportModes: "" }));
+                                      }}
+                                    >
+                                      {opt}
+                                    </button>
+                                  ))}
+                              </div>
+                            ) : null}
+                            {(TRANSPORT_SERVICES_MODE_FIELD.options || []).every((opt) =>
+                              transportModesSelection.some((s) => String(s).toLowerCase() === opt.toLowerCase()),
+                            ) ? (
+                              <p className="text-xs text-neutral-500 dark:text-slate-400">All preset suggestions added.</p>
+                            ) : null}
+                            {listingFieldErrors.transportModes ? (
+                              <p className="field-error-text" role="alert">
+                                {listingFieldErrors.transportModes}
+                              </p>
+                            ) : null}
+                          </>
+                        ) : (
+                          <>
+                            <input
+                              id="non-transport-service-title-input"
+                              name="serviceTitle"
+                              type="text"
+                              enterKeyHint="next"
+                              autoComplete="off"
+                              aria-labelledby="service-title-field-label"
+                              aria-describedby="service-title-field-hint"
+                              aria-invalid={listingFieldErrors.title ? true : undefined}
+                              placeholder={
+                                selectedServiceCategory && String(selectedServiceCategory.examples || "").trim()
+                                  ? `e.g. ${String(selectedServiceCategory.examples).trim()}`
+                                  : "e.g. Plumbing, Massage, or what buyers should search for"
+                              }
+                              className={`input-base w-full ${
+                                listingFieldErrors.title
+                                  ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30"
+                                  : ""
+                              }`}
+                              value={nonTransportServiceTitleSegments.join(", ")}
+                              onChange={(e) => {
+                                const segments = String(e.target.value || "").split(",");
+                                const nextSeg = [];
+                                const seen = new Set();
+                                for (const seg of segments) {
+                                  const t = seg.trim();
+                                  if (!t) continue;
+                                  const k = t.toLowerCase();
+                                  if (seen.has(k)) continue;
+                                  seen.add(k);
+                                  nextSeg.push(t);
+                                }
+                                setListingForm((p) => ({ ...p, title: nextSeg.join(", ") }));
+                                setListingFieldErrors((prev) => ({ ...prev, title: "" }));
+                              }}
+                            />
+                            {serviceTitleQuickPickOptions.length > 0 && nonTransportServiceTitleSegments.length === 0 ? (
+                              <div className="flex flex-wrap gap-2 pt-1">
+                                <span className="sr-only">Quick-add suggestions</span>
+                                {serviceTitleQuickPickOptions
+                                  .filter(
+                                    (opt) =>
+                                      !nonTransportServiceTitleSegments.some(
+                                        (s) => String(s).toLowerCase() === String(opt).toLowerCase(),
+                                      ),
+                                  )
+                                  .map((opt) => (
+                                    <button
+                                      key={opt}
+                                      type="button"
+                                      className="min-h-10 rounded-full border border-brand-primary/35 px-2.5 py-1.5 text-xs font-medium text-brand-primary transition hover:bg-brand-soft/50 dark:border-brand-accent/35 dark:text-slate-200 dark:hover:bg-slate-800"
+                                      onClick={() => {
+                                        setListingForm((p) => {
+                                          const parts = [];
+                                          const seenKeys = new Set();
+                                          for (const seg of String(p.title || "").split(",")) {
+                                            const t = seg.trim();
+                                            if (!t) continue;
+                                            const k = t.toLowerCase();
+                                            if (seenKeys.has(k)) continue;
+                                            seenKeys.add(k);
+                                            parts.push(t);
+                                          }
+                                          if (parts.some((s) => s.toLowerCase() === String(opt).toLowerCase())) return p;
+                                          return { ...p, title: [...parts, opt].join(", ") };
+                                        });
+                                        setListingFieldErrors((prev) => ({ ...prev, title: "" }));
+                                      }}
+                                    >
+                                      {opt}
+                                    </button>
+                                  ))}
+                              </div>
+                            ) : null}
+                            {serviceTitleQuickPickOptions.length > 0 &&
+                            serviceTitleQuickPickOptions.every((opt) =>
+                              nonTransportServiceTitleSegments.some((s) => String(s).toLowerCase() === String(opt).toLowerCase()),
+                            ) ? (
+                              <p className="text-xs text-neutral-500 dark:text-slate-400">All preset suggestions added.</p>
+                            ) : null}
+                            {listingFieldErrors.title ? (
+                              <p id="listing-title-error" className="field-error-text" role="alert">
+                                {listingFieldErrors.title}
+                              </p>
+                            ) : null}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              <div
+                id="listing-section-photos"
+                className={`md:col-span-2 ${isServiceUpload && !serviceCategorySelected ? "hidden" : ""}`}
+              >
+                <div className="mb-2">
+                  {!listingEditOverlayOpen && !isServiceUpload ? (
+                    <div className="mb-2 flex min-w-0 items-center gap-2">
+                      <button
+                        type="button"
+                        className="z-10 inline-flex h-11 w-11 shrink-0 min-h-[44px] min-w-[44px] items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-50 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
+                        aria-label="Back"
+                        onClick={() => {
+                          if (listingSaving) return;
+                          requestDiscardListingChanges(() => {
+                            setListingForm(createInitialListingForm());
+                            setServiceDynamicMultiselectDraft({});
+                            setListingAvailabilityScheduleOpen(false);
+                            setListingFieldErrors({});
+                            setListingImageFile(null);
+                            setListingCoverContentHash("");
+                            if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+                            setListingImagePreviewUrl("");
+                            clearListingExtraImages();
+                            setListingCropQueue([]);
+                            closeListingCropEditor();
+                            closeListingPhotoActionModal();
+                            setListingAdvancedOpen(false);
+                            setListingOptionValueDraftA("");
+                            setListingOptionValueDraftB("");
+                            setListingSecondOptionOpen(false);
+                            setEditingListingId(null);
+                            listingDraftBaselineRef.current = null;
+
+                            setActiveView(VIEWS.PROFILE);
+                          });
+                        }}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.25"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="h-7 w-7"
+                          aria-hidden
+                        >
+                          <path d="M19 12H5" />
+                          <path d="M11 6l-6 6 6 6" />
+                        </svg>
+                      </button>
+                      <span className="min-w-0 truncate text-base font-semibold text-neutral-900 dark:text-slate-100">
+                        Add Product
+                      </span>
+                    </div>
                   ) : null}
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-primary dark:text-brand-accent">
                     Photos *
@@ -12660,51 +13989,239 @@ function App() {
                   </div>
                 ) : null}
               </div>
-              <div id="listing-section-details" className="md:col-span-2">
-                <label htmlFor="listing-title" className="label-base">
-                  Listing title *
-                </label>
-                <input
-                  id="listing-title"
-                  name="title"
-                  className={`input-base w-full ${listingFieldErrors.title ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
-                  type="text"
-                  enterKeyHint="next"
-                  autoComplete="off"
-                  value={listingForm.title}
-                  placeholder="Item name"
-                  onChange={(e) => {
-                    setListingForm((p) => ({ ...p, title: e.target.value }));
-                    if (listingFieldErrors.title) setListingFieldErrors((prev) => ({ ...prev, title: "" }));
-                  }}
-                  minLength={2}
-                  aria-invalid={listingFieldErrors.title ? true : undefined}
-                  aria-describedby={listingFieldErrors.title ? "listing-title-error" : undefined}
-                />
-                {listingFieldErrors.title ? (
-                  <p id="listing-title-error" className="field-error-text mt-1" role="alert">
-                    {listingFieldErrors.title}
-                  </p>
-                ) : null}
+              <div
+                id="listing-section-details"
+                className={`md:col-span-2 ${isServiceUpload && !serviceCategorySelected ? "hidden" : ""}`}
+              >
+                {isServiceUpload ? (
+                  <>
+                    <div className="min-w-0">
+                      <label className="label-base" htmlFor="service-rate-type">
+                        Rate type *
+                      </label>
+                      <select
+                        id="service-rate-type"
+                        className={`input-base mt-1.5 w-full ${listingFieldErrors.serviceRateType ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
+                        value={listingForm.serviceRateType}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setListingForm((p) => ({ ...p, serviceRateType: value }));
+                          if (listingFieldErrors.serviceRateType) setListingFieldErrors((prev) => ({ ...prev, serviceRateType: "" }));
+                        }}
+                      >
+                        <option value="">Select rate type</option>
+                        {SERVICE_RATE_TYPE_OPTIONS.map((rateType) => (
+                          <option key={rateType} value={rateType}>
+                            {rateType}
+                          </option>
+                        ))}
+                      </select>
+                      {listingFieldErrors.serviceRateType ? (
+                        <p className="field-error-text mt-1" role="alert">
+                          {listingFieldErrors.serviceRateType}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="mt-6 min-w-0">
+                    <p className="label-base">Price *</p>
+                    <p className="mb-1.5 text-[11px] leading-snug text-neutral-500 dark:text-slate-400">
+                      Enter your rate in pesos. Add a second amount only if you quote a range.
+                    </p>
+                    <div className="mt-2 min-w-0 space-y-3">
+                      <div className="min-w-0 space-y-1">
+                        <div
+                          className={
+                            transportPriceRangeOpen
+                              ? "grid min-w-0 grid-cols-2 items-stretch gap-2 sm:gap-3"
+                              : "min-w-0"
+                          }
+                        >
+                          <div
+                            className={`flex h-full min-h-[44px] min-w-0 items-stretch overflow-hidden rounded-xl border bg-white transition dark:bg-slate-950 ${
+                              listingFieldErrors.transportPriceMin || listingFieldErrors.transportPrice
+                                ? "border-rose-400 focus-within:border-rose-500 focus-within:ring-1 focus-within:ring-rose-200 dark:border-rose-500/70 dark:focus-within:ring-rose-500/30"
+                                : "border-neutral-200/95 focus-within:border-brand-primary focus-within:ring-1 focus-within:ring-brand-primary/30 dark:border-slate-600 dark:focus-within:border-brand-primary dark:focus-within:ring-brand-primary/28"
+                            }`}
+                          >
+                            <span
+                              className="flex w-[3.25rem] shrink-0 select-none items-center justify-center self-stretch border-r border-neutral-200 bg-neutral-50 px-2 text-xs font-semibold tracking-wide text-neutral-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 sm:w-14"
+                              aria-hidden
+                            >
+                              PHP
+                            </span>
+                            <input
+                              id="transport-price-min-pesos"
+                              className="min-h-[44px] min-w-0 flex-1 self-stretch border-0 bg-transparent px-3 py-2.5 text-base tabular-nums text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500 md:min-h-0 md:text-sm"
+                              type="text"
+                              placeholder="e.g. 120"
+                              aria-label="Price in Philippine pesos"
+                              inputMode="decimal"
+                              autoComplete="off"
+                              enterKeyHint="next"
+                              value={listingForm.transportPriceMinPesos}
+                              onChange={(e) => {
+                                setListingForm((p) => ({
+                                  ...p,
+                                  transportPriceMinPesos: formatPhpPriceTyping(e.target.value),
+                                }));
+                                setListingFieldErrors((prev) => ({
+                                  ...prev,
+                                  transportPriceMin: "",
+                                  transportPrice: "",
+                                }));
+                              }}
+                            />
+                          </div>
+                          {transportPriceRangeOpen ? (
+                            <div
+                              className={`flex h-full min-h-[44px] min-w-0 items-stretch overflow-hidden rounded-xl border bg-white transition dark:bg-slate-950 ${
+                                listingFieldErrors.transportPriceMax
+                                  ? "border-rose-400 focus-within:border-rose-500 focus-within:ring-1 focus-within:ring-rose-200 dark:border-rose-500/70 dark:focus-within:ring-rose-500/30"
+                                  : "border-neutral-200/95 focus-within:border-brand-primary focus-within:ring-1 focus-within:ring-brand-primary/30 dark:border-slate-600 dark:focus-within:border-brand-primary dark:focus-within:ring-brand-primary/28"
+                              }`}
+                            >
+                              <span
+                                className="flex w-[3.25rem] shrink-0 select-none items-center justify-center self-stretch border-r border-neutral-200 bg-neutral-50 px-2 text-xs font-semibold tracking-wide text-neutral-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 sm:w-14"
+                                aria-hidden
+                              >
+                                PHP
+                              </span>
+                              <input
+                                id="transport-price-max-pesos"
+                                className="min-h-[44px] min-w-0 flex-1 self-stretch border-0 bg-transparent px-3 py-2.5 text-base tabular-nums text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-500 md:min-h-0 md:text-sm"
+                                type="text"
+                                placeholder="e.g. 200"
+                                aria-label="Upper end of price range in Philippine pesos"
+                                inputMode="decimal"
+                                autoComplete="off"
+                                enterKeyHint="next"
+                                value={listingForm.transportPriceMaxPesos}
+                                onChange={(e) => {
+                                  setListingForm((p) => ({
+                                    ...p,
+                                    transportPriceMaxPesos: formatPhpPriceTyping(e.target.value),
+                                  }));
+                                  setListingFieldErrors((prev) => ({
+                                    ...prev,
+                                    transportPriceMax: "",
+                                    transportPrice: "",
+                                  }));
+                                }}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                        {listingFieldErrors.transportPriceMin || listingFieldErrors.transportPriceMax ? (
+                          <div
+                            className={
+                              transportPriceRangeOpen
+                                ? "grid min-w-0 grid-cols-2 gap-x-2 gap-y-0.5 sm:gap-x-3"
+                                : "min-w-0"
+                            }
+                          >
+                            <div className="min-w-0">
+                              {listingFieldErrors.transportPriceMin ? (
+                                <p className="field-error-text" role="alert">
+                                  {listingFieldErrors.transportPriceMin}
+                                </p>
+                              ) : null}
+                            </div>
+                            {transportPriceRangeOpen ? (
+                              <div className="min-w-0">
+                                {listingFieldErrors.transportPriceMax ? (
+                                  <p className="field-error-text" role="alert">
+                                    {listingFieldErrors.transportPriceMax}
+                                  </p>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                      {!transportPriceRangeOpen ? (
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            className="inline-flex min-h-[40px] touch-manipulation items-center justify-center text-sm font-semibold text-brand-primary underline decoration-brand-primary/40 underline-offset-2 transition hover:text-brand-primary/90 dark:text-brand-accent dark:decoration-brand-accent/40 dark:hover:text-brand-accent/90"
+                            onClick={() => setTransportPriceRangeOpen(true)}
+                          >
+                            Add a price range
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            className="inline-flex min-h-[40px] touch-manipulation items-center justify-center text-sm font-semibold text-red-600 underline decoration-red-600/40 underline-offset-2 transition hover:text-red-700 dark:text-red-400 dark:decoration-red-400/40 dark:hover:text-red-300"
+                            onClick={() => {
+                              setTransportPriceRangeOpen(false);
+                              setListingForm((p) => ({ ...p, transportPriceMaxPesos: "" }));
+                              setListingFieldErrors((prev) => ({ ...prev, transportPriceMax: "" }));
+                            }}
+                          >
+                            Use single price only
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {listingFieldErrors.transportPrice ? (
+                      <p className="field-error-text mt-2" role="alert">
+                        {listingFieldErrors.transportPrice}
+                      </p>
+                    ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="listing-title" className="label-base">
+                      Listing title *
+                    </label>
+                    <input
+                      id="listing-title"
+                      name="title"
+                      className={`input-base w-full ${listingFieldErrors.title ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200 dark:border-rose-500/70 dark:focus:ring-rose-500/30" : ""}`}
+                      type="text"
+                      enterKeyHint="next"
+                      autoComplete="off"
+                      value={listingForm.title}
+                      placeholder="Item name"
+                      onChange={(e) => {
+                        setListingForm((p) => ({ ...p, title: e.target.value }));
+                        if (listingFieldErrors.title) setListingFieldErrors((prev) => ({ ...prev, title: "" }));
+                      }}
+                      minLength={2}
+                      aria-invalid={listingFieldErrors.title ? true : undefined}
+                      aria-describedby={listingFieldErrors.title ? "listing-title-error" : undefined}
+                    />
+                    {listingFieldErrors.title ? (
+                      <p id="listing-title-error" className="field-error-text mt-1" role="alert">
+                        {listingFieldErrors.title}
+                      </p>
+                    ) : null}
+                  </>
+                )}
               </div>
-              <div className="md:col-span-2">
-                <ListingCategoryPicker
-                  value={listingForm.categories}
-                  invalid={Boolean(listingFieldErrors.categories)}
-                  onChange={(id) => {
-                    setListingForm((p) => ({ ...p, categories: id, subId: "all" }));
-                    if (listingFieldErrors.categories) setListingFieldErrors((prev) => ({ ...prev, categories: "" }));
-                  }}
-                />
-                {listingFieldErrors.categories ? (
-                  <p className="field-error-text mt-1" role="alert">
-                    {listingFieldErrors.categories}
-                  </p>
-                ) : null}
-              </div>
-              <div className="min-w-0 max-w-full md:col-span-2">
+              {!isServiceUpload ? (
+                <div className="md:col-span-2">
+                  <ListingCategoryPicker
+                    options={listingCategoryOptions}
+                    value={listingForm.categories}
+                    invalid={Boolean(listingFieldErrors.categories)}
+                    onChange={(id) => {
+                      setListingForm((p) => ({ ...p, categories: id, subId: "all" }));
+                      if (listingFieldErrors.categories) setListingFieldErrors((prev) => ({ ...prev, categories: "" }));
+                    }}
+                  />
+                  {listingFieldErrors.categories ? (
+                    <p className="field-error-text mt-1" role="alert">
+                      {listingFieldErrors.categories}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className={`min-w-0 max-w-full md:col-span-2 ${isServiceUpload && !serviceCategorySelected ? "hidden" : ""}`}>
                 <label htmlFor="listing-description" className="label-base">
-                  Description (optional)
+                  {isServiceUpload ? "Description *" : "Description (optional)"}
                 </label>
                 <p className="mb-1.5 text-[11px] leading-snug text-neutral-500 dark:text-slate-400">
                   Expands downward as you type; long lines wrap inside the field.
@@ -12716,17 +14233,300 @@ function App() {
                   enterKeyHint="done"
                   value={listingForm.description}
                   placeholder="Details"
-                  onChange={(e) => setListingForm((p) => ({ ...p, description: e.target.value }))}
+                  onChange={(e) => {
+                    setListingForm((p) => ({ ...p, description: e.target.value }));
+                    if (listingFieldErrors.description) setListingFieldErrors((prev) => ({ ...prev, description: "" }));
+                  }}
                   rows={4}
                   maxLength={2000}
                 />
                 <p className="mt-1 text-right text-[11px] text-neutral-500 dark:text-slate-400">{listingDescriptionCount}/2000</p>
+                {listingFieldErrors.description ? (
+                  <p className="field-error-text mt-1" role="alert">
+                    {listingFieldErrors.description}
+                  </p>
+                ) : null}
               </div>
-              <div className="md:col-span-2 mt-2 border-t border-neutral-200/65 pt-4 divide-y divide-neutral-200/65 dark:border-slate-700 dark:divide-slate-700">
-                <div id="listing-section-pricing" className="grid grid-cols-1 gap-4 py-5 md:grid-cols-2 md:py-4">
+              {isServiceUpload ? (
+                <div
+                  className={`min-w-0 max-w-full md:col-span-2 ${isServiceUpload && !serviceCategorySelected ? "hidden" : ""}`}
+                >
+                  <p id="listing-availability-schedule-heading" className="label-base">
+                    Availability schedule (optional)
+                  </p>
+                  {!listingAvailabilityScheduleOpen ? (
+                    <button
+                      type="button"
+                      id="listing-availability-schedule-toggle"
+                      aria-expanded={false}
+                      aria-controls="listing-availability-schedule-panel"
+                      className={`btn-secondary min-h-[44px] w-full touch-manipulation text-sm sm:w-auto mt-1.5 ${
+                        listingFieldErrors.serviceAvailability
+                          ? "ring-2 ring-rose-400 ring-offset-2 ring-offset-white dark:ring-rose-500/80 dark:ring-offset-slate-950"
+                          : ""
+                      }`}
+                      onClick={() => setListingAvailabilityScheduleOpen(true)}
+                    >
+                      Set schedule
+                    </button>
+                  ) : null}
+                  <div
+                    id="listing-availability-schedule-panel"
+                    role="region"
+                    aria-labelledby="listing-availability-schedule-heading"
+                    className={listingAvailabilityScheduleOpen ? "mt-3 space-y-3" : "hidden"}
+                  >
+                    <ServiceAvailabilityPicker
+                      hideLegend
+                      value={listingForm.serviceAvailability}
+                      onChange={(next) => {
+                        setListingForm((p) => ({ ...p, serviceAvailability: next }));
+                        if (listingFieldErrors.serviceAvailability) {
+                          setListingFieldErrors((prev) => ({ ...prev, serviceAvailability: "" }));
+                        }
+                      }}
+                      invalid={Boolean(listingFieldErrors.serviceAvailability)}
+                    />
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        className="text-sm font-semibold text-red-600 underline decoration-red-600/40 underline-offset-2 transition hover:text-red-700 dark:text-red-400 dark:decoration-red-400/40 dark:hover:text-red-300"
+                        onClick={() => {
+                          setListingForm((p) => ({ ...p, serviceAvailability: "" }));
+                          setListingFieldErrors((prev) => ({ ...prev, serviceAvailability: "" }));
+                          setListingAvailabilityScheduleOpen(false);
+                        }}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  {listingFieldErrors.serviceAvailability ? (
+                    <p className="field-error-text mt-2" role="alert">
+                      {listingFieldErrors.serviceAvailability}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {isServiceUpload ? (
+                <>
+                  {selectedServiceCategory && serviceDynamicFieldsForCategoryCard.length > 0 ? (
+                    <div className={`min-w-0 max-w-full md:col-span-2 mt-6 ${!serviceCategorySelected ? "hidden" : ""}`}>
+                      {String(listingForm.serviceCategoryId || "") !== "transport_services" ? (
+                        <h3 className="text-sm font-semibold text-neutral-900 dark:text-slate-100">{selectedServiceCategory.label}</h3>
+                      ) : null}
+                      <div className={`grid grid-cols-1 gap-4 md:grid-cols-2 ${String(listingForm.serviceCategoryId || "") !== "transport_services" ? "mt-3" : ""}`}>
+                        {serviceDynamicFieldsForCategoryCard.map((field) => {
+                          const value = listingForm.serviceDynamicFields?.[field.key];
+                          if (field.type === "toggle") {
+                            return (
+                              <button
+                                key={field.key}
+                                type="button"
+                                className={`inline-flex items-center justify-between rounded-xl border px-3 py-2 text-sm ${
+                                  value
+                                    ? "border-brand-primary bg-brand-primary/10 text-brand-primary dark:border-brand-accent dark:bg-brand-accent/20 dark:text-slate-100"
+                                    : "border-neutral-200 bg-white text-neutral-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                                }`}
+                                onClick={() =>
+                                  setListingForm((p) => ({
+                                    ...p,
+                                    serviceDynamicFields: { ...p.serviceDynamicFields, [field.key]: !value },
+                                  }))
+                                }
+                              >
+                                <span>{field.label}</span>
+                                <span>{value ? "On" : "Off"}</span>
+                              </button>
+                            );
+                          }
+                          if (field.type === "select") {
+                            return (
+                              <div key={field.key}>
+                                <label className="label-base">{field.label}</label>
+                                <select
+                                  className="input-base mt-1.5 w-full"
+                                  value={String(value || "")}
+                                  onChange={(e) =>
+                                    setListingForm((p) => ({
+                                      ...p,
+                                      serviceDynamicFields: { ...p.serviceDynamicFields, [field.key]: e.target.value },
+                                    }))
+                                  }
+                                >
+                                  <option value="">Select</option>
+                                  {(field.options || []).map((opt) => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            );
+                          }
+                          if (field.type === "multiselect") {
+                            const selected = Array.isArray(value) ? value : [];
+                            const presets = field.options || [];
+                            const extras = selected.filter((s) => !presets.includes(s));
+                            return (
+                              <div key={field.key} className={field.allowCustom ? "md:col-span-2" : undefined}>
+                                <label className="label-base" htmlFor={field.allowCustom ? `svc-ms-${field.key}` : undefined}>
+                                  {field.label}
+                                </label>
+                                <div className="mt-1.5 flex flex-wrap gap-2">
+                                  {presets.map((opt) => {
+                                    const active = selected.includes(opt);
+                                    return (
+                                      <button
+                                        key={opt}
+                                        type="button"
+                                        className={`rounded-full border px-2.5 py-1 text-xs transition ${
+                                          active
+                                            ? "border-brand-primary bg-brand-primary text-white dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                                            : "border-neutral-300 bg-white text-neutral-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                                        }`}
+                                        onClick={() =>
+                                          setListingForm((p) => {
+                                            const prev = Array.isArray(p.serviceDynamicFields?.[field.key])
+                                              ? p.serviceDynamicFields[field.key]
+                                              : [];
+                                            const next = prev.includes(opt) ? prev.filter((x) => x !== opt) : [...prev, opt];
+                                            return {
+                                              ...p,
+                                              serviceDynamicFields: { ...p.serviceDynamicFields, [field.key]: next },
+                                            };
+                                          })
+                                        }
+                                      >
+                                        {opt}
+                                      </button>
+                                    );
+                                  })}
+                                  {extras.map((tag) => (
+                                    <button
+                                      key={`extra-${field.key}-${tag}`}
+                                      type="button"
+                                      className="inline-flex items-center gap-1 rounded-full border border-brand-primary/40 bg-brand-primary/10 px-2.5 py-1 text-xs font-medium text-brand-primary dark:border-brand-accent/50 dark:bg-brand-accent/15 dark:text-brand-accent"
+                                      onClick={() =>
+                                        setListingForm((p) => {
+                                          const prev = Array.isArray(p.serviceDynamicFields?.[field.key])
+                                            ? p.serviceDynamicFields[field.key]
+                                            : [];
+                                          return {
+                                            ...p,
+                                            serviceDynamicFields: {
+                                              ...p.serviceDynamicFields,
+                                              [field.key]: prev.filter((x) => x !== tag),
+                                            },
+                                          };
+                                        })
+                                      }
+                                      aria-label={`Remove ${tag}`}
+                                    >
+                                      <span>{tag}</span>
+                                      <span className="text-[10px] opacity-80" aria-hidden>
+                                        ×
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                                {field.allowCustom ? (
+                                  <div className="mt-2 flex min-w-0 flex-wrap gap-2">
+                                    <input
+                                      id={`svc-ms-${field.key}`}
+                                      className="input-base min-w-0 flex-1"
+                                      placeholder="Add another option"
+                                      value={serviceDynamicMultiselectDraft[field.key] ?? ""}
+                                      onChange={(e) =>
+                                        setServiceDynamicMultiselectDraft((d) => ({
+                                          ...d,
+                                          [field.key]: e.target.value,
+                                        }))
+                                      }
+                                      onKeyDown={(e) => {
+                                        if (e.key !== "Enter") return;
+                                        e.preventDefault();
+                                        const t = String(serviceDynamicMultiselectDraft[field.key] ?? "").trim();
+                                        if (!t) return;
+                                        setListingForm((p) => {
+                                          const prev = Array.isArray(p.serviceDynamicFields?.[field.key])
+                                            ? p.serviceDynamicFields[field.key]
+                                            : [];
+                                          if (prev.some((s) => String(s).toLowerCase() === t.toLowerCase())) return p;
+                                          return {
+                                            ...p,
+                                            serviceDynamicFields: {
+                                              ...p.serviceDynamicFields,
+                                              [field.key]: [...prev, t],
+                                            },
+                                          };
+                                        });
+                                        setServiceDynamicMultiselectDraft((d) => ({ ...d, [field.key]: "" }));
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="inline-flex shrink-0 items-center justify-center rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 transition hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                                      onClick={() => {
+                                        const t = String(serviceDynamicMultiselectDraft[field.key] ?? "").trim();
+                                        if (!t) return;
+                                        setListingForm((p) => {
+                                          const prev = Array.isArray(p.serviceDynamicFields?.[field.key])
+                                            ? p.serviceDynamicFields[field.key]
+                                            : [];
+                                          if (prev.some((s) => String(s).toLowerCase() === t.toLowerCase())) return p;
+                                          return {
+                                            ...p,
+                                            serviceDynamicFields: {
+                                              ...p.serviceDynamicFields,
+                                              [field.key]: [...prev, t],
+                                            },
+                                          };
+                                        });
+                                        setServiceDynamicMultiselectDraft((d) => ({ ...d, [field.key]: "" }));
+                                      }}
+                                    >
+                                      Add
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          }
+                          return (
+                            <div key={field.key}>
+                              <label className="label-base">{field.label}</label>
+                              <input
+                                type={field.type === "number" ? "number" : "text"}
+                                min={field.type === "number" ? Number(field.min || 0) : undefined}
+                                className="input-base mt-1.5 w-full"
+                                value={String(value || "")}
+                                onChange={(e) =>
+                                  setListingForm((p) => ({
+                                    ...p,
+                                    serviceDynamicFields: { ...p.serviceDynamicFields, [field.key]: e.target.value },
+                                  }))
+                                }
+                                placeholder={field.placeholder || ""}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+              <div
+                className={`md:col-span-2 mt-2 border-t border-neutral-200/65 pt-4 divide-y divide-neutral-200/65 dark:border-slate-700 dark:divide-slate-700 ${
+                  isServiceUpload ? "hidden" : ""
+                }`}
+              >
+                <div
+                  id="listing-section-pricing"
+                  className="grid grid-cols-1 gap-4 py-5 md:grid-cols-2 md:py-4"
+                >
                   <div className="min-w-0">
                   <label htmlFor="listing-price-pesos" className="label-base">
-                    Price (PHP) *
+                    {isServiceUpload ? "Price (PHP) *" : "Price (PHP) *"}
                   </label>
                   <div
                     className={`flex min-w-0 overflow-hidden rounded-xl border bg-white transition dark:bg-slate-950 ${
@@ -12763,6 +14563,7 @@ function App() {
                     </p>
                   ) : null}
                   </div>
+                {!isServiceUpload ? (
                 <div className="min-w-0">
                     <label htmlFor="listing-quantity" className="label-base">
                       Quantity *
@@ -12815,7 +14616,10 @@ function App() {
                     </p>
                   ) : null}
                 </div>
+                ) : null}
               </div>
+              {!isServiceUpload ? (
+              <>
               <div id="listing-section-fulfillment" className="py-5 md:py-4">
                 <p className="label-base">Fulfillment *</p>
                 <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -12896,9 +14700,11 @@ function App() {
                   <div className="mt-3 border-t border-neutral-200/65 pt-4 dark:border-slate-700" />
                 ) : null}
               </div>
+              </>
+              ) : null}
               <div
                 id="listing-section-variants"
-                className={`md:col-span-2 border-t border-neutral-200/65 pt-4 dark:border-slate-700 ${listingAdvancedOpen ? "block" : "hidden"}`}
+                className={`md:col-span-2 border-t border-neutral-200/65 pt-4 dark:border-slate-700 ${!isServiceUpload && listingAdvancedOpen ? "block" : "hidden"}`}
               >
                 <h3 className="text-sm font-bold text-neutral-900 dark:text-slate-100">Product variants</h3>
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
@@ -13280,7 +15086,7 @@ function App() {
                 </div>
               </div>
               </div>
-              <div id="listing-section-publish" className="md:col-span-2">
+              <div id="listing-section-publish" className={`md:col-span-2 ${isServiceUpload && !serviceCategorySelected ? "hidden" : ""}`}>
                 <MobileFormActions className="border-t border-neutral-200/65 px-0 dark:border-slate-700">
                 <div className="flex w-full min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-stretch md:justify-start md:gap-2">
                   <button
@@ -13309,39 +15115,26 @@ function App() {
                     className="btn-secondary min-h-[44px] flex-1 md:min-h-0 md:flex-initial md:min-w-[7rem]"
                     disabled={listingSaving}
                     onClick={() => {
-                      requestDiscardListingChanges(() => {
-                        setListingForm({
-                          title: "",
-                          description: "",
-                          pricePesos: "",
-                          quantity: "",
-                          categories: "",
-                          subId: "all",
-                          optionNameA: "",
-                          optionValuesA: "",
-                          optionNameB: "",
-                          optionValuesB: "",
-                          orderType: "in_stock",
-                          processingTime: "",
-                          pickup: false,
-                          delivery: false,
-                        });
-                        setListingFieldErrors({});
-                        setListingImageFile(null);
-                        setListingCoverContentHash("");
-                        if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
-                        setListingImagePreviewUrl("");
-                        clearListingExtraImages();
-                        setListingCropQueue([]);
-                        closeListingCropEditor();
-                        closeListingPhotoActionModal();
-                        setListingAdvancedOpen(false);
-                        setListingOptionValueDraftA("");
-                        setListingOptionValueDraftB("");
-                        setListingSecondOptionOpen(false);
-                        setEditingListingId(null);
-                        listingDraftBaselineRef.current = null;
-                        setListingEditOverlayOpen(false);
+                          requestDiscardListingChanges(() => {
+                            setListingForm(createInitialListingForm());
+                            setServiceDynamicMultiselectDraft({});
+                            setListingAvailabilityScheduleOpen(false);
+                            setListingFieldErrors({});
+                            setListingImageFile(null);
+                            setListingCoverContentHash("");
+                            if (listingImagePreviewUrl && listingImagePreviewUrl.startsWith("blob:")) URL.revokeObjectURL(listingImagePreviewUrl);
+                            setListingImagePreviewUrl("");
+                            clearListingExtraImages();
+                            setListingCropQueue([]);
+                            closeListingCropEditor();
+                            closeListingPhotoActionModal();
+                            setListingAdvancedOpen(false);
+                            setListingOptionValueDraftA("");
+                            setListingOptionValueDraftB("");
+                            setListingSecondOptionOpen(false);
+                            setEditingListingId(null);
+                            listingDraftBaselineRef.current = null;
+                            setListingEditOverlayOpen(false);
                         setSellerTab(SELLER_TABS.PRODUCTS);
                         if (listingEditOverlayOpen) {
                           const origin = productFlowOriginRef.current || {};
@@ -13380,7 +15173,8 @@ function App() {
                   </div>
                 </div>
                 <p className="mt-2 text-left text-xs text-neutral-600 dark:text-slate-300">
-                  Required complete: <span className="font-semibold text-neutral-800 dark:text-slate-100">{listingRequiredCompletedCount}/{listingRequiredTotalCount}</span>
+                  Required complete:{" "}
+                  <span className="font-semibold text-neutral-800 dark:text-slate-100">{listingRequiredCompletedCount}/{listingRequiredTotalCount}</span>
                 </p>
                 </MobileFormActions>
               </div>
@@ -13847,58 +15641,85 @@ function App() {
                 goActivity={goActivity}
                 buyingBadge={activityPrimaryBuyingBadge}
                 sellingBadge={activityPrimarySellingBadge}
+                bookingBadge={activityPrimaryBookingBadge}
                 courierBadge={activityPrimaryCourierBadge}
                 courierProfileIncomplete={!buyNowFromProfile.ready}
               />
             </aside>
             <div className="min-w-0 space-y-4 md:min-w-0">
-            {(activityBuying || activitySelling) && !isMobileViewport ? (
+            {(activityBuying || activitySelling || activityBooking) && !isMobileViewport ? (
               !ordersFetchError ? (
                 <div className="border-b border-neutral-200/70 pb-3 dark:border-slate-700/70">
                   <ActivityHubOrderStatusStrip
                     variant="desktopMerged"
                     desktopRowJustify="start"
-                    activityBuying={activityBuying}
+                    activityBuying={activityBuying && !activityBooking}
+                    activityBooking={activityBooking}
                     activityTab={activityTab}
                     ordersStatusTab={ordersStatusTab}
                     commitOrdersStatusTab={commitOrdersStatusTab}
                     pendingTabBadgeDisplayCount={pendingTabBadgeDisplayCount}
                     processingTabBadgeDisplayCount={processingTabBadgeDisplayCount}
-                    ordersTabBadgeIdsByTab={ordersTabBadgeIdsByTab}
+                    ordersTabBadgeIdsByTab={ordersTabBadgeIdsByTabCommerce}
+                    bookingOrdersStatusTab={bookingOrdersStatusTab}
+                    commitBookingOrdersStatusTab={commitBookingOrdersStatusTab}
+                    bookingActiveTabBadgeDisplayCount={bookingActiveTabBadgeDisplayCount}
+                    bookingPastTabBadgeDisplayCount={bookingPastTabBadgeDisplayCount}
+                    bookingDeclinedTabBadgeDisplayCount={bookingDeclinedTabBadgeDisplayCount}
                   />
                 </div>
               ) : null
             ) : null}
-            {(activityBuying || activitySelling) && (
+            {(activityBuying || activitySelling || activityBooking) && (
               <>
             <div className="flex flex-wrap items-center justify-between gap-3 md:border-b md:border-neutral-200/70 md:pb-3 md:pt-3 dark:md:border-slate-700/70">
               <div className="min-w-0 flex-1 space-y-0.5">
                 <h3 className="min-w-0 text-lg font-semibold tracking-tight text-neutral-900 md:text-xl dark:text-slate-100">
-                  {activityBuying ? "Purchases" : "Orders"}
+                  {activityBooking ? "Bookings" : activityBuying ? "Purchases" : "Orders"}
                 </h3>
-                <p
-                  className="text-xs font-medium text-neutral-600 dark:text-slate-400"
-                  aria-label="Activity context"
-                >
-                  <span className={activityTabChrome.labelSelected}>
-                    {activityBuying ? "Buying" : "Selling"}
-                  </span>
-                  <span className="text-neutral-400 dark:text-slate-500" aria-hidden>
-                    {" "}
-                    ·{" "}
-                  </span>
-                  <span className="text-neutral-600 dark:text-slate-300">
-                    {ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label ?? "Pending"}
-                  </span>
-                </p>
+                {activityBooking ? (
+                  <p
+                    className="text-xs font-medium text-neutral-600 dark:text-slate-400"
+                    aria-label="Activity context"
+                  >
+                    <span className={activityTabChrome.labelSelected}>All your service bookings</span>
+                    <span className="text-neutral-400 dark:text-slate-500" aria-hidden>
+                      {" "}
+                      ·{" "}
+                    </span>
+                    <span className="text-neutral-600 dark:text-slate-300">
+                      {BOOKING_STATUS_TABS.find((t) => t.id === bookingOrdersStatusTab)?.label ?? "Active"}
+                    </span>
+                  </p>
+                ) : (
+                  <p
+                    className="text-xs font-medium text-neutral-600 dark:text-slate-400"
+                    aria-label="Activity context"
+                  >
+                    <span className={activityTabChrome.labelSelected}>
+                      {activityBuying ? "Buying" : "Selling"}
+                    </span>
+                    <span className="text-neutral-400 dark:text-slate-500" aria-hidden>
+                      {" "}
+                      ·{" "}
+                    </span>
+                    <span className="text-neutral-600 dark:text-slate-300">
+                      {ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label ?? "Pending"}
+                    </span>
+                  </p>
+                )}
               </div>
-              {orders.length > 0 ? (
+              {commerceFlowOrdersPool.length > 0 ? (
                 <div className="flex shrink-0 items-center justify-end">
                   <ProductViewDensityToggle
-                    value={activityBuying ? commerceFlowViewBuyer : commerceFlowViewSeller}
+                    value={commerceFlowOrdersView}
                     onChange={setCommerceFlowOrdersView}
                     groupAriaLabel={
-                      activityBuying ? "Purchases line layout" : "Orders line layout"
+                      activityBooking
+                        ? "Bookings line layout"
+                        : activityBuying
+                          ? "Purchases line layout"
+                          : "Orders line layout"
                     }
                     gridTitle="Grid — marketplace columns on wider screens; two columns on phone"
                     compactTitle="Dense — three columns for a compact overview"
@@ -13910,13 +15731,19 @@ function App() {
             </div>
             {!ordersFetchError && isMobileViewport ? (
               <ActivityHubOrderStatusStrip
-                activityBuying={activityBuying}
+                activityBuying={activityBuying && !activityBooking}
+                activityBooking={activityBooking}
                 activityTab={activityTab}
                 ordersStatusTab={ordersStatusTab}
                 commitOrdersStatusTab={commitOrdersStatusTab}
                 pendingTabBadgeDisplayCount={pendingTabBadgeDisplayCount}
                 processingTabBadgeDisplayCount={processingTabBadgeDisplayCount}
-                ordersTabBadgeIdsByTab={ordersTabBadgeIdsByTab}
+                ordersTabBadgeIdsByTab={ordersTabBadgeIdsByTabCommerce}
+                bookingOrdersStatusTab={bookingOrdersStatusTab}
+                commitBookingOrdersStatusTab={commitBookingOrdersStatusTab}
+                bookingActiveTabBadgeDisplayCount={bookingActiveTabBadgeDisplayCount}
+                bookingPastTabBadgeDisplayCount={bookingPastTabBadgeDisplayCount}
+                bookingDeclinedTabBadgeDisplayCount={bookingDeclinedTabBadgeDisplayCount}
               />
             ) : null}
             {ordersFetchError ? (
@@ -13933,36 +15760,46 @@ function App() {
                 <div
                   id="commerce-flow-status-panel"
                   role="tabpanel"
-                  aria-labelledby={`commerce-flow-status-tab-${ordersStatusTab}`}
+                  aria-labelledby={`commerce-flow-status-tab-${activityBooking ? bookingOrdersStatusTab : ordersStatusTab}`}
                   className={`flex max-w-full flex-col gap-2 max-md:pt-2 md:max-w-none md:gap-3 md:pb-0 md:pt-3 ${
-                    ordersStatusTab === "pending" && selectedOrders.length > 0
+                    commerceFlowOnPendingBulkTab && selectedOrders.length > 0
                       ? "max-md:pb-[max(11.5rem,calc(11.5rem+env(safe-area-inset-bottom,0px)))]"
                       : "max-md:pb-14"
                   }`}
                 >
-                  {ordersLoading && orders.length === 0 ? (
+                  {commerceOrdersInitialLoading ? (
                     <ScreenLoading message="Loading orders…" />
-                  ) : orders.length === 0 ? (
+                  ) : !commerceOrdersHasPoolRows ? (
                     <ScreenEmpty
                       className={activityTabChrome.emptySurface}
                       recoveryPrimaryClassName={activityTabChrome.recoveryPrimary}
                       recoverySecondaryClassName={activityTabChrome.recoverySecondary}
-                      title={activityBuying ? "No purchases yet" : "No orders yet"}
+                      title={
+                        activityBooking
+                          ? "No bookings yet"
+                          : activityBuying
+                            ? "No purchases yet"
+                            : "No orders yet"
+                      }
                       description={
-                        activityBuying
-                          ? "Orders you place with sellers show up here with status updates for pickup or delivery."
-                          : "When buyers order your listings, you'll accept or decline here and track each stage."
+                        activityBooking
+                          ? "When you book local services—or buyers book yours—requests appear here. On Pending, select your booking and tap Cancel to withdraw as the buyer, or Accept / Cancel as the provider."
+                          : activityBuying
+                            ? "Orders you place with sellers show up here with status updates for pickup or delivery."
+                            : "When buyers order your listings, you'll accept or decline here and track each stage."
                       }
                       primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
                       secondaryAction={
-                        activityBuying
-                          ? { label: "View cart", onClick: goCart }
-                          : { label: "Upload", onClick: openUploadAtTop }
+                        activityBooking
+                          ? { label: "Product purchases", onClick: () => setActivityTab(ACTIVITY_TABS.BUYING) }
+                          : activityBuying
+                            ? { label: "View cart", onClick: goCart }
+                            : { label: "Upload", onClick: openUploadAtTop }
                       }
                     />
                   ) : (
                   <>
-                  {ordersStatusTab === "pending" && ordersForStatusTab.length > 0 && selectedOrders.length > 0 ? (
+                  {commerceFlowOnPendingBulkTab && ordersForStatusTabView.length > 0 && selectedOrders.length > 0 ? (
                     <div className="hidden w-full min-w-0 items-stretch overflow-hidden rounded-xl border border-neutral-200/90 bg-white shadow-sm dark:border-slate-600 dark:bg-slate-900/85 dark:shadow-none md:flex">
                       <div className="flex min-w-0 flex-1 items-center px-3 py-2.5 sm:px-4">
                         <span
@@ -13981,7 +15818,7 @@ function App() {
                         </span>
                       </div>
                       <div className="flex min-w-0 shrink-0 divide-x divide-neutral-200/90 border-l border-neutral-200/90 dark:divide-slate-600 dark:border-slate-600 [&_button]:!rounded-none [&_button]:!shadow-none [&_button]:min-h-11 [&_button]:shrink-0 [&_button]:border-0 [&_button]:gap-1.5 [&_button]:px-3 [&_button]:text-sm sm:[&_button]:min-h-10 sm:[&_button]:gap-2 sm:[&_button]:px-4">
-                        {ordersRole === "seller" ? (
+                        {(!activityBooking && ordersRole === "seller") || activityBooking ? (
                           <Button
                             type="button"
                             variant="primary"
@@ -14038,37 +15875,51 @@ function App() {
                       </div>
                     </div>
                   ) : null}
-                  {!ordersFetchError && !(ordersLoading && orders.length === 0) && orders.length > 0 && ordersForStatusTab.length === 0 ? (
+                  {!ordersFetchError &&
+                  !commerceOrdersInitialLoading &&
+                  commerceOrdersHasPoolRows &&
+                  ordersForStatusTabView.length === 0 ? (
               <ScreenEmpty
                 spacious={false}
                 className={`${activityTabChrome.emptySurface} !py-8`}
                 recoveryPrimaryClassName={activityTabChrome.recoveryPrimary}
                 recoverySecondaryClassName={activityTabChrome.recoverySecondary}
                 title={
-                  activityBuying
-                    ? `No ${ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label || ""} purchases`
-                    : `No ${ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label || ""} orders`
+                  activityBooking
+                    ? `No ${BOOKING_STATUS_TABS.find((t) => t.id === bookingOrdersStatusTab)?.label || ""} service bookings`
+                    : activityBuying
+                      ? `No ${ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label || ""} purchases`
+                      : `No ${ORDERS_STATUS_TABS.find((t) => t.id === ordersStatusTab)?.label || ""} orders`
                 }
                 description={
-                  activityBuying
-                    ? "Pick another status tab above - your orders move as sellers accept and you complete pickup or delivery."
-                    : "Pick another tab - new orders start in Pending, then move when you accept or complete them."
+                  activityBooking
+                    ? "Pick Active, Past, or Declined above, or check Buying / Selling for product orders. Only service listings appear here."
+                    : activityBuying
+                      ? "Pick another status tab above - your orders move as sellers accept and you complete pickup or delivery."
+                      : "Pick another tab - new orders start in Pending, then move when you accept or complete them."
                 }
                 primaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
                 secondaryAction={
-                  activityBuying
-                    ? { label: "View cart", onClick: goCart }
-                    : { label: "Upload", onClick: openUploadAtTop }
+                  activityBooking
+                    ? { label: "Product purchases", onClick: () => setActivityTab(ACTIVITY_TABS.BUYING) }
+                    : activityBuying
+                      ? { label: "View cart", onClick: goCart }
+                      : { label: "Upload", onClick: openUploadAtTop }
                 }
               />
             ) : null}
             {ordersRole === "seller" &&
-            ordersStatusTab === "pending" &&
+            commerceFlowOnPendingBulkTab &&
+            !activityBooking &&
             !ordersFetchError &&
-            !(ordersLoading && orders.length === 0) &&
-            orders.length > 0 &&
-            ordersForStatusTab.length === 0 &&
-            orders.some((o) => orderMatchesOrdersStatusTab(o.status, "processing")) ? (
+            !commerceOrdersInitialLoading &&
+            commerceOrdersHasPoolRows &&
+            ordersForStatusTabView.length === 0 &&
+            orders.some(
+              (o) =>
+                orderMatchesOrdersStatusTab(o.status, "processing") &&
+                !orderIsServiceListingBooking(o),
+            ) ? (
               <p className="mt-2 text-center text-xs leading-relaxed text-neutral-600 dark:text-slate-400">
                 You may have orders in{" "}
                 <button
@@ -14081,20 +15932,34 @@ function App() {
               
               </p>
             ) : null}
-            {!ordersFetchError && ordersForStatusTab.length > 0 ? (
+            {!ordersFetchError && ordersForStatusTabView.length > 0 ? (
               <div className="space-y-3">
                 {Object.entries(
-                  ordersForStatusTab.reduce((acc, order) => {
-                    const groupKey =
-                      ordersRole === "seller"
+                  ordersForStatusTabView.reduce((acc, order) => {
+                    const groupKey = activityBooking
+                      ? `${order.__bookingRowRole === "seller" ? "h" : "b"}:${
+                          order.__bookingRowRole === "seller"
+                            ? String(order.buyerId || "unknown")
+                            : String(order.sellerId || "unknown")
+                        }`
+                      : ordersRole === "seller"
                         ? String(order.buyerId || "unknown")
                         : String(order.sellerId || "unknown");
                     if (!acc[groupKey]) acc[groupKey] = [];
                     acc[groupKey].push(order);
                     return acc;
                   }, {}),
-                ).map(([groupPartyId, groupedOrders]) => {
-                  const partyRoleLabel = ordersRole === "seller" ? "Buyer" : "Seller";
+                ).map(([groupKeyFull, groupedOrders]) => {
+                  const rowCommerceRole = activityBooking
+                    ? String(groupedOrders[0]?.__bookingRowRole || "") === "seller"
+                      ? "seller"
+                      : "buyer"
+                    : ordersRole;
+                  const groupPartyId =
+                    activityBooking && (groupKeyFull.startsWith("h:") || groupKeyFull.startsWith("b:"))
+                      ? groupKeyFull.slice(2)
+                      : groupKeyFull;
+                  const partyRoleLabel = rowCommerceRole === "seller" ? "Buyer" : "Seller";
                   const groupUser = usersList.find((u) => String(u?.id || "") === String(groupPartyId || ""));
                   const orderedSellerOrders = [...groupedOrders].sort((a, b) => {
                     const aId = String(a?.id || "");
@@ -14115,7 +15980,7 @@ function App() {
                     groupedOrders
                       .map((order) => {
                         const raw =
-                          ordersRole === "seller"
+                          rowCommerceRole === "seller"
                             ? order?.buyerUsername || order?.buyer?.username || order?.buyerName || ""
                             : order?.sellerUsername || order?.seller?.username || order?.sellerName || "";
                         const normalized = String(raw || "").trim();
@@ -14130,7 +15995,7 @@ function App() {
                   const listingPartyLabel =
                     groupedOrders
                       .map((order) =>
-                        ordersRole === "seller"
+                        rowCommerceRole === "seller"
                           ? orderListingsById[String(order.listingId)]?.buyerLabel
                           : orderListingsById[String(order.listingId)]?.sellerLabel,
                       )
@@ -14148,7 +16013,10 @@ function App() {
                           ? `${partyRoleLabel} ${groupPartyId.slice(0, 8)}`
                           : `Unknown ${partyRoleLabel.toLowerCase()}`;
                   const shouldMergeBuyerRows =
-                    ordersRole === "buyer" && !["completed", "cancelled"].includes(String(ordersStatusTab || ""));
+                    rowCommerceRole === "buyer" &&
+                    (activityBooking
+                      ? bookingOrdersStatusTab === "active"
+                      : !["completed", "cancelled"].includes(String(ordersStatusTab || "")));
                   const mergedSellerOrders =
                     shouldMergeBuyerRows
                       ? orderedSellerOrders.reduce((acc, o) => {
@@ -14257,9 +16125,9 @@ function App() {
                   const sellerAllSelected = sellerOrderIds.length > 0 && sellerSelectedCount === sellerOrderIds.length;
                   const sellerSomeSelected = sellerSelectedCount > 0 && !sellerAllSelected;
                   return (
-                    <div key={groupPartyId} className="flex flex-col gap-3">
+                    <div key={groupKeyFull} className="flex flex-col gap-3">
                       <div className="flex min-w-0 items-center gap-2.5">
-                        {ordersStatusTab === "pending" ? (
+                        {commerceFlowOnPendingBulkTab ? (
                           <CartSellerSelectAllCheckbox
                             allChecked={sellerAllSelected}
                             someSelected={sellerSomeSelected}
@@ -14285,8 +16153,8 @@ function App() {
                           /** List row: fluid thumb width so text column scales smoothly (grid uses full-width hero). */
                           const orderThumbList = "aspect-square w-[7.5rem] max-w-[7.5rem] shrink-0";
                           const orderThumbGrid = "lm-product-card-media aspect-square w-full min-h-0";
-                          const mergedVariantSig = pickMergedOrderVariantSignature(entry, orders);
-                          const buyerCommentRaw = pickMergedOrderCommentForVariantChips(entry, orders);
+                          const mergedVariantSig = pickMergedOrderVariantSignature(entry, commerceFlowOrdersPool);
+                          const buyerCommentRaw = pickMergedOrderCommentForVariantChips(entry, commerceFlowOrdersPool);
                           const orderCommentRow = buyerCommentDisplayForOrderCard(buyerCommentRaw, mergedVariantSig);
                           const orderVariantPick = narrowListingOptionValuesForBuyerSelection({
                             comment: buyerCommentRaw,
@@ -14298,60 +16166,59 @@ function App() {
                           });
                           const orderId = String(o.id || "");
                           const pickupBuyerAckOrderIds = entry.orderIds.filter((id) => {
-                            const ord = orders.find((x) => String(x.id) === id);
+                            const ord = commerceFlowOrdersPool.find((x) => String(x.id) === id);
                             return (
                               ord &&
                               String(ord.status || "") === "ready_for_pickup" &&
-                              !ord.buyerReceiptAcknowledgedAt
+                              !ord.buyerReceiptAcknowledgedAt &&
+                              (ord.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(ord))
                             );
                           });
                           const sellerReadyPickupOrderIds = entry.orderIds.filter((id) => {
-                            const ord = orders.find((x) => String(x.id) === id);
+                            const ord = commerceFlowOrdersPool.find((x) => String(x.id) === id);
                             return (
                               ord &&
                               String(ord.status || "") === "seller_accepted" &&
-                              ord.fulfillmentType === "pickup"
+                              (ord.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(ord))
                             );
                           });
-                          const fulfillmentBanner = orderFulfillmentBannerText(o, ordersRole);
+                          const fulfillmentBanner = orderFulfillmentBannerText(o, rowCommerceRole);
                           const fulfillmentBannerKind = orderFulfillmentBannerKind(o);
-                          const unseenIdsForTab = ordersTabBadgeIdsByTab[ordersStatusTab] || [];
                           const orderIdNeedsAttention = (oid) => {
                             const sid = String(oid || "");
-                            return Boolean(sid && unseenIdsForTab.some((x) => String(x) === sid));
+                            return Boolean(sid && unseenIdsForCommerceStatusTab.some((x) => String(x) === sid));
                           };
                           const shouldHighlightRecent =
-                            RECENT_ORDER_TAB_KEYS.includes(String(ordersStatusTab)) &&
-                            entry.orderIds.some(orderIdNeedsAttention);
+                            unseenIdsForCommerceStatusTab.length > 0 && entry.orderIds.some(orderIdNeedsAttention);
                           const rowAllSelected = entry.orderIds.length > 0 && entry.orderIds.every((id) => Boolean(orderSelection[id]));
                           const orderGoodsCents = Math.max(0, Number(entry.mergedGoodsCents ?? o.codGoodsCents) || 0);
                           const orderDeliveryFeeCents = Math.max(0, Number(entry.mergedDeliveryCents ?? o.codDeliveryCents) || 0);
                           const orderCodLineTotalCents = orderGoodsCents + orderDeliveryFeeCents;
                           const completedHistoryRow =
-                            ordersStatusTab === "completed" && String(o.status || "") === "completed";
+                            commerceShowCompletedContext && String(o.status || "") === "completed";
                           /** Avoid an empty footer shell in list view (stacked `gap` + `mt`/`pt` looked like a large dead zone). */
                           const orderCardFooterHasChrome =
                             Boolean(completedHistoryRow) ||
-                            (ordersRole === "buyer" &&
-                              ordersStatusTab === "completed" &&
+                            (rowCommerceRole === "buyer" &&
+                              commerceShowCompletedContext &&
                               String(o.status || "") === "completed") ||
-                            (ordersRole === "seller" &&
-                              ordersStatusTab === "completed" &&
+                            (rowCommerceRole === "seller" &&
+                              commerceShowCompletedContext &&
                               Boolean(o.buyerReview?.sellerRating)) ||
-                            (ordersRole === "buyer" &&
+                            (rowCommerceRole === "buyer" &&
                               String(o.status || "") === "ready_for_pickup" &&
-                              o.fulfillmentType === "pickup") ||
-                            (ordersRole === "seller" && String(o.status || "") === "ready_for_pickup") ||
-                            (ordersRole === "seller" && isDeliverySellerPreparing(o)) ||
-                            (ordersRole === "buyer" && isDeliverySellerPreparing(o)) ||
-                            (ordersRole === "seller" && isDeliveryCourierAssigned(o)) ||
-                            (ordersRole === "buyer" && isDeliveryCourierAssigned(o)) ||
-                            (ordersRole === "seller" &&
+                              (o.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(o))) ||
+                            (rowCommerceRole === "seller" && String(o.status || "") === "ready_for_pickup") ||
+                            (rowCommerceRole === "seller" && isDeliverySellerPreparing(o)) ||
+                            (rowCommerceRole === "buyer" && isDeliverySellerPreparing(o)) ||
+                            (rowCommerceRole === "seller" && isDeliveryCourierAssigned(o)) ||
+                            (rowCommerceRole === "buyer" && isDeliveryCourierAssigned(o)) ||
+                            (rowCommerceRole === "seller" &&
                               String(o.status || "") === "seller_accepted" &&
-                              o.fulfillmentType === "pickup") ||
-                            (ordersRole === "buyer" &&
+                              (o.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(o))) ||
+                            (rowCommerceRole === "buyer" &&
                               String(o.status || "") === "seller_accepted" &&
-                              o.fulfillmentType === "pickup") ||
+                              (o.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(o))) ||
                             isDeliveryInTransit(o);
                           const orderListingForProductOpen =
                             orderListingsById[String(o.listingId)] ||
@@ -14372,36 +16239,60 @@ function App() {
                               L.quantity != null && Number(L.quantity) >= 0
                                 ? Math.max(0, Number(L.quantity))
                                 : 0;
-                            const isBuyer = ordersRole === "buyer";
+                            const isBuyer = rowCommerceRole === "buyer";
+                            const inspectListingIsService = isServiceListing(listingForInspect);
                             openProductInspect(listingForInspect, {
                               quantity: Math.max(1, Number(cardListing.quantity) || Number(o.quantity) || 1),
                               comment: buyerCommentRaw,
                               commentSectionRequired: false,
                               commentHeading: isBuyer ? "Your note to the seller" : "Buyer note",
-                              subtitle: activityBuying ? "Purchase" : "Order",
+                              subtitle: activityBooking ? "Booking" : activityBuying ? "Purchase" : "Order",
                               listingStockQty: stockAvail,
                               showBuyerCommerceActions: isBuyer,
                               orderTimelineOrder: o,
                               orderTimelineOrderIds: entry.orderIds,
-                              orderTimelineContextTab: ordersStatusTab,
-                              orderTimelineViewerRole: ordersRole,
+                              orderTimelineContextTab: activityBooking ? orderStatusToTabId(o.status) : ordersStatusTab,
+                              orderTimelineViewerRole: rowCommerceRole,
                               ...(isBuyer
                                 ? {
-                                    onAddToCart: () => openQuickAddModal(listingForInspect, "cart"),
+                                    ...(inspectListingIsService
+                                      ? {}
+                                      : { onAddToCart: () => openQuickAddModal(listingForInspect, "cart") }),
                                     onBuyNow: () => openQuickAddModal(listingForInspect, "buy"),
                                   }
                                 : {}),
-                              ...(token && o.fulfillmentType === "delivery"
+                              ...(token &&
+                              o.fulfillmentType === "delivery" &&
+                              (!orderIsServiceListingBooking(o) || orderIsTransportServiceBooking(o))
                                 ? {
                                     orderCourierPoolToken: token,
                                     onOrderCourierPoolUpdated: async () => {
                                       try {
-                                        const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-                                        const nextOrders = data.orders || [];
-                                        setOrders(nextOrders);
+                                        let refreshed = null;
+                                        if (activityTabRef.current === ACTIVITY_TABS.BOOKING) {
+                                          const [buyerData, sellerData] = await Promise.all([
+                                            apiRequest("/orders?role=buyer", { token }),
+                                            apiRequest("/orders?role=seller", { token }),
+                                          ]);
+                                          const b = buyerData.orders || [];
+                                          const s = sellerData.orders || [];
+                                          setBookingHubBuyerOrders(b);
+                                          setBookingHubSellerOrders(s);
+                                          setOrders(dedupeOrdersByIdPreferLeft(b, s));
+                                          const oid = String(o.id || "").trim();
+                                          refreshed =
+                                            b.find((x) => String(x.id || "") === oid) ||
+                                            s.find((x) => String(x.id || "") === oid) ||
+                                            null;
+                                        } else {
+                                          const data = await apiRequest(`/orders?role=${rowCommerceRole}`, { token });
+                                          const nextOrders = data.orders || [];
+                                          setOrders(nextOrders);
+                                          const oid = String(o.id || "").trim();
+                                          refreshed = nextOrders.find((x) => String(x.id || "") === oid);
+                                        }
                                         void refreshCourierHub();
                                         const oid = String(o.id || "").trim();
-                                        const refreshed = nextOrders.find((x) => String(x.id || "") === oid);
                                         if (refreshed) {
                                           setProductInspect((prev) =>
                                             prev && String(prev.orderTimelineOrder?.id || "") === oid
@@ -14464,10 +16355,19 @@ function App() {
                                     <span className="text-neutral-500 dark:text-slate-500">:</span>
                                   </span>
                                   <span className="min-w-0 font-semibold text-neutral-800 dark:text-slate-200">
-                                    {o.fulfillmentType === "delivery" ? "Delivery" : "Pickup"}
+                                    {orderUsesAppointmentServiceFlow(o)
+                                      ? "Appointment (COD)"
+                                      : o.fulfillmentType === "delivery"
+                                        ? "Delivery"
+                                        : "Pickup"}
                                   </span>
                                 </p>
-                                {ordersStatusTab === "processing" && o.fulfillmentType === "delivery" ? (
+                                {(activityBooking
+                                  ? bookingOrdersStatusTab === "active" &&
+                                    orderMatchesOrdersStatusTab(o.status, "processing")
+                                  : ordersStatusTab === "processing") &&
+                                o.fulfillmentType === "delivery" &&
+                                (!orderIsServiceListingBooking(o) || orderIsTransportServiceBooking(o)) ? (
                                   <div className="flex flex-wrap gap-x-2 gap-y-1 border-t border-neutral-200/70 pt-1 dark:border-slate-600/60">
                                     <span
                                       className="inline-flex max-w-full items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-emerald-900 ring-1 ring-inset ring-emerald-200/90 dark:bg-emerald-950/45 dark:text-emerald-100 dark:ring-emerald-800/45"
@@ -14519,9 +16419,9 @@ function App() {
                             </div>
                           );
                           /** List: checkbox column beside card. Grid (all viewports): checkbox over image — matches cart grid. */
-                          const showOrderCheckboxBesideCard = ordersStatusTab === "pending" && cfList;
+                          const showOrderCheckboxBesideCard = commerceFlowOnPendingBulkTab && cfList;
                           const orderSelectCheckbox =
-                            ordersStatusTab === "pending" ? (
+                            commerceFlowOnPendingBulkTab ? (
                               <input
                                 type="checkbox"
                                 className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
@@ -14583,7 +16483,7 @@ function App() {
                                   onClick={openOrderProductInspect}
                                 >
                                   <div className="relative w-full shrink-0">
-                                    {ordersStatusTab === "pending" ? (
+                                    {commerceFlowOnPendingBulkTab ? (
                                       <label
                                         className="pointer-events-auto absolute left-2 top-2 z-20 inline-flex cursor-pointer items-center justify-center"
                                         onPointerDown={(e) => e.stopPropagation()}
@@ -14624,7 +16524,7 @@ function App() {
                                 }}
                                 onPointerDown={(e) => e.stopPropagation()}
                               >
-                                {ordersRole === "buyer" && ordersStatusTab === "completed" && String(o.status || "") === "completed" ? (
+                                {rowCommerceRole === "buyer" && commerceShowCompletedContext && String(o.status || "") === "completed" ? (
                                   <div
                                     className={`flex flex-col ${
                                       multicolOrderCard ? "gap-1.5 md:gap-2" : "gap-2 md:gap-3"
@@ -14676,7 +16576,7 @@ function App() {
                                     </div>
                                   </div>
                                 ) : null}
-                                {ordersRole === "seller" && ordersStatusTab === "completed" && o.buyerReview?.sellerRating ? (
+                                {rowCommerceRole === "seller" && commerceShowCompletedContext && o.buyerReview?.sellerRating ? (
                                   <div
                                     className={`rounded-lg border border-neutral-200/80 bg-neutral-50/60 dark:border-slate-600 dark:bg-slate-900/40 ${
                                       multicolOrderCard ? "px-2 py-1.5 text-[11px]" : "px-3 py-2 text-xs"
@@ -14692,8 +16592,8 @@ function App() {
                                     ) : null}
                                   </div>
                                 ) : null}
-                                {ordersRole === "seller" &&
-                                ordersStatusTab === "completed" &&
+                                {rowCommerceRole === "seller" &&
+                                commerceShowCompletedContext &&
                                 o.fulfillmentType === "delivery" &&
                                 o.buyerCourierReview?.rating ? (
                                   <div
@@ -14779,9 +16679,9 @@ function App() {
                                       multicolOrderCard ? "gap-1.5" : "gap-2"
                                     }`}
                                   >
-                                  {ordersRole === "seller" &&
+                                  {rowCommerceRole === "seller" &&
                                   String(o.status || "") === "seller_accepted" &&
-                                  o.fulfillmentType === "pickup" &&
+                                  (o.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(o)) &&
                                   sellerReadyPickupOrderIds.length > 0 ? (
                                     <button
                                       type="button"
@@ -14789,14 +16689,16 @@ function App() {
                                       onClick={() =>
                                         patchOrderTransition(sellerReadyPickupOrderIds[0], "mark_ready_for_pickup", {
                                           orderIds: sellerReadyPickupOrderIds,
-                                          successMessage: "Marked ready for pickup.",
+                                          successMessage: orderUsesAppointmentServiceFlow(o)
+                                            ? "Marked ready for appointment."
+                                            : "Marked ready for pickup.",
                                         })
                                       }
                                     >
-                                      Ready for Pickup
+                                      {orderUsesAppointmentServiceFlow(o) ? "Ready for appointment" : "Ready for Pickup"}
                                     </button>
                                   ) : null}
-                                  {ordersRole === "seller" && String(o.status || "") === "ready_for_pickup" ? (
+                                  {rowCommerceRole === "seller" && String(o.status || "") === "ready_for_pickup" ? (
                                     <button
                                       type="button"
                                       className={`btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0 ${
@@ -14810,9 +16712,9 @@ function App() {
                                       Message buyer
                                     </button>
                                   ) : null}
-                                  {ordersRole === "buyer" &&
+                                  {rowCommerceRole === "buyer" &&
                                   String(o.status || "") === "ready_for_pickup" &&
-                                  o.fulfillmentType === "pickup" &&
+                                  (o.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(o)) &&
                                   pickupBuyerAckOrderIds.length > 0 ? (
                                     <button
                                       type="button"
@@ -14824,14 +16726,18 @@ function App() {
                                       onClick={() =>
                                         patchOrderTransition(pickupBuyerAckOrderIds[0], "buyer_ack_receipt", {
                                           orderIds: pickupBuyerAckOrderIds,
-                                          successMessage: "Marked as picked up. Order completed.",
+                                          successMessage: orderUsesAppointmentServiceFlow(o)
+                                            ? "Service marked complete. Thank you."
+                                            : "Marked as picked up. Order completed.",
                                         })
                                       }
                                     >
-                                      Mark as Picked Up
+                                      {orderUsesAppointmentServiceFlow(o)
+                                        ? "Confirm service completed"
+                                        : "Mark as Picked Up"}
                                     </button>
                                   ) : null}
-                                  {ordersRole === "seller" && isDeliverySellerPreparing(o) ? (
+                                  {rowCommerceRole === "seller" && isDeliverySellerPreparing(o) ? (
                                     <button
                                       type="button"
                                       className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
@@ -14844,7 +16750,7 @@ function App() {
                                       I&apos;ll deliver myself
                                     </button>
                                   ) : null}
-                                  {ordersRole === "seller" && isDeliveryCourierAssigned(o) ? (
+                                  {rowCommerceRole === "seller" && isDeliveryCourierAssigned(o) ? (
                                     <button
                                       type="button"
                                       className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
@@ -14857,28 +16763,37 @@ function App() {
                                       Out for Delivery
                                     </button>
                                   ) : null}
-                                  {ordersRole === "buyer" && isDeliveryInTransit(o) ? (
+                                  {rowCommerceRole === "buyer" && isDeliveryInTransit(o) ? (
                                     <div className="flex w-full flex-col gap-1.5 md:flex-row md:items-center md:gap-3">
                                       <button
                                         type="button"
                                         className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
                                         onClick={() =>
                                           patchOrderTransition(o.id, "mark_delivered", {
-                                            successMessage: "Marked as received. Enjoy your order!",
+                                            successMessage: orderUsesAppointmentServiceFlow(o)
+                                              ? "Thanks — booking closed."
+                                              : "Marked as received. Enjoy your order!",
                                           })
                                         }
                                       >
-                                        Mark as Received
+                                        {orderUsesAppointmentServiceFlow(o)
+                                          ? "Confirm service completed"
+                                          : "Mark as Received"}
                                       </button>
                                       <p className="text-[10px] leading-snug text-neutral-600 dark:text-slate-400">
-                                        Confirm you got the goods. Pay the seller and courier in cash as agreed — mark “paid to courier” in your own
-                                        notes if you need a paper trail; there is no wallet here.
+                                        {orderIsServiceListingBooking(o)
+                                          ? "Confirm the service was completed. Pay the provider in cash as agreed; there is no wallet here."
+                                          : "Confirm you got the goods. Pay the seller and courier in cash as agreed — mark “paid to courier” in your own notes if you need a paper trail; there is no wallet here."}
                                       </p>
                                     </div>
                                   ) : null}
                                   </div>
-                                  {ordersStatusTab === "processing" &&
+                                  {(activityBooking
+                                    ? bookingOrdersStatusTab === "active" &&
+                                      orderMatchesOrdersStatusTab(o.status, "processing")
+                                    : ordersStatusTab === "processing") &&
                                   o.fulfillmentType === "delivery" &&
+                                  (!orderIsServiceListingBooking(o) || orderIsTransportServiceBooking(o)) &&
                                   isDeliverySellerPreparing(o) ? (
                                     <div
                                       className={`mt-2 border-t border-neutral-200/70 pt-3 dark:border-slate-600/50 ${
@@ -14892,15 +16807,31 @@ function App() {
                                         ).trim()}
                                         orderId={o.id}
                                         order={o}
-                                        viewerRole={ordersRole === "buyer" || ordersRole === "seller" ? ordersRole : "buyer"}
+                                        viewerRole={
+                                          rowCommerceRole === "buyer" || rowCommerceRole === "seller"
+                                            ? rowCommerceRole
+                                            : "buyer"
+                                        }
                                         excludeUserIds={[String(o.buyerId || "").trim(), String(o.sellerId || "").trim()].filter(
                                           Boolean,
                                         )}
                                         compact={multicolOrderCard}
                                         onPoolUpdated={async () => {
                                           try {
-                                            const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-                                            setOrders(data.orders || []);
+                                            if (activityTabRef.current === ACTIVITY_TABS.BOOKING) {
+                                              const [buyerData, sellerData] = await Promise.all([
+                                                apiRequest("/orders?role=buyer", { token }),
+                                                apiRequest("/orders?role=seller", { token }),
+                                              ]);
+                                              const b = buyerData.orders || [];
+                                              const s = sellerData.orders || [];
+                                              setBookingHubBuyerOrders(b);
+                                              setBookingHubSellerOrders(s);
+                                              setOrders(dedupeOrdersByIdPreferLeft(b, s));
+                                            } else {
+                                              const data = await apiRequest(`/orders?role=${rowCommerceRole}`, { token });
+                                              setOrders(data.orders || []);
+                                            }
                                             void refreshCourierHub();
                                           } catch {
                                             pushMarketplaceToast("Tip saved — refresh orders if amounts look stale.");
@@ -14909,7 +16840,7 @@ function App() {
                                         onAssigned={async () => {
                                           await refreshCourierAndOrders();
                                           pushMarketplaceToast(
-                                            ordersRole === "buyer"
+                                            rowCommerceRole === "buyer"
                                               ? "Invitation sent. The courier can accept or decline from Activity → Deliver."
                                               : "Courier invited. They can accept or decline from Activity → Deliver.",
                                           );
@@ -14934,8 +16865,8 @@ function App() {
                   )}
           </div>
           {isMobileViewport &&
-          ordersStatusTab === "pending" &&
-          ordersForStatusTab.length > 0 &&
+          commerceFlowOnPendingBulkTab &&
+          ordersForStatusTabView.length > 0 &&
           selectedOrders.length > 0 ? (
             <div
               role="region"
@@ -14959,7 +16890,7 @@ function App() {
                 </span>
               </div>
               <div className="flex min-w-0 shrink-0 divide-x divide-neutral-200/90 border-l border-neutral-200/90 dark:divide-slate-600 dark:border-slate-600 [&_button]:!rounded-none [&_button]:!shadow-none [&_button]:min-h-11 [&_button]:shrink-0 [&_button]:border-0 [&_button]:gap-1.5 [&_button]:px-3 [&_button]:text-sm sm:[&_button]:min-h-10 sm:[&_button]:gap-2 sm:[&_button]:px-4">
-                {ordersRole === "seller" ? (
+                {(!activityBooking && ordersRole === "seller") || activityBooking ? (
                   <Button
                     type="button"
                     variant="primary"
@@ -16578,9 +18509,13 @@ function App() {
               </div>
               {!showSellerProfileShopAside ? (
               <aside className="min-w-0 space-y-4 pt-8 lg:rounded-2xl lg:border lg:border-neutral-200/70 lg:bg-white lg:p-5 lg:pt-5 lg:shadow-sm dark:lg:border-slate-600 dark:lg:bg-slate-900/80">
-                <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Seller hub: products, dashboard, and buyer feedback">
+                <div
+                  className="flex w-full min-w-0 shrink-0 rounded-xl border border-neutral-200/85 bg-neutral-100/40 p-0.5 dark:border-slate-600/65 dark:bg-slate-800/40"
+                  role="tablist"
+                  aria-label="Seller hub: listings, dashboard, and buyer feedback"
+                >
                   {[
-                    { id: SELLER_TABS.PRODUCTS, label: "Product" },
+                    { id: SELLER_TABS.PRODUCTS, label: "Listings" },
                     { id: SELLER_TABS.DASHBOARD, label: "Dashboard" },
                     { id: SELLER_TABS.FEEDBACK, label: "Feedback" },
                   ].map(({ id, label }) => (
@@ -16589,44 +18524,112 @@ function App() {
                       type="button"
                       role="tab"
                       aria-selected={sellerTab === id}
-                      className={`inline-flex h-9 shrink-0 items-center gap-1 rounded-full px-2.5 text-xs font-semibold transition md:h-8 md:px-2 ${
+                      className={`min-h-9 flex-1 rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition sm:px-3 ${
                         sellerTab === id
-                          ? UI_KIT.tabActive
-                          : "border-0 bg-neutral-100/55 text-neutral-600 hover:bg-neutral-100 dark:bg-slate-800/55 dark:text-slate-400 dark:hover:bg-slate-800 md:border md:border-neutral-200/85 md:bg-transparent md:hover:bg-neutral-50 dark:md:border-slate-600"
+                          ? "bg-brand-primary/15 text-brand-primary ring-1 ring-brand-primary/30 shadow-sm dark:bg-brand-accent/25 dark:text-brand-accent dark:ring-brand-accent/35"
+                          : "text-neutral-600 hover:bg-white/80 dark:text-slate-400 dark:hover:bg-slate-700/50"
                       }`}
                       onClick={() => setSellerTab(id)}
                     >
-                      <SellerHubTabSvgIcon tabId={id} />
-                      <span className="whitespace-nowrap">{label}</span>
+                      <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">
+                        <SellerHubTabSvgIcon tabId={id} />
+                        <span>{label}</span>
+                      </span>
                     </button>
                   ))}
                 </div>
                 {sellerTab === SELLER_TABS.PRODUCTS && (
                   <div className="space-y-3">
-                    <div className="flex flex-wrap items-start justify-end gap-3">
-                      <div className="ml-auto flex items-center gap-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <h4 className="text-sm font-semibold text-neutral-900 dark:text-slate-100">Your listings</h4>
+                      <div className="float-right">
                         <ProductViewDensityToggle
                           value={sellerProductsView}
                           onChange={setSellerProductsView}
                           gridTitle="Grid — large photos, full details on each card"
                           compactTitle="Dense — small tiles; use View for long descriptions"
                         />
-                        <button
-                          type="button"
-                          className="btn-primary shrink-0 text-sm"
-                          onClick={() => {
-                            if (!String(profileCommunityName || "").trim()) {
-                              setProfileUploadProductNotice("Tip: set your community in Profile so uploads can be matched to your local shop.");
-                            } else {
-                              setProfileUploadProductNotice("");
-                            }
-                            openUploadAtTop();
-                          }}
-                        >
-                          Upload
-                        </button>
                       </div>
                     </div>
+                    {profileUploadChooserOpen ? (
+                      <div className="fixed inset-0 z-[140]">
+                        <button
+                          type="button"
+                          className="absolute inset-0 bg-neutral-900/20 dark:bg-black/35"
+                          aria-label="Close upload options"
+                          onClick={() => setProfileUploadChooserOpen(false)}
+                        />
+                        <div
+                          id="profile-upload-chooser"
+                          role="menu"
+                          aria-label="Choose upload type"
+                          className="absolute right-4 z-10 w-[min(23rem,calc(100vw-2rem))] rounded-2xl border border-neutral-200/70 bg-white/95 p-3 shadow-[0_22px_60px_rgba(15,23,42,0.24)] backdrop-blur-sm animate-in fade-in zoom-in-95 dark:border-slate-600/85 dark:bg-slate-900/95 md:right-6"
+                          style={{ bottom: "calc(max(1rem, env(safe-area-inset-bottom)) + 6.5rem)" }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div
+                            className="absolute -bottom-2 right-8 h-4 w-4 rotate-45 border-r border-b border-neutral-200/70 bg-white/95 dark:border-slate-600/85 dark:bg-slate-900/95"
+                            aria-hidden
+                          />
+                          <p className="px-1 pb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Create new</p>
+                          <div className="grid grid-cols-1 gap-2">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="-mt-0.5 group flex w-full items-start gap-3 rounded-xl border border-emerald-300/45 bg-emerald-50/70 px-3 py-2.5 text-left shadow-[0_6px_16px_-10px_rgba(5,150,105,0.45)] transition hover:-translate-y-px hover:border-emerald-400/65 hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/45 dark:border-emerald-500/40 dark:bg-emerald-900/22 dark:shadow-[0_8px_20px_-12px_rgba(16,185,129,0.45)] dark:hover:border-emerald-400/55 dark:hover:bg-emerald-900/25"
+                              onClick={handleProfileUploadProduct}
+                            >
+                              <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-200">
+                                <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 7.5h15m-13.5 0v11.25A1.5 1.5 0 007.5 20.25h9a1.5 1.5 0 001.5-1.5V7.5m-8.25 4.5h4.5m-2.25-2.25v4.5" />
+                                </svg>
+                              </span>
+                              <span className="min-w-0">
+                                <span className="flex items-center gap-2 text-sm font-semibold text-neutral-900 dark:text-slate-100">
+                                  <span>Upload product</span>
+                                  <span className="inline-flex items-center rounded-full bg-emerald-600/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:bg-emerald-300/20 dark:text-emerald-200">
+                                    Recommended
+                                  </span>
+                                </span>
+                                <span className="mt-0.5 block text-xs text-neutral-600 dark:text-slate-400">Sell physical items with photos and price</span>
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="group flex w-full items-start gap-3 rounded-xl border border-transparent px-3 py-2.5 text-left transition hover:-translate-y-px hover:border-sky-300/65 hover:bg-sky-50/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500/45 dark:hover:border-sky-500/45 dark:hover:bg-sky-900/20"
+                              onClick={handleProfileUploadShop}
+                            >
+                              <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-sky-500/12 text-sky-700 dark:bg-sky-400/20 dark:text-sky-200">
+                                <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 10.5L12 4.5l7.5 6m-13.5 0v8.25A1.5 1.5 0 007.5 20.25h9a1.5 1.5 0 001.5-1.5V10.5M9.75 20.25V13.5h4.5v6.75" />
+                                </svg>
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block text-sm font-semibold text-neutral-900 dark:text-slate-100">Upload shop</span>
+                                <span className="mt-0.5 block text-xs text-neutral-600 dark:text-slate-400">Update your seller profile and storefront info</span>
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="group flex w-full items-start gap-3 rounded-xl border border-transparent px-3 py-2.5 text-left transition hover:-translate-y-px hover:border-violet-300/65 hover:bg-violet-50/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500/45 dark:hover:border-violet-500/45 dark:hover:bg-violet-900/20"
+                              onClick={handleProfileUploadService}
+                            >
+                              <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-violet-500/12 text-violet-700 dark:bg-violet-400/20 dark:text-violet-200">
+                                <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75v10.5m-5.25-5.25h10.5M12 3.75a8.25 8.25 0 110 16.5 8.25 8.25 0 010-16.5z" />
+                                </svg>
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block text-sm font-semibold text-neutral-900 dark:text-slate-100">Upload service</span>
+                                <span className="mt-0.5 block text-xs text-neutral-600 dark:text-slate-400">Offer local skills, bookings, or on-demand help</span>
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                     {profileUploadProductNotice ? (
                       <div
                         className="mt-3 flex flex-wrap items-start justify-between gap-2 rounded-xl border border-amber-200/90 bg-amber-50/90 px-3 py-2 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100"
@@ -16676,69 +18679,93 @@ function App() {
                       </div>
                     ) : null}
                     {sellerListings.length ? (
-                      <Suspense
-                        fallback={
-                          <BrowseGridSkeleton
-                            gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
-                            variant={
-                              effectiveSellerProductsView === "list"
-                                ? "list"
-                                : effectiveSellerProductsView === "compact"
-                                  ? "compact"
-                                  : "grid"
-                            }
-                            softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
-                            count={4}
-                            className="min-h-[8rem] w-full min-w-0"
-                            ariaLabel="Loading your listings"
-                          />
-                        }
-                      >
-                        <div
-                          className={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
-                        >
-                          {sellerListings.map((l) => (
-                            <LazyCommunityShopListingCard
-                              key={l.id}
-                              listing={l}
-                              hideGalleryPageIndicators
-                              gridMode={effectiveSellerProductsView !== "list"}
-                              compactGrid={effectiveSellerProductsView === "compact"}
-                              mobileOwnerActionsInMenu={isMobileViewport && effectiveSellerProductsView !== "list"}
-                              disableGallerySwipe
+                        <Suspense
+                          fallback={
+                            <BrowseGridSkeleton
+                              gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                              variant={
+                                effectiveSellerProductsView === "list"
+                                  ? "list"
+                                  : effectiveSellerProductsView === "compact"
+                                    ? "compact"
+                                    : "grid"
+                              }
                               softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
-                              browseSummaryGrid={isMobileViewport && effectiveSellerProductsView === "grid"}
-                              mobileCardUx={isMobileViewport}
-                              mobileEntireCardTappable={isMobileViewport}
-                              isFavorite={false}
-                              showActions
-                              currentUserId={user?.id || ""}
-                              buyNowDisabled={false}
-                              buyNowDisabledReason=""
-                              onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
-                              onEdit={() => beginEditSellerListing(l)}
-                              onDelete={() => deleteSellerListingById(l.id)}
-                              onInspect={() => {
-                                const stockListed = Math.max(0, Number(l.quantity) || 0);
-                                openProductInspect(l, {
-                                  quantity: stockListed,
-                                  quantityLabel: "Stock listed",
-                                  subtitle: "Your listing",
-                                  listingStockQty: stockListed,
-                                  showSellerCommerceActions: true,
-                                  onEditListing: () => {
-                                    beginEditSellerListing(l);
-                                  },
-                                  onSaleSelect: (pct) => {
-                                    closeProductInspect();
-                                    void applySellerListingDiscount(l, pct);
-                                  },
-                                });
-                              }}
+                              count={4}
+                              className="min-h-[8rem] w-full min-w-0"
+                              ariaLabel="Loading your listings"
                             />
-                          ))}
-                        </div>
-                      </Suspense>
+                          }
+                        >
+                          <div className="w-full min-w-0 space-y-8">
+                            {profileSellerHubSections.map((section) => (
+                              <section
+                                key={section.id}
+                                className="space-y-3"
+                                aria-labelledby={`profile-listings-self-${section.id}`}
+                              >
+                                <h3
+                                  id={`profile-listings-self-${section.id}`}
+                                  className="text-sm font-semibold tracking-tight text-neutral-800 dark:text-slate-100"
+                                >
+                                  {section.title}
+                                </h3>
+                                {section.id === "shop" && section.listings.length === 0 ? (
+                                  <p className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/80 px-4 py-6 text-center text-sm text-neutral-600 dark:border-slate-600/70 dark:bg-slate-800/40 dark:text-slate-400">
+                                    No shop listings yet. Community shop upload is not available yet — listings will appear
+                                    here when it is.
+                                  </p>
+                                ) : null}
+                                {section.listings.length > 0 ? (
+                                <div
+                                  className={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                                >
+                                  {section.listings.map((l) => (
+                                    <LazyCommunityShopListingCard
+                                      key={l.id}
+                                      listing={l}
+                                      hideGalleryPageIndicators
+                                      gridMode={effectiveSellerProductsView !== "list"}
+                                      compactGrid={effectiveSellerProductsView === "compact"}
+                                      mobileOwnerActionsInMenu={isMobileViewport && effectiveSellerProductsView !== "list"}
+                                      disableGallerySwipe
+                                      softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
+                                      browseSummaryGrid={isMobileViewport && effectiveSellerProductsView === "grid"}
+                                      mobileCardUx={isMobileViewport}
+                                      mobileEntireCardTappable={isMobileViewport}
+                                      isFavorite={false}
+                                      showActions
+                                      currentUserId={user?.id || ""}
+                                      buyNowDisabled={false}
+                                      buyNowDisabledReason=""
+                                      onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
+                                      onEdit={() => beginEditSellerListing(l)}
+                                      onDelete={() => deleteSellerListingById(l.id)}
+                                      onInspect={() => {
+                                        const stockListed = Math.max(0, Number(l.quantity) || 0);
+                                        openProductInspect(l, {
+                                          quantity: stockListed,
+                                          quantityLabel: "Stock listed",
+                                          subtitle: "Your listing",
+                                          listingStockQty: stockListed,
+                                          showSellerCommerceActions: true,
+                                          onEditListing: () => {
+                                            beginEditSellerListing(l);
+                                          },
+                                          onSaleSelect: (pct) => {
+                                            closeProductInspect();
+                                            void applySellerListingDiscount(l, pct);
+                                          },
+                                        });
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                                ) : null}
+                              </section>
+                            ))}
+                          </div>
+                        </Suspense>
                     ) : !(sellerListingsLoading && sellerListings.length === 0) && !sellerListingsFetchError ? (
                       <ScreenEmpty
                         className="mt-3"
@@ -16776,12 +18803,32 @@ function App() {
                     <LazySellerBuyerFeedbackList token={token} />
                   </Suspense>
                 )}
+                {sellerTab === SELLER_TABS.PRODUCTS ? (
+                  <button
+                    type="button"
+                    className="btn-primary fixed bottom-[max(3rem,env(safe-area-inset-bottom))] right-4 z-40 inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm shadow-lg md:right-6 md:bottom-10"
+                    onClick={openProfileUploadChooser}
+                    aria-label="Upload listing"
+                    aria-haspopup="menu"
+                    aria-controls="profile-upload-chooser"
+                    aria-expanded={profileUploadChooserOpen}
+                  >
+                    <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+                    </svg>
+                    Upload
+                  </button>
+                ) : null}
               </aside>
               ) : (
               <aside className="min-w-0 space-y-4 pt-8 lg:rounded-2xl lg:border lg:border-neutral-200/70 lg:bg-white lg:p-5 lg:pt-5 lg:shadow-sm dark:lg:border-slate-600 dark:lg:bg-slate-900/80">
-                <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Seller shop: products and buyer feedback">
+                <div
+                  className="flex w-full min-w-0 shrink-0 rounded-xl border border-neutral-200/85 bg-neutral-100/40 p-0.5 dark:border-slate-600/65 dark:bg-slate-800/40"
+                  role="tablist"
+                  aria-label="Seller shop: listings and buyer feedback"
+                >
                   {[
-                    { id: SELLER_TABS.PRODUCTS, label: "Product" },
+                    { id: SELLER_TABS.PRODUCTS, label: "Listings" },
                     { id: SELLER_TABS.FEEDBACK, label: "Feedback" },
                   ].map(({ id, label }) => (
                     <button
@@ -16789,15 +18836,17 @@ function App() {
                       type="button"
                       role="tab"
                       aria-selected={sellerTab === id}
-                      className={`inline-flex h-9 shrink-0 items-center gap-1 rounded-full px-2.5 text-xs font-semibold transition md:h-8 md:px-2 ${
+                      className={`min-h-9 flex-1 rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition sm:px-3 ${
                         sellerTab === id
-                          ? UI_KIT.tabActive
-                          : "border-0 bg-neutral-100/55 text-neutral-600 hover:bg-neutral-100 dark:bg-slate-800/55 dark:text-slate-400 dark:hover:bg-slate-800 md:border md:border-neutral-200/85 md:bg-transparent md:hover:bg-neutral-50 dark:md:border-slate-600"
+                          ? "bg-brand-primary/15 text-brand-primary ring-1 ring-brand-primary/30 shadow-sm dark:bg-brand-accent/25 dark:text-brand-accent dark:ring-brand-accent/35"
+                          : "text-neutral-600 hover:bg-white/80 dark:text-slate-400 dark:hover:bg-slate-700/50"
                       }`}
                       onClick={() => setSellerTab(id)}
                     >
-                      <SellerHubTabSvgIcon tabId={id} />
-                      <span className="whitespace-nowrap">{label}</span>
+                      <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">
+                        <SellerHubTabSvgIcon tabId={id} />
+                        <span>{label}</span>
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -16805,7 +18854,9 @@ function App() {
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <p className="text-sm font-medium text-neutral-800 dark:text-slate-200">
-                      {profileRenderUser?.username ? `@${String(profileRenderUser.username || "").replace(/^@/, "")}` : "Products"}
+                      {profileRenderUser?.username
+                        ? `@${String(profileRenderUser.username || "").replace(/^@/, "")}`
+                        : "Listings"}
                     </p>
                     <ProductViewDensityToggle
                       value={sellerProductsView}
@@ -16847,96 +18898,120 @@ function App() {
                     </div>
                   ) : null}
                   {sellerProfileShopListings.length ? (
-                    <Suspense
-                      fallback={
-                        <BrowseGridSkeleton
-                          gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
-                          variant={
-                            effectiveSellerProductsView === "list"
-                              ? "list"
-                              : effectiveSellerProductsView === "compact"
-                                ? "compact"
-                                : "grid"
-                          }
-                          softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
-                          count={4}
-                          className="min-h-[8rem] w-full min-w-0"
-                          ariaLabel="Loading listings"
-                        />
-                      }
-                    >
-                      <div
-                        className={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                      <Suspense
+                        fallback={
+                          <BrowseGridSkeleton
+                            gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                            variant={
+                              effectiveSellerProductsView === "list"
+                                ? "list"
+                                : effectiveSellerProductsView === "compact"
+                                  ? "compact"
+                                  : "grid"
+                            }
+                            softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
+                            count={4}
+                            className="min-h-[8rem] w-full min-w-0"
+                            ariaLabel="Loading listings"
+                          />
+                        }
                       >
-                        {sellerProfileShopListings.map((l) => {
-                          const isOwn = String(l.sellerId || "") === String(user?.id || "");
-                          return (
-                            <LazyCommunityShopListingCard
-                              key={l.id}
-                              listing={l}
-                              hideGalleryPageIndicators
-                              gridMode={effectiveSellerProductsView !== "list"}
-                              compactGrid={effectiveSellerProductsView === "compact"}
-                              mobileOwnerActionsInMenu={isMobileViewport && effectiveSellerProductsView !== "list"}
-                              disableGallerySwipe={false}
-                              softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
-                              browseSummaryGrid={isMobileViewport && effectiveSellerProductsView === "grid"}
-                              mobileCardUx={isMobileViewport}
-                              mobileEntireCardTappable={isMobileViewport}
-                              isFavorite={favoriteIds.has(l.id)}
-                              showActions
-                              currentUserId={user?.id || ""}
-                              buyNowDisabled={!isOwn && buyNowBlocked}
-                              buyNowDisabledReason={!isOwn ? buyNowBlockedReason : ""}
-                              onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
-                              onEdit={() => beginEditSellerListing(l)}
-                              onBuy={() => openQuickAddModal(l, "buy")}
-                              onAdd={() => openQuickAddModal(l, "cart")}
-                              onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
-                              onInspect={() => {
-                                const stockListed = Math.max(0, Number(l.quantity) || 0);
-                                openProductInspect(l, {
-                                  quantity: stockListed,
-                                  quantityLabel: "Stock listed",
-                                  subtitle: "",
-                                  listingStockQty: stockListed,
-                                  showBuyerCommerceActions: !isOwn,
-                                  showSellerCommerceActions: isOwn,
-                                  onAddToCart: isOwn
-                                    ? undefined
-                                    : () => {
-                                        openQuickAddModal(l, "cart");
-                                      },
-                                  onBuyNow: isOwn
-                                    ? undefined
-                                    : () => {
-                                        openQuickAddModal(l, "buy");
-                                      },
-                                  buyNowDisabled: !isOwn && buyNowBlocked,
-                                  buyNowDisabledReason: !isOwn ? buyNowBlockedReason : "",
-                                  onEditListing: isOwn
-                                    ? () => {
-                                        beginEditSellerListing(l);
-                                      }
-                                    : undefined,
-                                  onSaleSelect: isOwn
-                                    ? (pct) => {
-                                        closeProductInspect();
-                                        void applySellerListingDiscount(l, pct);
-                                      }
-                                    : undefined,
-                                });
-                              }}
-                            />
-                          );
-                        })}
-                      </div>
-                    </Suspense>
+                        <div className="w-full min-w-0 space-y-8">
+                          {otherSellerHubSections.map((section) => (
+                            <section
+                              key={section.id}
+                              className="space-y-3"
+                              aria-labelledby={`profile-listings-other-${section.id}`}
+                            >
+                              <h3
+                                id={`profile-listings-other-${section.id}`}
+                                className="text-sm font-semibold tracking-tight text-neutral-800 dark:text-slate-100"
+                              >
+                                {section.title}
+                              </h3>
+                              {section.id === "shop" && section.listings.length === 0 ? (
+                                <p className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/80 px-4 py-6 text-center text-sm text-neutral-600 dark:border-slate-600/70 dark:bg-slate-800/40 dark:text-slate-400">
+                                  No shop listings yet. Community shop upload is not available yet — listings will appear
+                                  here when it is.
+                                </p>
+                              ) : null}
+                              {section.listings.length > 0 ? (
+                              <div
+                                className={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                              >
+                                {section.listings.map((l) => {
+                                  const isOwn = String(l.sellerId || "") === String(user?.id || "");
+                                  return (
+                                    <LazyCommunityShopListingCard
+                                      key={l.id}
+                                      listing={l}
+                                      hideGalleryPageIndicators
+                                      gridMode={effectiveSellerProductsView !== "list"}
+                                      compactGrid={effectiveSellerProductsView === "compact"}
+                                      mobileOwnerActionsInMenu={isMobileViewport && effectiveSellerProductsView !== "list"}
+                                      disableGallerySwipe={false}
+                                      softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
+                                      browseSummaryGrid={isMobileViewport && effectiveSellerProductsView === "grid"}
+                                      mobileCardUx={isMobileViewport}
+                                      mobileEntireCardTappable={isMobileViewport}
+                                      isFavorite={favoriteIds.has(l.id)}
+                                      showActions
+                                      currentUserId={user?.id || ""}
+                                      buyNowDisabled={!isOwn && buyNowBlocked}
+                                      buyNowDisabledReason={!isOwn ? buyNowBlockedReason : ""}
+                                      onSaleSelect={(percent) => applySellerListingDiscount(l, percent)}
+                                      onEdit={() => beginEditSellerListing(l)}
+                                      onBuy={() => openQuickAddModal(l, "buy")}
+                                      onAdd={() => openQuickAddModal(l, "cart")}
+                                      onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
+                                      onInspect={() => {
+                                        const stockListed = Math.max(0, Number(l.quantity) || 0);
+                                        openProductInspect(l, {
+                                          quantity: stockListed,
+                                          quantityLabel: "Stock listed",
+                                          subtitle: "",
+                                          listingStockQty: stockListed,
+                                          showBuyerCommerceActions: !isOwn,
+                                          showSellerCommerceActions: isOwn,
+                                          onAddToCart: isOwn
+                                            ? undefined
+                                            : () => {
+                                                openQuickAddModal(l, "cart");
+                                              },
+                                          onBuyNow: isOwn
+                                            ? undefined
+                                            : () => {
+                                                openQuickAddModal(l, "buy");
+                                              },
+                                          buyNowDisabled: !isOwn && buyNowBlocked,
+                                          buyNowDisabledReason: !isOwn ? buyNowBlockedReason : "",
+                                          onEditListing: isOwn
+                                            ? () => {
+                                                beginEditSellerListing(l);
+                                              }
+                                            : undefined,
+                                          onSaleSelect: isOwn
+                                            ? (pct) => {
+                                                closeProductInspect();
+                                                void applySellerListingDiscount(l, pct);
+                                              }
+                                            : undefined,
+                                        });
+                                      }}
+                                    />
+                                  );
+                                })}
+                              </div>
+                              ) : null}
+                            </section>
+                          ))}
+                        </div>
+                      </Suspense>
                   ) : !(sellerProfileShopLoading && sellerProfileShopListings.length === 0) && !sellerProfileShopError ? (
                     <ScreenEmpty
                       className="mt-3"
                       title="No active listings"
-                      description="This seller doesn’t have any products listed right now."
+                      description="This seller doesn’t have any listings right now."
                       secondaryAction={{ label: "Browse marketplace", onClick: goBrowse }}
                     />
                   ) : null}
@@ -17282,7 +19357,13 @@ function App() {
                   id="quick-add-modal-title"
                   className="break-words text-sm font-semibold leading-snug text-neutral-900 dark:text-slate-100 min-[360px]:text-base"
                 >
-                  {quickActionType === "buy" ? "Place order" : "Add to cart"}
+                  {quickActionType === "buy"
+                    ? quickAddTargetIsService
+                      ? "Request booking"
+                      : "Place order"
+                    : quickAddTargetIsService
+                      ? "Add service to cart"
+                      : "Add to cart"}
                 </h2>
               </div>
               <span className="inline-flex h-11 w-11 shrink-0 md:h-9 md:w-9" aria-hidden />
@@ -17366,8 +19447,33 @@ function App() {
                         quickAddListing?.soldCount != null && Number.isFinite(Number(quickAddListing.soldCount))
                           ? Math.max(0, Number(quickAddListing.soldCount))
                           : null;
-                      const isOutOfStockQa = stockQtyQa <= 0;
-                      const readOnlyStockRowQa = (
+                      const isServiceQa = isServiceListing(quickAddListing);
+                      const qaServiceHdr = isServiceQa ? getServiceCardProfileHeader(quickAddListing) : { categoryTitle: "", typeLabel: "" };
+                      const qaServiceStackTitle = isServiceQa
+                        ? qaServiceHdr.categoryTitle || quickAddListing.title || "Untitled service"
+                        : "";
+                      const qaServiceStackHighlight =
+                        isServiceQa &&
+                        qaServiceHdr.categoryTitle &&
+                        qaServiceHdr.typeLabel &&
+                        qaServiceHdr.typeLabel !== qaServiceStackTitle
+                          ? qaServiceHdr.typeLabel
+                          : "";
+                      const isOutOfStockQa = !isServiceQa && stockQtyQa <= 0;
+                      const qaServiceHeadlinePrice =
+                        isServiceQa && quickAddListing
+                          ? getServiceCardHeadlinePriceLabel(quickAddListing) ?? formatPesoWhole(quickAddListing.priceCents)
+                          : "";
+                      const qaServiceSlotOpts = isServiceQa ? slotOptionsForServiceListing(quickAddListing) : null;
+                      const qaBookableDates = qaServiceSlotOpts?.dates?.length ? qaServiceSlotOpts.dates : [];
+                      const qaBookableDateSet = new Set(qaBookableDates);
+                      const qaDateMin = qaBookableDates[0] || "";
+                      const qaDateMax = qaBookableDates.length ? qaBookableDates[qaBookableDates.length - 1] : "";
+                      const readOnlyStockRowQa = isServiceQa ? (
+                        <div className="min-w-0">
+                          <ListingServiceCardSummary listing={quickAddListing} variant="browse" />
+                        </div>
+                      ) : (
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300">
@@ -17411,12 +19517,16 @@ function App() {
                               variant="card"
                               browseStackMode={snapMobile ? "listMobile" : null}
                               compactListMeta={listModeQa || snapMobile}
-                              title={quickAddListing.title || "Untitled product"}
+                              title={isServiceQa ? qaServiceStackTitle : quickAddListing.title || "Untitled product"}
+                              titleHighlight={isServiceQa ? qaServiceStackHighlight : ""}
+                              headlinePriceOverride={qaServiceHeadlinePrice}
                               priceCents={quickAddListing.priceCents}
                               categoryLabel={
-                                snapMobile
+                                isServiceQa
                                   ? ""
-                                  : getListingCategoryShortLabel(quickAddListing.verticalId, quickAddListing.subId)
+                                  : snapMobile
+                                    ? ""
+                                    : getListingCategoryShortLabel(quickAddListing.verticalId, quickAddListing.subId)
                               }
                               description={quickAddListing.description}
                               fulfillmentModes={quickAddListing.fulfillmentModes}
@@ -17430,7 +19540,8 @@ function App() {
                               hideDescription={Boolean(
                                 listModeQa || (gridModeQa && (compactQa || browseSummaryQa)),
                               )}
-                              hideAvailability={dualFulfillmentPickers}
+                              hideAvailability={dualFulfillmentPickers || isServiceQa}
+                              omitProductMetaExtras={isServiceQa}
                               listingAvgRating={quickAddListing.listingAvgRating}
                               listingReviewCount={quickAddListing.listingReviewCount}
                             />
@@ -17508,7 +19619,7 @@ function App() {
                               ) : null}
                             </div>
                           ) : null}
-                          {qaOffersPickup && qaOffersDelivery ? (
+                          {qaOffersPickup && qaOffersDelivery && !isServiceQa ? (
                             <fieldset className="min-w-0 space-y-1.5 border-0 p-0">
                               <legend className="float-none text-xs font-semibold text-neutral-900 dark:text-slate-100">
                                 Fulfillment
@@ -17551,58 +19662,132 @@ function App() {
                               </div>
                             </fieldset>
                           ) : null}
-                          <div className="space-y-1.5 rounded-xl border border-neutral-200/80 bg-neutral-50/70 px-2.5 py-2 dark:border-slate-700/70 dark:bg-slate-900/40 md:max-w-[14rem]">
-                            <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
-                              Quantity
-                            </p>
-                            <div className="flex min-w-0 flex-col gap-2 md:gap-3">
-                              <div className="grid w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center gap-1.5 min-[390px]:w-auto min-[390px]:grid-cols-[2.75rem_4.5rem_2.75rem] min-[390px]:gap-2 md:grid-cols-[2.5rem_3.5rem_2.5rem] md:gap-2.5">
-                                <button
-                                  type="button"
-                                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 min-[390px]:h-11 min-[390px]:w-11 md:h-10 md:w-10"
-                                  aria-label="Decrease quantity"
-                                  disabled={Number(quickAddQuantity) <= 1 || quickAddSubmitting}
-                                  onClick={() =>
-                                    setQuickAddQuantity((prev) => {
-                                      const current = Number(prev);
-                                      const safeCurrent = Number.isFinite(current) && current > 0 ? current : 1;
-                                      return String(Math.max(1, safeCurrent - 1));
-                                    })
-                                  }
-                                >
-                                  −
-                                </button>
-                                <span
-                                  className="inline-flex h-10 min-w-0 w-full items-center justify-center px-0 text-center text-sm font-semibold tabular-nums text-neutral-800 dark:text-slate-100 min-[390px]:h-11 md:h-10"
-                                  aria-live="polite"
-                                >
-                                  {quickAddQuantity}
+                          {!isServiceQa ? (
+                            <div className="space-y-1.5 rounded-xl border border-neutral-200/80 bg-neutral-50/70 px-2.5 py-2 dark:border-slate-700/70 dark:bg-slate-900/40 md:max-w-[14rem]">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                                Quantity
+                              </p>
+                              <div className="flex min-w-0 flex-col gap-2 md:gap-3">
+                                <div className="grid w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center gap-1.5 min-[390px]:w-auto min-[390px]:grid-cols-[2.75rem_4.5rem_2.75rem] min-[390px]:gap-2 md:grid-cols-[2.5rem_3.5rem_2.5rem] md:gap-2.5">
+                                  <button
+                                    type="button"
+                                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 min-[390px]:h-11 min-[390px]:w-11 md:h-10 md:w-10"
+                                    aria-label="Decrease quantity"
+                                    disabled={Number(quickAddQuantity) <= 1 || quickAddSubmitting}
+                                    onClick={() =>
+                                      setQuickAddQuantity((prev) => {
+                                        const current = Number(prev);
+                                        const safeCurrent = Number.isFinite(current) && current > 0 ? current : 1;
+                                        return String(Math.max(1, safeCurrent - 1));
+                                      })
+                                    }
+                                  >
+                                    −
+                                  </button>
+                                  <span
+                                    className="inline-flex h-10 min-w-0 w-full items-center justify-center px-0 text-center text-sm font-semibold tabular-nums text-neutral-800 dark:text-slate-100 min-[390px]:h-11 md:h-10"
+                                    aria-live="polite"
+                                  >
+                                    {quickAddQuantity}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 min-[390px]:h-11 min-[390px]:w-11 md:h-10 md:w-10"
+                                    aria-label="Increase quantity"
+                                    disabled={
+                                      Number(quickAddQuantity) >= Math.max(1, Number(quickAddListing.quantity) || 1) ||
+                                      quickAddSubmitting
+                                    }
+                                    onClick={() =>
+                                      setQuickAddQuantity((prev) => {
+                                        const current = Number(prev);
+                                        const safeCurrent = Number.isFinite(current) && current > 0 ? current : 1;
+                                        const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
+                                        return String(Math.min(maxQty, safeCurrent + 1));
+                                      })
+                                    }
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                                <span className="text-[11px] text-neutral-500 min-[390px]:text-xs dark:text-slate-500">
+                                  In stock: {Math.max(0, Number(quickAddListing.quantity) || 0)}
                                 </span>
-                                <button
-                                  type="button"
-                                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 min-[390px]:h-11 min-[390px]:w-11 md:h-10 md:w-10"
-                                  aria-label="Increase quantity"
-                                  disabled={
-                                    Number(quickAddQuantity) >= Math.max(1, Number(quickAddListing.quantity) || 1) ||
-                                    quickAddSubmitting
-                                  }
-                                  onClick={() =>
-                                    setQuickAddQuantity((prev) => {
-                                      const current = Number(prev);
-                                      const safeCurrent = Number.isFinite(current) && current > 0 ? current : 1;
-                                      const maxQty = Math.max(1, Number(quickAddListing.quantity) || 1);
-                                      return String(Math.min(maxQty, safeCurrent + 1));
-                                    })
-                                  }
-                                >
-                                  +
-                                </button>
                               </div>
-                              <span className="text-[11px] text-neutral-500 min-[390px]:text-xs dark:text-slate-500">
-                                In stock: {Math.max(0, Number(quickAddListing.quantity) || 0)}
-                              </span>
                             </div>
-                          </div>
+                          ) : (
+                            <div className="space-y-2">
+                              {qaServiceSlotOpts?.required ? (
+                                <fieldset className="min-w-0 space-y-2 rounded-xl border border-neutral-200/80 bg-neutral-50/70 p-2.5 dark:border-slate-700/70 dark:bg-slate-900/40">
+                                  <legend className="float-none text-xs font-semibold text-neutral-900 dark:text-slate-100">
+                                    Preferred slot (within provider availability)
+                                  </legend>
+                                  {qaServiceSlotOpts.scheduleHuman ? (
+                                    <p className="text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
+                                      {qaServiceSlotOpts.scheduleHuman}
+                                    </p>
+                                  ) : null}
+                                  <div className="grid min-w-0 gap-2 min-[400px]:grid-cols-2">
+                                    <label className="min-w-0 text-[11px] font-medium text-neutral-700 dark:text-slate-300">
+                                      Date
+                                      <input
+                                        type="date"
+                                        className="input-base mt-1 w-full min-h-[2.5rem] text-sm"
+                                        value={quickAddServiceBookingDate}
+                                        min={qaDateMin || undefined}
+                                        max={qaDateMax || undefined}
+                                        onChange={(e) => {
+                                          const v = String(e.target.value || "").trim();
+                                          if (!v) {
+                                            if (qaDateMin) setQuickAddServiceBookingDate(qaDateMin);
+                                            return;
+                                          }
+                                          if (qaBookableDateSet.has(v)) setQuickAddServiceBookingDate(v);
+                                          else {
+                                            pushMarketplaceToast(
+                                              "That day is not in this provider’s available weekdays — pick another date.",
+                                            );
+                                            setQuickAddServiceBookingDate(qaDateMin || v);
+                                          }
+                                        }}
+                                        disabled={quickAddSubmitting}
+                                      />
+                                      {quickAddServiceBookingDate ? (
+                                        <span className="mt-0.5 block text-[10px] text-neutral-500 dark:text-slate-500">
+                                          {formatIsoDateForBookingDisplay(quickAddServiceBookingDate)}
+                                        </span>
+                                      ) : null}
+                                    </label>
+                                    <label className="min-w-0 text-[11px] font-medium text-neutral-700 dark:text-slate-300">
+                                      Time
+                                      <select
+                                        className="input-base mt-1 w-full text-sm tabular-nums"
+                                        value={quickAddServiceBookingTime}
+                                        onChange={(e) => setQuickAddServiceBookingTime(e.target.value)}
+                                        disabled={quickAddSubmitting}
+                                      >
+                                        {qaServiceSlotOpts.times.map((t) => (
+                                          <option key={t} value={t}>
+                                            {formatTimeHmTo12HourLabel(t)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                  </div>
+                                </fieldset>
+                              ) : (
+                                <p className="text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
+                                  This provider has not set complete weekly hours yet — add your preferred timing in
+                                  the comment. Bookings use meetup / COD; community courier is not used for services.
+                                </p>
+                              )}
+                              {!qaServiceSlotOpts?.required ? (
+                                <p className="text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
+                                  You can send multiple booking requests while this listing stays active.
+                                </p>
+                              ) : null}
+                            </div>
+                          )}
                         </>
                       );
                     })()}
@@ -17619,7 +19804,13 @@ function App() {
                   maxLength={quickActionType === "buy" ? 2000 : 250}
                   className="input-base w-full resize-none"
                   placeholder={
-                    quickActionType === "buy" ? "Optional note for the seller" : "Optional note for your cart item"
+                    quickActionType === "buy"
+                      ? quickAddTargetIsService
+                        ? "Preferred date, time, or location (optional)"
+                        : "Optional note for the seller"
+                      : quickAddTargetIsService
+                        ? "Preferred date, time, or location (optional)"
+                        : "Optional note for your cart item"
                   }
                   value={quickAddComment}
                   onChange={(e) => setQuickAddComment(e.target.value)}
@@ -17638,11 +19829,17 @@ function App() {
               >
                 {quickAddSubmitting
                   ? quickActionType === "buy"
-                    ? "Placing order…"
+                    ? quickAddTargetIsService
+                      ? "Sending request…"
+                      : "Placing order…"
                     : "Adding…"
                   : quickActionType === "buy"
-                    ? "Place order"
-                    : "Add to cart"}
+                    ? quickAddTargetIsService
+                      ? "Send booking request"
+                      : "Place order"
+                    : quickAddTargetIsService
+                      ? "Add service to cart"
+                      : "Add to cart"}
               </button>
               {quickAddInlineError ? (
                 <p className="app-alert-error mt-2 text-sm" role="alert">

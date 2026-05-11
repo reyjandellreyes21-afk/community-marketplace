@@ -110,7 +110,6 @@ export const normalizeAttentionIdsByTabObject = (raw) => {
 export const normalizeRecentPendingIdsFromApi = (raw) =>
   Array.isArray(raw) ? raw.map((x) => String(x || "")).filter(Boolean) : [];
 
-/** Maps API `order.status` to Orders view tabs (Pending / Processing / Completed / Cancelled). */
 export const ORDERS_STATUS_TABS = [
   {
     id: "pending",
@@ -147,6 +146,41 @@ export const orderMatchesOrdersStatusTab = (status, tabId) => {
   if (tabId === "cancelled") return s === "cancelled";
   if (tabId === "processing")
     return Boolean(s) && !["placed", "pending", "completed", "cancelled"].includes(s);
+  return false;
+};
+
+/**
+ * Activity → Booking only: merges Pending + Processing into **Active**, Completed → **Past**, Cancelled → **Declined**.
+ * Underlying `order.status` / dismiss storage still use `RECENT_ORDER_TAB_KEYS`.
+ */
+export const BOOKING_STATUS_TABS = [
+  {
+    id: "active",
+    label: "Active",
+    shortLabel: "Active",
+    hint: "Awaiting confirmation or in progress — same as Pending and Processing for products.",
+  },
+  {
+    id: "past",
+    label: "Past",
+    shortLabel: "Past",
+    hint: "Completed bookings.",
+  },
+  {
+    id: "declined",
+    label: "Declined",
+    shortLabel: "Decl.",
+    hint: "Cancelled or declined bookings.",
+  },
+];
+
+/** @param {string} status @param {'active'|'past'|'declined'} tabId */
+export const orderMatchesBookingStatusTab = (status, tabId) => {
+  if (tabId === "active") {
+    return orderMatchesOrdersStatusTab(status, "pending") || orderMatchesOrdersStatusTab(status, "processing");
+  }
+  if (tabId === "past") return orderMatchesOrdersStatusTab(status, "completed");
+  if (tabId === "declined") return orderMatchesOrdersStatusTab(status, "cancelled");
   return false;
 };
 

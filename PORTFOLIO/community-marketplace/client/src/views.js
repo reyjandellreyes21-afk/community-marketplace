@@ -55,6 +55,8 @@ export const COURIER_TABS = {
 export const ACTIVITY_TABS = {
   BUYING: "buying",
   SELLING: "selling",
+  /** Service listings and other bookable flows (orders whose listing `verticalId` is `services`). */
+  BOOKING: "booking",
   COURIER: "courier",
 };
 

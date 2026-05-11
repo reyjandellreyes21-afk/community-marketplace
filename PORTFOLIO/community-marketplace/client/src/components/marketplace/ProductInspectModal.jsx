@@ -13,7 +13,13 @@ import { formatCents } from "../../marketplace/money.js";
 import { resolveListingGalleryUrls } from "../../lib/listingImageUrl.js";
 import { ChevronLeftIcon, ChevronRightIcon } from "../landing/LandingMarketing.jsx";
 import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
-import { ListingProductMetaExtras } from "./ListingProductMetaExtras.jsx";
+import { ListingServiceCardSummary } from "./ListingServiceCardSummary.jsx";
+import {
+  getServiceCardHeadlinePriceLabel,
+  getServiceCardProfileHeader,
+  orderIsServiceListingBooking,
+  orderIsTransportServiceBooking,
+} from "../../lib/listingServiceCardMeta.js";
 import { ListingDescriptionMarkdown } from "./ListingDescriptionMarkdown.jsx";
 import { OrderStatusMilestoneList } from "./OrderStatusMilestoneList.jsx";
 import {
@@ -40,6 +46,7 @@ function initialsFromUsername(username) {
 /** Buyer→product, buyer→seller, and buyer→courier ratings when the order row includes reviews. */
 function OrderTimelineFeedbackBlocks({ order, viewerRole }) {
   if (!order) return null;
+  const isSvcOrder = orderIsServiceListingBooking(order);
   const productRating = Math.min(5, Math.max(0, Math.round(Number(order.buyerReview?.productRating) || 0)));
   const sellerRating = Math.min(5, Math.max(0, Math.round(Number(order.buyerReview?.sellerRating) || 0)));
   const hasProductReview = productRating >= 1;
@@ -50,7 +57,7 @@ function OrderTimelineFeedbackBlocks({ order, viewerRole }) {
   const viewerIsBuyer = viewerRole === "buyer";
   const showProductBlock = viewerIsBuyer && hasProductReview;
   const showSellerBlock = hasSellerReview;
-  if (!showProductBlock && !showSellerBlock && !(delivery && hasCourierReview)) return null;
+  if (!showProductBlock && !showSellerBlock && !(delivery && hasCourierReview && !isSvcOrder)) return null;
 
   const cardClass =
     "rounded-lg border border-neutral-200/80 bg-neutral-50/90 px-2.5 py-2 dark:border-slate-600 dark:bg-slate-900/50";
@@ -126,7 +133,7 @@ function OrderTimelineFeedbackBlocks({ order, viewerRole }) {
           )}
         </div>
       ) : null}
-      {delivery && hasCourierReview ? (
+      {delivery && hasCourierReview && !isSvcOrder ? (
         <div className={cardClass}>
           <p className={buyerReviewSectionTitleSummary}>
             {viewerIsBuyer ? "Your courier rating" : "Courier feedback"}
@@ -233,6 +240,9 @@ export function ProductInspectModal({
   /** Buyer ratings aggregated from completed-order reviews (`order_reviews`) for this listing. */
   listingAvgRating = null,
   listingReviewCount = 0,
+  /** Service listing: show `serviceMeta` instead of stock / fulfillment / product order chips. */
+  serviceListing = false,
+  serviceMeta = null,
   isFavorite = false,
   onToggleFavorite,
   /** When set (e.g. opened from an order card), show milestone timeline for this order only. */
@@ -285,6 +295,17 @@ export function ProductInspectModal({
   );
   const galleryUrlsKey = useMemo(() => galleryUrls.join("|"), [galleryUrls]);
   const displayImageUrl = galleryUrls[galleryThumbIdx] || galleryUrls[0] || "";
+  const serviceInspectStub = useMemo(
+    () => ({
+      verticalId: "services",
+      categories: "services",
+      title,
+      subId: serviceMeta?.categoryId,
+      priceCents,
+      serviceMeta: serviceMeta != null && typeof serviceMeta === "object" ? serviceMeta : null,
+    }),
+    [title, serviceMeta, priceCents],
+  );
   const saleMeta = parseSaleMetaFromDescription(description);
   const currentPesos = (Number(priceCents) || 0) / 100;
   const originalPesos = Number.isFinite(Number(saleMeta?.originalPesos)) ? Number(saleMeta.originalPesos) : null;
@@ -561,14 +582,20 @@ export function ProductInspectModal({
     listingStockQty != null && Number.isFinite(Number(listingStockQty)) ? Math.max(0, Number(listingStockQty)) : null;
   const soldQty =
     listingSoldQty != null && Number.isFinite(Number(listingSoldQty)) ? Math.max(0, Number(listingSoldQty)) : null;
-  const isOutOfStock = stock != null && stock <= 0;
+  const serviceListingEffective = Boolean(serviceListing);
+  const isOutOfStock = serviceListingEffective ? false : stock != null && stock <= 0;
   const quantityNumber = quantity != null && Number.isFinite(Number(quantity)) ? Number(quantity) : null;
-  const showQuantityLine = quantityNumber != null;
+  const showQuantityLine = quantityNumber != null && !serviceListingEffective;
   const quantityLabelNorm = String(quantityLabel || "").trim().toLowerCase();
   const isQuantityStockLine =
     quantityLabelNorm === "stock listed" || quantityLabelNorm === "stock available" || quantityLabelNorm === "stock";
   const hideStockAvailableAsDuplicate = showQuantityLine && stock != null && isQuantityStockLine && quantityNumber === stock;
-  const hasBuyerHandlers = showBuyerCommerceActions && (typeof onAddToCart === "function" || typeof onBuyNow === "function");
+  const serviceBuyerBookOnly =
+    serviceListingEffective && showBuyerCommerceActions && typeof onBuyNow === "function";
+  const hasBuyerHandlers =
+    showBuyerCommerceActions &&
+    (serviceBuyerBookOnly ||
+      (!serviceListingEffective && (typeof onAddToCart === "function" || typeof onBuyNow === "function")));
   const hasSellerHandlers =
     showSellerCommerceActions && (typeof onEditListing === "function" || typeof onSaleSelect === "function");
   const customDiscountValue = Number(customDiscountDraft);
@@ -603,6 +630,24 @@ export function ProductInspectModal({
   const variantChoicesBText = variantValsB.length > 0 ? variantValsB.join(", ") : "";
   const hasAnyVariantData =
     Boolean(nameATrim) || Boolean(nameBTrim) || Boolean(variantChoicesAText) || Boolean(variantChoicesBText);
+
+  const serviceInspectHeader = serviceListingEffective
+    ? getServiceCardProfileHeader(serviceInspectStub)
+    : { categoryTitle: "", typeLabel: "" };
+  const inspectTitlePrimary =
+    serviceListingEffective && serviceInspectHeader.categoryTitle
+      ? serviceInspectHeader.categoryTitle
+      : title || "Product";
+  const inspectTitleTypePill =
+    serviceListingEffective &&
+    serviceInspectHeader.categoryTitle &&
+    serviceInspectHeader.typeLabel &&
+    serviceInspectHeader.typeLabel !== inspectTitlePrimary
+      ? serviceInspectHeader.typeLabel
+      : "";
+  const inspectHeadlinePriceText = serviceListingEffective
+    ? getServiceCardHeadlinePriceLabel(serviceInspectStub) ?? formatPesoWhole(priceCents)
+    : formatPesoWhole(priceCents);
 
   return (
     <div
@@ -772,7 +817,11 @@ export function ProductInspectModal({
         <div className="flex min-w-0 shrink-0 items-start justify-between gap-2.5 border-b border-neutral-200/80 px-3 pb-2 pt-2.5 min-[360px]:gap-3 min-[360px]:px-5 min-[360px]:pb-2.5 min-[360px]:pt-3 dark:border-[#1f3c56]/85 md:px-5 md:pb-3 md:pt-4">
           <button
             type="button"
-            className="inline-flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-50 md:h-9 md:min-h-0 md:min-w-0 md:w-9"
+            className={`inline-flex h-11 min-h-[44px] shrink-0 items-center justify-center text-neutral-700 transition hover:text-neutral-900 dark:text-slate-200 dark:hover:text-slate-50 md:h-9 md:min-h-0 ${
+              serviceListingEffective
+                ? "w-11 min-w-[44px] pl-0 pr-0 md:w-auto md:min-w-0 md:justify-start md:gap-1.5 md:rounded-lg md:px-3 md:py-2 md:hover:bg-neutral-100 dark:md:hover:bg-slate-800/80"
+                : "w-11 min-w-[44px] md:w-9 md:min-w-0"
+            }`}
             aria-label="Back"
             onClick={onClose}
           >
@@ -784,12 +833,15 @@ export function ProductInspectModal({
               strokeWidth="2.25"
               strokeLinecap="round"
               strokeLinejoin="round"
-              className="h-7 w-7"
+              className={`h-7 w-7 shrink-0 ${serviceListingEffective ? "md:h-5 md:w-5" : ""}`}
               aria-hidden
             >
               <path d="M19 12H5" />
               <path d="M11 6l-6 6 6 6" />
             </svg>
+            {serviceListingEffective ? (
+              <span className="hidden text-sm font-semibold leading-none md:inline">Back</span>
+            ) : null}
           </button>
           {typeof onToggleFavorite === "function" ? (
             <button
@@ -985,8 +1037,15 @@ export function ProductInspectModal({
                   id="product-inspect-title"
                   className="break-words text-pretty text-[1.12rem] font-bold leading-tight tracking-tight text-neutral-900 min-[360px]:text-xl dark:text-slate-100 md:text-2xl"
                 >
-                  {title || "Product"}
+                  {inspectTitlePrimary}
                 </h2>
+                {inspectTitleTypePill ? (
+                  <p className="mt-1.5">
+                    <span className="inline-flex max-w-full rounded-full border border-sky-200/90 bg-sky-50 px-2.5 py-1 text-xs font-semibold leading-tight text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/55 dark:text-sky-100">
+                      {inspectTitleTypePill}
+                    </span>
+                  </p>
+                ) : null}
                 {subtitle ? (
                   <p className="mt-0.5 line-clamp-2 break-words text-xs text-neutral-500 dark:text-slate-400">{subtitle}</p>
                 ) : null}
@@ -998,7 +1057,7 @@ export function ProductInspectModal({
               </div>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <p className="text-[1.06rem] font-bold tabular-nums text-brand-primary min-[360px]:text-lg dark:text-brand-accent md:text-xl">
-                  {formatPesoWhole(priceCents)}
+                  {inspectHeadlinePriceText}
                 </p>
                 {originalPesos != null && originalPesos > currentPesos ? (
                   <div className="flex min-w-0 items-center gap-1.5">
@@ -1013,21 +1072,40 @@ export function ProductInspectModal({
                   </div>
                 ) : null}
               </div>
-              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                {categoryTrim ? (
-                  <span className="rounded-full border border-amber-300/80 bg-amber-100/80 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-300">
-                    {categoryTrim}
-                  </span>
+              <div className="flex min-w-0 flex-col gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  {categoryTrim && !serviceListingEffective ? (
+                    <span className="rounded-full border border-amber-300/80 bg-amber-100/80 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-300">
+                      {categoryTrim}
+                    </span>
+                  ) : null}
+                  {!serviceListingEffective ? (
+                    <>
+                      <span className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-[11px] font-semibold text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100">
+                        {orderTypeDisplay}
+                      </span>
+                      <span className="rounded-full border border-neutral-300/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                        {processingTrim ? `${processingLabel || "Processing"}: ${processingTrim}` : availabilitySummary}
+                      </span>
+                      <span className="rounded-full border border-neutral-300/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                        {fulfillmentSummary}
+                      </span>
+                    </>
+                  ) : null}
+                </div>
+                {serviceListingEffective ? (
+                  <ListingServiceCardSummary
+                    listing={{
+                      verticalId: "services",
+                      categories: "services",
+                      title,
+                      subId: serviceMeta?.categoryId,
+                      priceCents,
+                      serviceMeta,
+                    }}
+                    variant="inspect"
+                  />
                 ) : null}
-                <span className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-[11px] font-semibold text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100">
-                  {orderTypeDisplay}
-                </span>
-                <span className="rounded-full border border-neutral-300/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
-                  {processingTrim ? `${processingLabel || "Processing"}: ${processingTrim}` : availabilitySummary}
-                </span>
-                <span className="rounded-full border border-neutral-300/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
-                  {fulfillmentSummary}
-                </span>
               </div>
               {showQuantityLine ? (
                 <p className="text-xs text-neutral-600 dark:text-slate-400">
@@ -1035,7 +1113,7 @@ export function ProductInspectModal({
                   <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{quantityNumber}</span>
                 </p>
               ) : null}
-              {stock != null && !hideStockAvailableAsDuplicate ? (
+              {!serviceListingEffective && stock != null && !hideStockAvailableAsDuplicate ? (
                 <p className="text-xs text-neutral-600 dark:text-slate-400">
                   <span className="font-semibold text-neutral-700 dark:text-slate-300">Stock available:</span>{" "}
                   <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{stock}</span>
@@ -1077,7 +1155,9 @@ export function ProductInspectModal({
                     viewerRole={orderTimelineViewerRole}
                     className="mt-2"
                   />
-                  {String(orderTimelineOrder?.fulfillmentType || "") === "delivery" ? (
+                  {String(orderTimelineOrder?.fulfillmentType || "") === "delivery" &&
+                  (!orderIsServiceListingBooking(orderTimelineOrder) ||
+                    orderIsTransportServiceBooking(orderTimelineOrder)) ? (
                     <div className="mt-2 space-y-1.5 rounded-lg border border-neutral-200/80 bg-neutral-50/90 px-2.5 py-2 dark:border-slate-600 dark:bg-slate-900/50">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                         Delivery tip
@@ -1132,58 +1212,60 @@ export function ProductInspectModal({
           </div>
 
           <div className="mt-3.5 space-y-2.5 min-[360px]:mt-4 min-[360px]:space-y-3 md:mt-5 md:space-y-4">
-            <div className="space-y-2.5 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
-              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
-                Product variants
-              </h3>
-              {hasAnyVariantData ? (
-                <div className="space-y-2">
-                  {nameATrim || variantValsA.length > 0 ? (
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold text-neutral-800 dark:text-slate-100">{nameATrim || "Variant"}</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {variantValsA.length > 0 ? (
-                          variantValsA.map((choice) => (
-                            <span
-                              key={`variant-a-${choice}`}
-                              className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
-                            >
-                              {choice}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-xs text-neutral-500 dark:text-slate-400">No choices set.</span>
-                        )}
+            {!serviceListingEffective ? (
+              <div className="space-y-2.5 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
+                <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
+                  Product variants
+                </h3>
+                {hasAnyVariantData ? (
+                  <div className="space-y-2">
+                    {nameATrim || variantValsA.length > 0 ? (
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold text-neutral-800 dark:text-slate-100">{nameATrim || "Variant"}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {variantValsA.length > 0 ? (
+                            variantValsA.map((choice) => (
+                              <span
+                                key={`variant-a-${choice}`}
+                                className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
+                              >
+                                {choice}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-neutral-500 dark:text-slate-400">No choices set.</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ) : null}
-                  {(nameATrim || variantValsA.length > 0) && (nameBTrim || variantValsB.length > 0) ? (
-                    <div className="h-px w-full bg-neutral-200/80 dark:bg-slate-700/80" aria-hidden />
-                  ) : null}
-                  {nameBTrim || variantValsB.length > 0 ? (
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold text-neutral-800 dark:text-slate-100">{nameBTrim || "Variant"}</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {variantValsB.length > 0 ? (
-                          variantValsB.map((choice) => (
-                            <span
-                              key={`variant-b-${choice}`}
-                              className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
-                            >
-                              {choice}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-xs text-neutral-500 dark:text-slate-400">No choices set.</span>
-                        )}
+                    ) : null}
+                    {(nameATrim || variantValsA.length > 0) && (nameBTrim || variantValsB.length > 0) ? (
+                      <div className="h-px w-full bg-neutral-200/80 dark:bg-slate-700/80" aria-hidden />
+                    ) : null}
+                    {nameBTrim || variantValsB.length > 0 ? (
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold text-neutral-800 dark:text-slate-100">{nameBTrim || "Variant"}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {variantValsB.length > 0 ? (
+                            variantValsB.map((choice) => (
+                              <span
+                                key={`variant-b-${choice}`}
+                                className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
+                              >
+                                {choice}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-neutral-500 dark:text-slate-400">No choices set.</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="text-sm text-neutral-500 dark:text-slate-400">No product variants.</p>
-              )}
-            </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="text-sm text-neutral-500 dark:text-slate-400">No product variants.</p>
+                )}
+              </div>
+            ) : null}
 
             {descPlain ? (
               <section className="min-w-0 space-y-1.5">
@@ -1407,47 +1489,81 @@ export function ProductInspectModal({
               }
             >
               <div className="flex w-full flex-row items-stretch gap-2">
-                {typeof onAddToCart === "function" ? (
-                  <button
-                    type="button"
-                    className="min-h-[56px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-[11px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-12 flex flex-col items-center justify-center gap-1"
-                    disabled={isOutOfStock}
-                    onClick={() => onAddToCart()}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
-                      <circle cx="9" cy="20" r="1" />
-                      <circle cx="17" cy="20" r="1" />
-                      <path d="M3 4h2l2.2 10.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 7H7.1" />
-                    </svg>
-                    {isOutOfStock ? "Unavailable" : "Add to cart"}
-                  </button>
-                ) : null}
-                {typeof onBuyNow === "function" ? (
+                {serviceBuyerBookOnly ? (
                   <button
                     type="button"
                     title={
-                      isOutOfStock
-                        ? undefined
-                        : buyNowDisabled && buyNowDisabledReason
-                          ? buyNowDisabledReason
-                          : undefined
+                      buyNowDisabled && buyNowDisabledReason
+                        ? buyNowDisabledReason
+                        : "Request a booking — add preferred time in your note"
                     }
-                    aria-label={isOutOfStock ? "Out of stock" : "Place order"}
+                    aria-label={buyNowDisabled ? "Booking unavailable" : "Book service"}
                     className={`min-h-[56px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-[11px] font-semibold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-12 flex flex-col items-center justify-center gap-1 ${
-                      isOutOfStock
+                      buyNowDisabled
                         ? "cursor-not-allowed opacity-50"
                         : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
                     } disabled:cursor-not-allowed disabled:opacity-50`}
-                    disabled={isOutOfStock}
+                    disabled={buyNowDisabled}
                     onClick={() => onBuyNow()}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
-                      <path d="M6 8h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 8z" />
-                      <path d="M9 8V6a3 3 0 0 1 6 0v2" />
+                      <path d="M8 2v4" />
+                      <path d="M16 2v4" />
+                      <rect width="16" height="14" x="4" y="6" rx="2" />
+                      <path d="M8 14h.01" />
+                      <path d="M12 14h.01" />
+                      <path d="M16 14h.01" />
+                      <path d="M8 18h.01" />
+                      <path d="M12 18h.01" />
+                      <path d="M16 18h.01" />
                     </svg>
-                    {isOutOfStock ? "Out of stock" : "Place order"}
+                    Book
                   </button>
-                ) : null}
+                ) : (
+                  <>
+                    {typeof onAddToCart === "function" ? (
+                      <button
+                        type="button"
+                        className="min-h-[56px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-[11px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-12 flex flex-col items-center justify-center gap-1"
+                        disabled={isOutOfStock}
+                        onClick={() => onAddToCart()}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
+                          <circle cx="9" cy="20" r="1" />
+                          <circle cx="17" cy="20" r="1" />
+                          <path d="M3 4h2l2.2 10.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 7H7.1" />
+                        </svg>
+                        {isOutOfStock ? "Unavailable" : "Add to cart"}
+                      </button>
+                    ) : null}
+                    {typeof onBuyNow === "function" ? (
+                      <button
+                        type="button"
+                        title={
+                          isOutOfStock
+                            ? undefined
+                            : buyNowDisabled && buyNowDisabledReason
+                              ? buyNowDisabledReason
+                              : undefined
+                        }
+                        aria-label={isOutOfStock ? "Out of stock" : "Place order"}
+                        className={`min-h-[56px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-[11px] font-semibold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-12 flex flex-col items-center justify-center gap-1 ${
+                          isOutOfStock
+                            ? "cursor-not-allowed opacity-50"
+                            : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
+                        } disabled:cursor-not-allowed disabled:opacity-50`}
+                        disabled={isOutOfStock}
+                        onClick={() => onBuyNow()}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
+                          <path d="M6 8h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 8z" />
+                          <path d="M9 8V6a3 3 0 0 1 6 0v2" />
+                        </svg>
+                        {isOutOfStock ? "Out of stock" : "Place order"}
+                      </button>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
           ) : null}

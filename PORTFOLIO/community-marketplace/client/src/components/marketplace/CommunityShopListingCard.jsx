@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getListingCategoryShortLabel } from "../../categoryNav.js";
 import { UI_KIT } from "../../lib/appUiKit.js";
-import { SALE_PERCENT_OPTIONS } from "../../lib/listingSaleMeta.js";
+import { formatPesoWhole, SALE_PERCENT_OPTIONS } from "../../lib/listingSaleMeta.js";
 import { resolveListingGalleryUrls } from "../../lib/listingImageUrl.js";
 import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
 import { MarketplaceProductDetailStack } from "./MarketplaceProductDetailStack.jsx";
+import { ListingServiceCardSummary } from "./ListingServiceCardSummary.jsx";
+import { getServiceCardHeadlinePriceLabel, getServiceCardProfileHeader, isServiceListing } from "../../lib/listingServiceCardMeta.js";
 
 /** Minimum horizontal movement (px) to count as swipe vs tap-to-view-details — aligned with `ProductInspectModal`. */
 const CARD_GALLERY_SWIPE_MIN_PX = 48;
@@ -16,6 +18,8 @@ export function CommunityShopListingCard({
   isFavorite,
   onAdd,
   onBuy,
+  /** Service listings: single primary booking action (falls back to `onBuy` if omitted). */
+  onBook,
   onToggleFavorite,
   showActions = false,
   showFavoriteIcon = true,
@@ -55,8 +59,23 @@ export function CommunityShopListingCard({
   const [showAllSaleOptions, setShowAllSaleOptions] = useState(false);
   const categoryShortLabel = getListingCategoryShortLabel(listing.verticalId, listing.subId);
   const isOwner = String(listing.sellerId || "") === String(currentUserId || "");
+  const isServiceCard = isServiceListing(listing);
+  const serviceCardHeader = isServiceCard ? getServiceCardProfileHeader(listing) : { categoryTitle: "", typeLabel: "" };
+  const serviceStackTitle = isServiceCard
+    ? serviceCardHeader.categoryTitle || listing.title || "Untitled service"
+    : "";
+  const serviceStackHighlight =
+    isServiceCard &&
+    serviceCardHeader.categoryTitle &&
+    serviceCardHeader.typeLabel &&
+    serviceCardHeader.typeLabel !== serviceStackTitle
+      ? serviceCardHeader.typeLabel
+      : "";
   const stockQty = Math.max(0, Number(listing.quantity) || 0);
-  const isOutOfStock = stockQty <= 0;
+  const isOutOfStock = !isServiceCard && stockQty <= 0;
+  const serviceBookHandler = typeof onBook === "function" ? onBook : typeof onBuy === "function" ? onBuy : null;
+  const serviceHeadlinePrice =
+    isServiceCard ? getServiceCardHeadlinePriceLabel(listing) ?? formatPesoWhole(listing.priceCents) : "";
 
   const galleryUrls = useMemo(() => resolveListingGalleryUrls(listing), [listing]);
   const galleryUrlsKey = galleryUrls.join("|");
@@ -246,6 +265,12 @@ export function CommunityShopListingCard({
     </div>
   );
 
+  const serviceBrowseSummary = (
+    <div className="min-w-0">
+      <ListingServiceCardSummary listing={listing} variant="browse" />
+    </div>
+  );
+
   const imageInspectBtnClass =
     "lm-product-card--tap absolute inset-0 z-0 min-h-0 w-full border-0 bg-transparent p-0 text-left";
 
@@ -418,10 +443,12 @@ export function CommunityShopListingCard({
             variant="card"
             browseStackMode={mobileUx ? "listMobile" : null}
             compactListMeta={isListMode || mobileUx}
-            title={listing.title || "Untitled product"}
+            title={isServiceCard ? serviceStackTitle : listing.title || "Untitled product"}
+            titleHighlight={isServiceCard ? serviceStackHighlight : ""}
             titleEnd={favoriteTitleEnd}
+            headlinePriceOverride={isServiceCard ? serviceHeadlinePrice : ""}
             priceCents={listing.priceCents}
-            categoryLabel={mobileUx ? "" : categoryShortLabel}
+            categoryLabel={mobileUx || isServiceCard ? "" : categoryShortLabel}
             description={listing.description}
             fulfillmentModes={listing.fulfillmentModes}
             orderType={listing.orderType}
@@ -430,7 +457,9 @@ export function CommunityShopListingCard({
             optionValuesA={[]}
             optionNameB=""
             optionValuesB={[]}
-            quantityRow={readOnlyStockRow}
+            quantityRow={isServiceCard ? serviceBrowseSummary : readOnlyStockRow}
+            hideAvailability={isServiceCard}
+            omitProductMetaExtras={isServiceCard}
             hideDescription={Boolean(hideCardDescription || isListMode || (gridMode && (compactGrid || browseSummaryGrid)))}
             listingAvgRating={listing.listingAvgRating}
             listingReviewCount={listing.listingReviewCount}
@@ -681,7 +710,9 @@ export function CommunityShopListingCard({
                 isListMode
                   ? listDesktopCompactActions
                     ? "flex w-full flex-wrap items-center justify-end gap-2"
-                    : `grid w-full grid-cols-3 ${mobileUx ? "gap-2.5" : "gap-2"}`
+                    : isServiceCard
+                      ? `grid w-full grid-cols-2 ${mobileUx ? "gap-2.5" : "gap-2"}`
+                      : `grid w-full grid-cols-3 ${mobileUx ? "gap-2.5" : "gap-2"}`
                   : compactActionRowClass
               }
             >
@@ -700,55 +731,87 @@ export function CommunityShopListingCard({
                   View details
                 </button>
               ) : null}
-              <button
-                type="button"
-                title={isOutOfStock ? undefined : "Keep shopping — review cart anytime"}
-                className={`rounded-xl border border-primary font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-brand-accent dark:text-brand-accent dark:hover:bg-slate-800/80 max-md:border-2 ${
-                  mobileUx && isListMode ? "shadow-sm" : ""
-                } ${
-                  listDesktopCompactActions
-                    ? "inline-flex h-9 min-h-0 min-w-[7.5rem] shrink-0 items-center justify-center px-4 text-xs"
-                    : isListMode
-                      ? "h-10 w-full px-3 text-xs"
-                      : `flex-1 ${compactActionBtnClass}`
-                }`}
-                disabled={isOutOfStock}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAdd?.();
-                }}
-              >
-                {isOutOfStock ? "Unavailable" : "Add to cart"}
-              </button>
-              <button
-                type="button"
-                title={
-                  isOutOfStock
-                    ? undefined
-                    : buyNowDisabled && buyNowDisabledReason
+              {isServiceCard && serviceBookHandler ? (
+                <button
+                  type="button"
+                  title={
+                    buyNowDisabled && buyNowDisabledReason
                       ? buyNowDisabledReason
-                      : "Go to checkout — choose pickup or delivery"
-                }
-                aria-label={isOutOfStock ? "Out of stock" : "Buy now"}
-                className={`rounded-xl bg-primary font-bold text-white shadow-sm transition duration-200 ease-in-out dark:bg-brand-accent dark:text-slate-900 ${
-                  listDesktopCompactActions
-                    ? "inline-flex h-9 min-h-0 min-w-[7.5rem] shrink-0 items-center justify-center px-4 text-xs"
-                    : isListMode
-                      ? "h-10 w-full px-3 text-xs"
-                      : `flex-1 ${compactActionBtnClass}`
-                } ${
-                  isOutOfStock
-                    ? "cursor-not-allowed opacity-50"
-                    : "hover:bg-primary-hover dark:hover:bg-brand-accent/90"
-                } disabled:cursor-not-allowed disabled:opacity-50`}
-                disabled={isOutOfStock}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onBuy?.();
-                }}
-              >
-                {isOutOfStock ? "Out of stock" : "Buy now"}
-              </button>
+                      : "Request a booking — add preferred time in your note"
+                  }
+                  aria-label={buyNowDisabled ? "Booking unavailable" : "Book"}
+                  className={`rounded-xl bg-primary font-bold text-white shadow-sm transition duration-200 ease-in-out dark:bg-brand-accent dark:text-slate-900 ${
+                    listDesktopCompactActions
+                      ? "inline-flex h-9 min-h-0 min-w-[7.5rem] shrink-0 items-center justify-center px-4 text-xs"
+                      : isListMode
+                        ? "h-10 w-full px-3 text-xs"
+                        : `flex-1 ${compactActionBtnClass}`
+                  } ${
+                    buyNowDisabled
+                      ? "cursor-not-allowed opacity-50"
+                      : "hover:bg-primary-hover dark:hover:bg-brand-accent/90"
+                  } disabled:cursor-not-allowed disabled:opacity-50`}
+                  disabled={buyNowDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    serviceBookHandler();
+                  }}
+                >
+                  Book
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    title={isOutOfStock ? undefined : "Keep shopping — review cart anytime"}
+                    className={`rounded-xl border border-primary font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-brand-accent dark:text-brand-accent dark:hover:bg-slate-800/80 max-md:border-2 ${
+                      mobileUx && isListMode ? "shadow-sm" : ""
+                    } ${
+                      listDesktopCompactActions
+                        ? "inline-flex h-9 min-h-0 min-w-[7.5rem] shrink-0 items-center justify-center px-4 text-xs"
+                        : isListMode
+                          ? "h-10 w-full px-3 text-xs"
+                          : `flex-1 ${compactActionBtnClass}`
+                    }`}
+                    disabled={isOutOfStock}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAdd?.();
+                    }}
+                  >
+                    {isOutOfStock ? "Unavailable" : "Add to cart"}
+                  </button>
+                  <button
+                    type="button"
+                    title={
+                      isOutOfStock
+                        ? undefined
+                        : buyNowDisabled && buyNowDisabledReason
+                          ? buyNowDisabledReason
+                          : "Go to checkout — choose pickup or delivery"
+                    }
+                    aria-label={isOutOfStock ? "Out of stock" : "Buy now"}
+                    className={`rounded-xl bg-primary font-bold text-white shadow-sm transition duration-200 ease-in-out dark:bg-brand-accent dark:text-slate-900 ${
+                      listDesktopCompactActions
+                        ? "inline-flex h-9 min-h-0 min-w-[7.5rem] shrink-0 items-center justify-center px-4 text-xs"
+                        : isListMode
+                          ? "h-10 w-full px-3 text-xs"
+                          : `flex-1 ${compactActionBtnClass}`
+                    } ${
+                      isOutOfStock
+                        ? "cursor-not-allowed opacity-50"
+                        : "hover:bg-primary-hover dark:hover:bg-brand-accent/90"
+                    } disabled:cursor-not-allowed disabled:opacity-50`}
+                    disabled={isOutOfStock}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onBuy?.();
+                    }}
+                  >
+                    {isOutOfStock ? "Out of stock" : "Buy now"}
+                  </button>
+                </>
+              )}
             </div>
           )}
             </>

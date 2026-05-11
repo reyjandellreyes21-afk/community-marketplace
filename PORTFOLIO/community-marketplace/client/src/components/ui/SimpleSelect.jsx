@@ -14,8 +14,10 @@ import { cn } from "../../lib/cn.js";
  */
 export function SimpleSelect({ id, value, onChange, options, className, triggerClassName }) {
   const rootRef = useRef(null);
+  const panelRef = useRef(null);
   const listboxId = useId();
   const [open, setOpen] = useState(false);
+  const [openUpward, setOpenUpward] = useState(false);
   const selected = options.find((o) => o.value === value);
   const displayLabel = selected?.label ?? "";
 
@@ -26,6 +28,18 @@ export function SimpleSelect({ id, value, onChange, options, className, triggerC
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || typeof window === "undefined") return;
+    const root = rootRef.current;
+    if (!root) return;
+    const rect = root.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || 0;
+    const panelHeight = Math.min(viewportHeight * 0.65, 420);
+    const spaceBelow = viewportHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    setOpenUpward(spaceBelow < panelHeight && spaceAbove > spaceBelow);
   }, [open]);
 
   useEffect(() => {
@@ -43,7 +57,7 @@ export function SimpleSelect({ id, value, onChange, options, className, triggerC
   return (
     <div
       ref={rootRef}
-      className={cn("relative", open && "z-[200]", className)}
+      className={cn("relative", open && "z-[350]", className)}
     >
       <button
         id={id}
@@ -73,12 +87,16 @@ export function SimpleSelect({ id, value, onChange, options, className, triggerC
 
       {open ? (
         <div
+          ref={panelRef}
           id={listboxId}
           role="listbox"
           aria-label="Sort options"
-          className="absolute left-0 right-0 top-full z-[210] mt-1 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-[0_16px_48px_-8px_rgba(15,23,42,0.18)] ring-1 ring-black/[0.06] dark:border-[#3d6d8f]/45 dark:bg-[#0f2234] dark:shadow-[0_20px_50px_-10px_rgba(0,0,0,0.55)] dark:ring-white/[0.08]"
+          className={cn(
+            "absolute left-0 right-0 z-[360] overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-[0_16px_48px_-8px_rgba(15,23,42,0.18)] ring-1 ring-black/[0.06] dark:border-[#3d6d8f]/45 dark:bg-[#0f2234] dark:shadow-[0_20px_50px_-10px_rgba(0,0,0,0.55)] dark:ring-white/[0.08]",
+            openUpward ? "bottom-full mb-1" : "top-full mt-1",
+          )}
         >
-          <div className="flex flex-col p-1">
+          <div className="flex max-h-[min(65dvh,26rem)] flex-col overflow-y-auto p-1">
             {options.map((opt) => {
               const active = opt.value === value;
               return (

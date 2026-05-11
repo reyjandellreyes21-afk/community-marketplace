@@ -16,6 +16,7 @@ import { SellerBuyerRatingSummary } from "./SellerBuyerRatingSummary.jsx";
  * @param {string} [props.orderType] — `in_stock` | `pre_order` when listing exposes Add Product fields.
  * @param {number | null} [props.listingAvgRating] — from `order_reviews.product_rating` aggregate for this listing.
  * @param {number} [props.listingReviewCount]
+ * @param {string} [props.headlinePriceOverride] — pre-formatted main price (service range line); empty uses `priceCents`.
  */
 export function MarketplaceProductDetailStack({
   title,
@@ -43,8 +44,15 @@ export function MarketplaceProductDetailStack({
   uniformOrderDetailCompact = false,
   listingAvgRating = null,
   listingReviewCount = 0,
+  /** When true (service listings), hide ready-time / variant chips — parent shows service-specific meta instead. */
+  omitProductMetaExtras = false,
+  /** Service cards: main price line from range meta (omit for products — uses `priceCents`). */
+  headlinePriceOverride = "",
+  /** Service cards: optional pill under title (specific type within category). */
+  titleHighlight = "",
 }) {
   const saleMeta = parseSaleMetaFromDescription(description);
+  const headlinePriceTrim = String(headlinePriceOverride || "").trim();
   const currentPesos = (Number(priceCents) || 0) / 100;
   const originalPesos = Number.isFinite(Number(saleMeta.originalPesos)) ? Number(saleMeta.originalPesos) : null;
   const descriptionPreview = markdownToPlainPreview(description);
@@ -160,16 +168,27 @@ export function MarketplaceProductDetailStack({
           ? "space-y-2"
           : "space-y-1";
 
+  const titleHighlightTrim = String(titleHighlight || "").trim();
+  const serviceTypePillClass = compactListMeta
+    ? "inline-flex max-w-full rounded-full border border-sky-200/90 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold leading-tight text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/55 dark:text-sky-100"
+    : "inline-flex max-w-full rounded-full border border-sky-200/90 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold leading-tight text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/55 dark:text-sky-100";
+
   return (
     <div className={`min-w-0 flex-1 ${rootGap}`}>
       {title ? (
         titleEnd ? (
           <div className="flex min-w-0 items-start justify-between gap-2">
-            <p className={`${titleClass} min-w-0 flex-1`}>{title}</p>
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className={`${titleClass} text-pretty`}>{title}</p>
+              {titleHighlightTrim ? <span className={serviceTypePillClass}>{titleHighlightTrim}</span> : null}
+            </div>
             <div className="shrink-0 pt-0.5">{titleEnd}</div>
           </div>
         ) : (
-          <p className={titleClass}>{title}</p>
+          <div className="min-w-0 space-y-1">
+            <p className={`${titleClass} text-pretty`}>{title}</p>
+            {titleHighlightTrim ? <span className={serviceTypePillClass}>{titleHighlightTrim}</span> : null}
+          </div>
         )
       ) : null}
       <SellerBuyerRatingSummary
@@ -192,7 +211,9 @@ export function MarketplaceProductDetailStack({
             : "flex min-w-0 flex-wrap items-center gap-2"
         }
       >
-        <p className={`min-w-0 ${priceMainClass}`}>{formatPesoWhole(priceCents)}</p>
+        <p className={`min-w-0 ${priceMainClass}`}>
+          {headlinePriceTrim ? headlinePriceTrim : formatPesoWhole(priceCents)}
+        </p>
         {originalPesos != null && originalPesos > currentPesos ? (
           <div className="flex min-w-0 items-center gap-1.5">
             <span className="text-[11px] font-medium text-text-secondary/85 line-through min-[380px]:text-xs dark:text-slate-500">
@@ -212,7 +233,7 @@ export function MarketplaceProductDetailStack({
           </div>
         ) : null}
       </div>
-      {isCard && browseStackMode === "gridMobile" ? (
+      {!omitProductMetaExtras && isCard && browseStackMode === "gridMobile" ? (
         <div className="lm-product-card-badge-row">
           <ListingProductMetaExtras
             orderType={orderType}
@@ -226,7 +247,7 @@ export function MarketplaceProductDetailStack({
             uniformOrderDetailCompact={uniformOrderDetailCompact}
           />
         </div>
-      ) : (
+      ) : !omitProductMetaExtras ? (
         <ListingProductMetaExtras
           orderType={orderType}
           processingTime={processingTime}
@@ -238,7 +259,7 @@ export function MarketplaceProductDetailStack({
           uniformOrderDetailRows={uniformOrderDetailRows}
           uniformOrderDetailCompact={uniformOrderDetailCompact}
         />
-      )}
+      ) : null}
       {quantityAfterDescription ? (
         <>
           {!hideAvailability && availabilityLabel ? availabilityBlock : null}

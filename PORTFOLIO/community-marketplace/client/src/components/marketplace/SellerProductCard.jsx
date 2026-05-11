@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
 import { ListingProductMetaExtras } from "./ListingProductMetaExtras.jsx";
+import { ListingServiceCardSummary } from "./ListingServiceCardSummary.jsx";
 import {
   formatPesoWhole,
   listingCodAvailabilityLabel,
   parseSaleMetaFromDescription,
   SALE_PERCENT_OPTIONS,
 } from "../../lib/listingSaleMeta.js";
+import { getServiceCardHeadlinePriceLabel, getServiceCardProfileHeader, isServiceListing } from "../../lib/listingServiceCardMeta.js";
 import { markdownToPlainPreview } from "../../lib/listingDescriptionPlain.js";
 
 function IconEye({ className }) {
@@ -77,8 +79,9 @@ export function SellerProductCard({
     normalizedStatus === "active"
       ? "bg-green-100 text-green-600 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
       : "bg-gray-100 text-gray-600 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300";
+  const isService = isServiceListing(listing);
   const listedQtyForBadge = Math.max(0, Number(listing?.quantity) || 0);
-  const isOutOfStock = listedQtyForBadge === 0;
+  const isOutOfStock = !isService && listedQtyForBadge === 0;
   const statusBadgeLabel = isOutOfStock ? "Out of stock" : normalizedStatus || "unknown";
   const statusBadgeClass = isOutOfStock
     ? "bg-gray-100 text-gray-600 dark:border-amber-500/45 dark:bg-amber-950/40 dark:text-amber-100"
@@ -194,25 +197,76 @@ export function SellerProductCard({
           : "line-clamp-2 md:line-clamp-3"
         : "line-clamp-2 md:line-clamp-3";
 
+  const serviceHeader = isService ? getServiceCardProfileHeader(listing) : { categoryTitle: "", typeLabel: "" };
+  const servicePrimaryTitle =
+    isService && serviceHeader.categoryTitle
+      ? serviceHeader.categoryTitle
+      : listing.title || (isService ? "Untitled service" : "Untitled product");
+  const serviceTypePill =
+    isService &&
+    serviceHeader.categoryTitle &&
+    serviceHeader.typeLabel &&
+    serviceHeader.typeLabel !== servicePrimaryTitle
+      ? serviceHeader.typeLabel
+      : "";
+  const headlinePriceText = isService
+    ? getServiceCardHeadlinePriceLabel(listing) ?? formatPesoWhole(listing.priceCents)
+    : formatPesoWhole(listing.priceCents);
+
   const innerBody = (
     <>
       {isListLayout ? (
         <div className="flex min-w-0 items-start gap-2">
-          <p className="min-w-0 flex-1 text-pretty text-sm font-semibold leading-snug text-neutral-900 dark:text-slate-100 md:text-base">{listing.title || "Untitled product"}</p>
+          <div className="min-w-0 flex-1 space-y-1">
+            <p
+              className={`text-pretty font-semibold leading-snug text-[#0f3557] dark:text-slate-100 ${
+                isService ? "text-base md:text-lg" : "text-sm md:text-base text-neutral-900"
+              }`}
+            >
+              {servicePrimaryTitle}
+            </p>
+            {serviceTypePill ? (
+              <span className="inline-flex max-w-full rounded-full border border-sky-200/90 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold leading-tight text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/55 dark:text-sky-100">
+                {serviceTypePill}
+              </span>
+            ) : null}
+          </div>
           <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${statusBadgeClass}`}>{statusBadgeLabel}</span>
         </div>
       ) : compactGrid ? (
         <div className="flex min-w-0 items-start justify-between gap-2">
-          <p className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-semibold leading-snug text-neutral-900 dark:text-slate-100">
-            {listing.title || "Untitled product"}
-          </p>
+          <div className="min-w-0 flex-1 space-y-1">
+            <p
+              className={`line-clamp-2 min-w-0 break-words text-sm font-semibold leading-snug ${
+                isService ? "text-[#0f3557] dark:text-slate-100" : "text-neutral-900 dark:text-slate-100"
+              }`}
+            >
+              {servicePrimaryTitle}
+            </p>
+            {serviceTypePill ? (
+              <span className="inline-flex max-w-full rounded-full border border-sky-200/90 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold leading-tight text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/55 dark:text-sky-100">
+                {serviceTypePill}
+              </span>
+            ) : null}
+          </div>
           <span className={`inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium capitalize ${statusBadgeClass}`}>{statusBadgeLabel}</span>
         </div>
       ) : (
         <div className="flex min-w-0 items-start justify-between gap-2">
-          <p className="line-clamp-2 min-w-0 flex-1 break-words text-base font-semibold leading-snug text-neutral-900 dark:text-slate-100 md:text-[1.0625rem]">
-            {listing.title || "Untitled product"}
-          </p>
+          <div className="min-w-0 flex-1 space-y-1">
+            <p
+              className={`line-clamp-2 min-w-0 break-words font-semibold leading-snug md:text-[1.0625rem] ${
+                isService ? "text-base text-[#0f3557] dark:text-slate-100" : "text-base text-neutral-900 dark:text-slate-100"
+              }`}
+            >
+              {servicePrimaryTitle}
+            </p>
+            {serviceTypePill ? (
+              <span className="inline-flex max-w-full rounded-full border border-sky-200/90 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold leading-tight text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/55 dark:text-sky-100 md:text-xs">
+                {serviceTypePill}
+              </span>
+            ) : null}
+          </div>
           <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${statusBadgeClass}`}>{statusBadgeLabel}</span>
         </div>
       )}
@@ -220,7 +274,7 @@ export function SellerProductCard({
         <p
           className={`min-w-0 font-semibold text-neutral-800 dark:text-slate-200 ${isComfortableGrid ? "text-base md:text-lg" : compactGrid ? "text-sm tabular-nums" : "text-sm"}`}
         >
-          {formatPesoWhole(listing.priceCents)}
+          {headlinePriceText}
         </p>
         {originalPesos != null && originalPesos > currentPesos ? (
           <div className="flex items-center gap-1.5">
@@ -233,21 +287,28 @@ export function SellerProductCard({
           </div>
         ) : null}
       </div>
-      <ListingProductMetaExtras
-        orderType={listing.orderType}
-        processingTime={listing.processingTime}
-        optionNameA={listing.optionNameA}
-        optionValuesA={listing.optionValuesA}
-        optionNameB={listing.optionNameB}
-        optionValuesB={listing.optionValuesB}
-        density={compactGrid ? "compact" : "card"}
-      />
+      {!isService ? (
+        <ListingProductMetaExtras
+          orderType={listing.orderType}
+          processingTime={listing.processingTime}
+          optionNameA={listing.optionNameA}
+          optionValuesA={listing.optionValuesA}
+          optionNameB={listing.optionNameB}
+          optionValuesB={listing.optionValuesB}
+          density={compactGrid ? "compact" : "card"}
+        />
+      ) : (
+        <ListingServiceCardSummary listing={listing} variant="seller" />
+      )}
+      {!isService ? (
       <p
         className={`mt-1 text-xs text-neutral-600 dark:text-slate-400 ${isComfortableGrid ? "md:text-[13px]" : ""} ${isListLayout ? "md:text-[13px]" : ""} ${compactGrid ? "text-[11px]" : ""}`}
       >
         <span className="font-medium text-neutral-700 dark:text-slate-300">Current quantity:</span>{" "}
         <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{listedQtyForBadge}</span>
       </p>
+      ) : null}
+      {!isService ? (
       <div className="w-full min-w-0 space-y-2 text-xs text-neutral-600 dark:text-slate-400">
         {compactGrid ? (
           <div className="flex w-full min-w-0 flex-col gap-1">
@@ -370,6 +431,8 @@ export function SellerProductCard({
           </div>
         )}
       </div>
+      ) : null}
+      {!isService ? (
       <p
         className={`leading-snug text-neutral-600 dark:text-slate-400 ${isListLayout || compactGrid ? "text-[11px] md:text-xs" : "text-xs"} ${isComfortableGrid ? "md:text-[13px]" : ""} ${isListLayout ? "md:text-[13px]" : ""} ${compactGrid ? "truncate md:text-[11px]" : ""}`}
       >
@@ -381,6 +444,7 @@ export function SellerProductCard({
           {availabilityLabel}
         </span>
       </p>
+      ) : null}
       {descriptionPreview && !compactGrid ? (
         <p className={`text-pretty break-words text-xs leading-relaxed text-neutral-600 dark:text-slate-400 ${descClamp} ${isComfortableGrid ? "md:text-[13px] md:leading-snug" : ""}`}>{descriptionPreview}</p>
       ) : null}

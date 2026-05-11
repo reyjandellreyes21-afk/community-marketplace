@@ -11,6 +11,12 @@ import {
   notifyCourierInvitation,
   notifyUserOrderEvent,
 } from "../lib/orderNotifications.js";
+import {
+  findConflictingServiceBooking,
+  effectiveServiceSlotFromOrderRow,
+  listHeldServiceSlotsForListing,
+} from "../lib/serviceBookingHold.js";
+import { formatServiceBookingRequestLine, validateServiceBookingSlotForOrder } from "../lib/serviceBookingSlot.js";
 
 /** PostgREST: table missing from API schema (migrations not applied or `NOTIFY pgrst, 'reload schema';` needed). */
 const isSchemaMissingError = (error) =>
@@ -288,6 +294,11 @@ const ALLOWED_ORDER_CANCELLATION_REASONS = new Set([
   "placed_by_mistake",
   "other",
 ]);
+
+function listingRowIsService(row) {
+  const v = String(row?.vertical_id ?? row?.categories ?? "").trim().toLowerCase();
+  return v === "services";
+}
 
 function postgrestErrorText(error) {
   if (!error) return "";
@@ -710,11 +721,15 @@ const LISTINGS_OPTIONAL_PRODUCT_COLUMNS = [
   "option_values_b",
   "order_type",
   "processing_time",
+  "service_meta",
   "sold_count",
 ];
 const CART_LISTING_REQUIRED_SELECT =
   "id,seller_id,title,description,image_url,price_cents,quantity,status,fulfillment_modes";
 const CART_LISTING_OPTIONAL_COLUMNS = [
+  "vertical_id",
+  "categories",
+  "service_meta",
   "order_type",
   "processing_time",
   "option_name_a",
@@ -771,6 +786,10 @@ const listingRowToApi = (row) => ({
   variants: buildVariantsArrayFromRow(row),
   orderType: String(row.order_type ?? row.orderType ?? "in_stock").trim() || "in_stock",
   processingTime: String(row.processing_time ?? row.processingTime ?? "").trim(),
+  serviceMeta:
+    row.service_meta != null && typeof row.service_meta === "object" && !Array.isArray(row.service_meta)
+      ? row.service_meta
+      : null,
   communityId: row.community_id ?? null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -883,15 +902,27 @@ const buyerCourierReviewRowToApi = (row) => {
 
 /** Snapshot fields from `listings` row (snake_case) for order responses — keeps thumbnails working without extra client fetches. */
 function orderListingSnapshotFromDbRow(row) {
-  if (!row) return { listingTitle: null, listingImageUrl: "", listingImageUrls: [], listingCommunityId: null };
+  if (!row)
+    return {
+      listingTitle: null,
+      listingImageUrl: "",
+      listingImageUrls: [],
+      listingCommunityId: null,
+      listingVerticalId: null,
+      listingSubId: null,
+    };
   const imageUrls = dedupeListingImageUrlsOrdered(normalizeDbImageUrls(row.image_urls)).slice(0, LISTING_IMAGE_URLS_CAP);
   const primary = String(row.image_url || "").trim() || String(imageUrls[0] || "").trim();
   const cid = row.community_id != null ? String(row.community_id).trim() : "";
+  const vertical = String(row.vertical_id ?? row.verticalId ?? "").trim() || null;
+  const sub = String(row.sub_id ?? row.subId ?? "").trim();
   return {
     listingTitle: String(row.title || "").trim() || null,
     listingImageUrl: primary,
     listingImageUrls: imageUrls.length ? imageUrls : primary ? [primary] : [],
     listingCommunityId: cid || null,
+    listingVerticalId: vertical,
+    listingSubId: sub || null,
   };
 }
 
@@ -1018,6 +1049,21 @@ const orderRowToApi = (row, reviewRow = null, listingMeta = null, courierReviewR
       : null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
+  ...(() => {
+    const fromCols =
+      row.service_booking_date != null && String(row.service_booking_date).trim()
+        ? String(row.service_booking_date).trim().slice(0, 10)
+        : null;
+    const timeCol = row.service_booking_time != null ? String(row.service_booking_time).trim() : "";
+    const slot =
+      fromCols && /^([01]\d|2[0-3]):[0-5]\d$/.test(timeCol)
+        ? { date: fromCols, time: timeCol }
+        : effectiveServiceSlotFromOrderRow(row);
+    return {
+      serviceBookingDate: slot?.date ?? null,
+      serviceBookingTime: slot?.time ?? null,
+    };
+  })(),
   ...orderListingSnapshotFromDbRow(listingMeta),
 };
 };
@@ -1159,7 +1205,7 @@ async function fetchListingMetaForOrder(order) {
   if (!order?.listing_id) return null;
   const { data: listing } = await supabaseAdmin
     .from("listings")
-    .select("id, title, image_url, image_urls, community_id")
+    .select("id, title, image_url, image_urls, community_id, vertical_id, sub_id")
     .eq("id", order.listing_id)
     .maybeSingle();
   return listing || null;
@@ -1778,6 +1824,26 @@ export const getPublicMarketplaceStats = async (_req, res, next) => {
   }
 };
 
+/** GET — which service slots are already held (non-completed / non-cancelled orders) for a listing. */
+export const getListingServiceBookedSlots = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { data: listing, error: lerr } = await supabaseAdmin
+      .from("listings")
+      .select("id, status, vertical_id, categories, sub_id, seller_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (lerr) throw new AppError(500, lerr.message);
+    if (!listing) throw new AppError(404, "Listing not found.");
+    if (!listingRowIsService(listing)) throw new AppError(400, "Not a service listing.");
+    if (listing.status !== "active" && listing.seller_id !== req.user?.id) throw new AppError(404, "Listing not found.");
+    const bookedSlots = await listHeldServiceSlotsForListing(supabaseAdmin, id);
+    res.json({ bookedSlots });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const getListing = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -1874,6 +1940,10 @@ export const createListing = async (req, res, next) => {
       option_values_b: mergedVariants.option_values_b,
       order_type: orderType,
       processing_time: processingTime,
+      service_meta:
+        req.body.serviceMeta != null && typeof req.body.serviceMeta === "object" && !Array.isArray(req.body.serviceMeta)
+          ? req.body.serviceMeta
+          : null,
       sold_count: 0,
       // Keep insert compatible with DB constraint: active|paused|sold.
       status: "active",
@@ -1956,6 +2026,12 @@ export const updateListing = async (req, res, next) => {
     }
     if (req.body.orderType != null) patch.order_type = String(req.body.orderType) === "pre_order" ? "pre_order" : "in_stock";
     if (req.body.processingTime != null) patch.processing_time = String(req.body.processingTime).trim().slice(0, 120);
+    if (req.body.serviceMeta !== undefined) {
+      patch.service_meta =
+        req.body.serviceMeta != null && typeof req.body.serviceMeta === "object" && !Array.isArray(req.body.serviceMeta)
+          ? req.body.serviceMeta
+          : null;
+    }
     const effectiveOrderType = String(patch.order_type ?? existing.order_type ?? "in_stock");
     const effectiveProcessingTime = String(patch.processing_time ?? existing.processing_time ?? "").trim();
     if (effectiveOrderType === "pre_order" && !effectiveProcessingTime) {
@@ -2208,6 +2284,9 @@ async function enrichCartRowsForApi(rows) {
       fulfillmentModes: Array.isArray(listing.fulfillment_modes) ? listing.fulfillment_modes.map(String) : [],
       fulfillmentType: ftRow,
       comment: String(row.comment || "").trim(),
+      verticalId: meta.verticalId,
+      categories: meta.categories,
+      serviceMeta: meta.serviceMeta,
       orderType: meta.orderType,
       processingTime: meta.processingTime,
       optionNameA: meta.optionNameA,
@@ -2247,8 +2326,9 @@ export const addCartItem = async (req, res, next) => {
     if (lerr) throw new AppError(500, lerr.message);
     if (!listing || listing.status !== "active") throw new AppError(404, "Listing not available.");
     if (listing.seller_id === req.user.id) throw new AppError(400, "You cannot add your own listing to the cart.");
-    const maxStock = Math.max(0, Number(listing.quantity) || 0);
-    if (maxStock < 1) throw new AppError(400, "Out of stock. Current stock: 0.");
+    const isCartSvc = listingRowIsService(listing);
+    const maxStock = isCartSvc ? Number.MAX_SAFE_INTEGER : Math.max(0, Number(listing.quantity) || 0);
+    if (!isCartSvc && maxStock < 1) throw new AppError(400, "Out of stock. Current stock: 0.");
     const fulfillmentType = resolveBuyerFulfillmentForListing(listing, req.body.fulfillmentType);
 
     const { data: candidates, error: cErr } = await supabaseAdmin
@@ -2655,7 +2735,7 @@ export const createOrder = async (req, res, next) => {
   try {
     const listingId = String(req.body.listingId);
     const fulfillmentType = String(req.body.fulfillmentType);
-    const buyerComment = String(req.body.comment || "").trim().slice(0, 2000);
+    let buyerComment = String(req.body.comment || "").trim().slice(0, 2000);
     if (!["pickup", "delivery"].includes(fulfillmentType)) throw new AppError(400, "Invalid fulfillment type.");
     const quantity = req.body.quantity != null ? Number(req.body.quantity) : 1;
     if (quantity < 1) throw new AppError(400, "Invalid quantity.");
@@ -2664,9 +2744,32 @@ export const createOrder = async (req, res, next) => {
     if (!listing || listing.status !== "active") throw new AppError(404, "Listing not available.");
     if (listing.seller_id === req.user.id) throw new AppError(400, "You cannot order your own listing.");
     if (!listing.fulfillment_modes?.includes(fulfillmentType)) throw new AppError(400, "This listing does not support that fulfillment option.");
-    const maxStock = Math.max(0, Number(listing.quantity) || 0);
-    if (quantity > maxStock) throw new AppError(400, `Not enough stock. Requested: ${quantity}, available: ${maxStock}.`);
-    const codGoodsCents = listing.price_cents * quantity;
+    const isSvc = listingRowIsService(listing);
+    const orderQty = isSvc ? 1 : quantity;
+    if (isSvc && quantity !== 1) {
+      /* Services book one session per request; ignore client qty > 1. */
+    }
+    const maxStock = isSvc ? Number.MAX_SAFE_INTEGER : Math.max(0, Number(listing.quantity) || 0);
+    if (orderQty > maxStock) throw new AppError(400, `Not enough stock. Requested: ${orderQty}, available: ${maxStock}.`);
+    let serviceBookingDateIn = "";
+    let serviceBookingTimeIn = "";
+    if (isSvc) {
+      serviceBookingDateIn = String(req.body.serviceBookingDate ?? req.body.service_booking_date ?? "").trim();
+      serviceBookingTimeIn = String(req.body.serviceBookingTime ?? req.body.service_booking_time ?? "").trim();
+      const slotErr = validateServiceBookingSlotForOrder(listing, serviceBookingDateIn, serviceBookingTimeIn);
+      if (slotErr) throw new AppError(400, slotErr);
+      if (serviceBookingDateIn && serviceBookingTimeIn) {
+        const { taken } = await findConflictingServiceBooking(supabaseAdmin, {
+          listingId,
+          dateIso: serviceBookingDateIn,
+          timeHm: serviceBookingTimeIn,
+        });
+        if (taken) throw new AppError(409, "That time slot is already booked. Choose another.");
+        const prefix = `${formatServiceBookingRequestLine(serviceBookingDateIn, serviceBookingTimeIn)}\n`;
+        buyerComment = `${prefix}${buyerComment}`.trim().slice(0, 2000);
+      }
+    }
+    const codGoodsCents = listing.price_cents * orderQty;
     const initialStatus = "placed";
     const bodySig = String(req.body.variantSignature ?? "").trim().slice(0, 512);
     const targetVariantSig = bodySig || variantSignatureFromBuyerComment(buyerComment);
@@ -2677,11 +2780,13 @@ export const createOrder = async (req, res, next) => {
       .eq("buyer_id", req.user.id)
       .eq("status", initialStatus);
     if (existingErr) throw new AppError(500, existingErr.message);
-    const matchingPlaced = (existingPlacedOrders || []).filter((o) => {
-      if (effectiveVariantSignatureFromOrderRow(o) !== targetVariantSig) return false;
-      if (String(o?.fulfillment_type ?? "").trim() !== fulfillmentType) return false;
-      return String(o?.buyer_comment ?? "").trim() === buyerComment;
-    });
+    const matchingPlaced = isSvc
+      ? []
+      : (existingPlacedOrders || []).filter((o) => {
+          if (effectiveVariantSignatureFromOrderRow(o) !== targetVariantSig) return false;
+          if (String(o?.fulfillment_type ?? "").trim() !== fulfillmentType) return false;
+          return String(o?.buyer_comment ?? "").trim() === buyerComment;
+        });
     let preferredRowId = null;
     const newBuyerCourier =
       fulfillmentType === "delivery" ? parseOptionalCourierContributionCents(req.body.buyerCourierContributionCents) ?? 0 : 0;
@@ -2694,7 +2799,7 @@ export const createOrder = async (req, res, next) => {
       });
       const primary = ordered[0];
       const existingQtyTotal = ordered.reduce((sum, row) => sum + Math.max(0, Number(row?.quantity) || 0), 0);
-      const mergedQty = existingQtyTotal + quantity;
+      const mergedQty = existingQtyTotal + orderQty;
       const mergedBuyerComment =
         buyerComment || String(primary?.buyer_comment || "").trim();
       const mergedBuyerPool = ordered.reduce((s, row) => s + Math.max(0, Number(row?.buyer_courier_contribution_cents) || 0), 0) + newBuyerCourier;
@@ -2723,7 +2828,7 @@ export const createOrder = async (req, res, next) => {
         listing_id: listingId,
         buyer_id: req.user.id,
         seller_id: listing.seller_id,
-        quantity,
+        quantity: orderQty,
         fulfillment_type: fulfillmentType,
         status: initialStatus,
         cod_goods_cents: codGoodsCents,
@@ -2732,13 +2837,19 @@ export const createOrder = async (req, res, next) => {
         cod_delivery_cents: deliveryCodTotalFromSplit(newBuyerCourier, 0),
         buyer_comment: buyerComment,
         variant_signature: targetVariantSig,
+        ...(isSvc && serviceBookingDateIn && serviceBookingTimeIn
+          ? { service_booking_date: serviceBookingDateIn, service_booking_time: serviceBookingTimeIn }
+          : {}),
       };
       let insertPayload = { ...row };
       let data = null;
       let error = null;
-      for (let attempt = 0; attempt < 6; attempt++) {
+      for (let attempt = 0; attempt < 8; attempt++) {
         ({ data, error } = await supabaseAdmin.from("orders").insert(insertPayload).select("*").single());
         if (!error) break;
+        if (String(error?.code || "") === "23505" && isSvc && serviceBookingDateIn && serviceBookingTimeIn) {
+          throw new AppError(409, "That time slot is no longer available. Choose another.");
+        }
         if (isBuyerCommentMissingError(error) && Object.prototype.hasOwnProperty.call(insertPayload, "buyer_comment")) {
           const next = { ...insertPayload };
           delete next.buyer_comment;
@@ -2748,6 +2859,16 @@ export const createOrder = async (req, res, next) => {
         if (isVariantSignatureMissingError(error) && Object.prototype.hasOwnProperty.call(insertPayload, "variant_signature")) {
           const next = { ...insertPayload };
           delete next.variant_signature;
+          insertPayload = next;
+          continue;
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(insertPayload, "service_booking_date") &&
+          /service_booking_date|service_booking_time|schema cache|Could not find/i.test(String(error?.message || ""))
+        ) {
+          const next = { ...insertPayload };
+          delete next.service_booking_date;
+          delete next.service_booking_time;
           insertPayload = next;
           continue;
         }
@@ -2772,6 +2893,7 @@ export const createOrder = async (req, res, next) => {
       status: initialStatus,
       fulfillmentType: null,
       preferredId: preferredRowId || null,
+      skipPlacedConsolidationMerge: isSvc,
     });
     if (!finalized) throw new AppError(500, "Could not finalize order.");
     await notifyUserOrderEvent({
@@ -2791,7 +2913,14 @@ export const createOrder = async (req, res, next) => {
   }
 };
 
-const consolidateBuyerListingStatusOrders = async ({ buyerId, listingId, status, fulfillmentType, preferredId = null }) => {
+const consolidateBuyerListingStatusOrders = async ({
+  buyerId,
+  listingId,
+  status,
+  fulfillmentType,
+  preferredId = null,
+  skipPlacedConsolidationMerge = false,
+}) => {
   let q = supabaseAdmin
     .from("orders")
     .select("*")
@@ -2803,6 +2932,11 @@ const consolidateBuyerListingStatusOrders = async ({ buyerId, listingId, status,
   if (error) throw new AppError(500, error.message);
   const items = Array.isArray(rows) ? rows : [];
   if (items.length === 0) return null;
+
+  if (skipPlacedConsolidationMerge && String(status || "").toLowerCase() === "placed") {
+    const pref = preferredId ? items.find((r) => String(r.id) === String(preferredId)) : null;
+    return pref ?? items[0];
+  }
 
   /** Never merge pipeline / terminal orders — only duplicate `placed` rows (concurrent checkout). */
   if (String(status || "").toLowerCase() !== "placed") {
@@ -2902,7 +3036,7 @@ export const listOrders = async (req, res, next) => {
     if (listingIds.length > 0) {
       const { data: listings, error: lerr } = await supabaseAdmin
         .from("listings")
-        .select("id, title, image_url, image_urls, community_id")
+        .select("id, title, image_url, image_urls, community_id, vertical_id, sub_id")
         .in("id", listingIds);
       if (!lerr && Array.isArray(listings)) {
         for (const L of listings) {
@@ -3486,9 +3620,36 @@ export const patchOrder = async (req, res, next) => {
     const ts = new Date().toISOString();
     let patch = { updated_at: ts };
 
+    const { data: orderRuleListing } = await supabaseAdmin
+      .from("listings")
+      .select("vertical_id, categories, sub_id")
+      .eq("id", order.listing_id)
+      .maybeSingle();
+    const orderServiceAppointmentFlow =
+      orderRuleListing &&
+      listingRowIsService(orderRuleListing) &&
+      String(orderRuleListing.sub_id || "").trim() !== "transport_services";
+
     if (transition === "seller_accept") {
       if (!isSeller) throw new AppError(403, "Only the seller can accept.");
       if (order.status !== "placed") throw new AppError(400, "Invalid state.");
+      if (listingRowIsService(orderRuleListing)) {
+        const slot = effectiveServiceSlotFromOrderRow(order);
+        if (slot?.date && slot?.time) {
+          const { taken } = await findConflictingServiceBooking(supabaseAdmin, {
+            listingId: String(order.listing_id),
+            dateIso: slot.date,
+            timeHm: slot.time,
+            excludeOrderId: String(order.id),
+          });
+          if (taken) {
+            throw new AppError(
+              409,
+              "Another booking already holds this time slot. Decline this request or ask the buyer to reschedule.",
+            );
+          }
+        }
+      }
       patch.status = "seller_accepted";
       if (!order.processing_entered_at) patch.processing_entered_at = ts;
       if (order.fulfillment_type === "delivery") {
@@ -3534,7 +3695,11 @@ export const patchOrder = async (req, res, next) => {
     } else if (transition === "mark_ready_for_pickup") {
       if (!isSeller) throw new AppError(403, "Only the seller can mark ready for pickup.");
       if (order.status !== "seller_accepted") throw new AppError(400, "Invalid state.");
-      if (order.fulfillment_type !== "pickup") throw new AppError(400, "Only pickup orders use this step.");
+      const pickupOk = order.fulfillment_type === "pickup";
+      const serviceDeliveryAsAppointment = order.fulfillment_type === "delivery" && orderServiceAppointmentFlow;
+      if (!pickupOk && !serviceDeliveryAsAppointment) {
+        throw new AppError(400, "Only pickup orders use this step.");
+      }
       patch.status = "ready_for_pickup";
     } else if (transition === "mark_pickup_done") {
       if (!isSeller) throw new AppError(403, "Only the seller can mark pickup complete.");
@@ -3543,7 +3708,9 @@ export const patchOrder = async (req, res, next) => {
       patch.completed_at = ts;
     } else if (transition === "buyer_ack_receipt") {
       if (!isBuyer) throw new AppError(403, "Only the buyer can confirm pickup.");
-      if (order.fulfillment_type !== "pickup") throw new AppError(400, "Only pickup orders use this action.");
+      const pickupAckOk = order.fulfillment_type === "pickup";
+      const serviceDeliveryAckOk = order.fulfillment_type === "delivery" && orderServiceAppointmentFlow;
+      if (!pickupAckOk && !serviceDeliveryAckOk) throw new AppError(400, "Only pickup orders use this action.");
       if (order.status === "completed") {
         return res.json({ order: orderRowToApi(order) });
       }
@@ -3569,6 +3736,12 @@ export const patchOrder = async (req, res, next) => {
       if (!isSeller) throw new AppError(403, "Only the seller can self-deliver.");
       if (order.fulfillment_type !== "delivery") throw new AppError(400, "Only delivery orders use this action.");
       if (order.status !== "seller_accepted") throw new AppError(400, "Invalid state.");
+      if (orderServiceAppointmentFlow) {
+        throw new AppError(
+          400,
+          "This booking uses the appointment flow — mark “Ready for appointment” instead of courier-style delivery.",
+        );
+      }
       patch.status = "out_for_delivery";
     } else if (transition === "mark_out_for_delivery") {
       if (!isSeller) throw new AppError(403, "Only seller can mark out for delivery.");
@@ -3606,10 +3779,10 @@ export const patchOrder = async (req, res, next) => {
     if (patch.status === "completed") {
       const { data: listing } = await supabaseAdmin
         .from("listings")
-        .select("quantity,sold_count,status")
+        .select("quantity,sold_count,status,vertical_id,categories")
         .eq("id", order.listing_id)
         .maybeSingle();
-      if (listing && typeof listing.quantity === "number") {
+      if (listing && typeof listing.quantity === "number" && !listingRowIsService(listing)) {
         const newQty = Math.max(0, listing.quantity - order.quantity);
         const soldCountBase = Math.max(0, Number(listing.sold_count) || 0);
         const nextSoldCount = soldCountBase + Math.max(0, Number(order.quantity) || 0);
@@ -3738,7 +3911,8 @@ export const patchOrder = async (req, res, next) => {
       });
     }
 
-    res.json({ order: orderRowToApi(finalOrder) });
+    const listingMetaOut = await fetchListingMetaForOrder(finalOrder);
+    res.json({ order: orderRowToApi(finalOrder, null, listingMetaOut) });
   } catch (e) {
     next(e);
   }

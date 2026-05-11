@@ -11,8 +11,27 @@
  *
  * Pickup uses `seller_accepted` / `ready_for_pickup` instead.
  *
- * @param {{ status?: string, fulfillmentType?: string }} order
+ * Non-transport **service** bookings reuse pickup milestones (`ready_for_pickup`, buyer ack) even when
+ * the legacy row used `fulfillment_type === "delivery"` — see `isAppointmentStyleServiceOrder`.
+ *
+ * @param {{ status?: string, fulfillmentType?: string, listingVerticalId?: string, listingSubId?: string }} order
  */
+
+function isTransportServiceOrder(order) {
+  return (
+    String(order?.listingVerticalId || "")
+      .trim()
+      .toLowerCase() === "services" && String(order?.listingSubId || "").trim() === "transport_services"
+  );
+}
+
+function isAppointmentStyleServiceOrder(order) {
+  return (
+    String(order?.listingVerticalId || "")
+      .trim()
+      .toLowerCase() === "services" && !isTransportServiceOrder(order)
+  );
+}
 
 /** Delivery + courier assigned (internal `courier_assignments` row); seller marks shipment next. */
 export function isDeliveryCourierAssigned(order) {
@@ -23,6 +42,7 @@ export function isDeliveryCourierAssigned(order) {
 
 /** Delivery + seller accepted — waiting for seller self-delivery or community courier assign/claim. */
 export function isDeliverySellerPreparing(order) {
+  if (isAppointmentStyleServiceOrder(order)) return false;
   const ft = order?.fulfillmentType === "delivery" ? "delivery" : "pickup";
   if (ft !== "delivery") return false;
   return String(order?.status || "").toLowerCase() === "seller_accepted";
@@ -45,9 +65,9 @@ export function orderFulfillmentBannerKind(order) {
   const status = String(order?.status || "").toLowerCase();
   const ft = order?.fulfillmentType === "delivery" ? "delivery" : "pickup";
 
-  if (status === "seller_accepted" && ft === "pickup") return "preparing";
+  if (status === "seller_accepted" && (ft === "pickup" || isAppointmentStyleServiceOrder(order))) return "preparing";
   if (isDeliverySellerPreparing(order) || isDeliveryCourierAssigned(order)) return "preparing";
-  if (status === "ready_for_pickup" && ft === "pickup") return "ready_pickup";
+  if (status === "ready_for_pickup" && (ft === "pickup" || isAppointmentStyleServiceOrder(order))) return "ready_pickup";
   if (isDeliveryInTransit(order)) return "out_delivery";
   return null;
 }
@@ -59,17 +79,20 @@ export function orderFulfillmentBannerText(order, viewerRole) {
   const status = String(order?.status || "").toLowerCase();
   const ft = order?.fulfillmentType === "delivery" ? "delivery" : "pickup";
 
-  if (status === "seller_accepted" && ft === "pickup") {
+  if (status === "seller_accepted" && (ft === "pickup" || isAppointmentStyleServiceOrder(order))) {
+    if (isAppointmentStyleServiceOrder(order)) {
+      return viewerRole === "seller" ? "Booking confirmed" : "Your booking was accepted";
+    }
     return viewerRole === "seller" ? "Preparing" : "Seller is preparing your order";
   }
   if (isDeliverySellerPreparing(order) || isDeliveryCourierAssigned(order)) {
     return viewerRole === "seller" ? "Preparing" : "Seller is preparing your order";
   }
-  if (status === "ready_for_pickup" && ft === "pickup") {
-    return "Ready for Pickup";
+  if (status === "ready_for_pickup" && (ft === "pickup" || isAppointmentStyleServiceOrder(order))) {
+    return isAppointmentStyleServiceOrder(order) ? "Ready for appointment" : "Ready for Pickup";
   }
   if (isDeliveryInTransit(order)) {
-    return "Out for Delivery";
+    return isAppointmentStyleServiceOrder(order) ? "Appointment in progress" : "Out for Delivery";
   }
   return null;
 }

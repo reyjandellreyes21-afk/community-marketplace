@@ -15,6 +15,7 @@ import {
   getCourierModes,
   getCourierPresence,
   getListing,
+  getListingServiceBookedSlots,
   getMeOrderAttention,
   listCommunityCouriers,
   getCommunityCourierEngagement,
@@ -87,6 +88,13 @@ marketplaceRouter.patch(
 );
 
 marketplaceRouter.get("/listings", optionalAuth, listingsValidators.list, validate, listListings);
+marketplaceRouter.get(
+  "/listings/:id/service-booked-slots",
+  optionalAuth,
+  listingsValidators.idParam,
+  validate,
+  getListingServiceBookedSlots,
+);
 marketplaceRouter.get("/listings/:id", optionalAuth, listingsValidators.idParam, validate, getListing);
 
 marketplaceRouter.get("/users", requireAuth, marketplaceRouteValidators.listUsers, validate, listUsersDirectory);

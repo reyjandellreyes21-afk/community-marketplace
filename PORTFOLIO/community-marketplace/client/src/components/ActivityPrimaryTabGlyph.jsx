@@ -1,7 +1,7 @@
 import { ACTIVITY_TABS } from "../views.js";
 
 /**
- * Icons for Activity primary tabs (Buying / Selling / Courier).
+ * Icons for Activity primary tabs (Buying / Selling / Booking / Courier).
  */
 export function ActivityPrimaryTabGlyph({ tabId, selected, selectedAccentClass, className = "" }) {
   const tone = selected
@@ -35,6 +35,13 @@ export function ActivityPrimaryTabGlyph({ tabId, selected, selectedAccentClass, 
           <path d="m7.5 4.27 9 5.15" />
           <path d="M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 18v-2" />
           <path d="M3.29 7 12 12l8.71-5" />
+        </svg>
+      );
+    case ACTIVITY_TABS.BOOKING:
+      return (
+        <svg {...svgProps}>
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+          <path d="M16 2v4M8 2v4M3 10h18" />
         </svg>
       );
     case ACTIVITY_TABS.COURIER:

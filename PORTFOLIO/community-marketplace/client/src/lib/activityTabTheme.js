@@ -1,7 +1,7 @@
 import { ACTIVITY_TABS } from "../views.js";
 
 /**
- * Distinct accent + tinted shells for Activity primary tabs (Buying / Selling / Courier),
+ * Distinct accent + tinted shells for Activity primary tabs (Buying / Selling / Booking / Courier),
  * fixed footer for primary tabs, and child strips (order status / courier sub-tabs) under the header.
  */
 export const ACTIVITY_TAB_CHROME = {
@@ -71,6 +71,37 @@ export const ACTIVITY_TAB_CHROME = {
     segmentActiveMuted:
       "!bg-amber-100/95 !text-amber-950 !ring-1 !ring-inset !ring-amber-400/50 dark:!bg-amber-950/70 dark:!text-amber-100 dark:!ring-amber-500/45",
   },
+  [ACTIVITY_TABS.BOOKING]: {
+    labelSelected: "text-sky-600 dark:text-sky-400",
+    barSelected: "bg-sky-500 dark:bg-sky-400",
+    glyphSelected: "text-sky-600 dark:text-sky-400",
+    shellMobile:
+      "border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.04)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.2)]",
+    shellDesktop:
+      "border-b border-neutral-200/60 bg-neutral-50 dark:border-slate-700/60 dark:bg-slate-950",
+    childStripHeaderBand:
+      "w-full shrink-0 border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.03)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.15)] md:border-t-0 md:border-b md:border-neutral-200/60 md:bg-neutral-50 md:shadow-none dark:md:border-slate-700/60 dark:md:bg-slate-950",
+    primaryTabsFooter:
+      "border-t border-neutral-200/70 bg-neutral-50 shadow-[0_-4px_24px_-8px_rgba(15,23,42,0.06)] dark:border-slate-700/70 dark:bg-slate-950 dark:shadow-[0_-4px_24px_-8px_rgba(0,0,0,0.35)]",
+    orderFlowStrip:
+      "border-t border-transparent bg-transparent dark:border-transparent md:border-b md:border-neutral-200/50 md:bg-transparent dark:md:border-slate-700/50",
+    emptySurface:
+      "border-sky-200/75 bg-sky-50/45 dark:border-sky-800/40 dark:bg-sky-950/20",
+    recoveryPrimary:
+      "!border-transparent !bg-sky-600 !text-white shadow-sm !shadow-sky-600/25 hover:!bg-sky-700 active:!bg-sky-800 focus-visible:!ring-sky-500/50 dark:!bg-sky-500 dark:hover:!bg-sky-400 dark:focus-visible:!ring-sky-400/45",
+    recoverySecondary:
+      "!border-sky-600 !bg-sky-100/50 !text-sky-950 hover:!bg-sky-100/90 dark:!border-sky-500 dark:!bg-sky-950/45 dark:!text-sky-200 dark:hover:!bg-sky-950/60",
+    activityMainSurface:
+      "bg-neutral-50 dark:bg-slate-950",
+    activityShellWrap:
+      "!bg-neutral-50 dark:!bg-slate-950 md:!bg-transparent md:!dark:bg-transparent",
+    activityViewSection:
+      "w-full space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-4 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-4 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
+    segmentActive:
+      "!bg-sky-100 !text-sky-950 shadow-none !ring-1 !ring-inset !ring-sky-300/45 dark:!bg-sky-950/55 dark:!text-sky-100 dark:!ring-sky-600/35",
+    segmentActiveMuted:
+      "!bg-sky-100/95 !text-sky-950 !ring-1 !ring-inset !ring-sky-400/50 dark:!bg-sky-950/70 dark:!text-sky-100 dark:!ring-sky-500/45",
+  },
   [ACTIVITY_TABS.COURIER]: {
     labelSelected: "text-violet-600 dark:text-violet-400",
     barSelected: "bg-violet-500 dark:bg-violet-400",
@@ -131,7 +162,7 @@ export function courierHubFooterStripClass() {
   return courierHubSubtabStripClass();
 }
 
-/** Fixed viewport footer shell for Activity primary tabs (Buying / Selling / Courier). */
+/** Fixed viewport footer shell for Activity primary tabs (Buying / Selling / Booking / Courier). */
 export function activityPrimaryTabsFooterShellClass(activityTab) {
   const chrome = getActivityTabChrome(activityTab);
   return chrome.primaryTabsFooter;

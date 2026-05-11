@@ -55,6 +55,15 @@ export const listingsValidators = {
       }),
     body("orderType").optional().isIn(["in_stock", "pre_order"]),
     body("processingTime").optional().isString().isLength({ max: 120 }),
+    body("serviceMeta")
+      .optional({ nullable: true })
+      .custom((v) => {
+        if (v == null) return true;
+        if (typeof v !== "object" || Array.isArray(v)) throw new Error("serviceMeta must be an object.");
+        const len = JSON.stringify(v).length;
+        if (len > 20000) throw new Error("serviceMeta is too large.");
+        return true;
+      }),
   ],
   patch: [
     body("title").optional().isString().trim().isLength({ min: 2, max: 200 }),
@@ -86,6 +95,15 @@ export const listingsValidators = {
       }),
     body("orderType").optional().isIn(["in_stock", "pre_order"]),
     body("processingTime").optional({ nullable: true }).isString().isLength({ max: 120 }),
+    body("serviceMeta")
+      .optional({ nullable: true })
+      .custom((v) => {
+        if (v == null) return true;
+        if (typeof v !== "object" || Array.isArray(v)) throw new Error("serviceMeta must be an object.");
+        const len = JSON.stringify(v).length;
+        if (len > 20000) throw new Error("serviceMeta is too large.");
+        return true;
+      }),
     body("communityId").optional({ nullable: true }).isUUID(),
     body("status").optional().isIn(["active", "paused", "sold"]),
   ],
@@ -119,6 +137,10 @@ export const marketplaceRouteValidators = {
     body("comment").optional().isString().isLength({ max: 2000 }),
     body("variantSignature").optional().isString().isLength({ max: 512 }),
     body("buyerCourierContributionCents").optional().isInt({ min: 0, max: 10000000 }),
+    body("serviceBookingDate").optional().isString().trim().isLength({ min: 10, max: 10 }),
+    body("serviceBookingTime").optional().isString().trim().isLength({ min: 5, max: 5 }),
+    body("service_booking_date").optional().isString().trim().isLength({ min: 10, max: 10 }),
+    body("service_booking_time").optional().isString().trim().isLength({ min: 5, max: 5 }),
   ],
   patchOrder: [
     param("id").isUUID(),

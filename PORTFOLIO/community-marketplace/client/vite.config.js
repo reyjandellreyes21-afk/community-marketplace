@@ -13,7 +13,8 @@ function resolveBase(mode, env) {
   if (explicit) {
     return explicit.endsWith("/") ? explicit : `${explicit}/`;
   }
-  return mode === "production" ? "/linkmart/" : "/";
+  /** Root `/` avoids blank pages when the built app is hosted at the domain root. Subpath deploys: set `VITE_APP_BASE`. */
+  return mode === "production" ? "/" : "/";
 }
 
 // https://vite.dev/config/

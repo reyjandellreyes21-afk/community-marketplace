@@ -7,8 +7,9 @@ import { categoryIcon } from "../browse/BrowseFilterIcons.jsx";
  * @param {string} props.value — selected vertical id or ""
  * @param {(id: string) => void} props.onChange
  * @param {boolean} [props.invalid]
+ * @param {Array<{ id: string, label: string, subs?: Array<{ id: string, label: string }> }>} [props.options]
  */
-export function ListingCategoryPicker({ value, onChange, invalid }) {
+export function ListingCategoryPicker({ value, onChange, invalid, options = VERTICALS }) {
   const rootRef = useRef(null);
   const inputRef = useRef(null);
   const triggerId = useId();
@@ -16,7 +17,7 @@ export function ListingCategoryPicker({ value, onChange, invalid }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
-  const selected = useMemo(() => VERTICALS.find((v) => v.id === value), [value]);
+  const selected = useMemo(() => options.find((v) => v.id === value), [value, options]);
 
   useEffect(() => {
     if (open) return;
@@ -25,8 +26,8 @@ export function ListingCategoryPicker({ value, onChange, invalid }) {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return VERTICALS;
-    const ranked = VERTICALS.map((v) => {
+    if (!q) return options;
+    const ranked = options.map((v) => {
       const label = String(v.label || "").toLowerCase();
       const id = String(v.id || "").toLowerCase();
       const subMatch = (v.subs || []).some(
@@ -46,7 +47,7 @@ export function ListingCategoryPicker({ value, onChange, invalid }) {
       .filter((row) => row.score < 99)
       .sort((a, b) => a.score - b.score || a.v.label.localeCompare(b.v.label));
     return ranked.map((row) => row.v);
-  }, [query]);
+  }, [query, options]);
 
   useEffect(() => {
     if (!open) return;

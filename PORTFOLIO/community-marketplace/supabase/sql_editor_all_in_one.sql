@@ -1,6 +1,7 @@
 -- =============================================================================
 -- LinkMart (community-marketplace) — run in Supabase Dashboard → SQL Editor
--- Creates public.listings (seller products), orders, favorites, communities, etc.
+-- Creates public.listings (seller products and services), orders, favorites, communities, etc.
+-- Includes listings.service_meta (JSONB) for dynamic service upload fields; aligns with supabase/migrations.
 -- Safe to re-run: uses IF NOT EXISTS / DROP POLICY IF EXISTS where applicable.
 -- Requires: default Supabase Auth (auth.users) and public.profiles.
 -- =============================================================================
@@ -135,6 +136,17 @@ ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS cancellation_reason text;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS cancellation_note text;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS buyer_receipt_acknowledged_at timestamptz;
 
+-- Service booking slot (see migration 20260518120000_orders_service_booking_slot.sql).
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS service_booking_date date;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS service_booking_time text;
+
+CREATE UNIQUE INDEX IF NOT EXISTS orders_listing_service_slot_active_uidx
+ON public.orders (listing_id, service_booking_date, service_booking_time)
+WHERE service_booking_date IS NOT NULL
+  AND service_booking_time IS NOT NULL
+  AND btrim(service_booking_time) <> ''
+  AND status NOT IN ('completed', 'cancelled');
+
 -- Buyer note + canonical variant line (migrations 20260430121000_orders_buyer_comment +
 -- 20260502120000_orders_variant_signature). Safe to re-run.
 ALTER TABLE public.orders
@@ -256,6 +268,61 @@ ALTER TABLE public.listings
   ADD COLUMN IF NOT EXISTS community_id uuid REFERENCES public.communities (id) ON DELETE SET NULL;
 
 CREATE INDEX IF NOT EXISTS listings_community_idx ON public.listings (community_id) WHERE community_id IS NOT NULL;
+
+-- --- Profiles → community UUID (migration 20260427170000; requires public.communities) ---
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS community_id uuid REFERENCES public.communities (id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS profiles_community_id_idx ON public.profiles (community_id) WHERE community_id IS NOT NULL;
+
+UPDATE public.profiles p
+SET community_id = c.id
+FROM public.communities c
+WHERE p.community_id IS NULL
+  AND nullif(btrim(p.community), '') IS NOT NULL
+  AND lower(btrim(p.community)) = lower(btrim(c.name));
+
+-- --- Listings: gallery, variants, preorder, sold count, service JSON (migrations 20260430235900, 20260430221000, 20260508163100) ---
+ALTER TABLE public.listings
+  ADD COLUMN IF NOT EXISTS image_urls text[] NOT NULL DEFAULT ARRAY[]::text[],
+  ADD COLUMN IF NOT EXISTS option_name_a text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS option_values_a text[] NOT NULL DEFAULT ARRAY[]::text[],
+  ADD COLUMN IF NOT EXISTS option_name_b text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS option_values_b text[] NOT NULL DEFAULT ARRAY[]::text[],
+  ADD COLUMN IF NOT EXISTS order_type text NOT NULL DEFAULT 'in_stock',
+  ADD COLUMN IF NOT EXISTS processing_time text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS sold_count integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS service_meta jsonb;
+
+COMMENT ON COLUMN public.listings.service_meta IS
+  'Service listings: JSON with schemaVersion, categoryId, common (rate, area, …), dynamicFields (category-specific answers).';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'listings_order_type_check'
+      AND conrelid = 'public.listings'::regclass
+  ) THEN
+    ALTER TABLE public.listings
+      ADD CONSTRAINT listings_order_type_check
+      CHECK (order_type IN ('in_stock', 'pre_order'));
+  END IF;
+END $$;
+
+UPDATE public.listings
+SET image_urls = ARRAY[image_url]
+WHERE COALESCE(array_length(image_urls, 1), 0) = 0
+  AND COALESCE(TRIM(image_url), '') <> '';
+
+UPDATE public.listings
+SET sold_count = 0
+WHERE sold_count IS NULL OR sold_count < 0;
+
+CREATE INDEX IF NOT EXISTS listings_service_meta_gin_idx
+  ON public.listings
+  USING gin (service_meta);
 
 -- --- Storage: public bucket for community cover images ---
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)

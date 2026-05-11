@@ -6,6 +6,8 @@ export const LEGACY_THEME_KEY_V1 = "quiz_theme";
 export const ACTIVE_VIEW_STORAGE_KEY = "linkmart_active_view_v1";
 export const ACTIVITY_TAB_STORAGE_KEY = "linkmart_activity_tab_v1";
 export const COURIER_HUB_TAB_STORAGE_KEY = "linkmart_courier_hub_tab_v1";
+/** Persist product vs service listing composer while `MY_LISTINGS` is active (survives refresh). */
+export const LISTING_UPLOAD_KIND_STORAGE_KEY = "linkmart_listing_upload_kind_v1";
 
 export function readAuthToken() {
   if (typeof window === "undefined") return "";
@@ -92,4 +94,27 @@ export function writeCourierHubTab(tab) {
     return;
   }
   localStorage.setItem(COURIER_HUB_TAB_STORAGE_KEY, next);
+}
+
+/** @returns {"product" | "service"} */
+export function readListingUploadKind() {
+  if (typeof window === "undefined") return "product";
+  const raw = String(localStorage.getItem(LISTING_UPLOAD_KIND_STORAGE_KEY) || "").trim().toLowerCase();
+  return raw === "service" ? "service" : "product";
+}
+
+/** @param {"product" | "service"} kind */
+export function writeListingUploadKind(kind) {
+  if (typeof window === "undefined") return;
+  const next = String(kind || "").trim().toLowerCase();
+  if (next === "service") {
+    localStorage.setItem(LISTING_UPLOAD_KIND_STORAGE_KEY, "service");
+  } else {
+    localStorage.removeItem(LISTING_UPLOAD_KIND_STORAGE_KEY);
+  }
+}
+
+export function clearListingUploadKind() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(LISTING_UPLOAD_KIND_STORAGE_KEY);
 }
