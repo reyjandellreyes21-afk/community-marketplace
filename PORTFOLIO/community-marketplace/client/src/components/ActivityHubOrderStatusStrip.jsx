@@ -11,12 +11,14 @@ const ORDER_STATUS_BADGE_CORNER =
 const ORDER_STATUS_BADGE_MOBILE =
   "max-md:min-h-[1rem] max-md:min-w-[1rem] max-md:px-[3px] max-md:text-[8px]";
 /**
- * Pending–Cancelled status filters (purchases & product orders), or **Active / Past / Declined** for bookings.
+ * Pending–Cancelled status filters (purchases & product orders), or **Pending / Active / Completed / Cancelled** for bookings.
  * @param {boolean} [props.activityBooking] Service / booking order list (sky status chips)
  * @param {'default'|'desktopMerged'} [props.variant] `desktopMerged` = minimal outer shell (row sits inside unified Activity toolbar on md+)
  * @param {'center'|'start'} [props.desktopRowJustify] Horizontal alignment for `desktopMerged` status tabs (web sidebar layout uses `start`)
- * @param {string} [props.bookingOrdersStatusTab] When `activityBooking`: `active` | `past` | `declined`
+ * @param {string} [props.bookingOrdersStatusTab] When `activityBooking`: `approve` | `active` | `past` | `declined`
  * @param {(id: string) => void} [props.commitBookingOrdersStatusTab]
+ * @param {number} [props.bookingApproveTabBadgeDisplayCount]
+ * @param {number} [props.bookingApproveTabUnseenCount] Seller unseen pending only (rose on Approve tab)
  * @param {number} [props.bookingActiveTabBadgeDisplayCount]
  * @param {number} [props.bookingPastTabBadgeDisplayCount]
  * @param {number} [props.bookingDeclinedTabBadgeDisplayCount]
@@ -29,15 +31,18 @@ export function ActivityHubOrderStatusStrip({
   commitOrdersStatusTab,
   pendingTabBadgeDisplayCount,
   processingTabBadgeDisplayCount,
-  ordersTabBadgeIdsByTab,
+  ordersTabBadgeIdsByTab: ordersTabBadgeIdsByTabProp,
   bookingOrdersStatusTab = "active",
   commitBookingOrdersStatusTab,
+  bookingApproveTabBadgeDisplayCount = 0,
+  bookingApproveTabUnseenCount = 0,
   bookingActiveTabBadgeDisplayCount = 0,
   bookingPastTabBadgeDisplayCount = 0,
   bookingDeclinedTabBadgeDisplayCount = 0,
   variant = "default",
   desktopRowJustify = "center",
 }) {
+  const ordersTabBadgeIdsByTab = ordersTabBadgeIdsByTabProp && typeof ordersTabBadgeIdsByTabProp === "object" ? ordersTabBadgeIdsByTabProp : {};
   const activityTabChrome = getActivityTabChrome(activityTab);
   const sellingChrome = activityTab === ACTIVITY_TABS.SELLING;
   const bookingChrome = Boolean(activityBooking) || activityTab === ACTIVITY_TABS.BOOKING;
@@ -64,7 +69,7 @@ export function ActivityHubOrderStatusStrip({
     variant === "desktopMerged"
       ? `mx-auto flex w-full min-w-0 flex-wrap gap-2 md:flex-nowrap md:gap-2 md:px-0 ${mergedJustify}`
       : activityBooking
-        ? "mx-auto grid w-full min-w-0 grid-cols-3 gap-1 md:flex md:w-fit md:max-w-full md:flex-nowrap md:justify-center md:gap-2 md:px-1"
+        ? "mx-auto grid w-full min-w-0 grid-cols-2 gap-1 min-[400px]:grid-cols-4 md:flex md:w-fit md:max-w-full md:flex-nowrap md:justify-center md:gap-2 md:px-1"
         : "mx-auto grid w-full min-w-0 grid-cols-4 gap-1 md:flex md:w-fit md:max-w-full md:flex-nowrap md:justify-center md:gap-2 md:px-1";
 
   const statusTabMdSizing =
@@ -107,10 +112,12 @@ export function ActivityHubOrderStatusStrip({
           let tabBadgeCount = 0;
           let unseenForStatusTab = 0;
           if (activityBooking) {
-            if (id === "active") {
+            if (id === "approve") {
+              tabBadgeCount = bookingApproveTabBadgeDisplayCount;
+              unseenForStatusTab = bookingApproveTabUnseenCount;
+            } else if (id === "active") {
               tabBadgeCount = bookingActiveTabBadgeDisplayCount;
-              unseenForStatusTab =
-                (ordersTabBadgeIdsByTab.pending?.length ?? 0) + (ordersTabBadgeIdsByTab.processing?.length ?? 0);
+              unseenForStatusTab = ordersTabBadgeIdsByTab.processing?.length ?? 0;
             } else if (id === "past") {
               tabBadgeCount = bookingPastTabBadgeDisplayCount;
               unseenForStatusTab = ordersTabBadgeIdsByTab.completed?.length ?? 0;

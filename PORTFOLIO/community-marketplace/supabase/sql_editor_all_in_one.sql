@@ -80,7 +80,7 @@ CREATE INDEX IF NOT EXISTS cart_items_listing_idx ON public.cart_items (listing_
 
 CREATE TABLE IF NOT EXISTS public.orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  listing_id uuid NOT NULL REFERENCES public.listings (id) ON DELETE RESTRICT,
+  listing_id uuid REFERENCES public.listings (id) ON DELETE SET NULL,
   buyer_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   seller_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   quantity integer NOT NULL DEFAULT 1 CHECK (quantity >= 1),
@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS public.orders (
       'placed',
       'seller_accepted',
       'courier_assigned',
+      'provider_on_the_way',
       'ready_for_pickup',
       'out_for_delivery',
       'completed',
@@ -140,12 +141,66 @@ ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS buyer_receipt_acknowledged_at
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS service_booking_date date;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS service_booking_time text;
 
+COMMENT ON COLUMN public.orders.service_booking_date IS 'Local calendar date (YYYY-MM-DD) for a service booking when vertical is services.';
+COMMENT ON COLUMN public.orders.service_booking_time IS 'Local time slot start HH:mm (24h) for a service booking.';
+
 CREATE UNIQUE INDEX IF NOT EXISTS orders_listing_service_slot_active_uidx
 ON public.orders (listing_id, service_booking_date, service_booking_time)
 WHERE service_booking_date IS NOT NULL
   AND service_booking_time IS NOT NULL
   AND btrim(service_booking_time) <> ''
   AND status NOT IN ('completed', 'cancelled');
+
+-- Service-booking pipeline (see migration 20260519120000_orders_status_provider_on_the_way.sql):
+--   placed → seller_accepted → provider_on_the_way → ready_for_pickup → completed
+-- Drop and re-add the status whitelist so re-runs on older installs pick up `provider_on_the_way`.
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT c.conname
+    FROM pg_constraint c
+    JOIN pg_class t ON c.conrelid = t.oid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'orders'
+      AND c.contype = 'c'
+      AND pg_get_constraintdef(c.oid) LIKE '%status IN (%'
+      AND pg_get_constraintdef(c.oid) LIKE '%placed%'
+      AND pg_get_constraintdef(c.oid) LIKE '%seller_accepted%'
+      AND pg_get_constraintdef(c.oid) NOT LIKE '%provider_on_the_way%'
+  LOOP
+    EXECUTE format('ALTER TABLE public.orders DROP CONSTRAINT %I', r.conname);
+  END LOOP;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON c.conrelid = t.oid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'orders'
+      AND c.contype = 'c'
+      AND pg_get_constraintdef(c.oid) LIKE '%provider_on_the_way%'
+  ) THEN
+    ALTER TABLE public.orders ADD CONSTRAINT orders_status_allowed_values_check CHECK (
+      status IN (
+        'placed',
+        'seller_accepted',
+        'courier_assigned',
+        'provider_on_the_way',
+        'ready_for_pickup',
+        'out_for_delivery',
+        'completed',
+        'cancelled'
+      )
+    );
+  END IF;
+END $$;
 
 -- Buyer note + canonical variant line (migrations 20260430121000_orders_buyer_comment +
 -- 20260502120000_orders_variant_signature). Safe to re-run.
@@ -351,7 +406,7 @@ CREATE TABLE IF NOT EXISTS public.order_reviews (
   order_id uuid NOT NULL UNIQUE REFERENCES public.orders (id) ON DELETE CASCADE,
   buyer_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   seller_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
-  listing_id uuid NOT NULL REFERENCES public.listings (id) ON DELETE RESTRICT,
+  listing_id uuid REFERENCES public.listings (id) ON DELETE SET NULL,
   rating smallint NOT NULL CHECK (rating >= 1 AND rating <= 5),
   review_text text,
   created_at timestamptz NOT NULL DEFAULT now(),

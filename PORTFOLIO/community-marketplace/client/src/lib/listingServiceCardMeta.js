@@ -21,9 +21,55 @@ export function isServiceListing(listingLike) {
   return v === "services";
 }
 
-/** Order rows whose listing snapshot was a service (`listingVerticalId` on the order). */
-export function orderIsServiceListingBooking(o) {
-  return String(o?.listingVerticalId || "").trim().toLowerCase() === "services";
+const REQUESTED_SLOT_LINE = /Requested:\s*\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}/i;
+
+function orderListingSnapshotLooksLikeService(o) {
+  const v = String(o?.listingVerticalId || "").trim().toLowerCase();
+  if (v === "services") return true;
+  const c = String(o?.listingCategories ?? "").trim().toLowerCase();
+  return c === "services";
+}
+
+function orderHasServiceBookingSlotPayload(o) {
+  const d = String(o?.serviceBookingDate ?? o?.service_booking_date ?? "").trim();
+  const t = String(o?.serviceBookingTime ?? o?.service_booking_time ?? "").trim();
+  return Boolean(d && t);
+}
+
+function orderCommentSuggestsServiceSlot(o) {
+  const text = String(o?.comment ?? o?.buyerComment ?? "").trim();
+  return REQUESTED_SLOT_LINE.test(text);
+}
+
+/**
+ * Order rows for a **service listing** booking (Activity → Booking only).
+ * Uses listing snapshot fields from the API when present; falls back to slot columns or `Requested:` in the comment.
+ * @param {unknown} o
+ * @param {Record<string, unknown>|null|undefined} [listingByListingId] optional `GET /listings/:id` cache keyed by listing id
+ */
+export function orderIsServiceListingBooking(o, listingByListingId) {
+  if (!o || typeof o !== "object") return false;
+  if (orderListingSnapshotLooksLikeService(o)) return true;
+
+  const lid = String(o.listingId ?? o.listing_id ?? "").trim();
+  if (lid && listingByListingId && typeof listingByListingId === "object") {
+    const L = listingByListingId[lid];
+    if (L && isServiceListing(L)) return true;
+  }
+
+  if (orderHasServiceBookingSlotPayload(o)) return true;
+  if (orderCommentSuggestsServiceSlot(o)) return true;
+  return false;
+}
+
+/** Buying / Selling activity lists — keep product (non–service-booking) orders only. */
+export function filterOrdersExcludeServiceBookings(orders) {
+  return (Array.isArray(orders) ? orders : []).filter((x) => !orderIsServiceListingBooking(x));
+}
+
+/** Booking hub — service listing orders only. */
+export function filterOrdersServiceBookingsOnly(orders) {
+  return (Array.isArray(orders) ? orders : []).filter((x) => orderIsServiceListingBooking(x));
 }
 
 /** Community transport / ride listings stay on the courier-style delivery flow. */
@@ -31,9 +77,9 @@ export function orderIsTransportServiceBooking(o) {
   return orderIsServiceListingBooking(o) && String(o?.listingSubId || "").trim() === "transport_services";
 }
 
-/** Most services use appointment-style states (not parcel self-delivery / “mark received” as a package). */
+/** All service listings use the booking / appointment milestone flow (no community-courier lane). */
 export function orderUsesAppointmentServiceFlow(o) {
-  return orderIsServiceListingBooking(o) && !orderIsTransportServiceBooking(o);
+  return orderIsServiceListingBooking(o);
 }
 
 /**
@@ -107,9 +153,10 @@ function formatServiceFieldValueForDisplay(raw) {
 }
 
 /**
- * Profile / seller card: main heading = category; highlighted line = specific service type
- * (transport “Service title” modes or listing title).
- * @returns {{ categoryTitle: string, typeLabel: string }}
+ * Service listing metadata for card and modal headers.
+ * @returns {{ categoryTitle: string, typeLabel: string }} — `categoryTitle` is the service **category** label;
+ *   `typeLabel` is the **service title** (dynamic “Service title” field, else listing title). Callers map these to
+ *   headline vs. pill (e.g. title line = `typeLabel`, category chip = `categoryTitle`).
  */
 export function getServiceCardProfileHeader(listingLike) {
   if (!isServiceListing(listingLike)) {
@@ -176,20 +223,39 @@ export function getServiceCardHeadlinePriceLabel(listingLike) {
 
 /**
  * Human-readable rows for service listing cards (seller inventory, browse, inspect).
- * **All** category `dynamicFields` are included (never truncated). Optional `maxRows` only caps
- * how many **common** rows (rate, area, …) appear after dynamics when space is tight.
+ * **`summaryScope: 'card'`** — browse/seller cards: **rate type** and **availability** (when the provider set a schedule); other fields stay on view product.
+ * **`summaryScope: 'full'`** (default) — inspect / deep views: all category `dynamicFields` plus common rows.
+ * Optional `maxRows` only caps how many **common** rows appear after dynamics when space is tight.
  * Omit `maxRows` or pass `undefined` for full head + dynamics + common.
  * @param {{ verticalId?: string, categories?: string, serviceMeta?: object } | null | undefined} listingLike
- * @param {{ maxRows?: number | null, omitCategoryAndServiceTitle?: boolean }} [opts]
+ * @param {{ maxRows?: number | null, omitCategoryAndServiceTitle?: boolean, summaryScope?: 'full' | 'card' }} [opts]
  * @returns {{ label: string, value: string }[]}
  */
-export function getServiceCardSummaryRows(listingLike, { maxRows, omitCategoryAndServiceTitle = false } = {}) {
+export function getServiceCardSummaryRows(
+  listingLike,
+  { maxRows, omitCategoryAndServiceTitle = false, summaryScope = "full" } = {},
+) {
   if (!isServiceListing(listingLike)) return [];
   const meta =
     listingLike?.serviceMeta && typeof listingLike.serviceMeta === "object" && !Array.isArray(listingLike.serviceMeta)
       ? listingLike.serviceMeta
       : null;
   const common = meta?.common && typeof meta.common === "object" && !Array.isArray(meta.common) ? meta.common : {};
+
+  if (summaryScope === "card") {
+    /** @type {{ label: string, value: string }[]} */
+    const rows = [];
+    const rt = String(common.rateType || "").trim();
+    if (rt) rows.push({ label: "Rate type", value: rt });
+
+    const sched = String(common.availabilitySchedule || "").trim();
+    if (sched) {
+      const schedDisplay = formatServiceFieldValueForDisplay(sched);
+      if (schedDisplay) rows.push({ label: "Availability", value: truncate(schedDisplay, 160) });
+    }
+
+    return rows;
+  }
 
   const categoryLabel = getServiceCategoryDisplayLabel(listingLike, meta);
   /** @type {{ label: string, value: string }[]} */
@@ -222,7 +288,7 @@ export function getServiceCardSummaryRows(listingLike, { maxRows, omitCategoryAn
   const commonRows = [];
 
   const rt = String(common.rateType || "").trim();
-  if (rt) commonRows.push({ label: "Rate", value: rt });
+  if (rt) commonRows.push({ label: "Rate type", value: rt });
 
   const area = String(common.serviceArea || "").trim();
   if (area) commonRows.push({ label: "Service area", value: truncate(area, 96) });

@@ -29,6 +29,7 @@ import { CommunityCourierPanel } from "./components/marketplace/CommunityCourier
 import { ServiceAvailabilityPicker } from "./components/marketplace/ServiceAvailabilityPicker.jsx";
 import { isWeeklyAvailabilityComplete } from "./lib/serviceAvailabilitySchedule.js";
 import { SellerBuyerRatingSummary } from "./components/marketplace/SellerBuyerRatingSummary.jsx";
+import { ServiceBookingPicker } from "./components/marketplace/ServiceBookingPicker.jsx";
 import { ListingServiceCardSummary } from "./components/marketplace/ListingServiceCardSummary.jsx";
 import { SellerDashboardPanel } from "./components/marketplace/SellerDashboardPanel.jsx";
 import {
@@ -95,21 +96,27 @@ import {
 import { CHAT_QUICK_EMOJIS } from "./lib/chatComposerEmojis.js";
 import { UI_KIT } from "./lib/appUiKit.js";
 import {
+  filterOrdersExcludeServiceBookings,
+  filterOrdersServiceBookingsOnly,
   getProfileSellerListingSections,
   getServiceCardHeadlinePriceLabel,
   getServiceCardProfileHeader,
   isServiceListing,
   orderIsServiceListingBooking,
-  orderIsTransportServiceBooking,
   orderUsesAppointmentServiceFlow,
 } from "./lib/listingServiceCardMeta.js";
 import {
-  formatIsoDateForBookingDisplay,
+  bookedSlotsToKeySet,
+  bookingTimeHmWithinWindow,
+  effectiveServiceSlotFromOrderLike,
   formatServiceBookingRequestLine,
-  formatTimeHmTo12HourLabel,
+  isServiceSlotElapsed,
+  normalizeBookingDateIso,
+  normalizeBookingTimeHm,
   slotOptionsForServiceListing,
   validateServiceBookingSelection,
 } from "./lib/serviceBookingSlot.js";
+import { useServiceListingBookedSlots } from "./hooks/useServiceListingBookedSlots.js";
 import {
   formatDisplayName,
   getDisplayNameFromUser,
@@ -166,6 +173,7 @@ import {
   BOOKING_STATUS_TABS,
   orderMatchesOrdersStatusTab,
   orderMatchesBookingStatusTab,
+  orderStatusEligibleForServiceBookingBulkActions,
   mergeDismissedIdsByTab,
   attentionApiSideToDismissed,
   fetchOrderAttentionFromApi,
@@ -981,13 +989,22 @@ function pickMergedOrderCommentForVariantChips(entry, ordersList) {
  */
 function buyerPendingOrderMergeKey(order) {
   const listingId = String(order?.listingId || "");
+  const ft = String(order?.fulfillmentType ?? order?.fulfillment_type ?? "").trim();
+  const sep = "\u0002";
+  if (orderIsServiceListingBooking(order)) {
+    const slot = effectiveServiceSlotFromOrderLike(order);
+    if (slot?.date && slot?.time) {
+      const fromApi = String(order?.variantSignature ?? order?.variant_signature ?? "").trim();
+      const fromComment = variantSignatureFromBuyerComment(orderBuyerCommentRaw(order));
+      const variantSig = fromApi || fromComment || "__nosig__";
+      return `${listingId}${sep}${variantSig}${sep}${ft}${sep}__slot__${sep}${slot.date}T${slot.time}`;
+    }
+  }
   const fromApi = String(order?.variantSignature ?? order?.variant_signature ?? "").trim();
   const fromComment = variantSignatureFromBuyerComment(orderBuyerCommentRaw(order));
   const canonical = fromApi || fromComment;
   const variantSig = canonical || `__order__:${String(order?.id || "").trim() || "unknown"}`;
-  const ft = String(order?.fulfillmentType ?? order?.fulfillment_type ?? "").trim();
   const note = String(orderBuyerCommentRaw(order) ?? "").trim();
-  const sep = "\u0002";
   return `${listingId}${sep}${variantSig}${sep}${ft}${sep}${note}`;
 }
 
@@ -1377,7 +1394,7 @@ function App() {
   useEffect(() => {
     ordersStatusTabRef.current = ordersStatusTab;
   }, [ordersStatusTab]);
-  /** Activity → Booking: Active / Past / Declined (maps to the same order statuses as product tabs). */
+  /** Activity → Booking: Pending / Active / Completed / Cancelled (maps order statuses like product tabs). */
   const [bookingOrdersStatusTab, setBookingOrdersStatusTab] = useState("active");
   const bookingOrdersStatusTabRef = useRef(bookingOrdersStatusTab);
   useEffect(() => {
@@ -1615,17 +1632,15 @@ function App() {
       const buyerSvc = (buyerList || []).filter((o) => orderIsServiceListingBooking(o));
       const sellerSvc = (sellerList || []).filter((o) => orderIsServiceListingBooking(o));
       if (role === "buyer") {
-        if (g === "active") {
-          dismissBuyerOrdersForTab("pending", buyerSvc);
-          dismissBuyerOrdersForTab("processing", buyerSvc);
-        } else if (g === "past") dismissBuyerOrdersForTab("completed", buyerSvc);
+        if (g === "approve") dismissBuyerOrdersForTab("pending", buyerSvc);
+        else if (g === "active") dismissBuyerOrdersForTab("processing", buyerSvc);
+        else if (g === "past") dismissBuyerOrdersForTab("completed", buyerSvc);
         else if (g === "declined") dismissBuyerOrdersForTab("cancelled", buyerSvc);
         return;
       }
-      if (g === "active") {
-        dismissSellerOrdersForTab("pending", sellerSvc);
-        dismissSellerOrdersForTab("processing", sellerSvc);
-      } else if (g === "past") dismissSellerOrdersForTab("completed", sellerSvc);
+      if (g === "approve") dismissSellerOrdersForTab("pending", sellerSvc);
+      else if (g === "active") dismissSellerOrdersForTab("processing", sellerSvc);
+      else if (g === "past") dismissSellerOrdersForTab("completed", sellerSvc);
       else if (g === "declined") dismissSellerOrdersForTab("cancelled", sellerSvc);
     },
     [dismissBuyerOrdersForTab, dismissSellerOrdersForTab],
@@ -1748,6 +1763,8 @@ function App() {
   const [listingOptionValueDraftB, setListingOptionValueDraftB] = useState("");
   const [listingSecondOptionOpen, setListingSecondOptionOpen] = useState(false);
   const [listingSaving, setListingSaving] = useState(false);
+  const [listingDeleting, setListingDeleting] = useState(false);
+  const [listingDeleteDialog, setListingDeleteDialog] = useState({ open: false, id: "", options: {} });
   const [listingEditOverlayOpen, setListingEditOverlayOpen] = useState(false);
   const listingDraftBaselineRef = useRef(null);
   /** Inline banner when publish/save listing fails (a notification is still added for the same message). */
@@ -2280,6 +2297,9 @@ function App() {
   const skipAutoCommunityBrowseRef = useRef(false);
   const [quickAddModalOpen, setQuickAddModalOpen] = useState(false);
   const [quickAddListing, setQuickAddListing] = useState(null);
+  /** Latest listing snapshot for {@link useServiceListingBookedSlots} (stable ref; avoids callback churn). */
+  const quickAddListingBookedSlotsRef = useRef(null);
+  quickAddListingBookedSlotsRef.current = quickAddListing;
   const [quickAddImagePreviewOpen, setQuickAddImagePreviewOpen] = useState(false);
   const [quickAddLightboxImageFailed, setQuickAddLightboxImageFailed] = useState(false);
   const [quickActionType, setQuickActionType] = useState("cart");
@@ -2289,6 +2309,7 @@ function App() {
   const [quickAddComment, setQuickAddComment] = useState("");
   const [quickAddServiceBookingDate, setQuickAddServiceBookingDate] = useState("");
   const [quickAddServiceBookingTime, setQuickAddServiceBookingTime] = useState("");
+  /** Bumps while quick-add targets “today” so elapsed morning slots drop without waiting for user input. */
   const [quickOrderFulfillmentType, setQuickOrderFulfillmentType] = useState("pickup");
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
   const [quickAddInlineError, setQuickAddInlineError] = useState("");
@@ -2297,6 +2318,27 @@ function App() {
   const quickAddTargetIsService = useMemo(
     () => Boolean(quickAddListing && isServiceListing(quickAddListing)),
     [quickAddListing],
+  );
+  const quickAddOccupancyEnabled = useMemo(() => {
+    if (!quickAddModalOpen || !quickAddListing?.id || !quickAddTargetIsService) return false;
+    return slotOptionsForServiceListing(quickAddListing).required;
+  }, [quickAddModalOpen, quickAddListing, quickAddTargetIsService]);
+  const {
+    bookedSlots: quickAddBookedSlots,
+    occupancyStale: quickAddBookedSlotsStale,
+    occupancyLoading: quickAddOccupancyLoading,
+    occupancyLive: quickAddOccupancyLive,
+    reload: reloadQuickAddBookedSlots,
+  } = useServiceListingBookedSlots({
+      listingRef: quickAddListingBookedSlotsRef,
+      listingId: String(quickAddListing?.id || ""),
+      token,
+      enabled: quickAddOccupancyEnabled,
+      debouncedDateIso: normalizeBookingDateIso(quickAddServiceBookingDate),
+    });
+  const quickAddBuyBlockedByOccupancy = useMemo(
+    () => quickAddOccupancyEnabled && quickAddOccupancyLoading && !quickAddOccupancyLive,
+    [quickAddOccupancyEnabled, quickAddOccupancyLoading, quickAddOccupancyLive],
   );
   const productFlowOriginRef = useRef({ listingId: "", view: VIEWS.BROWSE, shopCommunityId: null });
   const productInspectReturnRef = useRef({ view: VIEWS.BROWSE, shopCommunityId: null, scrollTop: 0, listingId: "" });
@@ -2520,7 +2562,7 @@ function App() {
   const commitBookingOrdersStatusTab = useCallback(
     (nextTab) => {
       const next = String(nextTab || "");
-      if (!["active", "past", "declined"].includes(next) || next === bookingOrdersStatusTab) return;
+      if (!["approve", "active", "past", "declined"].includes(next) || next === bookingOrdersStatusTab) return;
       const g = bookingOrdersStatusTab;
       const buyerList = buyerOrdersForBadgesRef.current ?? [];
       const sellerList = sellerOrdersForBadgesRef.current ?? [];
@@ -4962,6 +5004,64 @@ function App() {
     };
   }, [quickAddModalOpen]);
 
+  useLayoutEffect(() => {
+    if (!quickAddModalOpen || !quickAddListing) return;
+    if (!isServiceListing(quickAddListing)) return;
+    const o = slotOptionsForServiceListing(quickAddListing);
+    if (!o.required) return;
+
+    const bookedKeySet = new Set();
+    for (const b of quickAddBookedSlots) {
+      const date = normalizeBookingDateIso(b?.date);
+      const time = normalizeBookingTimeHm(b?.time);
+      if (date && time) bookedKeySet.add(`${date}\t${time}`);
+    }
+
+    const timeOk = (dateIso, timeHm) => {
+      const di = normalizeBookingDateIso(dateIso);
+      const tm = normalizeBookingTimeHm(timeHm);
+      if (!di || !tm || !o.dates.includes(di)) return false;
+      if (!bookingTimeHmWithinWindow(tm, o.windowStart, o.windowEnd)) return false;
+      if (isServiceSlotElapsed(di, tm)) return false;
+      if (bookedKeySet.has(`${di}\t${tm}`)) return false;
+      if (quickAddOccupancyLoading && !quickAddOccupancyLive) return false;
+      return true;
+    };
+
+    const firstOpenSlot = () => {
+      for (const di of o.dates) {
+        const open = o.times.filter((tm) => timeOk(di, tm));
+        if (open.length) return { date: di, time: open[0] };
+      }
+      return { date: o.dates[0] || "", time: "" };
+    };
+
+    const d = normalizeBookingDateIso(quickAddServiceBookingDate);
+    const t = normalizeBookingTimeHm(quickAddServiceBookingTime);
+    if (d && t && timeOk(d, t)) return;
+
+    const onDay = d ? o.times.filter((tm) => timeOk(d, tm)) : [];
+    if (onDay.length === 0) {
+      const pick = firstOpenSlot();
+      if (pick.date !== d || pick.time !== t) {
+        setQuickAddServiceBookingDate(pick.date);
+        setQuickAddServiceBookingTime(pick.time);
+      }
+      return;
+    }
+    if (!timeOk(d, t)) {
+      setQuickAddServiceBookingTime(onDay[0]);
+    }
+  }, [
+    quickAddModalOpen,
+    quickAddListing,
+    quickAddBookedSlots,
+    quickAddOccupancyLoading,
+    quickAddOccupancyLive,
+    quickAddServiceBookingDate,
+    quickAddServiceBookingTime,
+  ]);
+
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
     if (!listingEditOverlayOpen) return undefined;
@@ -5480,9 +5580,32 @@ function App() {
     [commerceFlowOrdersPool.length],
   );
   const ordersForStatusTabView = useMemo(() => {
-    if (!activityBooking) return ordersForStatusTab.filter((o) => !orderIsServiceListingBooking(o));
+    if (!activityBooking) return ordersForStatusTab.filter((o) => o && !orderIsServiceListingBooking(o));
     const tab = bookingOrdersStatusTab;
-    const filterSvc = (o) => orderIsServiceListingBooking(o) && orderMatchesBookingStatusTab(o.status, tab);
+    if (tab === "approve") {
+      const filterApprove = (o) =>
+        Boolean(o) && orderIsServiceListingBooking(o) && orderMatchesBookingStatusTab(o.status, "approve");
+      const outApprove = [];
+      const seenApprove = new Set();
+      for (const o of bookingHubSellerOrders) {
+        if (!filterApprove(o)) continue;
+        const id = String(o.id || "");
+        if (!id || seenApprove.has(id)) continue;
+        seenApprove.add(id);
+        outApprove.push({ ...o, __bookingRowRole: "seller" });
+      }
+      for (const o of bookingHubBuyerOrders) {
+        if (!filterApprove(o)) continue;
+        const id = String(o.id || "");
+        if (!id || seenApprove.has(id)) continue;
+        seenApprove.add(id);
+        outApprove.push({ ...o, __bookingRowRole: "buyer" });
+      }
+      outApprove.sort((a, b) => orderRowSortMs(b) - orderRowSortMs(a));
+      return outApprove.filter(Boolean);
+    }
+    const filterSvc = (o) =>
+      Boolean(o) && orderIsServiceListingBooking(o) && orderMatchesBookingStatusTab(o.status, tab);
     const out = [];
     for (const o of bookingHubBuyerOrders) {
       if (!filterSvc(o)) continue;
@@ -5494,7 +5617,7 @@ function App() {
       out.push({ ...o, __bookingRowRole: "seller" });
     }
     out.sort((a, b) => orderRowSortMs(b) - orderRowSortMs(a));
-    return out;
+    return out.filter(Boolean);
   }, [activityBooking, bookingHubBuyerOrders, bookingHubSellerOrders, bookingOrdersStatusTab, ordersForStatusTab]);
 
   const buyerUnseenIdsByTab = useMemo(() => {
@@ -5572,23 +5695,38 @@ function App() {
   }, [activityBooking, ordersTabBadgeIdsByTab, bookingBuyerUnseenIdsByTab, bookingSellerUnseenIdsByTab]);
 
   const commerceFlowOnPendingBulkTab = useMemo(() => {
-    if (activityBooking) return bookingOrdersStatusTab === "active";
+    if (activityBooking) return bookingOrdersStatusTab === "approve";
     return ordersStatusTab === "pending";
   }, [activityBooking, bookingOrdersStatusTab, ordersStatusTab]);
 
+  const orderShowsCommerceBulkCheckbox = useCallback(
+    (order) =>
+      commerceFlowOnPendingBulkTab &&
+      (!activityBooking || orderStatusEligibleForServiceBookingBulkActions(order?.status)),
+    [activityBooking, commerceFlowOnPendingBulkTab],
+  );
+
   const unseenIdsForCommerceStatusTab = useMemo(() => {
     if (activityBooking) {
+      if (bookingOrdersStatusTab === "approve") {
+        return (bookingSellerUnseenIdsByTab.pending || []).map(String);
+      }
       if (bookingOrdersStatusTab === "active") {
-        const a = ordersTabBadgeIdsByTabCommerce.pending || [];
-        const b = ordersTabBadgeIdsByTabCommerce.processing || [];
-        return [...new Set([...a, ...b].map(String))].filter(Boolean);
+        return (ordersTabBadgeIdsByTabCommerce.processing || []).map(String);
       }
       const k = bookingOrdersStatusTab === "past" ? "completed" : "cancelled";
       return (ordersTabBadgeIdsByTabCommerce[k] || []).map(String);
     }
     const tab = String(ordersStatusTab || "");
     return ((ordersTabBadgeIdsByTab || {})[tab] || []).map(String);
-  }, [activityBooking, bookingOrdersStatusTab, ordersTabBadgeIdsByTabCommerce, ordersTabBadgeIdsByTab, ordersStatusTab]);
+  }, [
+    activityBooking,
+    bookingOrdersStatusTab,
+    ordersTabBadgeIdsByTabCommerce,
+    ordersTabBadgeIdsByTab,
+    ordersStatusTab,
+    bookingSellerUnseenIdsByTab.pending,
+  ]);
 
   const commerceShowCompletedContext = useMemo(
     () => (activityBooking ? bookingOrdersStatusTab === "past" : ordersStatusTab === "completed"),
@@ -5596,18 +5734,14 @@ function App() {
   );
 
   const bookingActiveTabBadgeDisplayCount = useMemo(() => {
-    const unseenP = ordersTabBadgeIdsByTabCommerce.pending?.length || 0;
     const unseenPr = ordersTabBadgeIdsByTabCommerce.processing?.length || 0;
-    const totalP = commerceFlowOrdersPool.filter(
-      (o) => orderIsServiceListingBooking(o) && orderMatchesOrdersStatusTab(o.status, "pending"),
-    ).length;
     const totalPr = commerceFlowOrdersPool.filter(
       (o) => orderIsServiceListingBooking(o) && orderMatchesOrdersStatusTab(o.status, "processing"),
     ).length;
-    if (unseenP + unseenPr > 0) return unseenP + unseenPr;
-    if (totalP + totalPr > 0) return totalP + totalPr;
+    if (unseenPr > 0) return unseenPr;
+    if (totalPr > 0) return totalPr;
     return 0;
-  }, [commerceFlowOrdersPool, ordersTabBadgeIdsByTabCommerce.pending, ordersTabBadgeIdsByTabCommerce.processing]);
+  }, [commerceFlowOrdersPool, ordersTabBadgeIdsByTabCommerce.processing]);
 
   const bookingPastTabBadgeDisplayCount = useMemo(() => {
     const unseenLen = ordersTabBadgeIdsByTabCommerce.completed?.length || 0;
@@ -5628,6 +5762,22 @@ function App() {
     if (totalInTab > 0) return totalInTab;
     return 0;
   }, [commerceFlowOrdersPool, ordersTabBadgeIdsByTabCommerce.cancelled]);
+
+  const bookingApproveTabBadgeDisplayCount = useMemo(() => {
+    const unseenLen = (bookingSellerUnseenIdsByTab?.pending || []).length;
+    const totalInTab = commerceFlowOrdersPool.filter(
+      (o) =>
+        orderIsServiceListingBooking(o) && orderMatchesBookingStatusTab(o.status, "approve"),
+    ).length;
+    if (unseenLen > 0) return unseenLen;
+    if (totalInTab > 0) return totalInTab;
+    return 0;
+  }, [commerceFlowOrdersPool, bookingSellerUnseenIdsByTab?.pending]);
+
+  const bookingApproveTabUnseenCount = useMemo(
+    () => Math.min(99, (bookingSellerUnseenIdsByTab?.pending || []).length),
+    [bookingSellerUnseenIdsByTab?.pending],
+  );
 
   /** Buying/Selling: total unseen across Pending–Cancelled (drives Activity hub rose + inbox order slice). */
   const purchaseNavBadgeCount = useMemo(() => {
@@ -6176,7 +6326,12 @@ function App() {
     setOrderSelection((prev) => {
       const next = {};
       for (const id of valid) {
-        if (prev[id]) next[id] = true;
+        if (!prev[id]) continue;
+        if (activityBooking && bookingOrdersStatusTab === "approve") {
+          const row = ordersForStatusTabView.find((o) => String(o.id || "") === id);
+          if (row && !orderStatusEligibleForServiceBookingBulkActions(row.status)) continue;
+        }
+        next[id] = true;
       }
       if (Object.keys(prev).length === Object.keys(next).length) {
         const unchanged = Object.keys(prev).every((k) => Boolean(prev[k]) === Boolean(next[k]));
@@ -6184,7 +6339,7 @@ function App() {
       }
       return next;
     });
-  }, [ordersForStatusTabView]);
+  }, [ordersForStatusTabView, activityBooking, bookingOrdersStatusTab]);
 
   const selectedCartItems = useMemo(
     () => cartItems.filter((item) => cartItemSelection[cartLineKeyFromItem(item)]),
@@ -6371,14 +6526,14 @@ function App() {
               apiRequest("/orders?role=buyer", { token }),
               apiRequest("/orders?role=seller", { token }),
             ]);
-            const b = buyerData.orders || [];
-            const s = sellerData.orders || [];
+            const b = filterOrdersServiceBookingsOnly(buyerData.orders || []);
+            const s = filterOrdersServiceBookingsOnly(sellerData.orders || []);
             setBookingHubBuyerOrders(b);
             setBookingHubSellerOrders(s);
             setOrders(dedupeOrdersByIdPreferLeft(b, s));
           } else {
             const data = await apiRequest(`/orders?role=${ordersRoleRef.current}`, { token });
-            setOrders(data.orders || []);
+            setOrders(filterOrdersExcludeServiceBookings(data.orders || []));
           }
         } catch {
           // Keep prior rows if refresh fails; result banner still informs user.
@@ -6556,8 +6711,8 @@ function App() {
           apiRequest("/orders?role=buyer", { token }),
           apiRequest("/orders?role=seller", { token }),
         ]);
-        const b = buyerData.orders || [];
-        const s = sellerData.orders || [];
+        const b = filterOrdersServiceBookingsOnly(buyerData.orders || []);
+        const s = filterOrdersServiceBookingsOnly(sellerData.orders || []);
         setBookingHubBuyerOrders(b);
         setBookingHubSellerOrders(s);
         setOrders(dedupeOrdersByIdPreferLeft(b, s));
@@ -6574,7 +6729,7 @@ function App() {
     setOrdersLoading(true);
     try {
       const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-      setOrders(data.orders || []);
+      setOrders(filterOrdersExcludeServiceBookings(data.orders || []));
     } catch (e) {
       setOrdersFetchError(e?.message || "Could not load orders.");
       setOrders([]);
@@ -6650,7 +6805,7 @@ function App() {
       try {
         setOrdersFetchError("");
         const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-        if (!cancelled) setOrders(data.orders || []);
+        if (!cancelled) setOrders(filterOrdersExcludeServiceBookings(data.orders || []));
       } catch (e) {
         if (!cancelled) {
           setOrders([]);
@@ -6677,8 +6832,8 @@ function App() {
           apiRequest("/orders?role=seller", { token }),
         ]);
         if (cancelled) return;
-        const b = buyerData.orders || [];
-        const s = sellerData.orders || [];
+        const b = filterOrdersServiceBookingsOnly(buyerData.orders || []);
+        const s = filterOrdersServiceBookingsOnly(sellerData.orders || []);
         setBookingHubBuyerOrders(b);
         setBookingHubSellerOrders(s);
         setOrders(dedupeOrdersByIdPreferLeft(b, s));
@@ -6714,9 +6869,9 @@ function App() {
         if (cancelled) return;
         const list = data.orders || [];
         if (activeViewRef.current === VIEWS.ACTIVITY && activityTabRef.current === ACTIVITY_TABS.BOOKING) {
-          setBookingHubBuyerOrders(list);
+          setBookingHubBuyerOrders(filterOrdersServiceBookingsOnly(list));
         } else {
-          setOrders(list);
+          setOrders(filterOrdersExcludeServiceBookings(list));
         }
       } catch {
         // Keep existing rows on transient errors; initial load still clears via the main orders effect on role change.
@@ -6747,15 +6902,16 @@ function App() {
       const onBookingHub =
         activeViewRef.current === VIEWS.ACTIVITY && activityTabRef.current === ACTIVITY_TABS.BOOKING;
       if (onBookingHub) {
-        setBookingHubSellerOrders(list);
+        setBookingHubSellerOrders(filterOrdersServiceBookingsOnly(list));
         return;
       }
       const onSellerOrdersScreen =
         ordersRoleRef.current === "seller" &&
         activeViewRef.current === VIEWS.ACTIVITY &&
         activityTabRef.current === ACTIVITY_TABS.SELLING;
-      if (onSellerOrdersScreen) setOrders(list);
-      else setPolledSellerOrders(list);
+      const productOnly = filterOrdersExcludeServiceBookings(list);
+      if (onSellerOrdersScreen) setOrders(productOnly);
+      else setPolledSellerOrders(productOnly);
     } catch {
       if (cancelledFn()) return;
       const onBookingHub =
@@ -6781,11 +6937,12 @@ function App() {
       const onBookingHub =
         activeViewRef.current === VIEWS.ACTIVITY && activityTabRef.current === ACTIVITY_TABS.BOOKING;
       if (onBookingHub) {
-        setBookingHubBuyerOrders(list);
+        setBookingHubBuyerOrders(filterOrdersServiceBookingsOnly(list));
         return;
       }
-      if (ordersRoleRef.current === "buyer") setOrders(list);
-      else setPolledBuyerOrders(list);
+      const productOnly = filterOrdersExcludeServiceBookings(list);
+      if (ordersRoleRef.current === "buyer") setOrders(productOnly);
+      else setPolledBuyerOrders(productOnly);
     } catch {
       if (cancelledFn()) return;
       const onBookingHub =
@@ -6936,7 +7093,12 @@ function App() {
   }, [token, user?.id, refreshSellerOrdersSnapshot, refreshBuyerOrdersSnapshot, runNonCriticalRefresh]);
 
   useEffect(() => {
-    if (!token || activeView !== VIEWS.ACTIVITY || !(activityBuying || activitySelling || activityBooking) || !orders.length)
+    if (
+      !token ||
+      activeView !== VIEWS.ACTIVITY ||
+      !(activityBuying || activitySelling || activityBooking || activityCourier) ||
+      !orders.length
+    )
       return undefined;
     const missingIds = Array.from(
       new Set(
@@ -6968,13 +7130,13 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, activeView, activityBuying, activitySelling, orders, orderListingsById]);
+  }, [token, activeView, activityBuying, activitySelling, activityBooking, activityCourier, orders, orderListingsById]);
 
   useEffect(() => {
     if (
       !token ||
       activeView !== VIEWS.ACTIVITY ||
-      !(activityBuying || activitySelling || activityBooking) ||
+      !(activityBuying || activitySelling || activityBooking || activityCourier) ||
       usersList.length > 0
     )
       return undefined;
@@ -6990,7 +7152,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, activeView, activityBuying, activitySelling, usersList.length]);
+  }, [token, activeView, activityBuying, activitySelling, activityBooking, activityCourier, usersList.length]);
 
   useEffect(() => {
     if (!token || !isBrowseLikeView || usersList.length > 0) return undefined;
@@ -7135,7 +7297,7 @@ function App() {
             apiRequest(`/delivery/open`, { token }).catch(() => ({ orders: [] })),
             apiRequest(`/delivery/invitations`, { token }).catch(() => ({ invitations: [] })),
           ]);
-          setOrders(ordersData.orders || []);
+          setOrders(filterOrdersExcludeServiceBookings(ordersData.orders || []));
           const open = Array.isArray(openData?.orders) ? openData.orders : [];
           const inv = Array.isArray(invData?.invitations) ? invData.invitations : [];
           const seen = new Set();
@@ -7162,7 +7324,7 @@ function App() {
               apiRequest(`/delivery/open`, { token }).catch(() => ({ orders: [] })),
               apiRequest(`/delivery/invitations`, { token }).catch(() => ({ invitations: [] })),
             ]);
-            setOrders(ordersData.orders || []);
+            setOrders(filterOrdersExcludeServiceBookings(ordersData.orders || []));
             const open = Array.isArray(openData?.orders) ? openData.orders : [];
             const inv = Array.isArray(invData?.invitations) ? invData.invitations : [];
             const seen = new Set();
@@ -7179,7 +7341,7 @@ function App() {
         } else {
           viewRefresh = async () => {
             const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-            setOrders(data.orders || []);
+            setOrders(filterOrdersExcludeServiceBookings(data.orders || []));
           };
         }
         break;
@@ -7561,14 +7723,14 @@ function App() {
           apiRequest("/orders?role=buyer", { token }),
           apiRequest("/orders?role=seller", { token }),
         ]);
-        const b = buyerData.orders || [];
-        const s = sellerData.orders || [];
+        const b = filterOrdersServiceBookingsOnly(buyerData.orders || []);
+        const s = filterOrdersServiceBookingsOnly(sellerData.orders || []);
         setBookingHubBuyerOrders(b);
         setBookingHubSellerOrders(s);
         setOrders(dedupeOrdersByIdPreferLeft(b, s));
       } else {
         const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-        setOrders(data.orders || []);
+        setOrders(filterOrdersExcludeServiceBookings(data.orders || []));
       }
     } catch {
       /* ignore */
@@ -7683,7 +7845,13 @@ function App() {
     const { orderIds, successMessage } = options;
     const transitionNorm = String(transition ?? "").trim();
     try {
-      const batchTransitions = new Set(["buyer_ack_receipt", "mark_ready_for_pickup"]);
+      /** Batched PATCH loops — keep merged Activity rows (same mergeKey) in sync for booking milestones. */
+      const batchTransitions = new Set([
+        "buyer_ack_receipt",
+        "mark_ready_for_pickup",
+        "provider_mark_on_the_way",
+        "mark_pickup_done",
+      ]);
       const ids =
         batchTransitions.has(transitionNorm) && Array.isArray(orderIds) && orderIds.length > 0
           ? [...new Set(orderIds.map((x) => String(x || "")).filter(Boolean))]
@@ -7697,14 +7865,14 @@ function App() {
           apiRequest("/orders?role=buyer", { token }),
           apiRequest("/orders?role=seller", { token }),
         ]);
-        const b = buyerData.orders || [];
-        const s = sellerData.orders || [];
+        const b = filterOrdersServiceBookingsOnly(buyerData.orders || []);
+        const s = filterOrdersServiceBookingsOnly(sellerData.orders || []);
         setBookingHubBuyerOrders(b);
         setBookingHubSellerOrders(s);
         setOrders(dedupeOrdersByIdPreferLeft(b, s));
       } else {
         const data = await apiRequest(`/orders?role=${ordersRole}`, { token });
-        setOrders(data.orders || []);
+        setOrders(filterOrdersExcludeServiceBookings(data.orders || []));
       }
       void refreshCourierHub();
       pushMarketplaceToast(successMessage || "Order updated.");
@@ -7869,12 +8037,23 @@ function App() {
     }
   };
 
-  const deleteSellerListingById = async (id, options = {}) => {
+  const deleteSellerListingById = (id, options = {}) => {
+    if (!token || !id || listingDeleting) return;
+    setListingDeleteDialog({ open: true, id: String(id), options });
+  };
+
+  const closeListingDeleteDialog = useCallback(() => {
+    if (listingDeleting) return;
+    setListingDeleteDialog({ open: false, id: "", options: {} });
+  }, [listingDeleting]);
+
+  const confirmDeleteSellerListing = async () => {
+    const id = String(listingDeleteDialog.id || "");
+    const options = listingDeleteDialog.options || {};
     const exitLikeCancel = Boolean(options.exitLikeCancel);
     const wasOverlay = Boolean(options.wasOverlay);
     if (!token || !id) return;
-    const ok = typeof window === "undefined" ? true : window.confirm("Delete this listing?");
-    if (!ok) return;
+    setListingDeleting(true);
     try {
       await apiRequest(`/me/listings/${id}`, { method: "DELETE", token });
       const refreshed = await apiRequest("/me/listings", { token });
@@ -7918,6 +8097,9 @@ function App() {
       pushMarketplaceToast("Listing deleted.");
     } catch (e) {
       pushMarketplaceToast(e.message || "Could not delete listing.");
+    } finally {
+      setListingDeleting(false);
+      setListingDeleteDialog({ open: false, id: "", options: {} });
     }
   };
 
@@ -8509,7 +8691,7 @@ function App() {
               ? orderStatusToTabId(order.status)
               : "pending";
         setActiveView(VIEWS.ACTIVITY);
-        const serviceOrder = order && orderIsServiceListingBooking(order);
+        const serviceOrder = order && orderIsServiceListingBooking(order, orderListingsById);
         setActivityTab(
           serviceOrder ? ACTIVITY_TABS.BOOKING : role === "seller" ? ACTIVITY_TABS.SELLING : ACTIVITY_TABS.BUYING,
         );
@@ -8561,6 +8743,7 @@ function App() {
       openChatThread,
       openProductInspect,
       orders,
+      orderListingsById,
       user?.id,
       chatThreads,
       navigate,
@@ -8616,10 +8799,17 @@ function App() {
       return;
     }
     if (quickSvc) {
+      const slotOptsCheck = slotOptionsForServiceListing(quickAddListing);
+      if (slotOptsCheck.required && quickAddOccupancyLoading && !quickAddOccupancyLive) {
+        showQuickAddError("Loading taken slots. Please wait a moment.");
+        return;
+      }
+      const bookedKeys = bookedSlotsToKeySet(quickAddBookedSlots);
       const slotErr = validateServiceBookingSelection(
         quickAddListing,
         quickAddServiceBookingDate,
         quickAddServiceBookingTime,
+        slotOptsCheck.required && quickAddOccupancyLive ? { bookedSlotKeys: bookedKeys } : undefined,
       );
       if (slotErr) {
         showQuickAddError(slotErr);
@@ -8711,7 +8901,17 @@ function App() {
           });
           markBuyerOrderAsUnseenInTab("pending", created?.order?.id);
         } catch (e) {
-          showQuickAddError(e.message || (quickSvc ? "Could not submit booking." : "Could not place order."));
+          const errMsg = e.message || (quickSvc ? "Could not submit booking." : "Could not place order.");
+          if (
+            quickSvc &&
+            quickAddListing?.id &&
+            /already booked|no longer available/i.test(String(errMsg))
+          ) {
+            setQuickAddInlineError("");
+            await reloadQuickAddBookedSlots();
+            return;
+          }
+          showQuickAddError(errMsg);
           return;
         }
         setQuickAddModalOpen(false);
@@ -9076,6 +9276,12 @@ function App() {
     if (!isServiceUpload && !listingForm.pickup && !listingForm.delivery) {
       nextErrors.fulfillment = "Turn on Pick-up and/or COD Delivery so buyers know how to receive the item.";
     }
+    if (isServiceUpload && !listingForm.pickup && !listingForm.delivery) {
+      nextErrors.fulfillment =
+        isTransportServiceListing
+          ? "Choose at least one of Door-to-door or Meet-up point."
+          : "Choose at least one of Home Service or Walk-in Service.";
+    }
     if (isServiceUpload) {
       if (!String(listingForm.serviceCategoryId || "").trim()) {
         nextErrors.serviceCategoryId = "Pick a service category to continue.";
@@ -9133,16 +9339,21 @@ function App() {
     const transportServiceListing =
       isServiceUpload && String(listingForm.serviceCategoryId || "") === "transport_services";
     const modes = [];
-    if (!isServiceUpload && listingForm.pickup) modes.push("pickup");
-    if (!isServiceUpload && listingForm.delivery) modes.push("delivery");
-    if (isServiceUpload) {
-      if (transportServiceListing) modes.push("delivery");
-      else modes.push("pickup");
+    if (!isServiceUpload) {
+      if (listingForm.pickup) modes.push("pickup");
+      if (listingForm.delivery) modes.push("delivery");
+    } else {
+      if (listingForm.pickup) modes.push("pickup");
+      if (listingForm.delivery) modes.push("delivery");
     }
     if (modes.length === 0) {
       setListingFieldErrors((prev) => ({
         ...prev,
-        fulfillment: "Turn on Pick-up and/or COD Delivery so buyers know how to receive the item.",
+        fulfillment: isServiceUpload
+          ? String(listingForm.serviceCategoryId || "") === "transport_services"
+            ? "Choose at least one of Door-to-door or Meet-up point."
+            : "Choose at least one of Home Service or Walk-in Service."
+          : "Turn on Pick-up and/or COD Delivery so buyers know how to receive the item.",
       }));
       return;
     }
@@ -14201,6 +14412,93 @@ function App() {
                   </>
                 )}
               </div>
+              {isServiceUpload && serviceCategorySelected ? (
+                <div
+                  id="listing-section-service-fulfillment"
+                  className="md:col-span-2 border-t border-neutral-200/65 py-5 dark:border-slate-700 md:py-4"
+                >
+                  <p className="label-base">Fulfillment *</p>
+                  <p className="mt-1 text-xs text-neutral-500 dark:text-slate-400">
+                    {String(listingForm.serviceCategoryId || "") === "transport_services"
+                      ? "Tell buyers if you pick them up door-to-door, at a meet-up point, or both."
+                      : "Choose where clients can receive the service (at their place, at yours, or both)."}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    {String(listingForm.serviceCategoryId || "") === "transport_services" ? (
+                      <>
+                        <button
+                          type="button"
+                          aria-pressed={listingForm.delivery}
+                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
+                            listingForm.delivery
+                              ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                              : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
+                          }`}
+                          onClick={() => {
+                            setListingForm((p) => ({ ...p, delivery: !p.delivery }));
+                            if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
+                          }}
+                        >
+                          Door-to-door
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={listingForm.pickup}
+                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
+                            listingForm.pickup
+                              ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                              : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
+                          }`}
+                          onClick={() => {
+                            setListingForm((p) => ({ ...p, pickup: !p.pickup }));
+                            if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
+                          }}
+                        >
+                          Meet-up point
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          aria-pressed={listingForm.delivery}
+                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
+                            listingForm.delivery
+                              ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                              : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
+                          }`}
+                          onClick={() => {
+                            setListingForm((p) => ({ ...p, delivery: !p.delivery }));
+                            if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
+                          }}
+                        >
+                          Home Service
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={listingForm.pickup}
+                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
+                            listingForm.pickup
+                              ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                              : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
+                          }`}
+                          onClick={() => {
+                            setListingForm((p) => ({ ...p, pickup: !p.pickup }));
+                            if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
+                          }}
+                        >
+                          Walk-in Service
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {listingFieldErrors.fulfillment ? (
+                    <p className="field-error-text mt-2" role="alert">
+                      {listingFieldErrors.fulfillment}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {!isServiceUpload ? (
                 <div className="md:col-span-2">
                   <ListingCategoryPicker
@@ -15157,10 +15455,10 @@ function App() {
                     <button
                       type="button"
                       className="btn-danger min-h-[44px] flex-1 md:min-h-0 md:flex-initial md:min-w-[7rem]"
-                      disabled={listingSaving}
+                    disabled={listingSaving || listingDeleting}
                       aria-label="Delete this listing"
                       onClick={() => {
-                        if (!editingListingId || listingSaving) return;
+                        if (!editingListingId || listingSaving || listingDeleting) return;
                         void deleteSellerListingById(editingListingId, {
                           exitLikeCancel: true,
                           wasOverlay: listingEditOverlayOpen,
@@ -15664,6 +15962,8 @@ function App() {
                     bookingOrdersStatusTab={bookingOrdersStatusTab}
                     commitBookingOrdersStatusTab={commitBookingOrdersStatusTab}
                     bookingActiveTabBadgeDisplayCount={bookingActiveTabBadgeDisplayCount}
+                    bookingApproveTabBadgeDisplayCount={bookingApproveTabBadgeDisplayCount}
+                    bookingApproveTabUnseenCount={bookingApproveTabUnseenCount}
                     bookingPastTabBadgeDisplayCount={bookingPastTabBadgeDisplayCount}
                     bookingDeclinedTabBadgeDisplayCount={bookingDeclinedTabBadgeDisplayCount}
                   />
@@ -15742,6 +16042,8 @@ function App() {
                 bookingOrdersStatusTab={bookingOrdersStatusTab}
                 commitBookingOrdersStatusTab={commitBookingOrdersStatusTab}
                 bookingActiveTabBadgeDisplayCount={bookingActiveTabBadgeDisplayCount}
+                bookingApproveTabBadgeDisplayCount={bookingApproveTabBadgeDisplayCount}
+                bookingApproveTabUnseenCount={bookingApproveTabUnseenCount}
                 bookingPastTabBadgeDisplayCount={bookingPastTabBadgeDisplayCount}
                 bookingDeclinedTabBadgeDisplayCount={bookingDeclinedTabBadgeDisplayCount}
               />
@@ -15764,7 +16066,7 @@ function App() {
                   className={`flex max-w-full flex-col gap-2 max-md:pt-2 md:max-w-none md:gap-3 md:pb-0 md:pt-3 ${
                     commerceFlowOnPendingBulkTab && selectedOrders.length > 0
                       ? "max-md:pb-[max(11.5rem,calc(11.5rem+env(safe-area-inset-bottom,0px)))]"
-                      : "max-md:pb-14"
+                      : "max-md:pb-[max(5.5rem,calc(3.25rem+var(--activity-primary-footer,4.75rem)+env(safe-area-inset-bottom,0px)))]"
                   }`}
                 >
                   {commerceOrdersInitialLoading ? (
@@ -15893,7 +16195,7 @@ function App() {
                 }
                 description={
                   activityBooking
-                    ? "Pick Active, Past, or Declined above, or check Buying / Selling for product orders. Only service listings appear here."
+                    ? "Pick Pending, Active, Completed, or Cancelled above, or check Buying / Selling for product orders. Only service listings appear here."
                     : activityBuying
                       ? "Pick another status tab above - your orders move as sellers accept and you complete pickup or delivery."
                       : "Pick another tab - new orders start in Pending, then move when you accept or complete them."
@@ -15935,7 +16237,7 @@ function App() {
             {!ordersFetchError && ordersForStatusTabView.length > 0 ? (
               <div className="space-y-3">
                 {Object.entries(
-                  ordersForStatusTabView.reduce((acc, order) => {
+                  ordersForStatusTabView.filter(Boolean).reduce((acc, order) => {
                     const groupKey = activityBooking
                       ? `${order.__bookingRowRole === "seller" ? "h" : "b"}:${
                           order.__bookingRowRole === "seller"
@@ -15950,6 +16252,7 @@ function App() {
                     return acc;
                   }, {}),
                 ).map(([groupKeyFull, groupedOrders]) => {
+                  if (!Array.isArray(groupedOrders) || groupedOrders.length === 0) return null;
                   const rowCommerceRole = activityBooking
                     ? String(groupedOrders[0]?.__bookingRowRole || "") === "seller"
                       ? "seller"
@@ -16012,10 +16315,17 @@ function App() {
                         : groupPartyId && groupPartyId !== "unknown"
                           ? `${partyRoleLabel} ${groupPartyId.slice(0, 8)}`
                           : `Unknown ${partyRoleLabel.toLowerCase()}`;
+                  /** Bookings hub lists buyer- and seller-role rows; same @username can appear twice (their service vs yours). */
+                  const bookingGroupHeadingLabel =
+                    activityBooking && rowCommerceRole === "buyer"
+                      ? `${sellerLabel} · You booked`
+                      : activityBooking && rowCommerceRole === "seller"
+                        ? `${sellerLabel} · Booked your service`
+                        : sellerLabel;
                   const shouldMergeBuyerRows =
                     rowCommerceRole === "buyer" &&
                     (activityBooking
-                      ? bookingOrdersStatusTab === "active"
+                      ? bookingOrdersStatusTab === "active" || bookingOrdersStatusTab === "approve"
                       : !["completed", "cancelled"].includes(String(ordersStatusTab || "")));
                   const mergedSellerOrders =
                     shouldMergeBuyerRows
@@ -16120,23 +16430,25 @@ function App() {
                             ),
                           };
                         });
-                  const sellerOrderIds = mergedSellerOrders.flatMap((entry) => entry.orderIds).filter(Boolean);
-                  const sellerSelectedCount = sellerOrderIds.filter((id) => orderSelection[id]).length;
-                  const sellerAllSelected = sellerOrderIds.length > 0 && sellerSelectedCount === sellerOrderIds.length;
+                  const selectableOrdersInGroup = orderedSellerOrders.filter((ord) => orderShowsCommerceBulkCheckbox(ord));
+                  const sellerBulkSelectableIds = selectableOrdersInGroup.map((x) => String(x.id || "")).filter(Boolean);
+                  const sellerSelectedCount = sellerBulkSelectableIds.filter((id) => orderSelection[id]).length;
+                  const sellerAllSelected =
+                    sellerBulkSelectableIds.length > 0 && sellerSelectedCount === sellerBulkSelectableIds.length;
                   const sellerSomeSelected = sellerSelectedCount > 0 && !sellerAllSelected;
                   return (
                     <div key={groupKeyFull} className="flex flex-col gap-3">
                       <div className="flex min-w-0 items-center gap-2.5">
-                        {commerceFlowOnPendingBulkTab ? (
+                        {commerceFlowOnPendingBulkTab && sellerBulkSelectableIds.length > 0 ? (
                           <CartSellerSelectAllCheckbox
                             allChecked={sellerAllSelected}
                             someSelected={sellerSomeSelected}
-                            onChange={() => toggleOrderSellerSelectAll(orderedSellerOrders)}
-                            ariaLabel={`Select all orders for ${sellerLabel}`}
+                            onChange={() => toggleOrderSellerSelectAll(selectableOrdersInGroup)}
+                            ariaLabel={`Select all orders for ${bookingGroupHeadingLabel}`}
                           />
                         ) : null}
                         <p className="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-wide text-neutral-700 md:text-sm dark:text-slate-200">
-                          {sellerLabel}
+                          {bookingGroupHeadingLabel}
                         </p>
                       </div>
                       <div
@@ -16165,21 +16477,48 @@ function App() {
                             optionValuesB: cardListing.optionValuesB,
                           });
                           const orderId = String(o.id || "");
+                          const entrySelectableOrderIds = activityBooking
+                            ? entry.orderIds.filter((id) => {
+                                const ord = commerceFlowOrdersPool.find((x) => String(x.id) === String(id));
+                                return ord && orderStatusEligibleForServiceBookingBulkActions(ord.status);
+                              })
+                            : entry.orderIds.filter(Boolean);
+                          const entryShowsCommerceBulkCheckbox =
+                            commerceFlowOnPendingBulkTab && entrySelectableOrderIds.length > 0;
                           const pickupBuyerAckOrderIds = entry.orderIds.filter((id) => {
-                            const ord = commerceFlowOrdersPool.find((x) => String(x.id) === id);
+                            const ord = commerceFlowOrdersPool.find((x) => String(x.id) === String(id));
                             return (
                               ord &&
                               String(ord.status || "") === "ready_for_pickup" &&
                               !ord.buyerReceiptAcknowledgedAt &&
-                              (ord.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(ord))
+                              (ord.fulfillmentType === "pickup" ||
+                                orderIsServiceListingBooking(ord, orderListingsById))
                             );
                           });
                           const sellerReadyPickupOrderIds = entry.orderIds.filter((id) => {
-                            const ord = commerceFlowOrdersPool.find((x) => String(x.id) === id);
+                            const ord = commerceFlowOrdersPool.find((x) => String(x.id) === String(id));
                             return (
                               ord &&
                               String(ord.status || "") === "seller_accepted" &&
-                              (ord.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(ord))
+                              (ord.fulfillmentType === "pickup" ||
+                                orderIsServiceListingBooking(ord, orderListingsById))
+                            );
+                          });
+                          /** Merged rows: every folded order id in this state must receive the same PATCH (see `patchOrderTransition` batch set). */
+                          const sellerProviderOnTheWayOrderIds = entry.orderIds.filter((id) => {
+                            const ord = commerceFlowOrdersPool.find((x) => String(x.id) === String(id));
+                            return (
+                              ord &&
+                              String(ord.status || "") === "provider_on_the_way" &&
+                              orderIsServiceListingBooking(ord, orderListingsById)
+                            );
+                          });
+                          const sellerMarkCompletedOrderIds = entry.orderIds.filter((id) => {
+                            const ord = commerceFlowOrdersPool.find((x) => String(x.id) === String(id));
+                            return (
+                              ord &&
+                              String(ord.status || "") === "ready_for_pickup" &&
+                              orderIsServiceListingBooking(ord, orderListingsById)
                             );
                           });
                           const fulfillmentBanner = orderFulfillmentBannerText(o, rowCommerceRole);
@@ -16190,7 +16529,9 @@ function App() {
                           };
                           const shouldHighlightRecent =
                             unseenIdsForCommerceStatusTab.length > 0 && entry.orderIds.some(orderIdNeedsAttention);
-                          const rowAllSelected = entry.orderIds.length > 0 && entry.orderIds.every((id) => Boolean(orderSelection[id]));
+                          const rowAllSelected =
+                            entrySelectableOrderIds.length > 0 &&
+                            entrySelectableOrderIds.every((id) => Boolean(orderSelection[id]));
                           const orderGoodsCents = Math.max(0, Number(entry.mergedGoodsCents ?? o.codGoodsCents) || 0);
                           const orderDeliveryFeeCents = Math.max(0, Number(entry.mergedDeliveryCents ?? o.codDeliveryCents) || 0);
                           const orderCodLineTotalCents = orderGoodsCents + orderDeliveryFeeCents;
@@ -16207,7 +16548,8 @@ function App() {
                               Boolean(o.buyerReview?.sellerRating)) ||
                             (rowCommerceRole === "buyer" &&
                               String(o.status || "") === "ready_for_pickup" &&
-                              (o.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(o))) ||
+                              (o.fulfillmentType === "pickup" ||
+                                orderIsServiceListingBooking(o, orderListingsById))) ||
                             (rowCommerceRole === "seller" && String(o.status || "") === "ready_for_pickup") ||
                             (rowCommerceRole === "seller" && isDeliverySellerPreparing(o)) ||
                             (rowCommerceRole === "buyer" && isDeliverySellerPreparing(o)) ||
@@ -16215,10 +16557,14 @@ function App() {
                             (rowCommerceRole === "buyer" && isDeliveryCourierAssigned(o)) ||
                             (rowCommerceRole === "seller" &&
                               String(o.status || "") === "seller_accepted" &&
-                              (o.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(o))) ||
+                              (o.fulfillmentType === "pickup" ||
+                                orderIsServiceListingBooking(o, orderListingsById))) ||
                             (rowCommerceRole === "buyer" &&
                               String(o.status || "") === "seller_accepted" &&
-                              (o.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(o))) ||
+                              (o.fulfillmentType === "pickup" ||
+                                orderIsServiceListingBooking(o, orderListingsById))) ||
+                            (orderIsServiceListingBooking(o, orderListingsById) &&
+                              String(o.status || "") === "provider_on_the_way") ||
                             isDeliveryInTransit(o);
                           const orderListingForProductOpen =
                             orderListingsById[String(o.listingId)] ||
@@ -16263,7 +16609,7 @@ function App() {
                                 : {}),
                               ...(token &&
                               o.fulfillmentType === "delivery" &&
-                              (!orderIsServiceListingBooking(o) || orderIsTransportServiceBooking(o))
+                              !orderIsServiceListingBooking(o)
                                 ? {
                                     orderCourierPoolToken: token,
                                     onOrderCourierPoolUpdated: async () => {
@@ -16274,8 +16620,8 @@ function App() {
                                             apiRequest("/orders?role=buyer", { token }),
                                             apiRequest("/orders?role=seller", { token }),
                                           ]);
-                                          const b = buyerData.orders || [];
-                                          const s = sellerData.orders || [];
+                                          const b = filterOrdersServiceBookingsOnly(buyerData.orders || []);
+                                          const s = filterOrdersServiceBookingsOnly(sellerData.orders || []);
                                           setBookingHubBuyerOrders(b);
                                           setBookingHubSellerOrders(s);
                                           setOrders(dedupeOrdersByIdPreferLeft(b, s));
@@ -16286,7 +16632,7 @@ function App() {
                                             null;
                                         } else {
                                           const data = await apiRequest(`/orders?role=${rowCommerceRole}`, { token });
-                                          const nextOrders = data.orders || [];
+                                          const nextOrders = filterOrdersExcludeServiceBookings(data.orders || []);
                                           setOrders(nextOrders);
                                           const oid = String(o.id || "").trim();
                                           refreshed = nextOrders.find((x) => String(x.id || "") === oid);
@@ -16342,7 +16688,7 @@ function App() {
                               >
                                 <p className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1 text-pretty">
                                   <span className="font-medium text-neutral-700 dark:text-slate-300">
-                                    Quantity
+                                    {orderIsServiceListingBooking(o) ? "Sessions" : "Quantity"}
                                     <span className="text-neutral-500 dark:text-slate-500">:</span>
                                   </span>
                                   <span className="min-w-0 font-semibold tabular-nums text-neutral-800 dark:text-slate-200">
@@ -16351,12 +16697,14 @@ function App() {
                                 </p>
                                 <p className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1 text-pretty">
                                   <span className="font-medium text-neutral-700 dark:text-slate-300">
-                                    Fulfillment
+                                    {orderIsServiceListingBooking(o) ? "How it runs" : "Fulfillment"}
                                     <span className="text-neutral-500 dark:text-slate-500">:</span>
                                   </span>
                                   <span className="min-w-0 font-semibold text-neutral-800 dark:text-slate-200">
                                     {orderUsesAppointmentServiceFlow(o)
-                                      ? "Appointment (COD)"
+                                      ? o.fulfillmentType === "delivery"
+                                        ? "Meet-up / visit (COD)"
+                                        : "Meet-up / pickup (COD)"
                                       : o.fulfillmentType === "delivery"
                                         ? "Delivery"
                                         : "Pickup"}
@@ -16367,7 +16715,7 @@ function App() {
                                     orderMatchesOrdersStatusTab(o.status, "processing")
                                   : ordersStatusTab === "processing") &&
                                 o.fulfillmentType === "delivery" &&
-                                (!orderIsServiceListingBooking(o) || orderIsTransportServiceBooking(o)) ? (
+                                !orderIsServiceListingBooking(o) ? (
                                   <div className="flex flex-wrap gap-x-2 gap-y-1 border-t border-neutral-200/70 pt-1 dark:border-slate-600/60">
                                     <span
                                       className="inline-flex max-w-full items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-emerald-900 ring-1 ring-inset ring-emerald-200/90 dark:bg-emerald-950/45 dark:text-emerald-100 dark:ring-emerald-800/45"
@@ -16395,7 +16743,7 @@ function App() {
                                 ) : (
                                   <p className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1 text-pretty">
                                     <span className="font-medium text-neutral-700 dark:text-slate-300">
-                                      Total
+                                      {orderIsServiceListingBooking(o) ? "Service total (COD)" : "Total"}
                                       <span className="text-neutral-500 dark:text-slate-500">:</span>
                                     </span>
                                     <span className="min-w-0 tabular-nums font-semibold text-neutral-800 dark:text-slate-200">
@@ -16410,7 +16758,11 @@ function App() {
                                 ) ? (
                                   <p className="line-clamp-2 text-pretty">
                                     <span className="font-medium text-neutral-700 dark:text-slate-300">
-                                      {orderCommentRow.label === "Comment" ? "Buyer comment" : orderCommentRow.label}
+                                      {orderCommentRow.label === "Comment"
+                                        ? orderIsServiceListingBooking(o)
+                                          ? "Notes"
+                                          : "Buyer comment"
+                                        : orderCommentRow.label}
                                     </span>
                                     : {orderCommentRow.text}
                                   </p>
@@ -16419,9 +16771,8 @@ function App() {
                             </div>
                           );
                           /** List: checkbox column beside card. Grid (all viewports): checkbox over image — matches cart grid. */
-                          const showOrderCheckboxBesideCard = commerceFlowOnPendingBulkTab && cfList;
-                          const orderSelectCheckbox =
-                            commerceFlowOnPendingBulkTab ? (
+                          const showOrderCheckboxBesideCard = entryShowsCommerceBulkCheckbox && cfList;
+                          const orderSelectCheckbox = entryShowsCommerceBulkCheckbox ? (
                               <input
                                 type="checkbox"
                                 className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
@@ -16431,7 +16782,7 @@ function App() {
                                   const nextChecked = !rowAllSelected;
                                   setOrderSelection((prev) => {
                                     const next = { ...prev };
-                                    for (const id of entry.orderIds) {
+                                    for (const id of entrySelectableOrderIds) {
                                       if (!id) continue;
                                       if (nextChecked) next[id] = true;
                                       else delete next[id];
@@ -16483,7 +16834,7 @@ function App() {
                                   onClick={openOrderProductInspect}
                                 >
                                   <div className="relative w-full shrink-0">
-                                    {commerceFlowOnPendingBulkTab ? (
+                                    {entryShowsCommerceBulkCheckbox ? (
                                       <label
                                         className="pointer-events-auto absolute left-2 top-2 z-20 inline-flex cursor-pointer items-center justify-center"
                                         onPointerDown={(e) => e.stopPropagation()}
@@ -16681,21 +17032,62 @@ function App() {
                                   >
                                   {rowCommerceRole === "seller" &&
                                   String(o.status || "") === "seller_accepted" &&
-                                  (o.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(o)) &&
+                                  (o.fulfillmentType === "pickup" ||
+                                    orderIsServiceListingBooking(o, orderListingsById)) &&
                                   sellerReadyPickupOrderIds.length > 0 ? (
                                     <button
                                       type="button"
                                       className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
                                       onClick={() =>
-                                        patchOrderTransition(sellerReadyPickupOrderIds[0], "mark_ready_for_pickup", {
-                                          orderIds: sellerReadyPickupOrderIds,
-                                          successMessage: orderUsesAppointmentServiceFlow(o)
-                                            ? "Marked ready for appointment."
-                                            : "Marked ready for pickup.",
+                                        patchOrderTransition(
+                                          sellerReadyPickupOrderIds[0],
+                                          /** Service bookings now move `seller_accepted → provider_on_the_way` via the new transition;
+                                           *  product pickup keeps the original one-step jump to `ready_for_pickup`. */
+                                          orderIsServiceListingBooking(o, orderListingsById)
+                                            ? "provider_mark_on_the_way"
+                                            : "mark_ready_for_pickup",
+                                          {
+                                            orderIds: sellerReadyPickupOrderIds,
+                                            successMessage: orderIsServiceListingBooking(o, orderListingsById)
+                                              ? "Marked on the way."
+                                              : "Marked ready for pickup.",
+                                          },
+                                        )
+                                      }
+                                    >
+                                      {orderIsServiceListingBooking(o, orderListingsById)
+                                        ? "Mark On The Way"
+                                        : "Ready for Pickup"}
+                                    </button>
+                                  ) : null}
+                                  {rowCommerceRole === "seller" && sellerProviderOnTheWayOrderIds.length > 0 ? (
+                                    <button
+                                      type="button"
+                                      className="btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0"
+                                      onClick={() =>
+                                        patchOrderTransition(sellerProviderOnTheWayOrderIds[0], "mark_ready_for_pickup", {
+                                          orderIds: sellerProviderOnTheWayOrderIds,
+                                          successMessage: "Marked as arrived.",
                                         })
                                       }
                                     >
-                                      {orderUsesAppointmentServiceFlow(o) ? "Ready for appointment" : "Ready for Pickup"}
+                                      Arrived
+                                    </button>
+                                  ) : null}
+                                  {rowCommerceRole === "seller" && sellerMarkCompletedOrderIds.length > 0 ? (
+                                    <button
+                                      type="button"
+                                      className={`btn-secondary min-h-11 w-full touch-manipulation text-xs md:w-auto md:min-h-0 ${
+                                        multicolOrderCard ? "min-h-9 px-2.5 py-1.5 text-[11px]" : ""
+                                      }`}
+                                      onClick={() =>
+                                        patchOrderTransition(sellerMarkCompletedOrderIds[0], "mark_pickup_done", {
+                                          orderIds: sellerMarkCompletedOrderIds,
+                                          successMessage: "Booking marked complete.",
+                                        })
+                                      }
+                                    >
+                                      Mark Completed
                                     </button>
                                   ) : null}
                                   {rowCommerceRole === "seller" && String(o.status || "") === "ready_for_pickup" ? (
@@ -16714,7 +17106,9 @@ function App() {
                                   ) : null}
                                   {rowCommerceRole === "buyer" &&
                                   String(o.status || "") === "ready_for_pickup" &&
-                                  (o.fulfillmentType === "pickup" || orderUsesAppointmentServiceFlow(o)) &&
+                                  o.fulfillmentType === "pickup" &&
+                                  /** Service bookings: provider is the one who taps "Mark Completed" — buyer just sees "Ongoing". */
+                                  !orderIsServiceListingBooking(o) &&
                                   pickupBuyerAckOrderIds.length > 0 ? (
                                     <button
                                       type="button"
@@ -16726,15 +17120,11 @@ function App() {
                                       onClick={() =>
                                         patchOrderTransition(pickupBuyerAckOrderIds[0], "buyer_ack_receipt", {
                                           orderIds: pickupBuyerAckOrderIds,
-                                          successMessage: orderUsesAppointmentServiceFlow(o)
-                                            ? "Service marked complete. Thank you."
-                                            : "Marked as picked up. Order completed.",
+                                          successMessage: "Marked as picked up. Order completed.",
                                         })
                                       }
                                     >
-                                      {orderUsesAppointmentServiceFlow(o)
-                                        ? "Confirm service completed"
-                                        : "Mark as Picked Up"}
+                                      Mark as Picked Up
                                     </button>
                                   ) : null}
                                   {rowCommerceRole === "seller" && isDeliverySellerPreparing(o) ? (
@@ -16793,7 +17183,7 @@ function App() {
                                       orderMatchesOrdersStatusTab(o.status, "processing")
                                     : ordersStatusTab === "processing") &&
                                   o.fulfillmentType === "delivery" &&
-                                  (!orderIsServiceListingBooking(o) || orderIsTransportServiceBooking(o)) &&
+                                  !orderIsServiceListingBooking(o) &&
                                   isDeliverySellerPreparing(o) ? (
                                     <div
                                       className={`mt-2 border-t border-neutral-200/70 pt-3 dark:border-slate-600/50 ${
@@ -16823,14 +17213,14 @@ function App() {
                                                 apiRequest("/orders?role=buyer", { token }),
                                                 apiRequest("/orders?role=seller", { token }),
                                               ]);
-                                              const b = buyerData.orders || [];
-                                              const s = sellerData.orders || [];
+                                              const b = filterOrdersServiceBookingsOnly(buyerData.orders || []);
+                                              const s = filterOrdersServiceBookingsOnly(sellerData.orders || []);
                                               setBookingHubBuyerOrders(b);
                                               setBookingHubSellerOrders(s);
                                               setOrders(dedupeOrdersByIdPreferLeft(b, s));
                                             } else {
                                               const data = await apiRequest(`/orders?role=${rowCommerceRole}`, { token });
-                                              setOrders(data.orders || []);
+                                              setOrders(filterOrdersExcludeServiceBookings(data.orders || []));
                                             }
                                             void refreshCourierHub();
                                           } catch {
@@ -19047,6 +19437,17 @@ function App() {
         onConfirm={confirmDiscardListingChangesModal}
       />
 
+      <DiscardUnsavedChangesModal
+        open={listingDeleteDialog.open}
+        title="Delete this listing?"
+        message="This product or service will be removed from your shop. This can’t be undone."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        busy={listingDeleting}
+        onClose={closeListingDeleteDialog}
+        onConfirm={confirmDeleteSellerListing}
+      />
+
       {orderCancelReasonModalOpen ? (
         <div
           className="fixed inset-0 z-[95] flex items-center justify-center p-4 md:p-6"
@@ -19371,7 +19772,7 @@ function App() {
 
             <div className="drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-2.5 min-[360px]:px-5 min-[360px]:py-3 md:px-5 md:py-4">
               <div className="mx-auto min-w-0 max-w-2xl space-y-4 md:max-w-none">
-                <div className="flex flex-col gap-3 md:grid md:grid-cols-[13.5rem_minmax(0,1fr)] md:items-start md:gap-5">
+                <div className="flex flex-col gap-3 md:gap-5">
                   {(() => {
                     const snap = quickAddBrowseSnapshot || { browseView: null, isMobile: isMobileViewport };
                     const effView = snap.browseView ?? "grid";
@@ -19384,7 +19785,7 @@ function App() {
                         if (snapMobile) {
                           return "relative mx-auto aspect-[4/3] w-full min-h-0 max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
                         }
-                        return "relative mx-auto h-32 w-32 shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:mx-0";
+                        return "relative mx-auto h-32 w-32 shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:mx-auto md:h-auto md:aspect-square md:w-full md:max-w-[min(100%,20rem)]";
                       }
                       if (compactQa && snapMobile) {
                         return "relative mx-auto h-28 max-h-28 w-full min-h-0 !aspect-auto overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
@@ -19392,12 +19793,12 @@ function App() {
                       if (snapMobile) {
                         return "relative mx-auto aspect-square w-full min-h-0 max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
                       }
-                      return "relative mx-auto aspect-square w-full max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:mx-0 md:aspect-[4/3] md:h-auto md:max-w-[13.5rem] md:rounded-lg";
+                      return "relative mx-auto aspect-square w-full max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:w-full md:max-w-[min(100%,20rem)]";
                     })();
                     const imageColClass =
                       listModeQa && !snapMobile
-                        ? "mx-auto flex w-full shrink-0 flex-col md:mx-0 md:max-w-[8rem]"
-                        : "mx-auto flex w-full shrink-0 flex-col md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]";
+                        ? "mx-auto flex w-full shrink-0 flex-col md:w-full md:max-w-none md:items-center"
+                        : "mx-auto flex w-full shrink-0 flex-col md:w-full md:max-w-none md:items-center";
                     return (
                       <div className={imageColClass}>
                         <div className={quickAddImageBoxClass}>
@@ -19415,7 +19816,7 @@ function App() {
                                 fillFrame={Boolean(gridModeQa)}
                                 className="pointer-events-none absolute inset-0 min-h-0"
                                 imageClassName="transition duration-200 hover:scale-[1.02]"
-                                sizes="(max-width: 768px) min(100vw, 64rem), 12rem"
+                                sizes="(max-width: 768px) min(100vw, 64rem), min(20rem, 100vw)"
                                 loading="eager"
                               />
                             </button>
@@ -19425,7 +19826,7 @@ function App() {
                               variant={gridModeQa ? "grid" : "list"}
                               fillFrame={Boolean(gridModeQa)}
                               className="absolute inset-0 min-h-0"
-                              sizes="(max-width: 768px) min(100vw, 64rem), 12rem"
+                              sizes="(max-width: 768px) min(100vw, 64rem), min(20rem, 100vw)"
                               loading="eager"
                             />
                           )}
@@ -19450,14 +19851,15 @@ function App() {
                       const isServiceQa = isServiceListing(quickAddListing);
                       const qaServiceHdr = isServiceQa ? getServiceCardProfileHeader(quickAddListing) : { categoryTitle: "", typeLabel: "" };
                       const qaServiceStackTitle = isServiceQa
-                        ? qaServiceHdr.categoryTitle || quickAddListing.title || "Untitled service"
+                        ? String(qaServiceHdr.typeLabel || "").trim() ||
+                          String(quickAddListing.title || "").trim() ||
+                          "Untitled service"
                         : "";
                       const qaServiceStackHighlight =
                         isServiceQa &&
-                        qaServiceHdr.categoryTitle &&
-                        qaServiceHdr.typeLabel &&
-                        qaServiceHdr.typeLabel !== qaServiceStackTitle
-                          ? qaServiceHdr.typeLabel
+                        String(qaServiceHdr.categoryTitle || "").trim() &&
+                        String(qaServiceHdr.categoryTitle).trim() !== qaServiceStackTitle
+                          ? qaServiceHdr.categoryTitle
                           : "";
                       const isOutOfStockQa = !isServiceQa && stockQtyQa <= 0;
                       const qaServiceHeadlinePrice =
@@ -19465,10 +19867,6 @@ function App() {
                           ? getServiceCardHeadlinePriceLabel(quickAddListing) ?? formatPesoWhole(quickAddListing.priceCents)
                           : "";
                       const qaServiceSlotOpts = isServiceQa ? slotOptionsForServiceListing(quickAddListing) : null;
-                      const qaBookableDates = qaServiceSlotOpts?.dates?.length ? qaServiceSlotOpts.dates : [];
-                      const qaBookableDateSet = new Set(qaBookableDates);
-                      const qaDateMin = qaBookableDates[0] || "";
-                      const qaDateMax = qaBookableDates.length ? qaBookableDates[qaBookableDates.length - 1] : "";
                       const readOnlyStockRowQa = isServiceQa ? (
                         <div className="min-w-0">
                           <ListingServiceCardSummary listing={quickAddListing} variant="browse" />
@@ -19510,6 +19908,7 @@ function App() {
                       const qaOffersPickup = qaFulfillmentModes.includes("pickup");
                       const qaOffersDelivery = qaFulfillmentModes.includes("delivery");
                       const dualFulfillmentPickers = qaOffersPickup && qaOffersDelivery;
+                      const stripPlaceOrderSectionFrame = quickActionType === "buy";
                       return (
                         <>
                           <div className="min-w-0 space-y-2">
@@ -19544,6 +19943,10 @@ function App() {
                               omitProductMetaExtras={isServiceQa}
                               listingAvgRating={quickAddListing.listingAvgRating}
                               listingReviewCount={quickAddListing.listingReviewCount}
+                              descriptionPresentation={
+                                quickAddTargetIsService && quickActionType === "buy" ? "inspect" : "card"
+                              }
+                              unframeDescription={stripPlaceOrderSectionFrame}
                             />
                             {quickAddListing.cityLabel ? (
                               <span
@@ -19663,15 +20066,21 @@ function App() {
                             </fieldset>
                           ) : null}
                           {!isServiceQa ? (
-                            <div className="space-y-1.5 rounded-xl border border-neutral-200/80 bg-neutral-50/70 px-2.5 py-2 dark:border-slate-700/70 dark:bg-slate-900/40 md:max-w-[14rem]">
+                            <div
+                              className={
+                                stripPlaceOrderSectionFrame
+                                  ? "space-y-1.5 md:max-w-[14rem]"
+                                  : "space-y-1.5 rounded-xl border border-neutral-200/80 bg-neutral-50/70 px-2.5 py-2 dark:border-slate-700/70 dark:bg-slate-900/40 md:max-w-[14rem]"
+                              }
+                            >
                               <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                                 Quantity
                               </p>
                               <div className="flex min-w-0 flex-col gap-2 md:gap-3">
-                                <div className="grid w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center gap-1.5 min-[390px]:w-auto min-[390px]:grid-cols-[2.75rem_4.5rem_2.75rem] min-[390px]:gap-2 md:grid-cols-[2.5rem_3.5rem_2.5rem] md:gap-2.5">
+                                <div className="inline-flex min-h-[44px] w-full max-w-[min(100%,14rem)] overflow-hidden rounded-xl border border-neutral-300 bg-white divide-x divide-neutral-200 dark:border-slate-600 dark:bg-slate-900 dark:divide-slate-700">
                                   <button
                                     type="button"
-                                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 min-[390px]:h-11 min-[390px]:w-11 md:h-10 md:w-10"
+                                    className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center border-0 bg-transparent text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800"
                                     aria-label="Decrease quantity"
                                     disabled={Number(quickAddQuantity) <= 1 || quickAddSubmitting}
                                     onClick={() =>
@@ -19685,14 +20094,14 @@ function App() {
                                     −
                                   </button>
                                   <span
-                                    className="inline-flex h-10 min-w-0 w-full items-center justify-center px-0 text-center text-sm font-semibold tabular-nums text-neutral-800 dark:text-slate-100 min-[390px]:h-11 md:h-10"
+                                    className="inline-flex min-h-[44px] min-w-0 flex-1 items-center justify-center bg-neutral-50/70 px-1 text-center text-sm font-semibold tabular-nums text-neutral-800 dark:bg-slate-800/50 dark:text-slate-100"
                                     aria-live="polite"
                                   >
                                     {quickAddQuantity}
                                   </span>
                                   <button
                                     type="button"
-                                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 min-[390px]:h-11 min-[390px]:w-11 md:h-10 md:w-10"
+                                    className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center border-0 bg-transparent text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800"
                                     aria-label="Increase quantity"
                                     disabled={
                                       Number(quickAddQuantity) >= Math.max(1, Number(quickAddListing.quantity) || 1) ||
@@ -19722,58 +20131,23 @@ function App() {
                                   <legend className="float-none text-xs font-semibold text-neutral-900 dark:text-slate-100">
                                     Preferred slot (within provider availability)
                                   </legend>
-                                  {qaServiceSlotOpts.scheduleHuman ? (
-                                    <p className="text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
-                                      {qaServiceSlotOpts.scheduleHuman}
-                                    </p>
-                                  ) : null}
-                                  <div className="grid min-w-0 gap-2 min-[400px]:grid-cols-2">
-                                    <label className="min-w-0 text-[11px] font-medium text-neutral-700 dark:text-slate-300">
-                                      Date
-                                      <input
-                                        type="date"
-                                        className="input-base mt-1 w-full min-h-[2.5rem] text-sm"
-                                        value={quickAddServiceBookingDate}
-                                        min={qaDateMin || undefined}
-                                        max={qaDateMax || undefined}
-                                        onChange={(e) => {
-                                          const v = String(e.target.value || "").trim();
-                                          if (!v) {
-                                            if (qaDateMin) setQuickAddServiceBookingDate(qaDateMin);
-                                            return;
-                                          }
-                                          if (qaBookableDateSet.has(v)) setQuickAddServiceBookingDate(v);
-                                          else {
-                                            pushMarketplaceToast(
-                                              "That day is not in this provider’s available weekdays — pick another date.",
-                                            );
-                                            setQuickAddServiceBookingDate(qaDateMin || v);
-                                          }
-                                        }}
-                                        disabled={quickAddSubmitting}
-                                      />
-                                      {quickAddServiceBookingDate ? (
-                                        <span className="mt-0.5 block text-[10px] text-neutral-500 dark:text-slate-500">
-                                          {formatIsoDateForBookingDisplay(quickAddServiceBookingDate)}
-                                        </span>
-                                      ) : null}
-                                    </label>
-                                    <label className="min-w-0 text-[11px] font-medium text-neutral-700 dark:text-slate-300">
-                                      Time
-                                      <select
-                                        className="input-base mt-1 w-full text-sm tabular-nums"
-                                        value={quickAddServiceBookingTime}
-                                        onChange={(e) => setQuickAddServiceBookingTime(e.target.value)}
-                                        disabled={quickAddSubmitting}
-                                      >
-                                        {qaServiceSlotOpts.times.map((t) => (
-                                          <option key={t} value={t}>
-                                            {formatTimeHmTo12HourLabel(t)}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </label>
-                                  </div>
+                                  <ServiceBookingPicker
+                                    key={String(quickAddListing?.id || "")}
+                                    scheduleHuman={qaServiceSlotOpts.scheduleHuman}
+                                    bookableDates={qaServiceSlotOpts.dates || []}
+                                    slotTimes={qaServiceSlotOpts.times || []}
+                                    windowStartHm={qaServiceSlotOpts.windowStart || ""}
+                                    windowEndHm={qaServiceSlotOpts.windowEnd || ""}
+                                    bookedSlots={quickAddBookedSlots}
+                                    selectedDate={quickAddServiceBookingDate}
+                                    selectedTime={quickAddServiceBookingTime}
+                                    onSelectDate={setQuickAddServiceBookingDate}
+                                    onSelectTime={setQuickAddServiceBookingTime}
+                                    disabled={quickAddSubmitting}
+                                    occupancyStale={quickAddBookedSlotsStale}
+                                    occupancyLoading={quickAddOccupancyLoading}
+                                    occupancyLive={quickAddOccupancyLive}
+                                  />
                                 </fieldset>
                               ) : (
                                 <p className="text-[11px] leading-snug text-neutral-600 dark:text-slate-400">
@@ -19816,14 +20190,44 @@ function App() {
                   onChange={(e) => setQuickAddComment(e.target.value)}
                 />
               </div>
+
+              {/* Wide webview / md+: primary action last (below comment); mobile keeps sticky footer. */}
+              <div className="hidden md:mt-3 md:block md:border-t md:border-neutral-200/70 md:pt-3 dark:md:border-slate-700/70">
+                <button
+                  type="button"
+                  className="btn-primary w-full"
+                  disabled={quickAddSubmitting || (quickActionType === "buy" && quickAddBuyBlockedByOccupancy)}
+                  aria-busy={quickAddSubmitting}
+                  onClick={submitQuickAddOrder}
+                >
+                  {quickAddSubmitting
+                    ? quickActionType === "buy"
+                      ? quickAddTargetIsService
+                        ? "Sending request…"
+                        : "Placing order…"
+                      : "Adding…"
+                    : quickActionType === "buy"
+                      ? quickAddTargetIsService
+                        ? "Send booking request"
+                        : "Place order"
+                      : quickAddTargetIsService
+                        ? "Add service to cart"
+                        : "Add to cart"}
+                </button>
+                {quickAddInlineError ? (
+                  <p className="app-alert-error mt-2 text-sm" role="alert">
+                    {quickAddInlineError}
+                  </p>
+                ) : null}
+              </div>
               </div>
             </div>
 
-            <div className="shrink-0 border-t border-neutral-200/80 bg-white/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/85 min-[360px]:px-5 min-[360px]:pt-2.5 dark:border-[#1f3c56]/85 dark:bg-[#0f2234]/95 dark:shadow-none md:px-5 md:pb-4 md:pt-3">
+            <div className="shrink-0 border-t border-neutral-200/80 bg-white/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/85 min-[360px]:px-5 min-[360px]:pt-2.5 dark:border-[#1f3c56]/85 dark:bg-[#0f2234]/95 dark:shadow-none md:hidden">
               <button
                 type="button"
                 className="btn-primary w-full"
-                disabled={quickAddSubmitting}
+                disabled={quickAddSubmitting || (quickActionType === "buy" && quickAddBuyBlockedByOccupancy)}
                 aria-busy={quickAddSubmitting}
                 onClick={submitQuickAddOrder}
               >

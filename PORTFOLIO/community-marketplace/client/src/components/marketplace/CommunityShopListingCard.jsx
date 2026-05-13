@@ -61,15 +61,14 @@ export function CommunityShopListingCard({
   const isOwner = String(listing.sellerId || "") === String(currentUserId || "");
   const isServiceCard = isServiceListing(listing);
   const serviceCardHeader = isServiceCard ? getServiceCardProfileHeader(listing) : { categoryTitle: "", typeLabel: "" };
-  const serviceStackTitle = isServiceCard
-    ? serviceCardHeader.categoryTitle || listing.title || "Untitled service"
+  const serviceTitleLine = isServiceCard
+    ? (serviceCardHeader.typeLabel || String(listing.title || "").trim() || "Untitled service")
     : "";
-  const serviceStackHighlight =
+  const serviceCategoryPill =
     isServiceCard &&
     serviceCardHeader.categoryTitle &&
-    serviceCardHeader.typeLabel &&
-    serviceCardHeader.typeLabel !== serviceStackTitle
-      ? serviceCardHeader.typeLabel
+    String(serviceCardHeader.categoryTitle).trim() !== String(serviceTitleLine).trim()
+      ? serviceCardHeader.categoryTitle
       : "";
   const stockQty = Math.max(0, Number(listing.quantity) || 0);
   const isOutOfStock = !isServiceCard && stockQty <= 0;
@@ -137,7 +136,10 @@ export function CommunityShopListingCard({
   /** Mobile: card CTAs live in the inspect modal; image opens details when handler exists. */
   const hideCardActionsOnMobile = Boolean(mobileUx && onInspect);
   const imageOpensInspect = Boolean(onInspect && mobileUx);
-  const wholeCardTapOpensInspect = Boolean(mobileEntireCardTappable && mobileUx && onInspect);
+  /** Desktop/web: entire card opens details; mobile keeps prior gate so small screens still match image-tap UX unless `mobileEntireCardTappable`. */
+  const wholeCardTapOpensInspect = Boolean(
+    onInspect && (!mobileUx || (mobileEntireCardTappable && mobileUx)),
+  );
 
   const onCardShellKeyDown = useCallback(
     (e) => {
@@ -275,8 +277,8 @@ export function CommunityShopListingCard({
     "lm-product-card--tap absolute inset-0 z-0 min-h-0 w-full border-0 bg-transparent p-0 text-left";
 
   const shellAriaLabel =
-    wholeCardTapOpensInspect && listing?.title
-      ? `View ${String(listing.title).trim() || "product"}`
+    wholeCardTapOpensInspect && (isServiceCard ? serviceTitleLine : listing?.title)
+      ? `View ${String((isServiceCard ? serviceTitleLine : listing.title) || "").trim() || "product"}`
       : wholeCardTapOpensInspect
         ? "View product"
         : undefined;
@@ -443,8 +445,8 @@ export function CommunityShopListingCard({
             variant="card"
             browseStackMode={mobileUx ? "listMobile" : null}
             compactListMeta={isListMode || mobileUx}
-            title={isServiceCard ? serviceStackTitle : listing.title || "Untitled product"}
-            titleHighlight={isServiceCard ? serviceStackHighlight : ""}
+            title={isServiceCard ? serviceTitleLine : listing.title || "Untitled product"}
+            titleHighlight={isServiceCard ? serviceCategoryPill : ""}
             titleEnd={favoriteTitleEnd}
             headlinePriceOverride={isServiceCard ? serviceHeadlinePrice : ""}
             priceCents={listing.priceCents}
@@ -492,20 +494,7 @@ export function CommunityShopListingCard({
           className={`flex flex-col gap-2 ${gridMode ? (useFeedLayout ? "mt-auto px-2 pb-2 pt-1.5 min-[360px]:px-2.5 min-[360px]:pb-2.5" : "mt-auto pt-3") : listDesktopCompactActions ? "mt-3 border-t border-neutral-200/70 pt-3 dark:border-slate-600/55" : "mt-3"}`}
         >
           {ownerGridOverflow ? (
-            <div className="flex items-stretch gap-2">
-              {onInspect ? (
-                <button
-                  type="button"
-                  className={`min-h-[44px] flex-1 rounded-xl border border-brand-primary/35 bg-white font-semibold text-brand-primary transition hover:bg-brand-soft/80 dark:border-slate-600 dark:bg-slate-900 dark:text-brand-accent dark:hover:bg-slate-800 ${compactActionBtnClass}`}
-                  title="Read full description and details"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onInspect();
-                  }}
-                >
-                  View details
-                </button>
-              ) : null}
+            <div className="flex w-full items-stretch justify-end gap-2">
               <div className="relative shrink-0" ref={ownerMenuRef}>
                 <button
                   type="button"
@@ -579,21 +568,6 @@ export function CommunityShopListingCard({
             </div>
           ) : (
             <>
-          {onInspect && !isListMode && !(mobileUx && gridMode) ? (
-            <button
-              type="button"
-              className={`rounded-lg border border-neutral-300 font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 ${
-                isListMode ? "h-10 flex-1 px-3 text-xs" : `w-full ${compactActionBtnClass}`
-              }`}
-              title="Read full description and details"
-              onClick={(e) => {
-                e.stopPropagation();
-                onInspect();
-              }}
-            >
-              View details
-            </button>
-          ) : null}
           {isOwner ? (
             <div
               className={
@@ -612,21 +586,6 @@ export function CommunityShopListingCard({
                     : compactActionRowClass
               }
             >
-              {isListMode && onInspect ? (
-                <button
-                  type="button"
-                  className={`rounded-xl border border-primary px-3 text-xs font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 ${
-                    listDesktopCompactActions ? "inline-flex h-9 min-h-0 min-w-[7rem] shrink-0 items-center justify-center px-4" : "h-10 w-full"
-                  }`}
-                  title="Read full description and details"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onInspect();
-                  }}
-                >
-                  View details
-                </button>
-              ) : null}
               <button
                 type="button"
                 className={`min-w-0 shadow-none transition duration-200 ease-in-out active:scale-[0.99] motion-reduce:active:scale-100 ${
@@ -716,21 +675,6 @@ export function CommunityShopListingCard({
                   : compactActionRowClass
               }
             >
-              {isListMode && onInspect ? (
-                <button
-                  type="button"
-                  className={`rounded-xl border border-primary px-3 text-xs font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 ${
-                    listDesktopCompactActions ? "inline-flex h-9 min-h-0 min-w-[7rem] shrink-0 items-center justify-center px-4" : "h-10 w-full"
-                  }`}
-                  title="Read full description and details"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onInspect();
-                  }}
-                >
-                  View details
-                </button>
-              ) : null}
               {isServiceCard && serviceBookHandler ? (
                 <button
                   type="button"

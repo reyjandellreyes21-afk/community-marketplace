@@ -17,8 +17,8 @@ import { ListingServiceCardSummary } from "./ListingServiceCardSummary.jsx";
 import {
   getServiceCardHeadlinePriceLabel,
   getServiceCardProfileHeader,
+  getServiceCardSummaryRows,
   orderIsServiceListingBooking,
-  orderIsTransportServiceBooking,
 } from "../../lib/listingServiceCardMeta.js";
 import { ListingDescriptionMarkdown } from "./ListingDescriptionMarkdown.jsx";
 import { OrderStatusMilestoneList } from "./OrderStatusMilestoneList.jsx";
@@ -217,7 +217,7 @@ export function ProductInspectModal({
   subtitle = "",
   /** When set, used to disable buyer add/buy when out of stock. */
   listingStockQty = null,
-  /** Total sold units for this listing. */
+  /** Total sold units (products) or completed bookings (services) for this listing. */
   listingSoldQty = null,
   showBuyerCommerceActions = false,
   showSellerCommerceActions = false,
@@ -559,6 +559,14 @@ export function ProductInspectModal({
     setImagePreviewOpen(true);
   };
 
+  const serviceInspectSummaryRowCount = useMemo(() => {
+    if (!serviceListing) return 0;
+    return getServiceCardSummaryRows(serviceInspectStub, {
+      omitCategoryAndServiceTitle: true,
+      summaryScope: "full",
+    }).length;
+  }, [serviceListing, serviceInspectStub]);
+
   if (!open) return null;
 
   const galleryMulti = galleryUrls.length > 1;
@@ -634,26 +642,29 @@ export function ProductInspectModal({
   const serviceInspectHeader = serviceListingEffective
     ? getServiceCardProfileHeader(serviceInspectStub)
     : { categoryTitle: "", typeLabel: "" };
-  const inspectTitlePrimary =
-    serviceListingEffective && serviceInspectHeader.categoryTitle
-      ? serviceInspectHeader.categoryTitle
-      : title || "Product";
+  const inspectTitlePrimary = serviceListingEffective
+    ? String(serviceInspectHeader.typeLabel || "").trim() || String(title || "").trim() || "Service"
+    : title || "Product";
   const inspectTitleTypePill =
     serviceListingEffective &&
-    serviceInspectHeader.categoryTitle &&
-    serviceInspectHeader.typeLabel &&
-    serviceInspectHeader.typeLabel !== inspectTitlePrimary
-      ? serviceInspectHeader.typeLabel
+    String(serviceInspectHeader.categoryTitle || "").trim() &&
+    String(serviceInspectHeader.categoryTitle).trim() !== String(inspectTitlePrimary).trim()
+      ? serviceInspectHeader.categoryTitle
       : "";
   const inspectHeadlinePriceText = serviceListingEffective
     ? getServiceCardHeadlinePriceLabel(serviceInspectStub) ?? formatPesoWhole(priceCents)
     : formatPesoWhole(priceCents);
 
+  const showWebServiceDetailsDescriptionBlock =
+    Boolean(fullScreen) &&
+    serviceListingEffective &&
+    (Boolean(descPlain) || serviceInspectSummaryRowCount > 0);
+
   return (
     <div
       className={
         fullScreen
-          ? "flex w-full min-h-0 flex-1 flex-col max-md:h-full max-md:w-[calc(100%+1.75rem)] max-md:self-stretch max-md:-mx-3.5 md:mx-0 md:w-full"
+          ? "flex w-full min-h-0 flex-1 flex-col max-md:h-full max-md:w-[calc(100%+1.75rem)] max-md:self-stretch max-md:-mx-3.5 md:mx-0 md:w-full md:flex-none"
           : "fixed inset-0 z-[95] flex items-end justify-center p-0 md:items-center md:p-4"
       }
       role={fullScreen ? "region" : "dialog"}
@@ -672,7 +683,7 @@ export function ProductInspectModal({
       <div
         className={`relative z-10 flex w-full flex-col ${
           fullScreen
-            ? "mx-auto w-full max-w-screen-lg rounded-none border-0 bg-white shadow-none dark:bg-slate-950 max-md:max-h-[100dvh] max-md:min-h-0 max-md:flex-1 max-md:overflow-hidden md:min-h-[calc(100dvh-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]"
+            ? "mx-auto w-full max-w-screen-lg rounded-none border-0 bg-white shadow-none dark:bg-slate-950 max-md:max-h-[100dvh] max-md:min-h-0 max-md:flex-1 max-md:overflow-hidden md:min-h-0 md:h-auto"
             : "max-h-[min(88dvh,42rem)] max-w-lg rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-[#1f3c56] dark:bg-[#0f2234] md:max-h-[min(90dvh,44rem)] md:rounded-2xl md:shadow-[0_20px_60px_rgba(15,23,42,0.22)]"
         } ${UI_KIT.surfaceFloating}`}
         onClick={(e) => e.stopPropagation()}
@@ -866,76 +877,122 @@ export function ProductInspectModal({
         <div
           className={`drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-2.5 min-[360px]:px-5 min-[360px]:py-3 md:px-5 md:py-4 ${
             fullScreen
-              ? "max-md:pt-0 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] md:pb-5"
+              ? "max-md:pt-0 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] md:flex-none md:overflow-visible md:overscroll-y-auto md:pb-5"
               : ""
           }`}
         >
-          <div className={`flex flex-col gap-3 md:flex-row md:items-start md:gap-4 ${fullScreen ? "lg:gap-6" : ""}`}>
+          <div
+            className={`flex flex-col gap-3 md:items-start md:gap-4 ${
+              fullScreen && serviceListingEffective ? "md:flex-col" : "md:flex-row"
+            } ${fullScreen ? "lg:gap-6" : ""}`}
+          >
             <div
               className={`mx-auto flex w-full shrink-0 flex-col ${
                 fullScreen
-                  ? "max-md:-mx-3 max-md:w-[calc(100%+1.5rem)] max-md:max-w-none min-[360px]:max-md:-mx-5 min-[360px]:max-md:w-[calc(100%+2.5rem)] md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
+                  ? serviceListingEffective
+                    ? "max-md:-mx-3 max-md:w-[calc(100%+1.5rem)] max-md:max-w-none min-[360px]:max-md:-mx-5 min-[360px]:max-md:w-[calc(100%+2.5rem)] md:mx-auto md:w-full md:max-w-sm lg:max-w-md"
+                    : "max-md:-mx-3 max-md:w-[calc(100%+1.5rem)] max-md:max-w-none min-[360px]:max-md:-mx-5 min-[360px]:max-md:w-[calc(100%+2.5rem)] md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
                   : "max-w-[12.5rem] md:mx-0 md:max-w-none"
               }`}
             >
               <div
-                className={`relative mx-auto aspect-square w-full shrink-0 ${
-                  fullScreen
-                    ? "max-md:max-w-none md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
-                    : "max-w-[12.5rem] md:mx-0 md:h-36 md:w-36 md:max-w-none md:aspect-auto"
+                className={`relative mx-auto w-full shrink-0 ${
+                  galleryMulti && !imagePreviewOpen
+                    ? `max-md:aspect-square md:flex md:items-center md:justify-center md:gap-2 ${
+                        fullScreen
+                          ? serviceListingEffective
+                            ? "max-md:max-w-none md:max-w-full"
+                            : "max-md:max-w-none md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
+                          : "max-w-[12.5rem] md:mx-0 md:max-w-none"
+                      }`
+                    : `aspect-square ${
+                        fullScreen
+                          ? serviceListingEffective
+                            ? "max-md:max-w-none md:max-w-full"
+                            : "max-md:max-w-none md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
+                          : "max-w-[12.5rem] md:mx-0 md:h-36 md:w-36 md:max-w-none md:aspect-auto"
+                      }`
                 }`}
               >
                 {String(displayImageUrl || "").trim() ? (
                   <>
                     {galleryMulti && !imagePreviewOpen ? (
-                      <div
-                        ref={heroContainerRef}
-                        className="relative aspect-square w-full overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10"
-                      >
-                        <div
-                          className="flex h-full touch-none select-none will-change-transform"
-                          style={{
-                            width: `${galleryUrls.length * 100}%`,
-                            transform: `translate3d(calc(-${(galleryThumbIdx * 100) / galleryUrls.length}% + ${heroDragPx}px), 0, 0)`,
-                            transition: heroStripDragging
-                              ? "none"
-                              : "transform 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+                      <>
+                        <button
+                          type="button"
+                          className={`z-20 flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full border border-white/45 bg-black/55 text-white shadow-[0_2px_12px_rgba(0,0,0,0.35)] ring-1 ring-black/25 backdrop-blur-[2px] transition hover:bg-black/70 active:scale-[0.96] motion-reduce:active:scale-100 max-md:absolute max-md:left-2.5 max-md:top-1/2 max-md:-translate-y-1/2 md:static md:translate-y-0 ${
+                            !canGalleryPrev ? "pointer-events-none opacity-35" : ""
+                          }`}
+                          aria-label="Previous product photo"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            goGalleryPrev();
                           }}
                         >
-                          {galleryUrls.map((url, i) => (
-                            <div
-                              key={`hero-g-${i}-${String(url).slice(-28)}`}
-                              className="h-full shrink-0"
-                              style={{ width: `${100 / galleryUrls.length}%` }}
-                            >
-                              <img
-                                src={url}
-                                alt={i === 0 ? title || "Product" : ""}
-                                className="h-full w-full object-cover select-none"
-                                draggable={false}
-                                loading={i === 0 ? "eager" : "lazy"}
-                              />
-                            </div>
-                          ))}
+                          <ChevronLeftIcon className="h-6 w-6 shrink-0 opacity-95" />
+                        </button>
+                        <div
+                          ref={heroContainerRef}
+                          className="relative aspect-square w-full min-w-0 overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:flex-1"
+                        >
+                          <div
+                            className="flex h-full touch-none select-none will-change-transform"
+                            style={{
+                              width: `${galleryUrls.length * 100}%`,
+                              transform: `translate3d(calc(-${(galleryThumbIdx * 100) / galleryUrls.length}% + ${heroDragPx}px), 0, 0)`,
+                              transition: heroStripDragging
+                                ? "none"
+                                : "transform 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+                            }}
+                          >
+                            {galleryUrls.map((url, i) => (
+                              <div
+                                key={`hero-g-${i}-${String(url).slice(-28)}`}
+                                className="h-full shrink-0"
+                                style={{ width: `${100 / galleryUrls.length}%` }}
+                              >
+                                <img
+                                  src={url}
+                                  alt={i === 0 ? title || "Product" : ""}
+                                  className="h-full w-full object-cover select-none"
+                                  draggable={false}
+                                  loading={i === 0 ? "eager" : "lazy"}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            className="absolute inset-0 z-[4] cursor-grab bg-transparent active:cursor-grabbing"
+                            aria-label="View larger product image. Drag left or right for more photos."
+                            onPointerDown={onHeroStripPointerDown}
+                            onPointerMove={onHeroStripPointerMove}
+                            onPointerUp={onHeroStripPointerUp}
+                            onPointerCancel={onHeroStripPointerCancel}
+                            onClick={onHeroImageActivate}
+                            style={{ touchAction: "none" }}
+                          />
+                          <p
+                            className="pointer-events-none absolute bottom-2 right-2 z-[6] rounded-full border border-white/30 bg-black/65 px-2.5 py-1 text-xs font-semibold tabular-nums text-white shadow-[0_2px_10px_rgba(0,0,0,0.45)] backdrop-blur-[2px] min-[360px]:bottom-2.5 min-[360px]:right-2.5 min-[360px]:text-[13px]"
+                            aria-live="polite"
+                          >
+                            {galleryThumbIdx + 1}/{galleryUrls.length}
+                          </p>
                         </div>
                         <button
                           type="button"
-                          className="absolute inset-0 z-[4] cursor-grab bg-transparent active:cursor-grabbing"
-                          aria-label="View larger product image. Drag left or right for more photos."
-                          onPointerDown={onHeroStripPointerDown}
-                          onPointerMove={onHeroStripPointerMove}
-                          onPointerUp={onHeroStripPointerUp}
-                          onPointerCancel={onHeroStripPointerCancel}
-                          onClick={onHeroImageActivate}
-                          style={{ touchAction: "none" }}
-                        />
-                        <p
-                          className="pointer-events-none absolute bottom-2 right-2 z-[6] rounded-full border border-white/30 bg-black/65 px-2.5 py-1 text-xs font-semibold tabular-nums text-white shadow-[0_2px_10px_rgba(0,0,0,0.45)] backdrop-blur-[2px] min-[360px]:bottom-2.5 min-[360px]:right-2.5 min-[360px]:text-[13px]"
-                          aria-live="polite"
+                          className={`z-20 flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full border border-white/45 bg-black/55 text-white shadow-[0_2px_12px_rgba(0,0,0,0.35)] ring-1 ring-black/25 backdrop-blur-[2px] transition hover:bg-black/70 active:scale-[0.96] motion-reduce:active:scale-100 max-md:absolute max-md:right-2.5 max-md:top-1/2 max-md:-translate-y-1/2 md:static md:translate-y-0 ${
+                            !canGalleryNext ? "pointer-events-none opacity-35" : ""
+                          }`}
+                          aria-label="Next product photo"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            goGalleryNext();
+                          }}
                         >
-                          {galleryThumbIdx + 1}/{galleryUrls.length}
-                        </p>
-                      </div>
+                          <ChevronRightIcon className="h-6 w-6 shrink-0 opacity-95" />
+                        </button>
+                      </>
                     ) : (
                       <button
                         type="button"
@@ -953,43 +1010,15 @@ export function ProductInspectModal({
                           imageClassName="transition duration-200 hover:scale-[1.02]"
                           sizes={
                             fullScreen
-                              ? "(max-width: 768px) min(100vw, 64rem), 12rem"
+                              ? serviceListingEffective
+                                ? "(max-width: 768px) min(100vw, 64rem), 28rem"
+                                : "(max-width: 768px) min(100vw, 64rem), 12rem"
                               : "(max-width: 768px) min(90vw, 12.5rem), 9rem"
                           }
                           loading="eager"
                         />
                       </button>
                     )}
-                    {galleryMulti && !imagePreviewOpen ? (
-                      <>
-                        <button
-                          type="button"
-                          className={`absolute left-2.5 top-1/2 z-20 flex h-11 w-11 min-h-[44px] min-w-[44px] -translate-y-1/2 items-center justify-center rounded-full border border-white/45 bg-black/55 text-white shadow-[0_2px_12px_rgba(0,0,0,0.35)] ring-1 ring-black/25 backdrop-blur-[2px] transition hover:bg-black/70 active:scale-[0.96] motion-reduce:active:scale-100 ${
-                            !canGalleryPrev ? "pointer-events-none opacity-35" : ""
-                          }`}
-                          aria-label="Previous product photo"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            goGalleryPrev();
-                          }}
-                        >
-                          <ChevronLeftIcon className="h-6 w-6 shrink-0 opacity-95" />
-                        </button>
-                        <button
-                          type="button"
-                          className={`absolute right-2.5 top-1/2 z-20 flex h-11 w-11 min-h-[44px] min-w-[44px] -translate-y-1/2 items-center justify-center rounded-full border border-white/45 bg-black/55 text-white shadow-[0_2px_12px_rgba(0,0,0,0.35)] ring-1 ring-black/25 backdrop-blur-[2px] transition hover:bg-black/70 active:scale-[0.96] motion-reduce:active:scale-100 ${
-                            !canGalleryNext ? "pointer-events-none opacity-35" : ""
-                          }`}
-                          aria-label="Next product photo"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            goGalleryNext();
-                          }}
-                        >
-                          <ChevronRightIcon className="h-6 w-6 shrink-0 opacity-95" />
-                        </button>
-                      </>
-                    ) : null}
                   </>
                 ) : (
                   <ProductListingMedia
@@ -1005,7 +1034,9 @@ export function ProductInspectModal({
                 <div
                   className={`mt-2 flex gap-1.5 overflow-x-auto pb-0.5 pt-0.5 [-webkit-overflow-scrolling:touch] ${
                     fullScreen
-                      ? "w-full max-md:justify-center md:max-w-[12rem] lg:max-w-[14rem]"
+                      ? serviceListingEffective
+                        ? "w-full justify-center md:w-full"
+                        : "w-full max-md:justify-center md:max-w-[12rem] lg:max-w-[14rem]"
                       : "max-w-[12.5rem] md:max-w-[9rem]"
                   }`}
                   role="list"
@@ -1031,7 +1062,11 @@ export function ProductInspectModal({
                 </div>
               ) : null}
             </div>
-            <div className="min-w-0 flex-1 space-y-1.5 min-[360px]:space-y-2 md:space-y-2">
+            <div
+              className={`min-w-0 space-y-1.5 min-[360px]:space-y-2 md:space-y-2 ${
+                fullScreen && serviceListingEffective ? "w-full flex-none md:w-full" : "flex-1"
+              }`}
+            >
               <div className="min-w-0">
                 <h2
                   id="product-inspect-title"
@@ -1094,17 +1129,19 @@ export function ProductInspectModal({
                   ) : null}
                 </div>
                 {serviceListingEffective ? (
-                  <ListingServiceCardSummary
-                    listing={{
-                      verticalId: "services",
-                      categories: "services",
-                      title,
-                      subId: serviceMeta?.categoryId,
-                      priceCents,
-                      serviceMeta,
-                    }}
-                    variant="inspect"
-                  />
+                  <div className={fullScreen ? "max-md:block md:hidden" : undefined}>
+                    <ListingServiceCardSummary
+                      listing={{
+                        verticalId: "services",
+                        categories: "services",
+                        title,
+                        subId: serviceMeta?.categoryId,
+                        priceCents,
+                        serviceMeta,
+                      }}
+                      variant="inspect"
+                    />
+                  </div>
                 ) : null}
               </div>
               {showQuantityLine ? (
@@ -1126,7 +1163,9 @@ export function ProductInspectModal({
               ) : null}
               {soldQty != null ? (
                 <p className="text-xs text-neutral-600 dark:text-slate-400">
-                  <span className="font-semibold text-neutral-700 dark:text-slate-300">Sold:</span>{" "}
+                  <span className="font-semibold text-neutral-700 dark:text-slate-300">
+                    {serviceListingEffective ? "Booked:" : "Sold:"}
+                  </span>{" "}
                   <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{soldQty}</span>
                 </p>
               ) : null}
@@ -1156,8 +1195,7 @@ export function ProductInspectModal({
                     className="mt-2"
                   />
                   {String(orderTimelineOrder?.fulfillmentType || "") === "delivery" &&
-                  (!orderIsServiceListingBooking(orderTimelineOrder) ||
-                    orderIsTransportServiceBooking(orderTimelineOrder)) ? (
+                  !orderIsServiceListingBooking(orderTimelineOrder) ? (
                     <div className="mt-2 space-y-1.5 rounded-lg border border-neutral-200/80 bg-neutral-50/90 px-2.5 py-2 dark:border-slate-600 dark:bg-slate-900/50">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                         Delivery tip
@@ -1267,8 +1305,36 @@ export function ProductInspectModal({
               </div>
             ) : null}
 
+            {showWebServiceDetailsDescriptionBlock ? (
+              <div className="hidden min-w-0 space-y-4 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70 md:mt-5 md:block">
+                {serviceInspectSummaryRowCount > 0 ? (
+                  <ListingServiceCardSummary
+                    listing={{
+                      verticalId: "services",
+                      categories: "services",
+                      title,
+                      subId: serviceMeta?.categoryId,
+                      priceCents,
+                      serviceMeta,
+                    }}
+                    variant="inspect"
+                  />
+                ) : null}
+                {descPlain ? (
+                  <section className="min-w-0 space-y-1.5">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                      Description
+                    </h3>
+                    <ListingDescriptionMarkdown text={description} />
+                  </section>
+                ) : null}
+              </div>
+            ) : null}
+
             {descPlain ? (
-              <section className="min-w-0 space-y-1.5">
+              <section
+                className={`min-w-0 space-y-1.5 ${showWebServiceDetailsDescriptionBlock ? "md:hidden" : ""}`}
+              >
                 <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                   Description
                 </h3>
@@ -1288,45 +1354,47 @@ export function ProductInspectModal({
             ) : null}
 
             {hasSellerDetails ? (
-              <div className="space-y-2 border-t border-neutral-200/70 pt-2.5 text-sm leading-relaxed dark:border-slate-700/70">
-                <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
-                  Seller details
-                </h3>
-                <div className="flex gap-3">
-                  <div
-                    className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full border border-neutral-200/90 bg-neutral-100 dark:border-slate-600 dark:bg-slate-800"
-                    aria-label={sellerUsernameTrim ? `Seller avatar for ${sellerUsernameTrim}` : "Seller avatar"}
-                  >
-                    {sellerAvatarTrim && !sellerAvatarBroken ? (
-                      <img
-                        src={sellerAvatarTrim}
-                        alt=""
-                        className="h-full w-full object-cover"
-                        onError={() => setSellerAvatarBroken(true)}
-                      />
-                    ) : (
-                      <span className="flex h-full w-full items-center justify-center text-xs font-semibold text-neutral-600 dark:text-slate-300">
-                        {sellerInitials}
-                      </span>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1 space-y-1.5">
-                    {sellerUsernameTrim ? (
-                      <p className="break-words text-neutral-800 dark:text-slate-200">
-                        <span className="font-semibold text-neutral-700 dark:text-slate-300">Username:</span>{" "}
-                        {sellerUsernameTrim.startsWith("@") ? sellerUsernameTrim : `@${sellerUsernameTrim}`}
-                      </p>
-                    ) : null}
-                    {sellerAddressLineTrim ? (
-                      <p className="break-words text-neutral-800 dark:text-slate-200">
-                        <span className="font-semibold text-neutral-700 dark:text-slate-300">Address:</span>{" "}
-                        {sellerAddressLineTrim}
-                      </p>
-                    ) : null}
+              <div className="border-t border-neutral-200/70 pt-2.5 text-sm leading-relaxed dark:border-slate-700/70 md:space-y-3">
+                <div className="space-y-2">
+                  <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
+                    Seller details
+                  </h3>
+                  <div className="flex gap-3">
+                    <div
+                      className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full border border-neutral-200/90 bg-neutral-100 dark:border-slate-600 dark:bg-slate-800"
+                      aria-label={sellerUsernameTrim ? `Seller avatar for ${sellerUsernameTrim}` : "Seller avatar"}
+                    >
+                      {sellerAvatarTrim && !sellerAvatarBroken ? (
+                        <img
+                          src={sellerAvatarTrim}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          onError={() => setSellerAvatarBroken(true)}
+                        />
+                      ) : (
+                        <span className="flex h-full w-full items-center justify-center text-xs font-semibold text-neutral-600 dark:text-slate-300">
+                          {sellerInitials}
+                        </span>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      {sellerUsernameTrim ? (
+                        <p className="break-words text-neutral-800 dark:text-slate-200">
+                          <span className="font-semibold text-neutral-700 dark:text-slate-300">Username:</span>{" "}
+                          {sellerUsernameTrim.startsWith("@") ? sellerUsernameTrim : `@${sellerUsernameTrim}`}
+                        </p>
+                      ) : null}
+                      {sellerAddressLineTrim ? (
+                        <p className="break-words text-neutral-800 dark:text-slate-200">
+                          <span className="font-semibold text-neutral-700 dark:text-slate-300">Address:</span>{" "}
+                          {sellerAddressLineTrim}
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
                 {typeof onContactSeller === "function" || typeof onViewSellerProfile === "function" ? (
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2 pt-2">
                     {typeof onContactSeller === "function" ? (
                       <button
                         type="button"

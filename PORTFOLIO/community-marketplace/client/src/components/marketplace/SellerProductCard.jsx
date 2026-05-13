@@ -198,16 +198,14 @@ export function SellerProductCard({
         : "line-clamp-2 md:line-clamp-3";
 
   const serviceHeader = isService ? getServiceCardProfileHeader(listing) : { categoryTitle: "", typeLabel: "" };
-  const servicePrimaryTitle =
-    isService && serviceHeader.categoryTitle
-      ? serviceHeader.categoryTitle
-      : listing.title || (isService ? "Untitled service" : "Untitled product");
+  const servicePrimaryTitle = isService
+    ? String(serviceHeader.typeLabel || "").trim() || String(listing.title || "").trim() || "Untitled service"
+    : listing.title || "Untitled product";
   const serviceTypePill =
     isService &&
-    serviceHeader.categoryTitle &&
-    serviceHeader.typeLabel &&
-    serviceHeader.typeLabel !== servicePrimaryTitle
-      ? serviceHeader.typeLabel
+    String(serviceHeader.categoryTitle || "").trim() &&
+    String(serviceHeader.categoryTitle).trim() !== String(servicePrimaryTitle).trim()
+      ? serviceHeader.categoryTitle
       : "";
   const headlinePriceText = isService
     ? getServiceCardHeadlinePriceLabel(listing) ?? formatPesoWhole(listing.priceCents)

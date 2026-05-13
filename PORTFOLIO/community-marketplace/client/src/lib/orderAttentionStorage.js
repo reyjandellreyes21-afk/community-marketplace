@@ -150,39 +150,52 @@ export const orderMatchesOrdersStatusTab = (status, tabId) => {
 };
 
 /**
- * Activity → Booking only: merges Pending + Processing into **Active**, Completed → **Past**, Cancelled → **Declined**.
+ * Activity → Booking: **Pending** (placed), **Active** (processing), **Completed**, **Cancelled**.
  * Underlying `order.status` / dismiss storage still use `RECENT_ORDER_TAB_KEYS`.
  */
 export const BOOKING_STATUS_TABS = [
   {
+    id: "approve",
+    label: "Pending",
+    shortLabel: "Pending",
+    hint: "Service bookings waiting for provider acceptance, or your request is still pending.",
+  },
+  {
     id: "active",
     label: "Active",
     shortLabel: "Active",
-    hint: "Awaiting confirmation or in progress — same as Pending and Processing for products.",
+    hint: "Accepted bookings in progress (same queue as Processing for product orders).",
   },
   {
     id: "past",
-    label: "Past",
-    shortLabel: "Past",
+    label: "Completed",
+    shortLabel: "Done",
     hint: "Completed bookings.",
   },
   {
     id: "declined",
-    label: "Declined",
-    shortLabel: "Decl.",
+    label: "Cancelled",
+    shortLabel: "Canc.",
     hint: "Cancelled or declined bookings.",
   },
 ];
 
-/** @param {string} status @param {'active'|'past'|'declined'} tabId */
+/** @param {string} status @param {'approve'|'active'|'past'|'declined'} tabId */
 export const orderMatchesBookingStatusTab = (status, tabId) => {
+  if (tabId === "approve") {
+    return orderMatchesOrdersStatusTab(status, "pending");
+  }
   if (tabId === "active") {
-    return orderMatchesOrdersStatusTab(status, "pending") || orderMatchesOrdersStatusTab(status, "processing");
+    return orderMatchesOrdersStatusTab(status, "processing");
   }
   if (tabId === "past") return orderMatchesOrdersStatusTab(status, "completed");
   if (tabId === "declined") return orderMatchesOrdersStatusTab(status, "cancelled");
   return false;
 };
+
+/** Matches bulk Accept / Cancel eligibility in Bookings (see `ordersAcceptEnabled` / `ordersDeclineEnabled` in App). */
+export const orderStatusEligibleForServiceBookingBulkActions = (status) =>
+  String(status || "").toLowerCase() === "placed";
 
 export const orderStatusToTabId = (status) => {
   const s = String(status || "").toLowerCase();

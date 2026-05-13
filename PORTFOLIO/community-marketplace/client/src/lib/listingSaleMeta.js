@@ -1,4 +1,5 @@
 import { formatCents } from "../marketplace/money.js";
+import { formatBuyerCommentRequestedSlotsForDisplay } from "./serviceBookingSlot.js";
 
 export const SALE_PERCENT_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40, 50, 70, 90];
 
@@ -156,7 +157,7 @@ export function stripSelectedLinesFromComment(comment) {
 export function buyerCommentDisplayForOrderCard(rawComment, variantSignature = "") {
   const stripped = stripSelectedLinesFromComment(rawComment).trim();
   if (stripped && !/^n\/a$/i.test(stripped)) {
-    return { show: true, label: "Comment", text: stripped };
+    return { show: true, label: "Comment", text: formatBuyerCommentRequestedSlotsForDisplay(stripped) };
   }
   const raw = String(rawComment || "").trim();
   const mapFromComment = parseBuyerSelectedVariantsFromComment(raw);
@@ -170,7 +171,7 @@ export function buyerCommentDisplayForOrderCard(rawComment, variantSignature = "
     return { show: true, label: "Selection", text };
   }
   if (raw && !/^n\/a$/i.test(raw)) {
-    return { show: true, label: "Comment", text: raw };
+    return { show: true, label: "Comment", text: formatBuyerCommentRequestedSlotsForDisplay(raw) };
   }
   return { show: false, label: "", text: "" };
 }

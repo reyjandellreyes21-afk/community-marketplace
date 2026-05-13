@@ -1,12 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "../../lib/appApi.js";
+import { useServiceListingBookedSlots } from "../../hooks/useServiceListingBookedSlots.js";
 import { isServiceListing } from "../../lib/listingServiceCardMeta.js";
 import {
-  formatIsoDateForBookingDisplay,
-  formatTimeHmTo12HourLabel,
+  bookedSlotsToKeySet,
+  bookingTimeHmWithinWindow,
+  isServiceSlotElapsed,
+  normalizeBookingDateIso,
+  normalizeBookingTimeHm,
   slotOptionsForServiceListing,
   validateServiceBookingSelection,
 } from "../../lib/serviceBookingSlot.js";
+import { ServiceBookingPicker } from "./ServiceBookingPicker.jsx";
 
 export function OrderPlacementForm({ listing, token, onDone, onError }) {
   const modes = listing?.fulfillmentModes?.length ? listing.fulfillmentModes : ["pickup"];
@@ -15,57 +20,60 @@ export function OrderPlacementForm({ listing, token, onDone, onError }) {
   const [buyerCourierPesos, setBuyerCourierPesos] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const isService = isServiceListing(listing);
-  const slotOpts = isService ? slotOptionsForServiceListing(listing) : { required: false, dates: [], times: [], scheduleHuman: "" };
+  const orderPlacementListingRef = useRef(listing);
+  orderPlacementListingRef.current = listing;
+  const serviceBookingSlotKey = useMemo(
+    () =>
+      `${String(listing?.id ?? "")}|${String(listing?.verticalId ?? "")}|${String(listing?.categories ?? "")}|${String(
+        listing?.serviceMeta?.common?.availabilitySchedule ?? "",
+      )}`,
+    [listing?.id, listing?.verticalId, listing?.categories, listing?.serviceMeta?.common?.availabilitySchedule],
+  );
+  const slotOpts = useMemo(() => {
+    if (!isServiceListing(listing)) return { required: false, dates: [], times: [], scheduleHuman: "", windowStart: "", windowEnd: "" };
+    return slotOptionsForServiceListing(listing);
+    // `serviceBookingSlotKey` captures fields that affect generated dates/times copy.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceBookingSlotKey]);
   const [serviceBookingDate, setServiceBookingDate] = useState("");
   const [serviceBookingTime, setServiceBookingTime] = useState("");
-  const [serviceBookingDateHint, setServiceBookingDateHint] = useState("");
-  const [bookedSlots, setBookedSlots] = useState([]);
+  const {
+    bookedSlots,
+    occupancyStale: bookingOccupancyStale,
+    occupancyLoading: bookingOccupancyLoading,
+    occupancyLive: bookingOccupancyLive,
+    reload: reloadBookedSlots,
+  } = useServiceListingBookedSlots({
+    listingRef: orderPlacementListingRef,
+    listingId: String(listing?.id || ""),
+    token,
+    enabled: Boolean(isService && listing?.id && slotOpts.required),
+    debouncedDateIso: normalizeBookingDateIso(serviceBookingDate),
+  });
+  const placementBlockedByOccupancy = Boolean(slotOpts.required && bookingOccupancyLoading && !bookingOccupancyLive);
 
-  useEffect(() => {
-    if (!isService || !listing?.id) {
-      setBookedSlots([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await apiRequest(`/listings/${listing.id}/service-booked-slots`, { token });
-        const raw = Array.isArray(r?.bookedSlots) ? r.bookedSlots : [];
-        const norm = raw
-          .map((x) => ({ date: String(x?.date || "").trim(), time: String(x?.time || "").trim() }))
-          .filter((x) => x.date && x.time);
-        if (!cancelled) setBookedSlots(norm);
-      } catch {
-        if (!cancelled) setBookedSlots([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isService, listing?.id, token]);
+  const bookedKeySet = useMemo(() => bookedSlotsToKeySet(bookedSlots), [bookedSlots]);
 
-  const bookedKeySet = useMemo(() => {
-    const s = new Set();
-    for (const b of bookedSlots) s.add(`${b.date}\t${b.time}`);
-    return s;
-  }, [bookedSlots]);
-
-  const timesForSelectedDate = useMemo(() => {
-    if (!slotOpts.required) return slotOpts.times;
-    const d = String(serviceBookingDate || "").trim();
-    return (slotOpts.times || []).filter((t) => !bookedKeySet.has(`${d}\t${t}`));
-  }, [slotOpts.required, slotOpts.times, serviceBookingDate, bookedKeySet]);
+  const timeOkOnDay = (dateIso, timeHm) => {
+    const di = normalizeBookingDateIso(dateIso);
+    const tm = normalizeBookingTimeHm(timeHm);
+    if (!di || !tm || !slotOpts.dates?.includes(di)) return false;
+    if (!bookingTimeHmWithinWindow(tm, slotOpts.windowStart, slotOpts.windowEnd)) return false;
+    if (isServiceSlotElapsed(di, tm)) return false;
+    if (bookedKeySet.has(`${di}\t${tm}`)) return false;
+    if (slotOpts.required && bookingOccupancyLoading && !bookingOccupancyLive) return false;
+    return true;
+  };
 
   useEffect(() => {
     if (!isService || !slotOpts.required) return;
-    if (timesForSelectedDate.length === 0) {
-      if (serviceBookingTime) setServiceBookingTime("");
-      return;
-    }
-    if (!timesForSelectedDate.includes(serviceBookingTime)) {
-      setServiceBookingTime(timesForSelectedDate[0]);
-    }
-  }, [isService, slotOpts.required, timesForSelectedDate, serviceBookingTime]);
+    const d = normalizeBookingDateIso(serviceBookingDate);
+    const tNorm = normalizeBookingTimeHm(serviceBookingTime);
+    if (d && tNorm && timeOkOnDay(d, tNorm)) return;
+    const first = (slotOpts.times || []).find((tm) => timeOkOnDay(serviceBookingDate, tm));
+    if (first) setServiceBookingTime(first);
+    else if (serviceBookingTime) setServiceBookingTime("");
+  }, [isService, slotOpts.required, slotOpts.times, serviceBookingDate, serviceBookingTime, bookedKeySet, bookingOccupancyLive, bookingOccupancyLoading, bookingOccupancyStale, slotOpts.windowStart, slotOpts.windowEnd, slotOpts.dates]);
 
   const isOutOfStock = !isService && Math.max(0, Number(listing?.quantity) || 0) <= 0;
 
@@ -83,7 +91,6 @@ export function OrderPlacementForm({ listing, token, onDone, onError }) {
     const o = slotOptionsForServiceListing(listing);
     setServiceBookingDate(o.dates[0] || "");
     setServiceBookingTime("");
-    setServiceBookingDateHint("");
   }, [listing]);
 
   const place = async () => {
@@ -93,20 +100,16 @@ export function OrderPlacementForm({ listing, token, onDone, onError }) {
       return;
     }
     if (isService) {
-      const err = validateServiceBookingSelection(listing, serviceBookingDate, serviceBookingTime);
+      if (slotOpts.required && bookingOccupancyLoading && !bookingOccupancyLive) {
+        onError("Loading taken slots. Please wait a moment.");
+        return;
+      }
+      const err = validateServiceBookingSelection(listing, serviceBookingDate, serviceBookingTime, {
+        bookedSlotKeys: slotOpts.required && bookingOccupancyLive ? bookedKeySet : undefined,
+      });
       if (err) {
         onError(err);
         return;
-      }
-      if (slotOpts.required) {
-        if (timesForSelectedDate.length === 0) {
-          onError("No open times remain on that day — pick another date.");
-          return;
-        }
-        if (!timesForSelectedDate.includes(serviceBookingTime)) {
-          onError("That time was just taken — pick another slot.");
-          return;
-        }
       }
     }
     setSubmitting(true);
@@ -157,7 +160,17 @@ export function OrderPlacementForm({ listing, token, onDone, onError }) {
         createdOrderId,
       );
     } catch (e) {
-      onError(e.message || "Could not place order.");
+      const msg = e.message || "Could not place order.";
+      if (
+        isService &&
+        slotOpts.required &&
+        listing?.id &&
+        /already booked|no longer available/i.test(String(msg))
+      ) {
+        void reloadBookedSlots();
+        return;
+      }
+      onError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -174,79 +187,23 @@ export function OrderPlacementForm({ listing, token, onDone, onError }) {
       {isService && slotOpts.required ? (
         <fieldset className="space-y-2 rounded-lg border border-neutral-200/80 bg-neutral-50/70 p-2.5 dark:border-slate-700/70 dark:bg-slate-900/40">
           <legend className="text-xs font-semibold text-neutral-900 dark:text-slate-100">Preferred slot</legend>
-          {slotOpts.scheduleHuman ? (
-            <p className="text-[11px] text-neutral-600 dark:text-slate-400">{slotOpts.scheduleHuman}</p>
-          ) : null}
-          {(() => {
-            const bookable = slotOpts.dates || [];
-            const bookableSet = new Set(bookable);
-            const dateMin = bookable[0] || "";
-            const dateMax = bookable.length ? bookable[bookable.length - 1] : "";
-            return (
-              <div className="grid gap-2 min-[400px]:grid-cols-2">
-                <label className="text-[11px] font-medium text-neutral-700 dark:text-slate-300">
-                  Date
-                  <input
-                    type="date"
-                    className="input-base mt-1 w-full min-h-[2.5rem] text-sm"
-                    value={serviceBookingDate}
-                    min={dateMin || undefined}
-                    max={dateMax || undefined}
-                    onChange={(e) => {
-                      const v = String(e.target.value || "").trim();
-                      if (!v) {
-                        if (dateMin) setServiceBookingDate(dateMin);
-                        setServiceBookingDateHint("");
-                        return;
-                      }
-                      if (bookableSet.has(v)) {
-                        setServiceBookingDate(v);
-                        setServiceBookingDateHint("");
-                      } else {
-                        setServiceBookingDateHint(
-                          "That day is not in this provider’s available weekdays — pick another date.",
-                        );
-                        setServiceBookingDate(dateMin || v);
-                      }
-                    }}
-                    disabled={submitting}
-                  />
-                  {serviceBookingDate ? (
-                    <span className="mt-0.5 block text-[10px] text-neutral-500 dark:text-slate-500">
-                      {formatIsoDateForBookingDisplay(serviceBookingDate)}
-                    </span>
-                  ) : null}
-                  {serviceBookingDateHint ? (
-                    <p className="mt-1 text-[10px] text-rose-600 dark:text-rose-400">{serviceBookingDateHint}</p>
-                  ) : null}
-                </label>
-                <label className="text-[11px] font-medium text-neutral-700 dark:text-slate-300">
-                  Time
-                  <select
-                    className="input-base mt-1 w-full text-sm tabular-nums"
-                    value={serviceBookingTime}
-                    onChange={(e) => setServiceBookingTime(e.target.value)}
-                    disabled={submitting || timesForSelectedDate.length === 0}
-                  >
-                    {timesForSelectedDate.length === 0 ? (
-                      <option value="">No open times</option>
-                    ) : (
-                      timesForSelectedDate.map((t) => (
-                        <option key={t} value={t}>
-                          {formatTimeHmTo12HourLabel(t)}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                  {bookedSlots.length > 0 && timesForSelectedDate.length === 0 ? (
-                    <p className="mt-1 text-[10px] text-rose-600 dark:text-rose-400">
-                      All times on this day are already booked.
-                    </p>
-                  ) : null}
-                </label>
-              </div>
-            );
-          })()}
+          <ServiceBookingPicker
+            key={String(listing?.id || "")}
+            scheduleHuman={slotOpts.scheduleHuman}
+            bookableDates={slotOpts.dates || []}
+            slotTimes={slotOpts.times || []}
+            windowStartHm={slotOpts.windowStart || ""}
+            windowEndHm={slotOpts.windowEnd || ""}
+            bookedSlots={bookedSlots}
+            selectedDate={serviceBookingDate}
+            selectedTime={serviceBookingTime}
+            onSelectDate={(iso) => setServiceBookingDate(iso)}
+            onSelectTime={setServiceBookingTime}
+            disabled={submitting}
+            occupancyStale={bookingOccupancyStale}
+            occupancyLoading={bookingOccupancyLoading}
+            occupancyLive={bookingOccupancyLive}
+          />
         </fieldset>
       ) : isService ? (
         <p className="text-xs text-neutral-600 dark:text-slate-400">
@@ -285,7 +242,7 @@ export function OrderPlacementForm({ listing, token, onDone, onError }) {
           </span>
         </label>
       ) : null}
-      <button type="button" className="btn-primary" disabled={submitting || isOutOfStock} onClick={place}>
+      <button type="button" className="btn-primary" disabled={submitting || isOutOfStock || placementBlockedByOccupancy} onClick={place}>
         {submitting ? "Placing order…" : "Place order"}
       </button>
     </div>

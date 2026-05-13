@@ -91,7 +91,8 @@ export function formatDaysHuman(days) {
 }
 
 /**
- * Human-readable line for previews (listing UI, confirmation copy).
+ * Human-readable line for previews (listing UI, booking copy).
+ * Weekly schedules return **days + hours only** (no leading “Available”) so they sit cleanly next to labels like “Availability”.
  * @param {unknown} raw
  */
 export function formatAvailabilityScheduleHuman(raw) {
@@ -99,7 +100,7 @@ export function formatAvailabilityScheduleHuman(raw) {
   if (p.kind === "weekly") {
     const daysHuman = formatDaysHuman(p.days);
     if (!daysHuman) return "";
-    return `Available ${daysHuman}, ${formatTimeLabel(p.start)} – ${formatTimeLabel(p.end)}`;
+    return `${daysHuman}, ${formatTimeLabel(p.start)} – ${formatTimeLabel(p.end)}`;
   }
   if (p.kind === "legacy_dates") {
     return "Previously saved as specific dates — set weekly hours below.";

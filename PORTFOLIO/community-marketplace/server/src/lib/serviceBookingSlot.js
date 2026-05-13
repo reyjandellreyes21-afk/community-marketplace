@@ -5,6 +5,31 @@
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+function normalizeBookingTimeHmServer(raw) {
+  const s = String(raw ?? "").trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?(?:\.\d+)?$/);
+  if (!m) return "";
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h < 0 || h > 23 || min < 0 || min > 59) return "";
+  const out = `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+  return TIME_RE.test(out) ? out : "";
+}
+
+/**
+ * @param {unknown} timeHm
+ * @param {unknown} windowStart
+ * @param {unknown} windowEnd
+ */
+function bookingTimeHmWithinWindowServer(timeHm, windowStart, windowEnd) {
+  const t = normalizeBookingTimeHmServer(timeHm);
+  const a = normalizeBookingTimeHmServer(windowStart);
+  const b = normalizeBookingTimeHmServer(windowEnd);
+  if (!t || !a || !b || !TIME_RE.test(t) || !TIME_RE.test(a) || !TIME_RE.test(b)) return false;
+  if (a >= b) return false;
+  return t >= a && t < b;
+}
+
 function parseWeeklyFromScheduleJson(raw) {
   const s = String(raw ?? "").trim();
   if (!s) return null;
@@ -85,14 +110,16 @@ function slotOptionsFromListingRow(listing) {
   const common = meta?.common && typeof meta.common === "object" && !Array.isArray(meta.common) ? meta.common : {};
   const sched = String(common.availabilitySchedule || "").trim();
   if (!isWeeklyCompleteFromRaw(sched)) {
-    return { required: false, dates: [], times: [] };
+    return { required: false, dates: [], times: [], windowStart: "", windowEnd: "" };
   }
   const p = parseWeeklyFromScheduleJson(sched);
-  if (!p) return { required: false, dates: [], times: [] };
+  if (!p) return { required: false, dates: [], times: [], windowStart: "", windowEnd: "" };
   return {
     required: true,
     dates: getBookableIsoDatesForWeekly(p, 120),
     times: halfHourTimesBetween(p.start, p.end),
+    windowStart: p.start,
+    windowEnd: p.end,
   };
 }
 
@@ -107,7 +134,7 @@ export function validateServiceBookingSlotForOrder(listingRow, dateIso, timeHm) 
   if (!ISO_DATE.test(d)) return "Choose a booking date that matches the provider’s schedule.";
   if (!o.dates.includes(d)) return "That date is outside the provider’s weekly availability.";
   if (!TIME_RE.test(t)) return "Choose a booking time.";
-  if (!o.times.includes(t)) return "That time is outside the provider’s available hours.";
+  if (!bookingTimeHmWithinWindowServer(t, o.windowStart, o.windowEnd)) return "That time is outside the provider’s available hours.";
   return "";
 }
 

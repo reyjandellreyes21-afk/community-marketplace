@@ -10,6 +10,8 @@ import { SellerBuyerRatingSummary } from "./SellerBuyerRatingSummary.jsx";
  * `quantityRow` is usually listing stock (browse) or an adjustable qty control (cart / add modal).
  * @param {"default" | "card"} [props.variant] — `card` uses stronger hierarchy for browse / community grids.
  * @param {boolean} [props.frameDescriptionAsSellerNote] — when true, description is shown in a labeled disclosure box (modal / detail).
+ * @param {"card"|"inspect"} [props.descriptionPresentation] — `card` (default): bordered “Details” preview on card variant; `inspect`: “Description” + markdown, no card frame (matches full product inspect).
+ * @param {boolean} [props.unframeDescription] — when true with `descriptionPresentation="card"`, shows Details without the bordered `lm-card-meta` frame (e.g. Place order modal).
  * @param {boolean} [props.hideAvailability] — omit the availability row (e.g. when the parent shows a compact fulfillment line on mobile).
  * @param {import("react").ReactNode} [props.titleEnd] — e.g. favorite control aligned with the title row (keeps imagery unobstructed).
  * @param {"gridMobile"|"listMobile"|null} [props.browseStackMode] — marketplace browse density on small screens (card variant only).
@@ -50,6 +52,8 @@ export function MarketplaceProductDetailStack({
   headlinePriceOverride = "",
   /** Service cards: optional pill under title (specific type within category). */
   titleHighlight = "",
+  descriptionPresentation = "card",
+  unframeDescription = false,
 }) {
   const saleMeta = parseSaleMetaFromDescription(description);
   const headlinePriceTrim = String(headlinePriceOverride || "").trim();
@@ -85,14 +89,28 @@ export function MarketplaceProductDetailStack({
 
   const descriptionBlock = !hideDescription && descriptionPreview ? (
     isCard ? (
-      <div
-        className={`lm-card-meta ${
-          browseStackMode === "listMobile" ? "px-3 py-2.5" : "px-2.5 py-2"
-        }`}
-      >
-        <p className="product-meta-label">Details</p>
-        <p className={`mt-1 ${descriptionClampClass} product-description-preview`}>{descriptionPreview}</p>
-      </div>
+      descriptionPresentation === "inspect" ? (
+        <section className="min-w-0 space-y-1.5">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+            Description
+          </h3>
+          <div className="min-w-0 text-text-secondary min-[360px]:text-sm dark:text-slate-400">
+            <ListingDescriptionMarkdown text={description} />
+          </div>
+        </section>
+      ) : unframeDescription ? (
+        <section className="min-w-0 space-y-1.5">
+          <p className="product-meta-label">Details</p>
+          <p className={`${descriptionClampClass} product-description-preview`}>{descriptionPreview}</p>
+        </section>
+      ) : (
+        <div
+          className={`lm-card-meta ${browseStackMode === "listMobile" ? "px-3 py-2.5" : "px-2.5 py-2"}`}
+        >
+          <p className="product-meta-label">Details</p>
+          <p className={`mt-1 ${descriptionClampClass} product-description-preview`}>{descriptionPreview}</p>
+        </div>
+      )
     ) : frameDescriptionAsSellerNote ? (
       <div className="min-w-0 rounded-lg border border-amber-200/90 bg-amber-50/75 px-2.5 py-2 dark:border-amber-500/35 dark:bg-amber-500/10">
         <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">From the seller</p>

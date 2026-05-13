@@ -2,13 +2,16 @@ import { getServiceCardSummaryRows } from "../../lib/listingServiceCardMeta.js";
 
 /**
  * Compact service details from `listing.serviceMeta` for cards (seller, browse, modal).
- * All dynamic fields are shown; pass `maxRows` only to limit trailing common rows (rate, area, …).
+ * **Card** variants (`seller`, `browse`): rate type and availability (when set); other fields live in view product.
+ * **Inspect**: full dynamic + common rows (view product / modal).
  * @param {"seller"|"browse"|"inspect"} [props.variant]
  */
 export function ListingServiceCardSummary({ listing, variant = "seller", maxRows }) {
+  const summaryScope = variant === "inspect" ? "full" : "card";
   const rows = getServiceCardSummaryRows(listing, {
     maxRows,
     omitCategoryAndServiceTitle: true,
+    summaryScope,
   });
   if (!rows.length) return null;
 
@@ -29,9 +32,7 @@ export function ListingServiceCardSummary({ listing, variant = "seller", maxRows
 
   return (
     <div className={`min-w-0 space-y-1 ${variant === "inspect" ? "space-y-1.5" : ""}`}>
-      {variant === "browse" ? (
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary/80 dark:text-slate-400">Service details</p>
-      ) : variant === "inspect" ? (
+      {variant === "inspect" ? (
         <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">Service details</p>
       ) : null}
       {rows.map((row, i) => (

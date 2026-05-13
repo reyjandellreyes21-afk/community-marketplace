@@ -10,6 +10,7 @@
     "demo:account": "node scripts/create-demo-account.js",
     "db:apply-cart-fulfillment": "node scripts/apply-cart-fulfillment-type.js",
     "db:apply-courier-reviews": "node scripts/apply-courier-delivery-reviews.js",
+    "db:apply-provider-on-the-way": "node scripts/apply-orders-status-provider-on-the-way.js",
     "check": "node --check index.js && node --check load-env.js && node --check src/app.js && node --check src/schemas/index.js",
     "test": "node --test"
   },

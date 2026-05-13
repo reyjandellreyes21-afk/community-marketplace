@@ -15,6 +15,8 @@ import {
   findConflictingServiceBooking,
   effectiveServiceSlotFromOrderRow,
   listHeldServiceSlotsForListing,
+  normalizeSlotDateIso,
+  normalizeSlotTimeHm,
 } from "../lib/serviceBookingHold.js";
 import { formatServiceBookingRequestLine, validateServiceBookingSlotForOrder } from "../lib/serviceBookingSlot.js";
 
@@ -909,12 +911,17 @@ function orderListingSnapshotFromDbRow(row) {
       listingImageUrls: [],
       listingCommunityId: null,
       listingVerticalId: null,
+      listingCategories: null,
       listingSubId: null,
     };
   const imageUrls = dedupeListingImageUrlsOrdered(normalizeDbImageUrls(row.image_urls)).slice(0, LISTING_IMAGE_URLS_CAP);
   const primary = String(row.image_url || "").trim() || String(imageUrls[0] || "").trim();
   const cid = row.community_id != null ? String(row.community_id).trim() : "";
-  const vertical = String(row.vertical_id ?? row.verticalId ?? "").trim() || null;
+  /** Match {@link listingRowIsService}: some rows use `categories` when `vertical_id` is unset. */
+  const verticalRaw = String(row.vertical_id ?? row.verticalId ?? "").trim();
+  const categoriesRaw = String(row.categories ?? "").trim().toLowerCase();
+  const vertical =
+    verticalRaw.toLowerCase() === "services" || categoriesRaw === "services" ? "services" : verticalRaw || null;
   const sub = String(row.sub_id ?? row.subId ?? "").trim();
   return {
     listingTitle: String(row.title || "").trim() || null,
@@ -922,6 +929,7 @@ function orderListingSnapshotFromDbRow(row) {
     listingImageUrls: imageUrls.length ? imageUrls : primary ? [primary] : [],
     listingCommunityId: cid || null,
     listingVerticalId: vertical,
+    listingCategories: row.categories != null && String(row.categories).trim() ? String(row.categories).trim() : null,
     listingSubId: sub || null,
   };
 }
@@ -1050,15 +1058,7 @@ const orderRowToApi = (row, reviewRow = null, listingMeta = null, courierReviewR
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   ...(() => {
-    const fromCols =
-      row.service_booking_date != null && String(row.service_booking_date).trim()
-        ? String(row.service_booking_date).trim().slice(0, 10)
-        : null;
-    const timeCol = row.service_booking_time != null ? String(row.service_booking_time).trim() : "";
-    const slot =
-      fromCols && /^([01]\d|2[0-3]):[0-5]\d$/.test(timeCol)
-        ? { date: fromCols, time: timeCol }
-        : effectiveServiceSlotFromOrderRow(row);
+    const slot = effectiveServiceSlotFromOrderRow(row);
     return {
       serviceBookingDate: slot?.date ?? null,
       serviceBookingTime: slot?.time ?? null,
@@ -1205,7 +1205,7 @@ async function fetchListingMetaForOrder(order) {
   if (!order?.listing_id) return null;
   const { data: listing } = await supabaseAdmin
     .from("listings")
-    .select("id, title, image_url, image_urls, community_id, vertical_id, sub_id")
+    .select("id, title, image_url, image_urls, community_id, vertical_id, categories, sub_id")
     .eq("id", order.listing_id)
     .maybeSingle();
   return listing || null;
@@ -2098,24 +2098,18 @@ export const updateListing = async (req, res, next) => {
 export const deleteListing = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { data: existing } = await supabaseAdmin.from("listings").select("id,seller_id,status").eq("id", id).maybeSingle();
+    const { data: existing } = await supabaseAdmin.from("listings").select("id,seller_id").eq("id", id).maybeSingle();
     if (!existing || existing.seller_id !== req.user.id) throw new AppError(404, "Listing not found.");
-    if (String(existing.status || "").toLowerCase() === "deleted") {
-      res.status(204).send();
-      return;
-    }
-    // Keep historical orders/reviews intact: mark listing deleted instead of hard-delete.
-    const { error } = await supabaseAdmin
-      .from("listings")
-      .update({ status: "deleted", updated_at: new Date().toISOString() })
-      .eq("id", id);
+    const { error } = await supabaseAdmin.from("listings").delete().eq("id", id).eq("seller_id", req.user.id);
     if (
       error &&
-      /status|check constraint|listings_status_check|violates check constraint/i.test(String(error.message || ""))
+      /foreign key|violates foreign key constraint|orders_listing_id_fkey|order_reviews_listing_id_fkey/i.test(
+        String(error.message || ""),
+      )
     ) {
       throw new AppError(
         503,
-        "Database schema is outdated for listing delete. Apply migration `supabase/migrations/20260507153000_listings_allow_deleted_status_soft_delete.sql`, then run `NOTIFY pgrst, 'reload schema';`.",
+        "Database schema is outdated for listing hard delete. Apply migration `supabase/migrations/20260519121000_listings_hard_delete_order_refs_nullable.sql`, then run `NOTIFY pgrst, 'reload schema';`.",
       );
     }
     if (error) throw new AppError(500, error.message);
@@ -2754,20 +2748,12 @@ export const createOrder = async (req, res, next) => {
     let serviceBookingDateIn = "";
     let serviceBookingTimeIn = "";
     if (isSvc) {
-      serviceBookingDateIn = String(req.body.serviceBookingDate ?? req.body.service_booking_date ?? "").trim();
-      serviceBookingTimeIn = String(req.body.serviceBookingTime ?? req.body.service_booking_time ?? "").trim();
+      const rawD = String(req.body.serviceBookingDate ?? req.body.service_booking_date ?? "").trim();
+      const rawT = String(req.body.serviceBookingTime ?? req.body.service_booking_time ?? "").trim();
+      serviceBookingDateIn = normalizeSlotDateIso(rawD) || rawD;
+      serviceBookingTimeIn = normalizeSlotTimeHm(rawT) || rawT;
       const slotErr = validateServiceBookingSlotForOrder(listing, serviceBookingDateIn, serviceBookingTimeIn);
       if (slotErr) throw new AppError(400, slotErr);
-      if (serviceBookingDateIn && serviceBookingTimeIn) {
-        const { taken } = await findConflictingServiceBooking(supabaseAdmin, {
-          listingId,
-          dateIso: serviceBookingDateIn,
-          timeHm: serviceBookingTimeIn,
-        });
-        if (taken) throw new AppError(409, "That time slot is already booked. Choose another.");
-        const prefix = `${formatServiceBookingRequestLine(serviceBookingDateIn, serviceBookingTimeIn)}\n`;
-        buyerComment = `${prefix}${buyerComment}`.trim().slice(0, 2000);
-      }
     }
     const codGoodsCents = listing.price_cents * orderQty;
     const initialStatus = "placed";
@@ -2781,12 +2767,34 @@ export const createOrder = async (req, res, next) => {
       .eq("status", initialStatus);
     if (existingErr) throw new AppError(500, existingErr.message);
     const matchingPlaced = isSvc
-      ? []
+      ? (existingPlacedOrders || []).filter((o) => {
+          if (String(o?.fulfillment_type ?? "").trim() !== fulfillmentType) return false;
+          const existingSlot = effectiveServiceSlotFromOrderRow(o);
+          const newSlot =
+            serviceBookingDateIn && serviceBookingTimeIn
+              ? { date: serviceBookingDateIn, time: serviceBookingTimeIn }
+              : null;
+          if (newSlot && existingSlot && existingSlot.date === newSlot.date && existingSlot.time === newSlot.time)
+            return true;
+          return false;
+        })
       : (existingPlacedOrders || []).filter((o) => {
           if (effectiveVariantSignatureFromOrderRow(o) !== targetVariantSig) return false;
           if (String(o?.fulfillment_type ?? "").trim() !== fulfillmentType) return false;
           return String(o?.buyer_comment ?? "").trim() === buyerComment;
         });
+    if (isSvc && serviceBookingDateIn && serviceBookingTimeIn) {
+      const excludeOrderIds = matchingPlaced.map((o) => String(o?.id || "")).filter(Boolean);
+      const { taken } = await findConflictingServiceBooking(supabaseAdmin, {
+        listingId,
+        dateIso: serviceBookingDateIn,
+        timeHm: serviceBookingTimeIn,
+        excludeOrderIds,
+      });
+      if (taken) throw new AppError(409, "That time slot is already booked. Choose another.");
+      const prefix = `${formatServiceBookingRequestLine(serviceBookingDateIn, serviceBookingTimeIn)}\n`;
+      buyerComment = `${prefix}${buyerComment}`.trim().slice(0, 2000);
+    }
     let preferredRowId = null;
     const newBuyerCourier =
       fulfillmentType === "delivery" ? parseOptionalCourierContributionCents(req.body.buyerCourierContributionCents) ?? 0 : 0;
@@ -2814,6 +2822,9 @@ export const createOrder = async (req, res, next) => {
         buyer_courier_contribution_cents: mergedBuyerPool,
         seller_courier_contribution_cents: mergedSellerPool,
         cod_delivery_cents: deliveryCodTotalFromSplit(mergedBuyerPool, mergedSellerPool),
+        ...(isSvc && serviceBookingDateIn && serviceBookingTimeIn
+          ? { service_booking_date: serviceBookingDateIn, service_booking_time: serviceBookingTimeIn }
+          : {}),
       };
       const { data: updated, error: uerr } = await updateOrderRowRetryWithoutMissingColumns(primary.id, patch);
       if (uerr) throw new AppError(400, uerr.message);
@@ -3036,7 +3047,7 @@ export const listOrders = async (req, res, next) => {
     if (listingIds.length > 0) {
       const { data: listings, error: lerr } = await supabaseAdmin
         .from("listings")
-        .select("id, title, image_url, image_urls, community_id, vertical_id, sub_id")
+        .select("id, title, image_url, image_urls, community_id, vertical_id, categories, sub_id")
         .in("id", listingIds);
       if (!lerr && Array.isArray(listings)) {
         for (const L of listings) {
@@ -3625,10 +3636,12 @@ export const patchOrder = async (req, res, next) => {
       .select("vertical_id, categories, sub_id")
       .eq("id", order.listing_id)
       .maybeSingle();
-    const orderServiceAppointmentFlow =
-      orderRuleListing &&
-      listingRowIsService(orderRuleListing) &&
-      String(orderRuleListing.sub_id || "").trim() !== "transport_services";
+    /** Prefer live listing row; if missing (deleted), infer service booking from persisted slot columns. */
+    const orderRowLooksLikeServiceBooking = Boolean(order?.service_booking_date && order?.service_booking_time);
+    const orderServiceAppointmentFlow = Boolean(
+      (orderRuleListing && listingRowIsService(orderRuleListing)) ||
+        (!orderRuleListing && orderRowLooksLikeServiceBooking),
+    );
 
     if (transition === "seller_accept") {
       if (!isSeller) throw new AppError(403, "Only the seller can accept.");
@@ -3692,9 +3705,24 @@ export const patchOrder = async (req, res, next) => {
       patch.buyer_courier_contribution_cents = b;
       patch.seller_courier_contribution_cents = s;
       patch.cod_delivery_cents = deliveryCodTotalFromSplit(b, s);
+    } else if (transition === "provider_mark_on_the_way") {
+      if (!isSeller) throw new AppError(403, "Only the provider can mark on the way.");
+      if (!orderServiceAppointmentFlow) {
+        throw new AppError(400, "Only service bookings use this step.");
+      }
+      if (order.status !== "seller_accepted") throw new AppError(400, "Invalid state.");
+      patch.status = "provider_on_the_way";
     } else if (transition === "mark_ready_for_pickup") {
       if (!isSeller) throw new AppError(403, "Only the seller can mark ready for pickup.");
-      if (order.status !== "seller_accepted") throw new AppError(400, "Invalid state.");
+      /**
+       * Service bookings now flow `seller_accepted → provider_on_the_way → ready_for_pickup` (the
+       * "Arrived" milestone reuses this transition); product pickup keeps the original one-step jump.
+       */
+      const allowedFromForService = ["seller_accepted", "provider_on_the_way"];
+      const validState = orderServiceAppointmentFlow
+        ? allowedFromForService.includes(order.status)
+        : order.status === "seller_accepted";
+      if (!validState) throw new AppError(400, "Invalid state.");
       const pickupOk = order.fulfillment_type === "pickup";
       const serviceDeliveryAsAppointment = order.fulfillment_type === "delivery" && orderServiceAppointmentFlow;
       if (!pickupOk && !serviceDeliveryAsAppointment) {
@@ -3837,14 +3865,29 @@ export const patchOrder = async (req, res, next) => {
         body: "The seller accepted your order — it’s now being prepared.",
         orderStatusForTab: stFinal,
       });
-    } else if (transition === "mark_ready_for_pickup") {
+    } else if (transition === "provider_mark_on_the_way") {
       await notifyUserOrderEvent({
         recipientUserId: finalOrder.buyer_id,
         actorUserId: req.user.id,
         orderId: oid,
         recipientRole: "buyer",
-        title: "Ready for pickup",
-        body: "Your order is ready for pickup.",
+        title: "Provider on the way",
+        body: "Your provider is on the way to your booking.",
+        orderStatusForTab: stFinal,
+      });
+    } else if (transition === "mark_ready_for_pickup") {
+      /** Service bookings reuse this transition for the "Arrived" milestone — tune the copy accordingly. */
+      const serviceArrived =
+        orderServiceAppointmentFlow && String(orderBeforePatch?.status || "") === "provider_on_the_way";
+      await notifyUserOrderEvent({
+        recipientUserId: finalOrder.buyer_id,
+        actorUserId: req.user.id,
+        orderId: oid,
+        recipientRole: "buyer",
+        title: serviceArrived ? "Provider arrived" : "Ready for pickup",
+        body: serviceArrived
+          ? "Your provider has arrived and your booking is in progress."
+          : "Your order is ready for pickup.",
         orderStatusForTab: stFinal,
       });
     } else if (transition === "mark_pickup_done") {
@@ -3853,8 +3896,10 @@ export const patchOrder = async (req, res, next) => {
         actorUserId: req.user.id,
         orderId: oid,
         recipientRole: "buyer",
-        title: "Order completed",
-        body: "The seller marked your pickup order as completed.",
+        title: orderServiceAppointmentFlow ? "Booking completed" : "Order completed",
+        body: orderServiceAppointmentFlow
+          ? "Your provider marked the booking as completed."
+          : "The seller marked your pickup order as completed.",
         orderStatusForTab: stFinal,
       });
     } else if (transition === "buyer_ack_receipt") {
