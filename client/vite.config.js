@@ -28,7 +28,7 @@ export default defineConfig(({ mode }) => {
       react(),
       VitePWA({
         registerType: "autoUpdate",
-        includeAssets: ["favicon.png", "pwa-192.png", "pwa-512.png"],
+        includeAssets: ["favicon.png", "pwa-192.png", "pwa-512.png", "splash-logo.png"],
         manifest: {
           name: "LinkMart",
           short_name: "LinkMart",

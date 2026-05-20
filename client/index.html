@@ -14,6 +14,103 @@
         } catch (e) {}
       })();
     </script>
+    <style>
+      /* Critical boot UI — must work before JS/CSS bundle (avoids bare skip-link flash). */
+      .skip-to-main {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      .skip-to-main:focus {
+        position: fixed;
+        z-index: 10000;
+        left: max(0.75rem, env(safe-area-inset-left, 0px));
+        top: max(0.75rem, env(safe-area-inset-top, 0px));
+        width: auto;
+        height: auto;
+        margin: 0;
+        padding: 0.75rem 1rem;
+        overflow: visible;
+        clip: auto;
+        white-space: normal;
+        border-radius: 0.5rem;
+        background: #1fa6a6;
+        color: #fff;
+        font: 600 0.875rem/1.25 system-ui, sans-serif;
+        text-decoration: none;
+        outline: 2px solid #1fa6a6;
+        outline-offset: 2px;
+      }
+      html.dark .skip-to-main:focus {
+        background: #1fa6a6;
+        color: #0f172a;
+      }
+      #app-boot {
+        box-sizing: border-box;
+        display: flex;
+        min-height: 100dvh;
+        min-height: 100vh;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.25rem;
+        padding: max(1rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px))
+          max(1rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
+        background: #ffffff;
+        color: #1f2a37;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      html.dark #app-boot {
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      #app-boot img {
+        display: block;
+        width: auto;
+        height: 2.5rem;
+        max-width: min(72vw, 14rem);
+        object-fit: contain;
+      }
+      #app-boot p {
+        margin: 0;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: #4b5563;
+      }
+      html.dark #app-boot p {
+        color: #94a3b8;
+      }
+      .app-boot-spinner {
+        width: 2.25rem;
+        height: 2.25rem;
+        border: 2px solid #d7eeee;
+        border-top-color: #1fa6a6;
+        border-radius: 50%;
+        animation: app-boot-spin 0.75s linear infinite;
+      }
+      html.dark .app-boot-spinner {
+        border-color: #1e3a52;
+        border-top-color: #1fa6a6;
+      }
+      @keyframes app-boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .app-boot-spinner {
+          animation: none;
+          border-top-color: #1fa6a6;
+          opacity: 0.85;
+        }
+      }
+    </style>
     <link rel="icon" type="image/png" href="%BASE_URL%favicon.png" />
     <meta
       name="viewport"
@@ -30,7 +127,13 @@
   </head>
   <body>
     <a class="skip-to-main" href="#main-content">Skip to main content</a>
-    <div id="root"></div>
+    <div id="root">
+      <div id="app-boot" role="status" aria-live="polite" aria-busy="true" aria-label="Loading LinkMart">
+        <img src="%BASE_URL%splash-logo.png" width="224" height="40" alt="LinkMart" decoding="async" />
+        <div class="app-boot-spinner" aria-hidden="true"></div>
+        <p>Loading LinkMart…</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
