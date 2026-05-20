@@ -1,0 +1,74 @@
+import { ACTIVITY_TABS } from "../views.js";
+
+/**
+ * Icons for Activity primary tabs (Buying / Selling / Booking / Courier).
+ */
+export function ActivityPrimaryTabGlyph({ tabId, selected, selectedAccentClass, className = "" }) {
+  const tone = selected
+    ? selectedAccentClass ?? "text-primary dark:text-brand-accent"
+    : "text-neutral-500 dark:text-slate-500";
+  const cn = `h-6 w-6 shrink-0 ${tone} ${className}`;
+  const svgProps = {
+    xmlns: "http://www.w3.org/2000/svg",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    className: cn,
+    "aria-hidden": true,
+  };
+
+  switch (tabId) {
+    case ACTIVITY_TABS.COMMERCE_ALL:
+      return (
+        <svg {...svgProps}>
+          <path d="M12 3v3" />
+          <path d="M8 6h8l-1.5 5h-5L8 6Z" />
+          <path d="M9 14h6v2a3 3 0 0 1-6 0v-2Z" />
+          <path d="M6 11h12" />
+        </svg>
+      );
+    case "orders":
+    case ACTIVITY_TABS.BUYING:
+      return (
+        <svg {...svgProps}>
+          <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
+          <path d="M3 6h18" />
+          <path d="M16 10a4 4 0 0 1-8 0" />
+        </svg>
+      );
+    case ACTIVITY_TABS.SELLING:
+      return (
+        <svg {...svgProps}>
+          <path d="m7.5 4.27 9 5.15" />
+          <path d="M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 18v-2" />
+          <path d="M3.29 7 12 12l8.71-5" />
+        </svg>
+      );
+    case ACTIVITY_TABS.BOOKING:
+      return (
+        <svg {...svgProps}>
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+          <path d="M16 2v4M8 2v4M3 10h18" />
+        </svg>
+      );
+    case ACTIVITY_TABS.COURIER:
+      return (
+        <svg {...svgProps}>
+          <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" />
+          <path d="M15 18H9" />
+          <path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14" />
+          <circle cx="17" cy="18" r="2" />
+          <circle cx="7" cy="18" r="2" />
+        </svg>
+      );
+    default:
+      return (
+        <svg {...svgProps}>
+          <circle cx="12" cy="12" r="10" />
+        </svg>
+      );
+  }
+}

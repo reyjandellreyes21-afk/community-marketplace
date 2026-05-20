@@ -1,0 +1,156 @@
+-- LinkMart marketplace schema (run in Supabase SQL editor or via CLI).
+-- Uses public schema; assumes auth.users and public.profiles already exist.
+
+-- Optional profile fields for browse radius and couriers
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS default_lat double precision,
+  ADD COLUMN IF NOT EXISTS default_lng double precision,
+  ADD COLUMN IF NOT EXISTS courier_modes text[] NOT NULL DEFAULT ARRAY[]::text[];
+
+CREATE TABLE IF NOT EXISTS public.listings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  seller_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  title text NOT NULL,
+  description text NOT NULL DEFAULT '',
+  price_cents integer NOT NULL CHECK (price_cents >= 0),
+  quantity integer NOT NULL DEFAULT 1 CHECK (quantity >= 0),
+  vertical_id text NOT NULL DEFAULT 'COM',
+  sub_id text,
+  fulfillment_modes text[] NOT NULL DEFAULT ARRAY['pickup','delivery']::text[],
+  status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'sold')),
+  city_label text NOT NULL DEFAULT '',
+  lat double precision,
+  lng double precision,
+  image_url text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS listings_seller_idx ON public.listings (seller_id);
+CREATE INDEX IF NOT EXISTS listings_vertical_sub_idx ON public.listings (vertical_id, sub_id);
+CREATE INDEX IF NOT EXISTS listings_status_idx ON public.listings (status);
+CREATE INDEX IF NOT EXISTS listings_geo_idx ON public.listings (lat, lng) WHERE lat IS NOT NULL AND lng IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS public.user_listing_favorites (
+  user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  listing_id uuid NOT NULL REFERENCES public.listings (id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, listing_id)
+);
+
+CREATE INDEX IF NOT EXISTS user_listing_favorites_user_idx ON public.user_listing_favorites (user_id);
+
+CREATE TABLE IF NOT EXISTS public.orders (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  listing_id uuid NOT NULL REFERENCES public.listings (id) ON DELETE RESTRICT,
+  buyer_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  seller_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  quantity integer NOT NULL DEFAULT 1 CHECK (quantity >= 1),
+  fulfillment_type text NOT NULL CHECK (fulfillment_type IN ('pickup', 'delivery')),
+  status text NOT NULL DEFAULT 'placed' CHECK (
+    status IN (
+      'placed',
+      'seller_accepted',
+      'bidding_open',
+      'bid_accepted',
+      'ready_for_pickup',
+      'out_for_delivery',
+      'completed',
+      'cancelled'
+    )
+  ),
+  cod_goods_cents integer NOT NULL CHECK (cod_goods_cents >= 0),
+  cod_delivery_cents integer NOT NULL DEFAULT 0 CHECK (cod_delivery_cents >= 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (buyer_id <> seller_id)
+);
+
+CREATE INDEX IF NOT EXISTS orders_buyer_idx ON public.orders (buyer_id);
+CREATE INDEX IF NOT EXISTS orders_seller_idx ON public.orders (seller_id);
+CREATE INDEX IF NOT EXISTS orders_listing_idx ON public.orders (listing_id);
+CREATE INDEX IF NOT EXISTS orders_status_idx ON public.orders (status);
+
+CREATE TABLE IF NOT EXISTS public.delivery_bids (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id uuid NOT NULL REFERENCES public.orders (id) ON DELETE CASCADE,
+  courier_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  amount_cents integer NOT NULL CHECK (amount_cents > 0),
+  eta_minutes integer,
+  mode text NOT NULL CHECK (mode IN ('walk', 'run', 'bike')),
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected', 'superseded')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (order_id, courier_id)
+);
+
+CREATE INDEX IF NOT EXISTS delivery_bids_order_idx ON public.delivery_bids (order_id);
+
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS accepted_bid_id uuid REFERENCES public.delivery_bids (id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS public.seller_expenses (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  seller_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  category text NOT NULL DEFAULT 'general',
+  amount_cents integer NOT NULL CHECK (amount_cents >= 0),
+  note text NOT NULL DEFAULT '',
+  occurred_on date NOT NULL DEFAULT (CURRENT_DATE),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS seller_expenses_seller_idx ON public.seller_expenses (seller_id);
+
+-- RLS
+ALTER TABLE public.listings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_listing_favorites ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.delivery_bids ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.seller_expenses ENABLE ROW LEVEL SECURITY;
+
+-- Listings: anyone authenticated can read active; sellers manage own
+DROP POLICY IF EXISTS listings_select_active ON public.listings;
+CREATE POLICY listings_select_active ON public.listings FOR SELECT TO authenticated USING (status = 'active' OR seller_id = auth.uid());
+
+DROP POLICY IF EXISTS listings_insert_own ON public.listings;
+CREATE POLICY listings_insert_own ON public.listings FOR INSERT TO authenticated WITH CHECK (seller_id = auth.uid());
+
+DROP POLICY IF EXISTS listings_update_own ON public.listings;
+CREATE POLICY listings_update_own ON public.listings FOR UPDATE TO authenticated USING (seller_id = auth.uid()) WITH CHECK (seller_id = auth.uid());
+
+DROP POLICY IF EXISTS listings_delete_own ON public.listings;
+CREATE POLICY listings_delete_own ON public.listings FOR DELETE TO authenticated USING (seller_id = auth.uid());
+
+-- Favorites
+DROP POLICY IF EXISTS favorites_all_own ON public.user_listing_favorites;
+CREATE POLICY favorites_all_own ON public.user_listing_favorites FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- Orders: buyer or seller
+DROP POLICY IF EXISTS orders_select_parties ON public.orders;
+CREATE POLICY orders_select_parties ON public.orders FOR SELECT TO authenticated USING (buyer_id = auth.uid() OR seller_id = auth.uid());
+
+DROP POLICY IF EXISTS orders_insert_buyer ON public.orders;
+CREATE POLICY orders_insert_buyer ON public.orders FOR INSERT TO authenticated WITH CHECK (buyer_id = auth.uid());
+
+DROP POLICY IF EXISTS orders_update_parties ON public.orders;
+CREATE POLICY orders_update_parties ON public.orders FOR UPDATE TO authenticated USING (buyer_id = auth.uid() OR seller_id = auth.uid());
+
+-- Bids: courier owns insert; buyer/seller/courier can read if party to order
+DROP POLICY IF EXISTS bids_select_related ON public.delivery_bids;
+CREATE POLICY bids_select_related ON public.delivery_bids FOR SELECT TO authenticated USING (
+  courier_id = auth.uid()
+  OR EXISTS (
+    SELECT 1 FROM public.orders o
+    WHERE o.id = order_id AND (o.buyer_id = auth.uid() OR o.seller_id = auth.uid())
+  )
+);
+
+DROP POLICY IF EXISTS bids_insert_courier ON public.delivery_bids;
+CREATE POLICY bids_insert_courier ON public.delivery_bids FOR INSERT TO authenticated WITH CHECK (courier_id = auth.uid());
+
+DROP POLICY IF EXISTS bids_update_courier ON public.delivery_bids;
+CREATE POLICY bids_update_courier ON public.delivery_bids FOR UPDATE TO authenticated USING (courier_id = auth.uid());
+
+-- Expenses
+DROP POLICY IF EXISTS expenses_own ON public.seller_expenses;
+CREATE POLICY expenses_own ON public.seller_expenses FOR ALL TO authenticated USING (seller_id = auth.uid()) WITH CHECK (seller_id = auth.uid());
+
+-- Service role bypasses RLS; Express uses service role. Document for direct Supabase client usage.

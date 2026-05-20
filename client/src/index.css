@@ -1,0 +1,962 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    /* Semantic Tailwind class bundles for mobile: `MOBILE_DESIGN_SYSTEM` in src/utils/mobile/ui.js */
+    /* Core UI primitives — radius / rhythm / touch (see components/ui) */
+    --ui-touch-target: 44px;
+    --ui-radius: 0.75rem;
+    --ui-radius-lg: 1rem;
+    --ui-radius-full: 9999px;
+    --ui-space-1: 0.25rem;
+    --ui-space-2: 0.5rem;
+    --ui-space-3: 0.75rem;
+    --ui-space-4: 1rem;
+    --ui-space-6: 1.5rem;
+    --ui-text-body: 0.875rem;
+    --ui-text-body-lg: 1rem;
+    /* Mobile-first type ramp (< md) — see `.mobile-page-title`, `.product-price`, `MOBILE_DESIGN_SYSTEM.typography` */
+    --ui-text-page: 1.375rem; /* 22px — page / dialog titles */
+    --ui-text-section: 1.125rem; /* 18px — section titles start */
+    --ui-leading-snug: 1.375;
+    --ui-leading-normal: 1.5;
+    /* iOS / Android: use with arbitrary values, e.g. h-[var(--mobile-bottom-ui)] */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    /* Approx. header row height — used by overlays/toasts; secondary tabs sit in-flow below (see LoggedInHeader) */
+    --mobile-bottom-nav: 4.25rem;
+    /* Legacy height token (order-status strip was footer; primary tabs use footer now) */
+    --commerce-order-status-footer: 3.5rem;
+    /* Safe-area + legacy bottom chrome estimate — sheets / fixed UI may reference this token */
+    --mobile-nav-stack-bottom: calc(var(--mobile-bottom-nav) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .dark {
+    color-scheme: dark;
+  }
+
+  /* Keeps layout width stable when scrollbar appears/disappears between views */
+  html {
+    scrollbar-gutter: stable;
+    /* Prevent iOS from inflating small text in landscape / form contexts — stable typography */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    /* 16px root — readable on small phones; components still tune sizes via tokens */
+    @apply m-0 bg-background text-text-primary font-sans antialiased dark:bg-slate-950 dark:text-slate-100 text-base leading-relaxed;
+    /* Softer tap flash than default gray — pairs with touch-manipulation controls */
+    -webkit-tap-highlight-color: rgb(31 166 166 / 0.12);
+  }
+
+  .dark body {
+    -webkit-tap-highlight-color: rgb(45 212 191 / 0.14);
+  }
+
+  #root {
+    @apply min-h-screen min-h-[100dvh];
+  }
+}
+
+@layer components {
+  /* Hide scrollbar while keeping the area scrollable. */
+  .no-scrollbar {
+    -ms-overflow-style: none; /* IE and legacy Edge */
+    scrollbar-width: none; /* Firefox */
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none; /* Chrome, Safari, Opera */
+  }
+
+  /* Skip link: hidden until focused — keyboard / external switch access on small viewports. */
+  .skip-to-main {
+    @apply sr-only focus:not-sr-only focus:fixed focus:z-[9999] focus:left-[max(0.75rem,env(safe-area-inset-left,0px))] focus:top-[max(0.75rem,env(safe-area-inset-top,0px))] focus:rounded-lg focus:bg-primary focus:px-4 focus:py-3 focus:text-sm focus:font-semibold focus:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:focus:bg-brand-accent dark:focus:text-slate-900 dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950;
+  }
+
+  /* Mobile filter drawer: less intrusive scrollbar */
+  .drawer-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(163 163 163 / 0.55) transparent;
+  }
+  .dark .drawer-scroll {
+    scrollbar-color: rgb(100 116 139 / 0.5) transparent;
+  }
+  .drawer-scroll::-webkit-scrollbar {
+    width: 5px;
+  }
+  .drawer-scroll::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: rgb(163 163 163 / 0.55);
+  }
+  .dark .drawer-scroll::-webkit-scrollbar-thumb {
+    background: rgb(100 116 139 / 0.55);
+  }
+  .drawer-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /*
+   * Mobile app shell: fluid width (full viewport minus safe horizontal inset) — validate at 360 / 390 / 430.
+   * Layout: [.mobile-app-top-header] (menu row) → [main scroll] → [.mobile-app-secondary-nav] (icon tab footer).
+   * Light, full-bleed chrome — no heavy outer ring/shadow on phones.
+   */
+  .mobile-app-shell {
+    @apply relative isolate mx-auto flex h-[100dvh] max-h-[100dvh] min-h-screen min-h-[100dvh] w-full max-w-none flex-col overflow-hidden bg-white pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)] dark:bg-slate-950 md:h-auto md:max-h-none md:min-h-0 md:max-w-none md:overflow-visible md:bg-transparent md:pl-0 md:pr-0;
+  }
+
+  .mobile-app-top-header {
+    @apply shrink-0;
+  }
+
+  /* Icon-only secondary tab footer: hairline + frosted row pinned to bottom (no strip shadow). */
+  .mobile-app-secondary-nav {
+    @apply shrink-0 border-t border-neutral-200/45 bg-gradient-to-t from-white/95 to-brand-soft/20 backdrop-blur-md;
+  }
+  @supports (backdrop-filter: blur(12px)) {
+    .mobile-app-secondary-nav {
+      background: linear-gradient(to top, rgb(255 255 255 / 0.92), rgb(232 246 246 / 0.35));
+      backdrop-filter: blur(12px);
+    }
+  }
+  /* Deep slate — editorial marketplace chrome */
+  .dark .mobile-app-secondary-nav {
+    border-top-color: rgb(31 60 86 / 0.55);
+    background: linear-gradient(to top, rgb(15 34 52 / 0.97), rgb(17 40 61 / 0.94));
+    backdrop-filter: blur(12px);
+  }
+
+  @keyframes lm-view-slide-left {
+    0% {
+      opacity: 0.94;
+      transform: translate3d(26px, 0, 0);
+    }
+    100% {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes lm-view-slide-right {
+    0% {
+      opacity: 0.94;
+      transform: translate3d(-26px, 0, 0);
+    }
+    100% {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  .lm-view-slide-left {
+    animation: lm-view-slide-left 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .lm-view-slide-right {
+    animation: lm-view-slide-right 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lm-view-slide-left,
+    .lm-view-slide-right {
+      animation: none;
+    }
+  }
+
+  /* Header / nav row inset — one layer only (avoid stacking with main px) */
+  .app-shell-content-inset {
+    @apply w-full px-3.5 md:px-6;
+  }
+
+  /* Main column: comfortable mobile gutters; desktop max width */
+  .app-container {
+    @apply mx-auto w-full max-w-none px-3.5 md:max-w-7xl md:px-6;
+  }
+
+  /**
+   * LinkMart card primitives — shared shells for browse tiles, cart/order rows, seller inventory, etc.
+   * Mobile-first: soft neutral border (light) / slate border (dark); calm elevation from md+ only.
+   * Use overflow-x-hidden (not overflow-hidden) so in-card popovers/menus are not clipped vertically.
+   */
+  .lm-card {
+    @apply min-w-0 overflow-x-hidden rounded-none border border-neutral-200/85 bg-white text-sm leading-relaxed shadow-none transition-[border-color,box-shadow,background-color] duration-200 ease-out dark:border-slate-600/70 dark:bg-[#0f2234] md:shadow-sm md:shadow-slate-900/[0.04] dark:md:shadow-none;
+  }
+
+  /** Whole-card press targets (row buttons, linked tiles) — touch-friendly active + focus ring */
+  .lm-card-interactive {
+    @apply lm-card cursor-pointer touch-manipulation outline-none transition duration-200 ease-out motion-reduce:transition-none hover:border-primary/30 hover:bg-neutral-50/80 active:scale-[0.99] motion-reduce:active:scale-100 dark:hover:border-slate-500 dark:hover:bg-[#11283d] dark:active:bg-[#0f2234] md:hover:-translate-y-px md:hover:shadow-md md:hover:shadow-slate-900/[0.06] motion-reduce:md:hover:translate-y-0 dark:md:hover:border-[#3d6d8f] dark:md:hover:shadow-[0_10px_28px_rgba(0,0,0,0.32)] motion-reduce:md:hover:shadow-sm focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-950;
+  }
+
+  /** Product / listing hero frame — pair with aspect-* or fixed h-* on the same node */
+  .lm-card-media {
+    @apply relative shrink-0 overflow-hidden rounded-none border border-neutral-200/90 bg-neutral-100 dark:border-slate-600/75 dark:bg-[#11283d];
+  }
+
+  /** Soft ring variant for browse grids (less boxy than full border) */
+  .lm-card-media-soft {
+    @apply relative shrink-0 overflow-hidden rounded-[var(--ui-radius-lg)] border-0 bg-background ring-1 ring-neutral-200/50 dark:bg-[#11283d] dark:ring-slate-600/45 md:rounded-xl md:border md:border-border md:ring-0 dark:md:border-[#1f3c56];
+  }
+
+  /** Primary text block inside a card — stacks title, price, meta */
+  .lm-card-body {
+    @apply min-w-0 flex-1 flex flex-col gap-2;
+  }
+
+  /** Title line — matches `.product-card-title` scale */
+  .lm-card-title {
+    @apply line-clamp-2 min-w-0 break-words text-[15px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-base;
+  }
+
+  /** Bordered meta strip (stock, fulfillment, dense browse) */
+  .lm-card-meta {
+    @apply rounded-xl border border-neutral-200/90 bg-background px-2.5 py-2 dark:border-slate-700 dark:bg-slate-800/50;
+  }
+
+  /** Primary + secondary actions inside a card — vertical on mobile, row when space allows */
+  .lm-card-actions {
+    @apply flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch sm:gap-2;
+  }
+
+  /**
+   * LinkMart list / grid view system — mobile-first layouts for browse, favorites, seller inventory,
+   * cart/order line items. Pair with `lm-list-card` / `lm-grid-card` on card roots; use
+   * `lib/lmViewLayouts.js` helpers for consistent class strings.
+   */
+  .lm-view-list,
+  .lm-view-grid {
+    @apply w-full min-w-0;
+  }
+
+  .lm-view-list > *,
+  .lm-view-grid > * {
+    @apply min-w-0;
+  }
+
+  /** Single-column stack (browse list, section lists) */
+  .lm-list-layout {
+    @apply flex w-full min-w-0 flex-col gap-3 md:gap-4;
+  }
+
+  /** Profile “My listings” snapshot — top spacing aligned with section rhythm */
+  .lm-list-layout--seller-profile {
+    @apply mt-3 gap-3 md:gap-3;
+  }
+
+  /** Shared grid shell — children supply template columns */
+  .lm-grid-layout {
+    @apply grid w-full min-w-0 items-stretch;
+  }
+
+  /** Mobile shop: 2 tight columns; tablet 2–3; desktop fills from ~14.5rem */
+  .lm-grid-layout--browse-mobile-2col {
+    @apply grid-cols-2 gap-2 md:gap-3 md:[grid-template-columns:repeat(auto-fill,minmax(min(100%,12.25rem),1fr))] lg:[grid-template-columns:repeat(auto-fill,minmax(min(100%,14rem),1fr))];
+  }
+
+  /** Comfortable auto-fill — tablet/desktop grows columns from min 17rem */
+  .lm-grid-layout--browse-auto {
+    @apply gap-3 md:gap-4 lg:gap-5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))];
+  }
+
+  /** Dense auto-fill browse */
+  .lm-grid-layout--browse-compact {
+    @apply gap-2 md:gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,10.25rem),1fr))];
+  }
+
+  /** Favorites: one full-width row per item */
+  .lm-grid-layout--favorites-list {
+    @apply grid-cols-1 gap-3 md:gap-4;
+  }
+
+  /** Favorites comfortable grid — 2-up mobile, 3-up on large tablets/desktop */
+  .lm-grid-layout--favorites-grid {
+    @apply grid-cols-2 gap-2 md:gap-4 lg:grid-cols-3;
+  }
+
+  /** Desktop-dense favorites */
+  .lm-grid-layout--favorites-compact {
+    @apply grid-cols-4 gap-2 md:gap-3;
+  }
+
+  /** Seller inventory comfortable grid */
+  .lm-grid-layout--seller-comfortable {
+    @apply mt-3 gap-4 md:gap-5;
+  }
+
+  /** Seller inventory compact grid — md/xl minmax bands match legacy My listings */
+  .lm-grid-layout--seller-compact {
+    @apply mt-3 gap-1.5 md:gap-2;
+  }
+
+  /** Cart / order line-item stacks inside seller/buyer commerce cards */
+  .lm-commerce-line-items--list-cart {
+    @apply flex w-full min-w-0 flex-col divide-y divide-neutral-200/80 px-1 dark:divide-slate-700/80 md:px-1.5;
+  }
+
+  .lm-commerce-line-items--list-orders {
+    @apply flex w-full min-w-0 flex-col gap-2 px-1 md:gap-2.5 md:px-1.5;
+  }
+
+  /**
+   * Cart grid — mobile: 2 columns (aligned with community shop mobile browse).
+   * Web (md+): same comfortable auto-fill as `.lm-grid-layout--browse-auto` (~4 tiles on wide viewports).
+   */
+  .lm-commerce-line-items--grid {
+    @apply grid w-full min-w-0 items-stretch gap-2.5 md:gap-4 lg:gap-5;
+    @apply grid-cols-2;
+    @apply md:[grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))];
+  }
+
+  /**
+   * Purchases / orders grid — mobile: 2 columns; web (md+): comfortable auto-fill like community browse
+   * (replaces fixed md/lg/xl column steps).
+   */
+  .lm-commerce-line-items--grid-orders {
+    @apply grid w-full min-w-0 items-stretch gap-2.5 md:gap-4 lg:gap-5;
+    @apply grid-cols-2;
+    @apply md:[grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))];
+  }
+
+  /** Dense commerce grid — mobile: single column; web (md+): matches `.lm-grid-layout--browse-compact` auto-fill */
+  .lm-commerce-line-items--grid-compact {
+    @apply grid w-full min-w-0 grid-cols-1 items-stretch gap-2 md:gap-3;
+    @apply md:[grid-template-columns:repeat(auto-fill,minmax(min(100%,10.25rem),1fr))];
+  }
+
+  /**
+   * Card density hooks — compose with `lm-card` / product shells.
+   * Grid: prioritize hero + title + price; list: allow wider meta + actions.
+   */
+  .lm-list-card {
+    @apply min-w-0;
+  }
+
+  .lm-grid-card {
+    @apply min-w-0;
+  }
+
+  /** Grid tiles: prefer square heroes (browse / inventory); pair with `lm-product-media-grid` */
+  .lm-grid-card-media {
+    @apply aspect-square w-full min-h-0 overflow-hidden;
+  }
+
+  /**
+   * Global product media — pair with `ProductListingMedia` / `StableMediaImage.lm-product-image`.
+   * Grid: square; list: square thumb (parent sets `h-* w-*`); feed: compose `lm-product-card-media`.
+   */
+  .lm-product-media {
+    @apply relative shrink-0 overflow-hidden rounded-none border border-neutral-200/90 bg-neutral-100 dark:border-slate-600/75 dark:bg-[#11283d];
+  }
+
+  .lm-product-media-grid {
+    @apply aspect-square w-full min-h-0;
+  }
+
+  .lm-product-media-list {
+    @apply relative aspect-square h-full max-h-full w-full max-w-full min-h-0 min-w-0;
+  }
+
+  /** Lighter ring for browse (non-feed) */
+  .lm-product-media--soft {
+    @apply rounded-none border-0 bg-background ring-1 ring-neutral-200/50 dark:bg-[#11283d] dark:ring-slate-600/45 md:border md:border-border md:ring-0 dark:md:border-[#1f3c56];
+  }
+
+  /** Optional composition aliases — roots usually already include `.lm-card` */
+  .lm-product-card-grid {
+    @apply lm-grid-card min-h-0 min-w-0 flex flex-col overflow-hidden;
+  }
+
+  .lm-product-card-list {
+    @apply lm-list-card min-w-0 overflow-x-hidden;
+  }
+
+  .lm-product-image {
+    @apply h-full w-full object-cover;
+  }
+
+  .lm-product-image-placeholder {
+    @apply bg-neutral-100/95 dark:bg-[#11283d]/95;
+  }
+
+  /**
+   * Marketplace browse tiles — dense mobile feed (Shopee-like density, LinkMart tokens).
+   * Compose: `lm-card lm-grid-card lm-product-card lm-product-card--feed` on card root; `p-0` on feed.
+   */
+  .lm-product-card {
+    @apply flex h-full min-h-0 flex-col overflow-hidden p-0 shadow-none;
+  }
+
+  /** Modifies `lm-card` roots — overflow clip for flush hero image; inherits shell from `.lm-card` */
+  .lm-product-card--feed {
+    @apply overflow-hidden;
+  }
+
+  /** Tappable product image (or whole-card on desktop): use with a single inner media layer (`pointer-events-none` on images). */
+  .lm-product-card--tap {
+    @apply cursor-pointer touch-manipulation outline-none transition duration-200 ease-out motion-reduce:transition-none hover:border-primary/35 hover:bg-neutral-50/70 active:scale-[0.99] motion-reduce:active:scale-100 dark:hover:border-slate-500 dark:hover:bg-[#11283d]/85 focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-950 md:hover:-translate-y-px md:hover:shadow-md md:hover:shadow-slate-900/[0.05] motion-reduce:md:hover:translate-y-0 dark:md:hover:border-[#3d6d8f] dark:md:hover:shadow-[0_8px_22px_rgba(0,0,0,0.28)] motion-reduce:md:hover:shadow-sm;
+  }
+
+  .lm-product-card-media {
+    @apply relative aspect-square w-full shrink-0 overflow-hidden bg-neutral-100 dark:bg-[#11283d];
+  }
+
+  /** Flush top image: rounded top corners only; subtle separator before body */
+  .lm-product-card--feed .lm-product-card-media {
+    @apply rounded-none border-b border-neutral-200/80 dark:border-slate-600/55;
+  }
+
+  /** Commerce order grid cards — no rule between hero image and product body */
+  .lm-commerce-order-card.lm-product-card--feed .lm-product-card-media {
+    @apply border-b-0;
+  }
+
+  .lm-product-card-media--ring {
+    @apply border-0 ring-1 ring-inset ring-neutral-200/45 dark:ring-slate-600/40;
+  }
+
+  .lm-product-card--feed .lm-product-card-media.lm-product-card-media--ring {
+    @apply border-b-0;
+  }
+
+  .lm-product-card-body {
+    @apply flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 px-2 pb-2 pt-2 min-[360px]:gap-2 min-[360px]:px-2.5 min-[360px]:pb-2.5 min-[360px]:pt-2.5;
+  }
+
+  .lm-product-card-title {
+    @apply line-clamp-2 min-w-0 break-words text-[15px] font-bold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-base;
+  }
+
+  .lm-product-card-price-row {
+    @apply flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5;
+  }
+
+  .lm-product-card-price {
+    @apply min-w-0 text-[1.1rem] font-extrabold tabular-nums tracking-tight text-primary min-[360px]:text-[1.18rem] dark:text-brand-accent;
+  }
+
+  .lm-product-card-pill {
+    @apply inline-flex shrink-0 rounded-none border border-orange-300 bg-orange-100 px-1.5 py-0.5 text-[11px] font-extrabold tabular-nums leading-none text-orange-700 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-300 min-[380px]:px-2 min-[380px]:text-xs;
+  }
+
+  .lm-product-card-badge-row {
+    @apply flex min-w-0 flex-wrap items-center gap-1;
+  }
+
+  /** Stock / fulfillment / delivery hints — compact, no heavy card chrome */
+  .lm-product-card-meta {
+    @apply min-w-0 border-0 bg-transparent p-0 text-xs leading-snug text-text-secondary dark:text-slate-400;
+  }
+
+  /** Layout density toggle — wraps `ProductViewDensityToggle`; pairs with `lm-btn-segment` */
+  .lm-view-toggle {
+    @apply inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-lg p-0.5;
+  }
+
+  .lm-view-toggle--default {
+    @apply bg-neutral-100/40 dark:bg-slate-800/50 md:rounded-xl md:border md:border-neutral-200/85 md:bg-white md:p-1 md:shadow-sm dark:md:border-slate-600 dark:md:bg-slate-900;
+  }
+
+  /** Phone toolbar — matches compact Filters row height (overrides 44px segment min on small screens) */
+  .lm-view-toggle--minimal {
+    @apply rounded-lg border border-neutral-200/75 bg-neutral-100/70 p-0.5 shadow-[0_1px_2px_rgba(15,23,42,0.06)] dark:border-slate-600/75 dark:bg-slate-800/70 dark:shadow-[0_1px_2px_rgba(0,0,0,0.25)];
+  }
+
+  .lm-view-toggle--minimal .lm-btn-segment {
+    @apply h-9 min-h-9 min-w-9 max-h-9 rounded-md px-2 py-1;
+  }
+
+
+  /* Component Card + legacy aliases — composed from `lm-card` */
+  .app-card {
+    @apply lm-card bg-surface p-4 transition duration-200 ease-in-out min-[360px]:text-[15px] md:p-5 md:text-sm dark:bg-[#0f2234] md:shadow-sm md:shadow-slate-900/[0.05] dark:md:shadow-none md:dark:shadow-[0_1px_2px_rgba(0,0,0,0.2),0_8px_18px_rgba(0,0,0,0.18)];
+  }
+
+  .app-card-interactive {
+    @apply app-card motion-reduce:transition-none motion-reduce:md:hover:translate-y-0 motion-reduce:md:hover:scale-100 md:hover:-translate-y-px md:hover:scale-[1.01] md:hover:border-primary/35 md:hover:shadow-md dark:md:hover:border-[#2a5a7b] dark:md:hover:shadow-[0_8px_24px_rgba(0,0,0,0.3)] motion-reduce:md:hover:shadow-sm dark:motion-reduce:md:hover:shadow-[0_1px_2px_rgba(0,0,0,0.22),0_8px_20px_rgba(0,0,0,0.22)];
+  }
+
+  /**
+   * LinkMart button system — mobile-first (`--ui-touch-target` min height), readable labels, calm desktop density.
+   * Compose: `lm-btn-primary` | `lm-btn-secondary` | … ; add `lm-btn-icon` for square icon-only (requires variant); modifiers `lm-btn-sm` | `lm-btn-lg` | `lm-btn-full`.
+   * Chips / filters: `lm-btn-chip` (+ `lm-btn-chip-active` when selected). Toolbar segments: `lm-btn-segment-*`.
+   * Legacy `btn-*` aliases match `lm-btn-*` for existing markup.
+   */
+  .lm-btn {
+    @apply inline-flex min-h-[var(--ui-touch-target)] min-w-0 max-w-full touch-manipulation items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-[15px] font-semibold leading-snug text-text-primary transition duration-200 ease-out motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.98] motion-reduce:active:scale-100 disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none disabled:active:scale-100 dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-950 md:min-h-10 md:px-4 md:py-2 md:text-sm;
+  }
+
+  .lm-btn[aria-busy="true"] {
+    @apply pointer-events-none cursor-wait opacity-90;
+  }
+
+  .lm-btn-primary {
+    @apply lm-btn border border-transparent bg-primary text-white shadow-sm shadow-primary/20 hover:bg-primary-hover md:hover:shadow-sm dark:text-white;
+  }
+
+  .lm-btn-secondary {
+    @apply lm-btn border border-primary bg-surface text-primary hover:bg-primary-soft dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800;
+  }
+
+  .lm-btn-ghost {
+    @apply lm-btn border border-transparent bg-transparent text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white;
+  }
+
+  .lm-btn-danger {
+    @apply lm-btn border border-transparent bg-danger text-white shadow-sm hover:bg-danger-hover dark:text-white;
+  }
+
+  .lm-btn-accent {
+    @apply lm-btn border border-transparent bg-accent text-white shadow-sm hover:bg-accent-hover dark:text-white;
+  }
+
+  /** Square icon-only surface — pair with `lm-btn-primary`, `lm-btn-ghost`, etc. */
+  .lm-btn-icon {
+    @apply shrink-0 !h-[var(--ui-touch-target)] !min-h-[var(--ui-touch-target)] !w-[var(--ui-touch-target)] !min-w-[var(--ui-touch-target)] !max-w-[var(--ui-touch-target)] !gap-0 !p-0 !px-0 !py-0;
+  }
+
+  /** Pill filter / tag-style control (full min-height on mobile) */
+  .lm-btn-chip {
+    @apply lm-btn max-w-full truncate rounded-full border border-neutral-200/90 bg-white px-3.5 py-2 text-xs font-semibold text-text-secondary shadow-none hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 md:min-h-9 md:px-3 md:py-1.5 md:text-xs;
+  }
+
+  .lm-btn-chip-active {
+    @apply border-primary/30 bg-primary-soft text-primary ring-1 ring-primary/20 dark:border-brand-accent/30 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-accent/25;
+  }
+
+  /** Density modifiers — append after a variant class */
+  .lm-btn-sm {
+    @apply min-h-10 px-3 py-2 text-sm md:min-h-9 md:px-2.5 md:py-1.5 md:text-xs;
+  }
+
+  .lm-btn-lg {
+    @apply min-h-[3rem] px-5 py-3 text-base md:min-h-11 md:text-sm;
+  }
+
+  .lm-btn-full {
+    @apply w-full max-w-full justify-center;
+  }
+
+  /** Segmented toolbar (layout toggles, icon-first filters) */
+  .lm-btn-segment {
+    @apply inline-flex min-h-[44px] min-w-[44px] shrink-0 touch-manipulation items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold transition motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/40 dark:focus-visible:ring-offset-slate-900 md:min-h-9 md:min-w-0 md:gap-1.5 md:px-2.5;
+  }
+
+  .lm-btn-segment-active {
+    @apply bg-brand-soft text-brand-primary shadow-none ring-1 ring-inset ring-primary/25 dark:bg-slate-800 dark:text-slate-100 dark:ring-brand-accent/30;
+  }
+
+  .lm-btn-segment-active-muted {
+    @apply bg-brand-soft/90 text-brand-primary ring-1 ring-inset ring-brand-primary/45 dark:bg-slate-800/95 dark:text-brand-accent dark:ring-brand-accent/45;
+  }
+
+  .lm-btn-segment-idle {
+    @apply text-neutral-600 hover:bg-neutral-100/90 dark:text-slate-400 dark:hover:bg-slate-800/80;
+  }
+
+  .lm-btn-segment-idle-minimal {
+    @apply text-neutral-500 hover:bg-neutral-100/75 dark:text-slate-500 dark:hover:bg-slate-800/55;
+  }
+
+  /* Legacy aliases — same visuals as `lm-btn*` */
+  .btn-base {
+    @apply lm-btn;
+  }
+
+  .btn-primary {
+    @apply lm-btn-primary;
+  }
+
+  .btn-secondary {
+    @apply lm-btn-secondary;
+  }
+
+  .btn-ghost {
+    @apply lm-btn-ghost;
+  }
+
+  .btn-danger {
+    @apply lm-btn-danger;
+  }
+
+  .btn-accent {
+    @apply lm-btn-accent;
+  }
+
+  .btn-icon-only {
+    @apply lm-btn-icon;
+  }
+
+  .badge-success {
+    @apply inline-flex min-h-[1.375rem] items-center rounded-[var(--ui-radius-full)] bg-green-100 px-2.5 py-0.5 text-[11px] font-semibold leading-tight text-green-600;
+  }
+
+  .badge-sale {
+    @apply inline-flex min-h-[1.375rem] items-center rounded-[var(--ui-radius-full)] bg-accent/10 px-2.5 py-0.5 text-[11px] font-semibold leading-tight text-accent;
+  }
+
+  .badge-neutral {
+    @apply inline-flex min-h-[1.375rem] items-center rounded-[var(--ui-radius-full)] bg-gray-100 px-2.5 py-0.5 text-[11px] font-semibold leading-tight text-gray-600;
+  }
+
+  .badge-primary {
+    @apply inline-flex min-h-[1.375rem] items-center rounded-[var(--ui-radius-full)] border border-primary/30 bg-primary-soft px-2.5 py-0.5 text-[11px] font-semibold leading-tight text-primary dark:border-brand-accent/35 dark:bg-slate-800 dark:text-slate-100;
+  }
+
+  /* Optional: pill used as a control — meets 44px touch height */
+  .badge-touch {
+    @apply inline-flex min-h-[44px] items-center rounded-[var(--ui-radius-full)] px-4 text-sm font-semibold;
+  }
+
+  /* Inputs: 44px min height on small screens; dense layouts can override with h-9 etc. */
+  .input-base {
+    @apply box-border min-h-[44px] w-full touch-manipulation rounded-[var(--ui-radius)] border border-neutral-200/95 bg-white px-3 py-2.5 text-base leading-snug text-neutral-900 outline-none placeholder:text-neutral-500 focus-visible:border-brand-primary focus-visible:ring-1 focus-visible:ring-brand-primary/35 disabled:cursor-not-allowed disabled:opacity-65 dark:border-[#3d6d8f]/45 dark:bg-[#0f2234] dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus-visible:border-brand-accent dark:focus-visible:ring-brand-accent/30 md:min-h-10 md:text-sm;
+  }
+
+  .textarea-base {
+    @apply input-base min-h-[6.5rem] resize-y py-3 text-base md:text-sm;
+  }
+
+  /* Form labels — one scale on phones + md+ (pairs with `Label` / auth / listing / profile) */
+  .label-base {
+    @apply mb-1.5 block text-[13px] font-semibold leading-snug tracking-[0.01em] text-neutral-700 dark:text-slate-200 min-[390px]:text-sm;
+  }
+
+  /* Screen sections — stack rhythm + type scale */
+  .ui-section {
+    @apply space-y-5 md:space-y-5;
+  }
+
+  .ui-section-eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-wide leading-snug text-primary dark:text-brand-accent min-[380px]:text-xs;
+  }
+
+  /* Section title: 18px → 20px (min 400) on phone, large display from md */
+  .ui-section-title {
+    @apply text-lg font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-xl md:text-[1.65rem] md:leading-tight;
+  }
+
+  .ui-section-subtitle {
+    @apply mt-1 text-sm leading-relaxed text-text-secondary dark:text-slate-400 min-[360px]:text-[15px] md:text-sm;
+  }
+
+  /* Page / full-screen panel titles — 22px → 24px; use on main view `<h1>` / auth / key modals */
+  .mobile-page-title {
+    @apply text-[1.375rem] font-bold leading-tight tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-2xl md:text-[1.65rem] md:font-semibold;
+  }
+
+  /* Product & listing card — title / price / meta (browse grids, detail stack) */
+  .product-card-title {
+    @apply line-clamp-2 min-w-0 break-words text-[15px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-base;
+  }
+
+  .product-price {
+    @apply text-[1rem] font-bold tabular-nums text-primary min-[360px]:text-xl dark:text-brand-accent;
+  }
+
+  .product-meta-label {
+    @apply text-[11px] font-semibold uppercase tracking-wide text-text-secondary dark:text-slate-500 min-[380px]:text-xs;
+  }
+
+  .product-meta-value {
+    @apply text-sm font-semibold tabular-nums text-text-primary dark:text-slate-100 min-[360px]:text-[15px];
+  }
+
+  .product-meta-body {
+    @apply mt-0.5 text-sm font-medium leading-snug text-text-primary dark:text-slate-200 min-[360px]:text-[15px];
+  }
+
+  .product-description-preview {
+    @apply text-pretty text-xs leading-relaxed text-text-secondary min-[360px]:text-sm dark:text-slate-300;
+  }
+
+  /* Mobile: stronger meta contrast (WCAG AA); md+ keeps lighter meta. */
+  .meta-label {
+    @apply text-[11px] font-semibold uppercase tracking-wide leading-snug text-neutral-700 dark:text-slate-200 min-[380px]:text-xs md:text-xs md:font-semibold md:uppercase md:tracking-wide md:text-neutral-500 md:dark:text-slate-400;
+  }
+
+  /* Landing page: flat white below hero — matches “Choose your target exam” card surface */
+  .landing-shell {
+    @apply min-h-screen min-h-[100dvh] bg-white text-neutral-900 antialiased [color-scheme:light] dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark];
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Hero strip only — brighter wash + grid (contrasts with body below) */
+  .landing-hero-band {
+    @apply border-b border-neutral-200/90 dark:border-slate-700/80;
+    background-color: rgb(252 252 253);
+    background-image:
+      linear-gradient(180deg, rgb(255 255 255 / 1) 0%, rgb(248 250 252 / 0.92) 55%, rgb(241 245 249 / 0.85) 100%),
+      linear-gradient(rgb(226 232 240 / 0.45) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(226 232 240 / 0.45) 1px, transparent 1px);
+    background-size: auto, 48px 48px, 48px 48px;
+    background-position: 0 0, -1px -1px, -1px -1px;
+  }
+
+  .dark .landing-hero-band {
+    background-color: rgb(15 23 42);
+    background-image:
+      linear-gradient(180deg, rgb(30 41 59 / 0.65) 0%, rgb(15 23 42 / 1) 70%),
+      linear-gradient(rgb(51 65 85 / 0.28) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(51 65 85 / 0.28) 1px, transparent 1px);
+    background-size: auto, 48px 48px, 48px 48px;
+    background-position: 0 0, -1px -1px, -1px -1px;
+  }
+
+  .landing-nav {
+    @apply sticky top-0 z-40 border-b border-neutral-200/80 bg-white/90 pt-[env(safe-area-inset-top,0px)] shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/90;
+  }
+
+  .landing-nav--elevated {
+    @apply z-50;
+    box-shadow:
+      0 4px 14px -4px rgb(15 23 42 / 0.12),
+      0 1px 0 rgb(15 23 42 / 0.06);
+  }
+
+  .dark .landing-nav--elevated {
+    box-shadow: 0 4px 22px -6px rgb(0 0 0 / 0.45);
+  }
+
+  .landing-card {
+    @apply rounded-2xl border border-neutral-200/90 bg-white p-8 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.12)] md:p-10 dark:border-[#1f3c56]/90 dark:bg-[#0f2234] dark:shadow-[0_16px_46px_-16px_rgba(0,0,0,0.5)];
+  }
+
+  .landing-input {
+    @apply min-h-[44px] w-full rounded-xl border border-neutral-300/90 bg-white px-3.5 py-2.5 text-[15px] text-neutral-900 shadow-sm outline-none placeholder:text-neutral-500 focus:border-brand-primary focus-visible:ring-2 focus-visible:ring-brand-primary/45 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-400 min-[430px]:px-4 min-[430px]:py-3 md:text-sm;
+  }
+
+  .landing-btn-primary {
+    @apply lm-btn-primary lm-btn-full h-12 min-h-[3rem] rounded-full px-8 text-sm font-semibold shadow-md shadow-brand-primary/25 motion-reduce:transition-none hover:bg-brand-hover active:scale-[0.98] motion-reduce:active:scale-100 disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100;
+  }
+
+  /* Landing auth bar: one row height so logo, links, and CTAs share a common baseline */
+  .landing-btn-nav-text {
+    @apply inline-flex h-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-lg px-2 text-xs font-medium text-neutral-900 transition hover:bg-neutral-100 hover:text-neutral-700 dark:text-slate-100 dark:hover:bg-slate-800 dark:hover:text-slate-200 min-[360px]:px-2.5 min-[390px]:px-3 min-[390px]:text-sm min-[430px]:px-3 md:text-sm;
+  }
+
+  .landing-btn-nav-primary {
+    @apply inline-flex h-11 min-h-[44px] items-center justify-center rounded-full bg-brand-primary px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-hover min-[360px]:px-3.5 min-[390px]:px-4 min-[390px]:text-sm min-[430px]:px-[1.125rem] md:px-5 md:text-sm;
+  }
+
+  .landing-auth-close {
+    @apply absolute right-2 top-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-neutral-600 transition motion-reduce:transition-none hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100 dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950;
+  }
+
+  .landing-auth-panel {
+    animation: landing-auth-in 0.35s ease-out both;
+  }
+
+  @keyframes landing-auth-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .landing-hero-cta {
+    @apply inline-flex h-12 items-center justify-center rounded-full bg-brand-primary px-8 text-sm font-semibold text-white shadow-lg shadow-brand-primary/25 transition hover:bg-brand-hover;
+  }
+
+  .landing-link {
+    @apply text-sm font-medium text-brand-primary underline-offset-4 hover:underline;
+  }
+
+  .dark .landing-link {
+    @apply text-brand-accent hover:text-sky-300;
+  }
+
+  /* Status / alert strips — readable on dark backgrounds */
+  .app-alert-error {
+    @apply rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-900/55 dark:bg-rose-950/45 dark:text-rose-100;
+  }
+
+  /* Inline field errors — slightly larger type on small screens for thumb-distance reading */
+  .field-error-text {
+    @apply break-words text-[15px] font-medium leading-snug text-rose-700 dark:text-rose-300 md:text-sm;
+  }
+
+  .app-alert-success {
+    @apply rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100;
+  }
+
+  .app-alert-danger-text {
+    @apply text-rose-700 dark:text-rose-300;
+  }
+
+  .app-surface-muted {
+    @apply rounded-[var(--ui-radius-lg)] border-0 bg-neutral-50/90 dark:bg-[#11283d]/60 dark:text-[#e9f7ff] md:border md:border-neutral-200 md:bg-neutral-50 md:dark:border-[#1f3c56] md:dark:bg-[#11283d]/80;
+  }
+
+  .app-history-row {
+    @apply lm-card rounded-[var(--ui-radius)] border-neutral-200/80 bg-neutral-50/95 p-3 dark:border-slate-600/65 dark:bg-[#11283d]/70 md:rounded-xl md:bg-neutral-50 md:shadow-sm md:shadow-slate-900/[0.03] dark:md:bg-[#11283d]/80 dark:md:shadow-none;
+  }
+
+  /* Marketing footer (logged-out landing): fixed navy palette independent of theme toggle */
+  .landing-site-footer {
+    @apply text-white antialiased;
+    --landing-footer-accent: rgb(45 212 191);
+  }
+
+  .landing-site-footer a:hover {
+    @apply text-white underline decoration-white/40 underline-offset-4;
+  }
+
+  .landing-footer-about-link {
+    @apply block text-sm text-white/90 transition hover:text-white;
+  }
+
+  @keyframes publish-toast-progress {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
+    }
+  }
+
+  .publish-toast-progress {
+    transform-origin: left center;
+    animation-name: publish-toast-progress;
+    animation-timing-function: linear;
+    animation-fill-mode: forwards;
+  }
+
+  /**
+   * Mobile + keyboard: high-contrast focus ring for one-off controls (use with `focus:outline-none`).
+   * Full `.lm-btn` / `.input-base` already include `focus-visible` styles.
+   */
+  .a11y-focus-ring {
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950;
+  }
+}
+
+/* prefers-reduced-motion: respect system setting for mobile shell, modals, and decorative motion */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .landing-auth-panel {
+    animation: none;
+  }
+  .publish-toast-progress {
+    animation: none;
+  }
+}
+
+/**
+ * Mobile view only (<768px): WCAG-oriented affordances — contrast-friendly links, visible focus,
+ * minimum motion, without altering md+ desktop layout intent.
+ */
+@media (max-width: 767px) {
+  /*
+   * Hide every scrollbar on small viewports; scrolling still works (touch, wheel, keyboard).
+   * Unlayered. `*::-webkit-scrollbar` alone loses to `.drawer-scroll::-webkit-scrollbar` (higher
+   * specificity) — must reset `.drawer-scroll` and pseudo-elements explicitly.
+   */
+  html {
+    scrollbar-gutter: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+  .drawer-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .drawer-scroll::-webkit-scrollbar,
+  .drawer-scroll::-webkit-scrollbar-thumb,
+  .drawer-scroll::-webkit-scrollbar-track,
+  .drawer-scroll::-webkit-scrollbar-corner {
+    display: none;
+    width: 0;
+    height: 0;
+    background: transparent;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  /* Default document links: higher-contrast teal for AA body text on white / dark surfaces */
+  :where(.mobile-app-shell, .landing-shell, .app-container) a.text-brand-primary,
+  :where(.mobile-app-shell, .landing-shell, .app-container) a.text-primary {
+    color: #158585;
+  }
+  .dark :where(.mobile-app-shell, .landing-shell, .app-container) a.text-brand-primary,
+  .dark :where(.mobile-app-shell, .landing-shell, .app-container) a.text-primary {
+    color: #5eead4;
+  }
+
+  /* Obvious focus for keyboard / switch control (dialogs may sit outside `.mobile-app-shell`) */
+  :where(.mobile-app-shell, .landing-shell, [role="dialog"], [role="alertdialog"]) :is(
+      a,
+      button,
+      [role="button"],
+      [role="tab"],
+      [role="radio"],
+      summary
+    ):focus-visible {
+    outline: 2px solid rgb(21 133 133 / 0.95);
+    outline-offset: 2px;
+  }
+  .dark
+    :where(.mobile-app-shell, .landing-shell, [role="dialog"], [role="alertdialog"])
+    :is(a, button, [role="button"], [role="tab"], [role="radio"], summary):focus-visible {
+    outline-color: rgb(45 212 191 / 0.95);
+  }
+
+  .a11y-focus-ring:focus-visible {
+    outline: 2px solid rgb(21 133 133 / 0.95);
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+  .dark .a11y-focus-ring:focus-visible {
+    outline-color: rgb(45 212 191 / 0.95);
+  }
+}
+
+/* viewport-fit=cover (see index.html): env() insets for notches & gesture bars */
+@layer utilities {
+  .safe-area-pt {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .safe-area-pb {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .safe-area-pl {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+  .safe-area-pr {
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  .safe-area-px {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  /**
+   * Fixed horizontal inset: max(token, safe) so floating UI clears curved edges & Dynamic Island sides.
+   * Pair with `fixed` + `bottom`/`top`; reset left/right at `md:` when using desktop offsets.
+   */
+  .safe-fixed-x {
+    left: max(0.75rem, env(safe-area-inset-left, 0px));
+    right: max(0.75rem, env(safe-area-inset-right, 0px));
+  }
+}

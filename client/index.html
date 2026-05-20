@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      (function () {
+        try {
+          var next = localStorage.getItem("linkmart_theme_v1");
+          var legacy = localStorage.getItem("quiz_theme_v2");
+          var dark = next === "dark" || legacy === "dark";
+          if (dark) document.documentElement.classList.add("dark");
+          else document.documentElement.classList.remove("dark");
+          localStorage.removeItem("quiz_theme");
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="icon" type="image/png" href="%BASE_URL%favicon.png" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="LinkMart" />
+    <link rel="apple-touch-icon" href="%BASE_URL%pwa-192.png" />
+    <title>LinkMart</title>
+  </head>
+  <body>
+    <a class="skip-to-main" href="#main-content">Skip to main content</a>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

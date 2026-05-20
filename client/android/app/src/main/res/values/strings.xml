@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">LinkMart</string>
+    <string name="title_activity_main">LinkMart</string>
+    <string name="package_name">com.linkmart.app</string>
+    <string name="custom_url_scheme">com.linkmart.app</string>
+</resources>
