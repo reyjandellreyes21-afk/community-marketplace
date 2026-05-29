@@ -135,7 +135,7 @@ export function MarketplaceProductDetailStack({
         ) : null}
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           {categoryLabel ? (
-            <span className="line-clamp-1 max-w-full rounded-md border border-amber-200/90 bg-amber-50/90 px-2 py-0.5 text-[10px] font-semibold leading-tight text-amber-700 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-300">
+            <span className="lm-tag-category line-clamp-1">
               {categoryLabel}
             </span>
           ) : null}
@@ -187,9 +187,7 @@ export function MarketplaceProductDetailStack({
           : "space-y-1";
 
   const titleHighlightTrim = String(titleHighlight || "").trim();
-  const serviceTypePillClass = compactListMeta
-    ? "inline-flex max-w-full rounded-full border border-sky-200/90 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold leading-tight text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/55 dark:text-sky-100"
-    : "inline-flex max-w-full rounded-full border border-sky-200/90 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold leading-tight text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/55 dark:text-sky-100";
+  const serviceTypePillClass = "lm-tag-category";
 
   return (
     <div className={`min-w-0 flex-1 ${rootGap}`}>
@@ -234,17 +232,11 @@ export function MarketplaceProductDetailStack({
         </p>
         {originalPesos != null && originalPesos > currentPesos ? (
           <div className="flex min-w-0 items-center gap-1.5">
-            <span className="text-[11px] font-medium text-text-secondary/85 line-through min-[380px]:text-xs dark:text-slate-500">
+            <span className="lm-price-original min-[380px]:text-xs">
               ₱{originalPesos}
             </span>
             {saleMeta.percent ? (
-              <span
-                className={
-                  browseStackMode === "gridMobile"
-                    ? "lm-product-card-pill"
-                    : "rounded-md border border-amber-300/80 bg-amber-100/80 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-amber-700 min-[380px]:text-xs dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-300"
-                }
-              >
+              <span className={browseStackMode === "gridMobile" ? "lm-product-card-pill" : "lm-tag-sale"}>
                 -{saleMeta.percent}%
               </span>
             ) : null}
@@ -289,13 +281,7 @@ export function MarketplaceProductDetailStack({
           {metaStrip}
           {browseStackMode !== "gridMobile" && categoryLabel ? (
             <div className="lm-product-card-badge-row">
-              <span
-                className={`line-clamp-1 max-w-full rounded-none border border-orange-300 bg-orange-100 py-0.5 leading-tight text-orange-700 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-300 ${
-                  compactListMeta
-                    ? "px-2 text-[11px] font-semibold"
-                    : "px-2.5 text-xs font-semibold min-[380px]:text-[13px]"
-                }`}
-              >
+              <span className={`lm-tag-category line-clamp-1 ${compactListMeta ? "" : "px-2.5 min-[380px]:text-[13px]"}`}>
                 {categoryLabel}
               </span>
             </div>

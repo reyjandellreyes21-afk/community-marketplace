@@ -282,11 +282,7 @@ export function CommunityShopListingCard({
           <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
           <span className="tabular-nums font-semibold text-text-primary dark:text-slate-100">{stockQty}</span>
         </p>
-        {isOutOfStock ? (
-          <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-600 min-[380px]:text-xs dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
-            Out of stock
-          </span>
-        ) : null}
+        {isOutOfStock ? <span className="lm-tag-danger">Out of stock</span> : null}
       </div>
     </div>
   );
@@ -517,7 +513,7 @@ export function CommunityShopListingCard({
               <div className="relative shrink-0" ref={ownerMenuRef}>
                 <button
                   type="button"
-                  className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-neutral-200/90 bg-white text-lg font-bold leading-none text-neutral-600 transition hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                  className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-none border border-neutral-200/90 bg-white text-lg font-bold leading-none text-neutral-600 transition hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
                   aria-label="Listing options"
                   aria-expanded={ownerMenuOpen}
                   aria-haspopup="menu"
@@ -531,7 +527,7 @@ export function CommunityShopListingCard({
                 {ownerMenuOpen ? (
                   <div
                     role="menu"
-                    className="absolute bottom-full right-0 z-30 mb-1 min-w-[10.5rem] overflow-hidden rounded-xl border border-neutral-200/90 bg-white py-1 shadow-lg dark:border-slate-600 dark:bg-slate-900"
+                    className="absolute bottom-full right-0 z-30 mb-1 min-w-[10.5rem] overflow-hidden rounded-none border border-neutral-200/90 bg-white py-1 shadow-lg dark:border-slate-600 dark:bg-slate-900"
                   >
                     <button
                       type="button"
@@ -609,10 +605,10 @@ export function CommunityShopListingCard({
                 type="button"
                 className={`min-w-0 shadow-none transition duration-200 ease-in-out active:scale-[0.99] motion-reduce:active:scale-100 ${
                   mobileUx && !isListMode
-                    ? `rounded-lg border border-neutral-200/90 bg-white font-medium text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${
+                    ? `rounded-none border border-neutral-200/90 bg-white font-medium text-neutral-700 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${
                         isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
                       }`
-                    : `rounded-xl bg-primary font-semibold text-white hover:bg-primary-hover dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90 ${
+                    : `rounded-none bg-primary font-semibold text-white hover:bg-primary-hover dark:bg-brand-accent dark:text-slate-900 dark:hover:bg-brand-accent/90 ${
                         listDesktopCompactActions
                           ? "inline-flex h-9 min-h-0 min-w-[7rem] shrink-0 items-center justify-center px-4 text-xs"
                           : isListMode
@@ -633,10 +629,10 @@ export function CommunityShopListingCard({
                 type="button"
                 className={`min-w-0 shadow-none transition duration-200 ease-in-out active:scale-[0.99] motion-reduce:active:scale-100 dark:active:scale-100 ${
                   mobileUx && !isListMode
-                    ? `rounded-lg border border-rose-200/90 bg-rose-50/70 font-medium text-rose-900 hover:bg-rose-100/90 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45 ${
+                    ? `rounded-none border border-rose-200/90 bg-rose-50/70 font-medium text-rose-900 hover:bg-rose-100/90 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45 ${
                         isListMode ? "h-10 w-full px-3 text-xs" : `w-full flex-1 ${compactActionBtnClass}`
                       }`
-                    : `rounded-xl bg-accent font-semibold text-white hover:bg-accent-hover dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400 ${
+                    : `rounded-none bg-accent font-semibold text-white hover:bg-accent-hover dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400 ${
                         listDesktopCompactActions
                           ? "inline-flex h-9 min-h-0 min-w-[7rem] shrink-0 items-center justify-center px-4 text-xs"
                           : isListMode
@@ -665,7 +661,7 @@ export function CommunityShopListingCard({
               {onDelete ? (
                 <button
                   type="button"
-                  className={`rounded-xl border border-danger bg-danger font-semibold text-white shadow-none transition duration-200 ease-in-out hover:bg-danger-hover dark:border-rose-500/55 dark:bg-rose-950/45 dark:text-rose-100 dark:hover:bg-rose-950/60 ${
+                  className={`rounded-none border border-danger bg-danger font-semibold text-white shadow-none transition duration-200 ease-in-out hover:bg-danger-hover dark:border-rose-500/55 dark:bg-rose-950/45 dark:text-rose-100 dark:hover:bg-rose-950/60 ${
                     listDesktopCompactActions
                       ? "inline-flex h-9 min-h-0 min-w-[7rem] shrink-0 items-center justify-center px-4 text-xs"
                       : isListMode
@@ -703,7 +699,7 @@ export function CommunityShopListingCard({
                       : "Request a booking — add preferred time in your note"
                   }
                   aria-label={buyNowDisabled ? "Booking unavailable" : "Book"}
-                  className={`rounded-xl bg-primary font-bold text-white shadow-sm transition duration-200 ease-in-out dark:bg-brand-accent dark:text-slate-900 ${
+                  className={`rounded-none bg-primary font-bold text-white shadow-sm transition duration-200 ease-in-out dark:bg-brand-accent dark:text-slate-900 ${
                     listDesktopCompactActions
                       ? "inline-flex h-9 min-h-0 min-w-[7.5rem] shrink-0 items-center justify-center px-4 text-xs"
                       : isListMode
@@ -727,7 +723,7 @@ export function CommunityShopListingCard({
                   <button
                     type="button"
                     title={isOutOfStock ? undefined : "Keep shopping — review cart anytime"}
-                    className={`rounded-xl border border-primary font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-brand-accent dark:text-brand-accent dark:hover:bg-slate-800/80 max-md:border-2 ${
+                    className={`rounded-none border border-primary font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-brand-accent dark:text-brand-accent dark:hover:bg-slate-800/80 max-md:border-2 ${
                       mobileUx && isListMode ? "shadow-sm" : ""
                     } ${
                       listDesktopCompactActions
@@ -754,7 +750,7 @@ export function CommunityShopListingCard({
                           : "Go to checkout — choose pickup or delivery"
                     }
                     aria-label={isOutOfStock ? "Out of stock" : "Buy now"}
-                    className={`rounded-xl bg-primary font-bold text-white shadow-sm transition duration-200 ease-in-out dark:bg-brand-accent dark:text-slate-900 ${
+                    className={`rounded-none bg-primary font-bold text-white shadow-sm transition duration-200 ease-in-out dark:bg-brand-accent dark:text-slate-900 ${
                       listDesktopCompactActions
                         ? "inline-flex h-9 min-h-0 min-w-[7.5rem] shrink-0 items-center justify-center px-4 text-xs"
                         : isListMode
@@ -783,7 +779,7 @@ export function CommunityShopListingCard({
       ) : null}
       {showCardActionStrip && showOwnerManageOnCard && saleOpen ? (
         <div className={gridMode ? (useFeedLayout ? "mt-2 shrink-0 px-2 pb-2 min-[360px]:px-2.5" : "mt-2 shrink-0") : "mt-2"}>
-          <div className="rounded-xl border border-rose-200/80 bg-rose-50/80 p-2 dark:border-rose-500/30 dark:bg-rose-500/10">
+          <div className="rounded-none border border-rose-200/80 bg-rose-50/80 p-2 dark:border-rose-500/30 dark:bg-rose-500/10">
             <div className="flex flex-wrap items-center gap-2">
               <input
                 type="number"
@@ -792,7 +788,7 @@ export function CommunityShopListingCard({
                 step={1}
                 inputMode="numeric"
                 placeholder="Custom %"
-                className="h-8 w-24 rounded-md border border-rose-300/90 bg-white px-2 text-xs font-semibold text-rose-900 outline-none transition placeholder:text-rose-500/80 focus:border-rose-400 focus:ring-2 focus:ring-rose-300/40 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-100 dark:placeholder:text-rose-300/70"
+                className="h-8 w-24 rounded-none border border-rose-300/90 bg-white px-2 text-xs font-semibold text-rose-900 outline-none transition placeholder:text-rose-500/80 focus:border-rose-400 focus:ring-2 focus:ring-rose-300/40 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-100 dark:placeholder:text-rose-300/70"
                 value={customSalePercent}
                 onClick={(e) => e.stopPropagation()}
                 onChange={(e) => {
@@ -806,7 +802,7 @@ export function CommunityShopListingCard({
               />
               <button
                 type="button"
-                className="h-8 rounded-md border border-rose-300/90 bg-white px-2.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-900/30"
+                className="h-8 rounded-none border border-rose-300/90 bg-white px-2.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-900/30"
                 disabled={!customSaleValid}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -822,7 +818,7 @@ export function CommunityShopListingCard({
               {SALE_PERCENT_OPTIONS.length > 0 ? (
                 <button
                   type="button"
-                  className="h-8 rounded-md border border-rose-300/90 bg-white px-2.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-900/30"
+                  className="h-8 rounded-none border border-rose-300/90 bg-white px-2.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-900/30"
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowAllSaleOptions((prev) => !prev);
@@ -838,7 +834,7 @@ export function CommunityShopListingCard({
                   <button
                     key={percent}
                     type="button"
-                    className="min-h-8 rounded-md border border-rose-300/90 bg-white px-2 py-1 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-900/30"
+                    className="min-h-8 rounded-none border border-rose-300/90 bg-white px-2 py-1 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 dark:border-rose-500/50 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-900/30"
                     onClick={(e) => {
                       e.stopPropagation();
                       onSaleSelect?.(percent);

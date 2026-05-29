@@ -56,8 +56,8 @@ export function ListingProductMetaExtras({
   const uniformDetailValue = "font-semibold text-neutral-800 dark:text-slate-200";
   const timingChip =
     density === "compact"
-      ? "inline-flex items-center rounded-sm border border-brand-primary/45 bg-brand-primary/12 px-2 py-px text-[10px] font-semibold leading-tight text-brand-primary dark:border-brand-accent/45 dark:bg-brand-accent/15 dark:text-slate-100"
-      : "inline-flex items-center rounded-sm border border-brand-primary/45 bg-brand-primary/12 px-2 py-0.5 text-[10px] font-semibold leading-tight text-brand-primary min-[380px]:text-xs dark:border-brand-accent/45 dark:bg-brand-accent/15 dark:text-slate-100";
+      ? "inline-flex items-center rounded-none border border-brand-primary/45 bg-brand-primary/12 px-2 py-px text-[10px] font-semibold leading-tight text-brand-primary dark:border-brand-accent/45 dark:bg-brand-accent/15 dark:text-slate-100"
+      : "inline-flex items-center rounded-none border border-brand-primary/45 bg-brand-primary/12 px-2 py-0.5 text-[10px] font-semibold leading-tight text-brand-primary min-[380px]:text-xs dark:border-brand-accent/45 dark:bg-brand-accent/15 dark:text-slate-100";
 
   const formatValues = (vals) => {
     const s = vals.join(", ");

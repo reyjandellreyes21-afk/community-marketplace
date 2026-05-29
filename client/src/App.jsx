@@ -20759,17 +20759,17 @@ function App() {
                     const quickAddImageBoxClass = (() => {
                       if (!gridModeQa) {
                         if (snapMobile) {
-                          return "relative mx-auto aspect-[4/3] w-full min-h-0 max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
+                          return "relative mx-auto aspect-[4/3] w-full min-h-0 max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
                         }
-                        return "relative mx-auto h-32 w-32 shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:mx-auto md:h-auto md:aspect-square md:w-full md:max-w-[min(100%,20rem)]";
+                        return "relative mx-auto h-32 w-32 shrink-0 overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:mx-auto md:h-auto md:aspect-square md:w-full md:max-w-[min(100%,20rem)]";
                       }
                       if (compactQa && snapMobile) {
-                        return "relative mx-auto h-28 max-h-28 w-full min-h-0 !aspect-auto overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
+                        return "relative mx-auto h-28 max-h-28 w-full min-h-0 !aspect-auto overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
                       }
                       if (snapMobile) {
-                        return "relative mx-auto aspect-square w-full min-h-0 max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
+                        return "relative mx-auto aspect-square w-full min-h-0 max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10";
                       }
-                      return "relative mx-auto aspect-square w-full max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-lg bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:w-full md:max-w-[min(100%,20rem)]";
+                      return "relative mx-auto aspect-square w-full max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:w-full md:max-w-[min(100%,20rem)]";
                     })();
                     const imageColClass =
                       listModeQa && !snapMobile
@@ -20860,15 +20860,9 @@ function App() {
                               </span>
                             </p>
                             {soldQtyQa != null ? (
-                              <span className="rounded-full border border-amber-300/80 bg-amber-100/80 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 min-[390px]:text-[11px] dark:border-amber-400/35 dark:bg-amber-500/15 dark:text-amber-300">
-                                Sold {soldQtyQa}
-                              </span>
+                              <span className="lm-tag-neutral uppercase tracking-wide">Sold {soldQtyQa}</span>
                             ) : null}
-                            {isOutOfStockQa ? (
-                              <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-600 min-[380px]:text-xs dark:border-rose-500/50 dark:bg-rose-950/30 dark:text-rose-300">
-                                Out of stock
-                              </span>
-                            ) : null}
+                            {isOutOfStockQa ? <span className="lm-tag-danger">Out of stock</span> : null}
                           </div>
                         </div>
                       );
@@ -20928,8 +20922,8 @@ function App() {
                               <span
                                 className={
                                   snapMobile && gridModeQa
-                                    ? `${UI_KIT.chipMuted} inline-flex max-w-full py-px text-[10px] leading-tight`
-                                    : `${UI_KIT.chipMuted} inline-flex max-w-full`
+                                    ? "lm-tag-neutral truncate py-px text-[10px] leading-tight"
+                                    : "lm-tag-neutral truncate"
                                 }
                               >
                                 {quickAddListing.cityLabel}
@@ -20953,7 +20947,7 @@ function App() {
                                           role="radio"
                                           aria-checked={selected}
                                           disabled={quickAddSubmitting}
-                                          className={`min-h-[44px] min-w-[44px] rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
+                                          className={`min-h-[44px] min-w-[44px] rounded-none border px-3 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
                                             selected
                                               ? "border-brand-primary bg-brand-primary/12 text-brand-primary shadow-sm dark:border-brand-accent dark:bg-brand-accent/15 dark:text-slate-50"
                                               : "border-neutral-300 bg-white text-neutral-800 hover:border-neutral-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500"
@@ -20982,7 +20976,7 @@ function App() {
                                           role="radio"
                                           aria-checked={selected}
                                           disabled={quickAddSubmitting}
-                                          className={`min-h-[44px] min-w-[44px] rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
+                                          className={`min-h-[44px] min-w-[44px] rounded-none border px-3 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
                                             selected
                                               ? "border-brand-primary bg-brand-primary/12 text-brand-primary shadow-sm dark:border-brand-accent dark:bg-brand-accent/15 dark:text-slate-50"
                                               : "border-neutral-300 bg-white text-neutral-800 hover:border-neutral-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500"
@@ -21009,7 +21003,7 @@ function App() {
                                   role="radio"
                                   aria-checked={quickOrderFulfillmentType === "pickup"}
                                   disabled={quickAddSubmitting}
-                                  className={`min-h-[44px] min-w-[44px] rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
+                                  className={`min-h-[44px] min-w-[44px] rounded-none border px-3 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
                                     quickOrderFulfillmentType === "pickup"
                                       ? "border-brand-primary bg-brand-primary/12 text-brand-primary shadow-sm dark:border-brand-accent dark:bg-brand-accent/15 dark:text-slate-50"
                                       : "border-neutral-300 bg-white text-neutral-800 hover:border-neutral-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500"
@@ -21026,7 +21020,7 @@ function App() {
                                   role="radio"
                                   aria-checked={quickOrderFulfillmentType === "delivery"}
                                   disabled={quickAddSubmitting}
-                                  className={`min-h-[44px] min-w-[44px] rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
+                                  className={`min-h-[44px] min-w-[44px] rounded-none border px-3 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:focus-visible:ring-brand-accent/40 ${
                                     quickOrderFulfillmentType === "delivery"
                                       ? "border-brand-primary bg-brand-primary/12 text-brand-primary shadow-sm dark:border-brand-accent dark:bg-brand-accent/15 dark:text-slate-50"
                                       : "border-neutral-300 bg-white text-neutral-800 hover:border-neutral-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500"
@@ -21046,14 +21040,14 @@ function App() {
                               className={
                                 stripPlaceOrderSectionFrame
                                   ? "space-y-1.5 md:max-w-[14rem]"
-                                  : "space-y-1.5 rounded-xl border border-neutral-200/80 bg-neutral-50/70 px-2.5 py-2 dark:border-slate-700/70 dark:bg-slate-900/40 md:max-w-[14rem]"
+                                  : "space-y-1.5 rounded-none border border-neutral-200/80 bg-neutral-50/70 px-2.5 py-2 dark:border-slate-700/70 dark:bg-slate-900/40 md:max-w-[14rem]"
                               }
                             >
                               <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                                 Quantity
                               </p>
                               <div className="flex min-w-0 flex-col gap-2 md:gap-3">
-                                <div className="inline-flex min-h-[44px] w-full max-w-[min(100%,14rem)] overflow-hidden rounded-xl border border-neutral-300 bg-white divide-x divide-neutral-200 dark:border-slate-600 dark:bg-slate-900 dark:divide-slate-700">
+                                <div className="inline-flex min-h-[44px] w-full max-w-[min(100%,14rem)] overflow-hidden rounded-none border border-neutral-300 bg-white divide-x divide-neutral-200 dark:border-slate-600 dark:bg-slate-900 dark:divide-slate-700">
                                   <button
                                     type="button"
                                     className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center border-0 bg-transparent text-base font-semibold text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800"
@@ -21103,7 +21097,7 @@ function App() {
                           ) : (
                             <div className="space-y-2">
                               {qaServiceSlotOpts?.required ? (
-                                <fieldset className="min-w-0 space-y-2 rounded-xl border border-neutral-200/80 bg-neutral-50/70 p-2.5 dark:border-slate-700/70 dark:bg-slate-900/40">
+                                <fieldset className="min-w-0 space-y-2 rounded-none border border-neutral-200/80 bg-neutral-50/70 p-2.5 dark:border-slate-700/70 dark:bg-slate-900/40">
                                   <legend className="float-none text-xs font-semibold text-neutral-900 dark:text-slate-100">
                                     Preferred slot (within provider availability)
                                   </legend>
@@ -21171,7 +21165,7 @@ function App() {
               <div className="hidden md:mt-3 md:block md:border-t md:border-neutral-200/70 md:pt-3 dark:md:border-slate-700/70">
                 <button
                   type="button"
-                  className="btn-primary w-full"
+                  className="btn-primary w-full rounded-none"
                   disabled={quickAddSubmitting || (quickActionType === "buy" && quickAddBuyBlockedByOccupancy)}
                   aria-busy={quickAddSubmitting}
                   onClick={submitQuickAddOrder}
@@ -21202,7 +21196,7 @@ function App() {
             <div className="shrink-0 border-t border-neutral-200/80 bg-white/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/85 min-[360px]:px-5 min-[360px]:pt-2.5 dark:border-[#1f3c56]/85 dark:bg-[#0f2234]/95 dark:shadow-none md:hidden">
               <button
                 type="button"
-                className="btn-primary w-full"
+                className="btn-primary w-full rounded-none"
                 disabled={quickAddSubmitting || (quickActionType === "buy" && quickAddBuyBlockedByOccupancy)}
                 aria-busy={quickAddSubmitting}
                 onClick={submitQuickAddOrder}

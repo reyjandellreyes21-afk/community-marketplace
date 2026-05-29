@@ -216,9 +216,9 @@
     @apply line-clamp-2 min-w-0 break-words text-[15px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-base;
   }
 
-  /** Bordered meta strip (stock, fulfillment, dense browse) */
+  /** Bordered meta strip (stock, fulfillment, dense browse) — sharp marketplace chrome */
   .lm-card-meta {
-    @apply rounded-xl border border-neutral-200/90 bg-background px-2.5 py-2 dark:border-slate-700 dark:bg-slate-800/50;
+    @apply rounded-none border border-neutral-200/90 bg-background px-2.5 py-2 dark:border-slate-700 dark:bg-slate-800/50;
   }
 
   /** Primary + secondary actions inside a card — vertical on mobile, row when space allows */
@@ -443,7 +443,7 @@
   }
 
   .lm-product-card-pill {
-    @apply inline-flex shrink-0 rounded-none border border-orange-300 bg-orange-100 px-1.5 py-0.5 text-[11px] font-extrabold tabular-nums leading-none text-orange-700 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-300 min-[380px]:px-2 min-[380px]:text-xs;
+    @apply inline-flex shrink-0 rounded-none border border-accent/50 bg-accent/10 px-1.5 py-0.5 text-[11px] font-extrabold tabular-nums leading-none text-accent dark:border-accent/55 dark:bg-accent/15 dark:text-rose-300 min-[380px]:px-2 min-[380px]:text-xs;
   }
 
   .lm-product-card-badge-row {
@@ -615,6 +615,41 @@
     @apply inline-flex min-h-[44px] items-center rounded-[var(--ui-radius-full)] px-4 text-sm font-semibold;
   }
 
+  /**
+   * Listing tag system — one sharp, dense marketplace language shared by product cards,
+   * the product inspect view, and the place-order modal (storefront-grid feel).
+   * Theme roles: teal = category/identity, rose = deal/sale, neutral = meta, danger = stock-out.
+   * All sharp-cornered (rounded-none) so chips read crisp against square card heroes.
+   */
+  .lm-tag {
+    @apply inline-flex max-w-full items-center rounded-none border px-2 py-0.5 text-[11px] font-semibold leading-tight tracking-tight min-[380px]:text-xs;
+  }
+
+  /* Category / vertical (e.g. Food) — brand teal identity */
+  .lm-tag-category {
+    @apply lm-tag border-brand-border bg-brand-soft text-primary-hover dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-brand-soft;
+  }
+
+  /* Neutral meta — fulfillment, availability, order type, sold count */
+  .lm-tag-neutral {
+    @apply lm-tag border-neutral-300 bg-neutral-50 text-text-secondary dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300;
+  }
+
+  /* Sale / discount % — rose accent, the attention-grabbing "deal" pop */
+  .lm-tag-sale {
+    @apply lm-tag border-accent/50 bg-accent/10 font-bold tabular-nums text-accent dark:border-accent/55 dark:bg-accent/15 dark:text-rose-300;
+  }
+
+  /* Out of stock / blocked state */
+  .lm-tag-danger {
+    @apply lm-tag border-danger/50 bg-danger/10 font-bold uppercase tracking-wide text-danger dark:border-rose-500/55 dark:bg-rose-950/45 dark:text-rose-300;
+  }
+
+  /* Strikethrough original price beside a sale price */
+  .lm-price-original {
+    @apply text-xs font-medium tabular-nums text-text-secondary/80 line-through dark:text-slate-500;
+  }
+
   /* Inputs: 44px min height on small screens; dense layouts can override with h-9 etc. */
   .input-base {
     @apply box-border min-h-[44px] w-full touch-manipulation rounded-[var(--ui-radius)] border border-neutral-200/95 bg-white px-3 py-2.5 text-base leading-snug text-neutral-900 outline-none placeholder:text-neutral-500 focus-visible:border-brand-primary focus-visible:ring-1 focus-visible:ring-brand-primary/35 disabled:cursor-not-allowed disabled:opacity-65 dark:border-[#3d6d8f]/45 dark:bg-[#0f2234] dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus-visible:border-brand-accent dark:focus-visible:ring-brand-accent/30 md:min-h-10 md:text-sm;
@@ -658,7 +693,7 @@
   }
 
   .product-price {
-    @apply text-[1rem] font-bold tabular-nums text-primary min-[360px]:text-xl dark:text-brand-accent;
+    @apply text-[1.05rem] font-extrabold tabular-nums tracking-tight text-primary min-[360px]:text-xl dark:text-brand-accent;
   }
 
   .product-meta-label {

@@ -724,10 +724,7 @@ export function ProductInspectModal({
                 <div className="flex flex-wrap gap-1.5">
                   {variantValsA.length > 0 ? (
                     variantValsA.map((choice) => (
-                      <span
-                        key={`variant-a-${choice}`}
-                        className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
-                      >
+                      <span key={`variant-a-${choice}`} className="lm-tag-category">
                         {choice}
                       </span>
                     ))
@@ -746,10 +743,7 @@ export function ProductInspectModal({
                 <div className="flex flex-wrap gap-1.5">
                   {variantValsB.length > 0 ? (
                     variantValsB.map((choice) => (
-                      <span
-                        key={`variant-b-${choice}`}
-                        className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
-                      >
+                      <span key={`variant-b-${choice}`} className="lm-tag-category">
                         {choice}
                       </span>
                     ))
@@ -812,10 +806,10 @@ export function ProductInspectModal({
               : "Request a booking — add preferred time in your note"
           }
           aria-label={buyNowDisabled ? "Booking unavailable" : "Book service"}
-          className={`min-h-[56px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-[11px] font-semibold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-11 md:text-sm flex flex-col items-center justify-center gap-1 ${
+          className={`min-h-[56px] flex-1 rounded-none bg-primary px-3 py-2 text-[11px] font-bold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-11 md:text-sm flex flex-col items-center justify-center gap-1 ${
             buyNowDisabled
               ? "cursor-not-allowed opacity-50"
-              : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
+              : "hover:bg-primary-hover dark:hover:bg-brand-accent/90"
           } disabled:cursor-not-allowed disabled:opacity-50`}
           disabled={buyNowDisabled}
           onClick={() => onBuyNow()}
@@ -838,7 +832,7 @@ export function ProductInspectModal({
           {typeof onAddToCart === "function" ? (
             <button
               type="button"
-              className="min-h-[56px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-[11px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-11 md:text-sm flex flex-col items-center justify-center gap-1"
+              className="min-h-[56px] flex-1 rounded-none border-2 border-primary px-3 py-2 text-[11px] font-bold leading-none text-primary transition hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-50 dark:border-brand-accent dark:text-brand-accent dark:hover:bg-slate-800 md:min-h-11 md:text-sm flex flex-col items-center justify-center gap-1"
               disabled={isOutOfStock}
               onClick={() => onAddToCart()}
             >
@@ -861,10 +855,10 @@ export function ProductInspectModal({
                     : undefined
               }
               aria-label={isOutOfStock ? "Out of stock" : "Place order"}
-              className={`min-h-[56px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-[11px] font-semibold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-11 md:text-sm flex flex-col items-center justify-center gap-1 ${
+              className={`min-h-[56px] flex-1 rounded-none bg-primary px-3 py-2 text-[11px] font-bold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-11 md:text-sm flex flex-col items-center justify-center gap-1 ${
                 isOutOfStock
                   ? "cursor-not-allowed opacity-50"
-                  : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
+                  : "hover:bg-primary-hover dark:hover:bg-brand-accent/90"
               } disabled:cursor-not-allowed disabled:opacity-50`}
               disabled={isOutOfStock}
               onClick={() => onBuyNow()}
@@ -901,7 +895,7 @@ export function ProductInspectModal({
     : `relative z-0 isolate mx-auto w-full max-w-[12.5rem] shrink-0 overflow-hidden ${inspectHeroMobileBleed} md:left-auto md:mx-0 md:w-full md:max-w-[12rem] md:translate-x-0 lg:max-w-[14rem]`;
 
   const inspectHeroBoxClass = fullScreen
-    ? `relative shrink-0 overflow-hidden rounded-xl bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 ${inspectHeroMobileSquare} md:aspect-square md:h-auto md:w-full md:max-w-none`
+    ? `relative shrink-0 overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 ${inspectHeroMobileSquare} md:aspect-square md:h-auto md:w-full md:max-w-none`
     : `relative min-h-0 max-w-full shrink-0 overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 ${inspectHeroMobileSquare} md:aspect-square md:w-full`;
 
   const inspectTopLayoutClass = fullScreen
@@ -1415,9 +1409,7 @@ export function ProductInspectModal({
                 </h2>
                 {inspectTitleTypePill ? (
                   <p className="mt-1.5">
-                    <span className="inline-flex max-w-full rounded-full border border-sky-200/90 bg-sky-50 px-2.5 py-1 text-xs font-semibold leading-tight text-sky-950 dark:border-sky-500/40 dark:bg-sky-950/55 dark:text-sky-100">
-                      {inspectTitleTypePill}
-                    </span>
+                    <span className="lm-tag-category">{inspectTitleTypePill}</span>
                   </p>
                 ) : null}
                 {subtitle ? (
@@ -1430,40 +1422,28 @@ export function ProductInspectModal({
                 />
               </div>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <p className="text-[1.06rem] font-bold tabular-nums text-brand-primary min-[360px]:text-lg dark:text-brand-accent md:text-xl">
+                <p className="text-[1.1rem] font-extrabold tabular-nums tracking-tight text-brand-primary min-[360px]:text-xl dark:text-brand-accent md:text-2xl">
                   {inspectHeadlinePriceText}
                 </p>
                 {originalPesos != null && originalPesos > currentPesos ? (
                   <div className="flex min-w-0 items-center gap-1.5">
-                    <span className="text-xs font-medium text-neutral-500 line-through dark:text-slate-400">
-                      ₱{originalPesos}
-                    </span>
-                    {saleMeta?.percent ? (
-                      <span className="rounded-md border border-amber-300/80 bg-amber-100/80 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-300">
-                        -{saleMeta.percent}%
-                      </span>
-                    ) : null}
+                    <span className="lm-price-original">₱{originalPesos}</span>
+                    {saleMeta?.percent ? <span className="lm-tag-sale">-{saleMeta.percent}%</span> : null}
                   </div>
                 ) : null}
               </div>
               <div className="flex min-w-0 flex-col gap-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   {categoryTrim && !serviceListingEffective ? (
-                    <span className="rounded-full border border-amber-300/80 bg-amber-100/80 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-300">
-                      {categoryTrim}
-                    </span>
+                    <span className="lm-tag-category">{categoryTrim}</span>
                   ) : null}
                   {!serviceListingEffective ? (
                     <>
-                      <span className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-[11px] font-semibold text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100">
-                        {orderTypeDisplay}
-                      </span>
-                      <span className="rounded-full border border-neutral-300/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                      <span className="lm-tag-neutral">{orderTypeDisplay}</span>
+                      <span className="lm-tag-neutral">
                         {processingTrim ? `${processingLabel || "Processing"}: ${processingTrim}` : availabilitySummary}
                       </span>
-                      <span className="rounded-full border border-neutral-300/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
-                        {fulfillmentSummary}
-                      </span>
+                      <span className="lm-tag-neutral">{fulfillmentSummary}</span>
                     </>
                   ) : null}
                 </div>
@@ -1493,11 +1473,7 @@ export function ProductInspectModal({
                 <p className="text-xs text-neutral-600 dark:text-slate-400">
                   <span className="font-semibold text-neutral-700 dark:text-slate-300">Stock available:</span>{" "}
                   <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{stock}</span>
-                  {isOutOfStock ? (
-                    <span className="ml-2 rounded-full border border-rose-300 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/50 dark:bg-rose-950/40 dark:text-rose-300">
-                      Out of stock
-                    </span>
-                  ) : null}
+                  {isOutOfStock ? <span className="lm-tag-danger ml-2">Out of stock</span> : null}
                 </p>
               ) : null}
               {soldQty != null ? (
@@ -1658,7 +1634,7 @@ export function ProductInspectModal({
                 </h3>
                 <button
                   type="button"
-                  className="inline-flex w-full items-center justify-between gap-2 rounded-lg border border-neutral-300/90 bg-white px-3 py-2.5 text-sm font-semibold text-neutral-800 transition hover:border-neutral-400 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  className="inline-flex w-full items-center justify-between gap-2 rounded-none border border-neutral-300/90 bg-white px-3 py-2.5 text-sm font-semibold text-neutral-800 transition hover:border-neutral-400 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                   disabled={!hasMeetupLocation}
                   onClick={() => setLocationModalOpen(true)}
                 >
@@ -1744,7 +1720,7 @@ export function ProductInspectModal({
                     {typeof onContactSeller === "function" ? (
                       <button
                         type="button"
-                        className="inline-flex min-h-8 min-w-[7.5rem] flex-1 items-center justify-center rounded-lg border border-neutral-300/90 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 sm:flex-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                        className="inline-flex min-h-8 min-w-[7.5rem] flex-1 items-center justify-center rounded-none border border-neutral-300/90 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 sm:flex-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
                         onClick={() => onContactSeller()}
                       >
                         Contact seller
@@ -1753,7 +1729,7 @@ export function ProductInspectModal({
                     {typeof onViewSellerProfile === "function" ? (
                       <button
                         type="button"
-                        className="inline-flex min-h-8 min-w-[7.5rem] flex-1 items-center justify-center rounded-lg border border-neutral-300/90 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 sm:flex-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+                        className="inline-flex min-h-8 min-w-[7.5rem] flex-1 items-center justify-center rounded-none border border-neutral-300/90 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 sm:flex-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
                         onClick={() => onViewSellerProfile()}
                       >
                         View profile
