@@ -1,6 +1,6 @@
 import { Suspense, createElement, useEffect } from "react";
 import { ActivityHubCommerceKindFilter } from "../ActivityHubCommerceKindFilter.jsx";
-import { useCourierPresence } from "../../hooks/useCourierPresence.js";
+import { useActivityHubCourierPresence } from "../ActivityHubCourierPresenceProvider.jsx";
 import { ACTIVITY_COURIER_SUBTABS } from "../../views.js";
 import { CourierHubAvailabilityRoleToggle, CourierHubSectionUnderlineTabs } from "./CourierActivityHubNav.jsx";
 import { CourierEngagementBoard } from "./CourierEngagementBoard.jsx";
@@ -25,8 +25,8 @@ import { CourierRunnerHubPanel } from "./CourierRunnerHubPanel.jsx";
  *   courierHubFeedback: boolean,
  *   setCourierHubTab: (t: string) => void,
  *   refreshCourierAndOrders: () => void | Promise<void>,
- *   applyCourierPresenceToUser: (payload: { courierStatus?: string }) => void,
  *   buyNowFromProfile: { ready: boolean, missing: string[] },
+ *   hideAvailabilityRoleToggle?: boolean,
  *   openProfileEdit: (opts?: { navigateToOwnProfile?: boolean }) => void,
  *   getDisplayNameFromUser: (user: unknown) => string,
  *   user: { id?: string, username?: string, avatarUrl?: string, courierStatus?: string } | null,
@@ -50,33 +50,15 @@ export function CourierAuthenticatedActivityHub({
   courierHubFeedback,
   setCourierHubTab,
   refreshCourierAndOrders,
-  applyCourierPresenceToUser,
   buyNowFromProfile,
+  hideAvailabilityRoleToggle = false,
   openProfileEdit,
   getDisplayNameFromUser,
   user,
   LazyCourierBuyerFeedbackList: CourierBuyerFeedbackLazy,
   onCourierHubOpenTaskCount,
 }) {
-  const viewerProfile =
-    user?.id != null
-      ? {
-          id: String(user.id),
-          username: user.username,
-          displayName: getDisplayNameFromUser(user),
-          avatarUrl: user.avatarUrl || "",
-        }
-      : null;
-
-  const courierPresence = useCourierPresence({
-    token,
-    communityId,
-    onPresenceApplied: applyCourierPresenceToUser,
-    courierProfileReady: buyNowFromProfile.ready,
-    viewerProfile,
-    initialCourierStatus: user?.courierStatus ?? null,
-  });
-
+  const courierPresence = useActivityHubCourierPresence();
   const { isOn, saving, availabilityLocked, saveStatus, loading, saveFeedback } = courierPresence;
 
   const availabilityHintText = availabilityLocked
@@ -107,19 +89,23 @@ export function CourierAuthenticatedActivityHub({
 
   return (
     <>
-      <CourierHubAvailabilityRoleToggle
-        className="w-full"
-        isOn={isOn}
-        saving={saving}
-        availabilityLocked={availabilityLocked}
-        canTurnOn={buyNowFromProfile.ready}
-        saveStatus={saveStatus}
-        hintText={!loading && availabilityHintText ? availabilityHintText : ""}
-      />
-      {saveFeedback ? (
-        <p className="mt-2 text-center text-[11px] font-medium text-neutral-600 dark:text-slate-400" aria-live="polite">
-          {saveFeedback}
-        </p>
+      {!hideAvailabilityRoleToggle ? (
+        <>
+          <CourierHubAvailabilityRoleToggle
+            className="w-full"
+            isOn={isOn}
+            saving={saving}
+            availabilityLocked={availabilityLocked}
+            canTurnOn={buyNowFromProfile.ready}
+            saveStatus={saveStatus}
+            hintText={!loading && availabilityHintText ? availabilityHintText : ""}
+          />
+          {saveFeedback ? (
+            <p className="mt-2 text-center text-[11px] font-medium text-neutral-600 dark:text-slate-400" aria-live="polite">
+              {saveFeedback}
+            </p>
+          ) : null}
+        </>
       ) : null}
       <>
         <CourierHubSectionUnderlineTabs

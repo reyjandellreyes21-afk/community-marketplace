@@ -25,8 +25,9 @@ import {
 } from "./components/legal/LinkMartLegalContent.jsx";
 import { ActivityHubCommerceKindFilter } from "./components/ActivityHubCommerceKindFilter.jsx";
 import { ActivityHubOrderStatusStrip } from "./components/ActivityHubOrderStatusStrip.jsx";
-import { ActivityPrimaryTabs } from "./components/ActivityPrimaryTabs.jsx";
 import { OrdersRoleToggle } from "./components/OrdersRoleToggle.jsx";
+import { ActivityHubDesktopSidebar } from "./components/ActivityHubDesktopSidebar.jsx";
+import { ActivityHubCourierPresenceProvider } from "./components/ActivityHubCourierPresenceProvider.jsx";
 import { CommunityCourierPanel } from "./components/marketplace/CommunityCourierPanel.jsx";
 import { ServiceAvailabilityPicker } from "./components/marketplace/ServiceAvailabilityPicker.jsx";
 import { isWeeklyAvailabilityComplete } from "./lib/serviceAvailabilitySchedule.js";
@@ -102,11 +103,17 @@ import {
 } from "./lib/marketplaceNotifications.js";
 import { CHAT_QUICK_EMOJIS } from "./lib/chatComposerEmojis.js";
 import { UI_KIT } from "./lib/appUiKit.js";
+import { scrollAppToTop } from "./lib/scrollAppToTop.js";
+import { useNearMeLocation } from "./hooks/useNearMeLocation.js";
+import { hasValidCoords } from "./lib/geo/constants.js";
+import { resolveProductListingLocation } from "./lib/geo/resolveSellerListingLocation.js";
+import { ProfileAddressLocationSection } from "./components/geo/ProfileAddressLocationSection.jsx";
 import {
   filterOrdersExcludeServiceBookings,
   filterOrdersServiceBookingsOnly,
   getOrderCommerceRowTypeLabel,
   getProfileSellerListingSections,
+  getProfileSellerSectionEmptyText,
   getServiceCardHeadlinePriceLabel,
   getServiceCardProfileHeader,
   isServiceListing,
@@ -416,6 +423,17 @@ const LISTING_READY_IN_PRESETS = ["Same day", "2 hours", "Tomorrow", "1–2 days
 /** Upload form: one-tap quantity quick picks — low counts + common stock levels. */
 const LISTING_QUANTITY_PRESETS = [1, 2, 5, 10, 25, 50, 100];
 
+/** Outline pill for quantity presets, variant types, fulfillment toggles (no solid fill). */
+function listingOutlineChipClassName(pressed, { withIcon = false } = {}) {
+  const base = withIcon
+    ? "group relative inline-flex min-h-14 flex-1 items-start gap-2 rounded-xl border px-3.5 py-3 text-left text-sm leading-tight transition-all duration-150 touch-manipulation active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 dark:border-brand-accent/35 dark:text-slate-200"
+    : "min-h-10 rounded-full border px-2.5 py-1.5 text-xs font-medium transition touch-manipulation active:scale-[0.98] dark:border-brand-accent/35 dark:text-slate-200";
+  if (pressed) {
+    return `${base} border-brand-primary bg-brand-primary/10 text-brand-primary ring-2 ring-brand-primary/45 shadow-sm dark:border-brand-accent dark:bg-brand-accent/20 dark:text-brand-accent`;
+  }
+  return `${base} border-brand-primary/30 bg-transparent text-brand-primary/90 hover:border-brand-primary/50 hover:bg-brand-soft/35 dark:text-slate-200 dark:hover:bg-slate-800`;
+}
+
 /** Service listings: two cells (low / high). One value = fixed price; both = range (midpoint used for `priceCents`). */
 function resolveTransportListingPricePesos(minStr, maxStr) {
   const minRaw = String(minStr ?? "").trim();
@@ -458,6 +476,9 @@ function createInitialListingForm() {
     serviceTags: "",
     serviceVerifiedProvider: false,
     serviceDynamicFields: createServiceDynamicDefaults(),
+    listingLat: null,
+    listingLng: null,
+    listingCityLabel: "",
   };
 }
 
@@ -1313,41 +1334,10 @@ function App() {
   const [mobileSecondaryDragging, setMobileSecondaryDragging] = useState(false);
   /** True while `<main>` animates transform back to 0 after a cancelled swipe. */
   const [mobileSecondarySwipeSettling, setMobileSecondarySwipeSettling] = useState(false);
-  const previousViewForMarketplaceScrollResetRef = useRef(activeView);
   useEffect(() => {
     const saved = readActiveView();
     if (saved === VIEWS.SELLER) setSellerTab(SELLER_TABS.PRODUCTS);
   }, []);
-  useEffect(() => {
-    const prev = previousViewForMarketplaceScrollResetRef.current;
-    previousViewForMarketplaceScrollResetRef.current = activeView;
-    const enteredMarketplaceFeed =
-      (activeView === VIEWS.BROWSE || activeView === VIEWS.COMMUNITY_SHOP) &&
-      prev !== VIEWS.BROWSE &&
-      prev !== VIEWS.COMMUNITY_SHOP;
-    const enteredAboutTermsOrPassword =
-      (activeView === VIEWS.ABOUT ||
-        activeView === VIEWS.TERMS ||
-        activeView === VIEWS.DATA_PRIVACY_ACT ||
-        activeView === VIEWS.BEWARE_SCAMMERS ||
-        activeView === VIEWS.PROHIBITED_PRODUCTS ||
-        activeView === VIEWS.PASSWORD_SECURITY ||
-        activeView === VIEWS.SEND_FEEDBACK) &&
-      prev !== VIEWS.ABOUT &&
-      prev !== VIEWS.TERMS &&
-      prev !== VIEWS.DATA_PRIVACY_ACT &&
-      prev !== VIEWS.BEWARE_SCAMMERS &&
-      prev !== VIEWS.PROHIBITED_PRODUCTS &&
-      prev !== VIEWS.PASSWORD_SECURITY &&
-      prev !== VIEWS.SEND_FEEDBACK;
-    if (!enteredMarketplaceFeed && !enteredAboutTermsOrPassword) return;
-    if (typeof window === "undefined") return;
-    window.requestAnimationFrame(() => {
-      const main = document.getElementById("main-content");
-      if (main) main.scrollTop = 0;
-      window.scrollTo(0, 0);
-    });
-  }, [activeView]);
   /** @type {[string | null, import('react').Dispatch<import('react').SetStateAction<string | null>>]} */
   const [browseVerticalId, setBrowseVerticalId] = useState(null);
   const [browseSubId, setBrowseSubId] = useState(null);
@@ -1411,6 +1401,7 @@ function App() {
   useEffect(() => {
     commerceAllHubRoleRef.current = commerceAllHubRole;
   }, [commerceAllHubRole]);
+
   const prevCommerceHubTabRef = useRef(/** @type {string | null} */ (null));
   useEffect(() => {
     if (activeView !== VIEWS.ACTIVITY) {
@@ -2220,6 +2211,15 @@ function App() {
     () => (shopCommunityId ? communities.find((x) => x.id === shopCommunityId) ?? null : null),
     [communities, shopCommunityId],
   );
+  const nearMe = useNearMeLocation();
+  /** Latest map pin while profile edit is open — committed on Save changes. */
+  const profileLocationPinRef = useRef({ lat: null, lng: null });
+  const handleProfileLocationPinChange = useCallback((coords) => {
+    profileLocationPinRef.current = {
+      lat: coords?.lat ?? null,
+      lng: coords?.lng ?? null,
+    };
+  }, []);
   /** City · province · postal for the open community shop header (structured fields from API). */
   const activeCommunityLocaleLine = useMemo(() => {
     const ac = activeCommunity;
@@ -2742,6 +2742,36 @@ function App() {
     });
   }, [favoriteIds]);
   const [sellerTab, setSellerTab] = useState(SELLER_TABS.PRODUCTS);
+
+  /** Primary nav + in-hub tabs — each destination starts at scroll top (shared `#main-content` / window). */
+  const navScrollKey = useMemo(
+    () =>
+      [
+        activeView,
+        activeView === VIEWS.ACTIVITY ? activityTab : "",
+        activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.COURIER ? courierHubTab : "",
+        activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.COMMERCE_ALL ? commerceAllHubRole : "",
+        activeView === VIEWS.ACTIVITY && activityTab === ACTIVITY_TABS.BOOKING ? ordersRole : "",
+        activeView === VIEWS.PROFILE || activeView === VIEWS.SELLER || activeView === VIEWS.MY_LISTINGS
+          ? sellerTab
+          : "",
+        activeView === VIEWS.MESSAGES ? messagesMobilePane : "",
+      ].join("|"),
+    [activeView, activityTab, courierHubTab, commerceAllHubRole, ordersRole, sellerTab, messagesMobilePane],
+  );
+  const prevNavScrollKeyRef = useRef(/** @type {string | null} */ (null));
+  useLayoutEffect(() => {
+    const next = navScrollKey;
+    const prev = prevNavScrollKeyRef.current;
+    prevNavScrollKeyRef.current = next;
+    if (prev === null || prev === next) return;
+    const prevView = String(prev.split("|")[0] || "");
+    if (prevView === VIEWS.PRODUCT_DETAIL && activeView !== VIEWS.PRODUCT_DETAIL) {
+      return;
+    }
+    scrollAppToTop();
+  }, [navScrollKey, activeView]);
+
   const [sellerProductsView, setSellerProductsView] = useState("list");
   const [communityProductsView, setCommunityProductsView] = useState("grid");
   const [communityListingsQuery, setCommunityListingsQuery] = useState("");
@@ -2937,6 +2967,11 @@ function App() {
           qs.set("verticalId", browseVerticalId);
           if (browseSubId && browseSubId !== "all") qs.set("subId", browseSubId);
         }
+        if (nearMe.enabled && nearMe.coords) {
+          qs.set("lat", String(nearMe.coords.lat));
+          qs.set("lng", String(nearMe.coords.lng));
+          qs.set("radiusKm", String(nearMe.radiusKm));
+        }
         const rows = await fetchAllListingsPages(token, qs);
         if (cancelledRef?.()) return;
         setListings(rows);
@@ -2953,12 +2988,30 @@ function App() {
         setListingsRefreshing(false);
       }
     },
-    [token, activeView, browseVerticalId, browseSubId, shopCommunityId, communityIncludeOwnListings],
+    [token, activeView, browseVerticalId, browseSubId, shopCommunityId, communityIncludeOwnListings, nearMe.enabled, nearMe.coords, nearMe.radiusKm],
   );
 
   const refreshCommunityShopListings = useCallback(() => {
     void loadCommunityShopListings({ preserveExistingRows: true });
   }, [loadCommunityShopListings]);
+
+  const handleToggleNearMeBrowse = useCallback(async () => {
+    if (nearMe.enabled) {
+      nearMe.disableNearMe();
+      if (activeView === VIEWS.COMMUNITY_SHOP) {
+        void loadCommunityShopListings({ preserveExistingRows: false, force: true });
+      }
+      return;
+    }
+    const fallback =
+      hasValidCoords(user?.defaultLat, user?.defaultLng)
+        ? { lat: Number(user.defaultLat), lng: Number(user.defaultLng) }
+        : null;
+    await nearMe.enableNearMe(fallback);
+    if (activeView === VIEWS.COMMUNITY_SHOP) {
+      void loadCommunityShopListings({ preserveExistingRows: false, force: true });
+    }
+  }, [nearMe, activeView, loadCommunityShopListings, user?.defaultLat, user?.defaultLng]);
 
   /** Remove this seller's listings from a community shop when they leave (runs in background — do not await before navigation). */
   const detachSellerListingsFromCommunity = useCallback(
@@ -3123,7 +3176,6 @@ function App() {
     addressProvince: "",
     addressCountry: "",
     addressPostalCode: "",
-    addressUrl: "",
     facebookUrl: "",
     twitterUrl: "",
     instagramUrl: "",
@@ -4261,11 +4313,6 @@ function App() {
       } else if (tab === ACTIVITY_TABS.COMMERCE_ALL) {
         setBookingOrdersStatusTab(mapOrdersStatusTabToBookingTab("pending"));
       }
-      if (typeof window !== "undefined") {
-        window.requestAnimationFrame(() => {
-          window.scrollTo(0, 0);
-        });
-      }
     },
     [dismissBuyerOrdersForTab, dismissSellerOrdersForTab],
   );
@@ -4296,11 +4343,6 @@ function App() {
     setProfileViewUserId("");
     setProfileViewReturnView("");
     setActiveView(nextView);
-    if (typeof window !== "undefined") {
-      window.requestAnimationFrame(() => {
-        window.scrollTo(0, 0);
-      });
-    }
   }, [profileViewReturnView]);
 
   const leaveCommunityToGlobalMarketplace = useCallback(() => {
@@ -4347,11 +4389,6 @@ function App() {
     setMobileCommunityFiltersOpen(false);
     setSellerTab(SELLER_TABS.PRODUCTS);
     setActiveView(VIEWS.PROFILE);
-    if (typeof window !== "undefined") {
-      window.requestAnimationFrame(() => {
-        window.scrollTo(0, 0);
-      });
-    }
   }, []);
   const openUploadAtTop = useCallback((kind = "product") => {
     listingDraftBaselineRef.current = null;
@@ -4375,13 +4412,6 @@ function App() {
     setServiceDynamicMultiselectDraft({});
     setListingFieldErrors((prev) => (prev.categories ? { ...prev, categories: "" } : prev));
     setActiveView(VIEWS.MY_LISTINGS);
-    if (typeof window !== "undefined") {
-      window.requestAnimationFrame(() => {
-        const main = document.getElementById("main-content");
-        if (main) main.scrollTop = 0;
-        window.scrollTo(0, 0);
-      });
-    }
   }, [activeView, shopCommunityId]);
   const openProfileUploadChooser = useCallback(() => {
     if (!String(profileCommunityName || "").trim()) {
@@ -4421,11 +4451,6 @@ function App() {
     setMobileCommunityFiltersOpen(false);
     setActiveView(VIEWS.MESSAGES);
     setMessagesMobilePane("list");
-    if (typeof window !== "undefined") {
-      window.requestAnimationFrame(() => {
-        window.scrollTo(0, 0);
-      });
-    }
   }, []);
   const goNotifications = useCallback(() => {
     setActiveView(VIEWS.NOTIFICATIONS);
@@ -5078,9 +5103,9 @@ function App() {
   const effectiveCommerceFlowViewBuyer = normalizeWebProductBrowseView(commerceFlowViewBuyer);
   const effectiveCommerceFlowViewSeller = normalizeWebProductBrowseView(commerceFlowViewSeller);
 
-  /** Use a single active scroll surface while overlays are open (product detail on mobile, or edit overlay on any viewport). */
+  /** Use a single active scroll surface while overlays are open (product detail page, edit overlay, or messages thread on mobile). */
   const lockMainScrollForOverlay =
-    (isMobileViewport && activeView === VIEWS.PRODUCT_DETAIL && Boolean(productInspect)) ||
+    (activeView === VIEWS.PRODUCT_DETAIL && Boolean(productInspect)) ||
     listingEditOverlayOpen ||
     (isMobileViewport && activeView === VIEWS.MESSAGES && messagesMobilePane === "thread");
 
@@ -5645,8 +5670,11 @@ function App() {
     if (activeView === VIEWS.COMMUNITY_SHOP && communityIncludeOwnListings) {
       items.push("Including: My products");
     }
+    if (activeView === VIEWS.COMMUNITY_SHOP && nearMe.enabled) {
+      items.push("Near me");
+    }
     return items;
-  }, [browseQuickFilter, browseVerticalId, activeView, communityListingsQuery, listingSort, communityIncludeOwnListings]);
+  }, [browseQuickFilter, browseVerticalId, activeView, communityListingsQuery, listingSort, communityIncludeOwnListings, nearMe.enabled]);
   const activeBrowseResultsCount =
     activeView === VIEWS.FAVORITES ? visibleFavoritesListings.length : visibleBrowseListings.length;
 
@@ -7042,9 +7070,13 @@ function App() {
   useEffect(() => {
     if (!token || activeView !== VIEWS.COMMUNITY_SHOP) return undefined;
     const inCommunity = !!shopCommunityId;
+    const nearKey =
+      nearMe.enabled && nearMe.coords
+        ? `near|${nearMe.coords.lat}|${nearMe.coords.lng}|${nearMe.radiusKm}`
+        : "all-areas";
     const queryKey = `${inCommunity ? shopCommunityId : "global"}|${browseVerticalId ?? ""}|${browseSubId ?? ""}|${
       communityIncludeOwnListings ? "with-own" : "without-own"
-    }`;
+    }|${nearKey}`;
     if (communityShopListingsQueryKeyRef.current !== queryKey) {
       communityShopListingsQueryKeyRef.current = queryKey;
       setListings([]);
@@ -7054,7 +7086,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, activeView, browseVerticalId, browseSubId, shopCommunityId, communityIncludeOwnListings, loadCommunityShopListings]);
+  }, [token, activeView, browseVerticalId, browseSubId, shopCommunityId, communityIncludeOwnListings, nearMe.enabled, nearMe.coords, nearMe.radiusKm, loadCommunityShopListings]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.FAVORITES) return undefined;
@@ -8030,6 +8062,15 @@ function App() {
       profileBrgySuggestBlurTimerRef.current = null;
     }
     return undefined;
+  }, [profileEditing]);
+
+  useEffect(() => {
+    if (!profileEditing || typeof document === "undefined") return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [profileEditing]);
 
   useEffect(() => {
@@ -9071,6 +9112,7 @@ function App() {
       onBuyNow: typeof extra.onBuyNow === "function" ? extra.onBuyNow : undefined,
       onEditListing: typeof extra.onEditListing === "function" ? extra.onEditListing : undefined,
       onSaleSelect: typeof extra.onSaleSelect === "function" ? extra.onSaleSelect : undefined,
+      onDeleteListing: typeof extra.onDeleteListing === "function" ? extra.onDeleteListing : undefined,
       buyNowDisabled: Boolean(extra.buyNowDisabled),
       buyNowDisabledReason: String(extra.buyNowDisabledReason || ""),
       orderTimelineOrder: extra.orderTimelineOrder ?? undefined,
@@ -9085,6 +9127,11 @@ function App() {
         openedServiceListing || typeof extra.onOrderCourierPoolUpdated !== "function"
           ? undefined
           : extra.onOrderCourierPoolUpdated,
+      listingLat:
+        listingLike.lat != null && Number.isFinite(Number(listingLike.lat)) ? Number(listingLike.lat) : null,
+      listingLng:
+        listingLike.lng != null && Number.isFinite(Number(listingLike.lng)) ? Number(listingLike.lng) : null,
+      listingCityLabel: String(listingLike.cityLabel || "").trim(),
       isFavorite: favoriteIds.has(String(listingLike.id || "")),
       onToggleFavorite:
         listingLike?.id
@@ -9152,11 +9199,17 @@ function App() {
             });
             const nextImageUrl = unifiedGallery[0] ?? prev.imageUrl;
             const nextImageUrls = [...unifiedGallery];
+            const nextImageFocalRects = resolveListingImageFocalRects({
+              ...apiRow,
+              imageUrl: nextImageUrl,
+              imageUrls: nextImageUrls,
+            });
             return {
               ...prev,
               title: String(fresh.title || prev.title),
               imageUrl: nextImageUrl,
               imageUrls: nextImageUrls,
+              imageFocalRects: nextImageFocalRects.length > 0 ? nextImageFocalRects : prev.imageFocalRects,
               priceCents: Number(fresh.priceCents ?? prev.priceCents) || 0,
               description: String(fresh.description ?? prev.description),
               categoryLabel: getListingCategoryShortLabel(fresh.verticalId, fresh.subId),
@@ -9184,10 +9237,15 @@ function App() {
                 fresh.serviceMeta != null && typeof fresh.serviceMeta === "object" && !Array.isArray(fresh.serviceMeta)
                   ? fresh.serviceMeta
                   : prev.serviceMeta,
+              listingLat:
+                fresh.lat != null && Number.isFinite(Number(fresh.lat)) ? Number(fresh.lat) : prev.listingLat,
+              listingLng:
+                fresh.lng != null && Number.isFinite(Number(fresh.lng)) ? Number(fresh.lng) : prev.listingLng,
+              listingCityLabel: String(fresh.cityLabel || "").trim() || prev.listingCityLabel,
               quantity:
                 String(prev.quantityLabel || "")
                   .trim()
-                  .toLowerCase() === "stock listed" && qtyFresh != null
+                  .toLowerCase() === "quantity available" && qtyFresh != null
                   ? qtyFresh
                   : prev.quantity,
             };
@@ -9750,6 +9808,9 @@ function App() {
       processingTime: String(listing.processingTime || "").trim(),
       pickup: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("pickup") : true,
       delivery: Array.isArray(listing.fulfillmentModes) ? listing.fulfillmentModes.includes("delivery") : true,
+      listingLat: listing.lat != null && Number.isFinite(Number(listing.lat)) ? Number(listing.lat) : null,
+      listingLng: listing.lng != null && Number.isFinite(Number(listing.lng)) ? Number(listing.lng) : null,
+      listingCityLabel: String(listing.cityLabel || "").trim(),
     };
     const editingService = String(listing.categories || listing.verticalId || "") === "services";
     setListingUploadKind(editingService ? "service" : "product");
@@ -9975,6 +10036,14 @@ function App() {
     }
     setListingSaving(true);
     try {
+      let productListingGeo = { lat: null, lng: null, cityLabel: "" };
+      if (!isServiceUpload) {
+        productListingGeo = await resolveProductListingLocation({
+          user,
+          profileDraft,
+          activeCommunity,
+        });
+      }
       const imageUrls = await resolveListingImagesForSave(
         token,
         {
@@ -10101,7 +10170,16 @@ function App() {
         verticalId: isServiceUpload ? "services" : String(listingForm.categories).trim(),
         subId: isServiceUpload ? String(listingForm.serviceCategoryId || "").trim() || null : subIdNormalized,
         fulfillmentModes: modes,
-        cityLabel: "",
+        cityLabel: isServiceUpload
+          ? String(listingForm.listingCityLabel || "").trim().slice(0, 200)
+          : String(productListingGeo.cityLabel || "").trim().slice(0, 200),
+        ...(isServiceUpload
+          ? hasValidCoords(listingForm.listingLat, listingForm.listingLng)
+            ? { lat: Number(listingForm.listingLat), lng: Number(listingForm.listingLng) }
+            : {}
+          : hasValidCoords(productListingGeo.lat, productListingGeo.lng)
+            ? { lat: Number(productListingGeo.lat), lng: Number(productListingGeo.lng) }
+            : {}),
         imageUrl: primaryImageUrl,
         imageUrls,
         imageFocalRects,
@@ -10128,8 +10206,16 @@ function App() {
           });
       const listRes = await apiRequest("/me/listings", { token });
       const latestListings = listRes.listings || [];
+      const hadMapPin = isServiceUpload
+        ? hasValidCoords(listingForm.listingLat, listingForm.listingLng)
+        : hasValidCoords(productListingGeo.lat, productListingGeo.lng);
       setSellerListings(latestListings.length ? latestListings : createRes?.listing ? [createRes.listing] : []);
       setListingForm(createInitialListingForm());
+      if (!hadMapPin && !isServiceUpload) {
+        pushMarketplaceToast(
+          "Listing saved. Add city and province to your profile so buyers can find you on the map.",
+        );
+      }
       setServiceDynamicMultiselectDraft({});
       setListingAvailabilityScheduleOpen(false);
       setListingFieldErrors({});
@@ -10659,6 +10745,10 @@ function App() {
     const parsedAddress = splitAddressParts(user.address);
     const draftBirthday = user.birthday ?? "";
     const computedAge = computeAgeFromBirthday(draftBirthday);
+    profileLocationPinRef.current = {
+      lat: hasValidCoords(user.defaultLat, user.defaultLng) ? Number(user.defaultLat) : null,
+      lng: hasValidCoords(user.defaultLat, user.defaultLng) ? Number(user.defaultLng) : null,
+    };
     setProfileDraft({
       avatarUrl: user.avatarUrl || "",
       username: user.username || user.name || "",
@@ -10677,7 +10767,6 @@ function App() {
       addressProvince: parsedAddress.addressProvince,
       addressCountry: "Philippines",
       addressPostalCode: parsedAddress.addressPostalCode,
-      addressUrl: user.addressUrl ?? "",
       facebookUrl: user.facebookUrl ?? (user.socialPlatform === "facebook" ? user.socialUrl ?? user.url ?? "" : ""),
       twitterUrl: user.twitterUrl ?? (user.socialPlatform === "x_twitter" ? user.socialUrl ?? user.url ?? "" : ""),
       instagramUrl: user.instagramUrl ?? (user.socialPlatform === "instagram" ? user.socialUrl ?? user.url ?? "" : ""),
@@ -10972,6 +11061,10 @@ function App() {
         ? { socialPlatform: "instagram", socialUrl: profileDraft.instagramUrl.trim() }
         : { socialPlatform: "", socialUrl: "" };
 
+      const pin = profileLocationPinRef.current;
+      const patchDefaultLat = hasValidCoords(pin.lat, pin.lng) ? Number(pin.lat) : null;
+      const patchDefaultLng = hasValidCoords(pin.lat, pin.lng) ? Number(pin.lng) : null;
+
       const data = await apiRequest("/auth/me", {
         method: "PATCH",
         token: effectiveToken,
@@ -10986,7 +11079,9 @@ function App() {
           birthday: profileDraft.birthday.trim() || null,
           community: profileDraft.community.trim(),
           address: buildAddressValue(profileDraft),
-          addressUrl: profileDraft.addressUrl.trim(),
+          addressUrl: "",
+          defaultLat: patchDefaultLat,
+          defaultLng: patchDefaultLng,
           facebookUrl: profileDraft.facebookUrl.trim(),
           twitterUrl: profileDraft.twitterUrl.trim(),
           instagramUrl: profileDraft.instagramUrl.trim(),
@@ -11008,7 +11103,9 @@ function App() {
         birthday: profileDraft.birthday.trim() || null,
         community: profileDraft.community.trim(),
         address: buildAddressValue(profileDraft),
-        addressUrl: profileDraft.addressUrl.trim(),
+        defaultLat: patchDefaultLat,
+        defaultLng: patchDefaultLng,
+        addressUrl: "",
         facebookUrl: profileDraft.facebookUrl.trim(),
         twitterUrl: profileDraft.twitterUrl.trim(),
         instagramUrl: profileDraft.instagramUrl.trim(),
@@ -11973,9 +12070,11 @@ function App() {
         onMobileBrowseNavCollapsedChange={setMobileTopChromeCollapsed}
         mobileSecondaryDragX={mobileSecondaryDragX}
         hideNavigationChrome={
+          profileEditing ||
           (isMobileViewport && activeView === VIEWS.PRODUCT_DETAIL && Boolean(productInspect)) ||
           listingEditOverlayOpen
         }
+        hideDesktopTopBar={profileEditing}
         liftChromeAboveOverlay={quickAddModalOpen}
         sendFeedbackPhase={sendFeedbackPhase}
         onSecondaryMobileScreenBack={
@@ -12010,7 +12109,9 @@ function App() {
         } ${
           activeView === VIEWS.ACTIVITY
             ? activityTabChrome.activityMainSurface
-            : "bg-white dark:bg-slate-950 md:bg-transparent md:dark:bg-transparent"
+            : activeView === VIEWS.PRODUCT_DETAIL
+              ? "bg-white dark:bg-slate-950"
+              : "bg-white dark:bg-slate-950 md:bg-transparent md:dark:bg-transparent"
         } ${
           activeView === VIEWS.ACTIVITY
             ? "max-md:!pt-2 max-md:scroll-pb-[max(1.25rem,calc(env(safe-area-inset-bottom,0px)+1rem))] max-md:pb-[max(1.25rem,calc(env(safe-area-inset-bottom,0px)+1rem))]"
@@ -12224,16 +12325,22 @@ function App() {
               ) : activeView === VIEWS.FAVORITES ? null : (
                 <>
                   {activeView === VIEWS.BROWSE ? (
-                    <button
-                      type="button"
-                      className="fixed right-4 z-40 inline-flex h-12 w-12 touch-manipulation items-center justify-center rounded-full border border-[#1f3c56]/40 bg-[#1F2A37] p-0 text-white shadow-lg transition hover:bg-[#223140] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1F2A37]/50 max-md:bottom-[max(1rem,calc(var(--mobile-nav-stack-bottom)+1.25rem))] md:right-6 md:bottom-10 dark:border-dark-border/60 dark:bg-dark-surface dark:hover:bg-dark-elevated dark:focus-visible:outline-dark-border"
-                      aria-label="New community"
-                      onClick={openAddCommunityModal}
+                    <div
+                      className="pointer-events-none fixed inset-x-0 z-40 px-3.5 max-md:bottom-[max(1rem,calc(var(--mobile-nav-stack-bottom)+1.25rem))] md:bottom-10 md:px-6"
                     >
-                      <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
-                      </svg>
-                    </button>
+                      <div className="pointer-events-auto mx-auto flex w-full max-w-7xl justify-end">
+                        <button
+                          type="button"
+                          className="inline-flex h-12 w-12 touch-manipulation items-center justify-center rounded-full border border-[#1f3c56]/40 bg-[#1F2A37] p-0 text-white shadow-lg transition hover:bg-[#223140] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1F2A37]/50 dark:border-dark-border/60 dark:bg-dark-surface dark:hover:bg-dark-elevated dark:focus-visible:outline-dark-border"
+                          aria-label="New community"
+                          onClick={openAddCommunityModal}
+                        >
+                          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
                   ) : null}
                   <div className="min-w-0 px-3 pb-3 pt-0 md:p-0">
                 <div className="relative min-w-0 rounded-2xl border border-brand-border/70 bg-gradient-to-br from-white via-brand-soft/35 to-white p-4 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_8px_28px_-12px_rgba(31,166,166,0.12),0_2px_6px_rgba(15,23,42,0.04)] ring-1 ring-brand-primary/[0.06] dark:border-[#3d6d8f]/35 dark:from-slate-900 dark:via-[#0f2234]/95 dark:to-slate-900 dark:shadow-[0_1px_0_rgba(255,255,255,0.04)_inset,0_12px_40px_-18px_rgba(0,0,0,0.45)] dark:ring-brand-accent/10 md:p-5">
@@ -12915,6 +13022,31 @@ function App() {
                         }
                       >
                       {activeView === VIEWS.COMMUNITY_SHOP ? (
+                        <button
+                          type="button"
+                          className={`inline-flex min-h-[44px] shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-semibold shadow-sm transition active:scale-[0.98] md:min-h-10 md:text-sm ${
+                            nearMe.enabled
+                              ? "border-brand-primary bg-brand-primary text-white dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                              : "border-neutral-200/90 bg-white text-neutral-800 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                          }`}
+                          aria-pressed={nearMe.enabled}
+                          disabled={nearMe.loading}
+                          onClick={() => void handleToggleNearMeBrowse()}
+                          aria-label={nearMe.enabled ? "Turn off near me filter" : "Show listings near me"}
+                        >
+                          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 21s7-4.5 7-11a7 7 0 1 0-14 0c0 6.5 7 11 7 11Z" />
+                            <circle cx="12" cy="10" r="2.5" />
+                          </svg>
+                          <span className="truncate">{nearMe.loading ? "Locating…" : nearMe.enabled ? "Near me" : "Near me"}</span>
+                        </button>
+                      ) : null}
+                      {activeView === VIEWS.COMMUNITY_SHOP && nearMe.error ? (
+                        <p className="w-full text-xs text-rose-700 dark:text-rose-300 max-lg:order-4" role="alert">
+                          {nearMe.error}
+                        </p>
+                      ) : null}
+                      {activeView === VIEWS.COMMUNITY_SHOP ? (
                         <select
                           value={listingSort}
                           onChange={(e) => setListingSort(e.target.value)}
@@ -13045,10 +13177,9 @@ function App() {
                           >
                             {section.title}
                           </h3>
-                          {section.id === "shop" && section.listings.length === 0 ? (
+                          {section.listings.length === 0 ? (
                             <p className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/80 px-4 py-6 text-center text-sm text-neutral-600 dark:border-slate-600/70 dark:bg-slate-800/40 dark:text-slate-400">
-                              No shop listings yet. Community shop upload is not available yet — listings will appear here
-                              when it is.
+                              {getProfileSellerSectionEmptyText(section.id)}
                             </p>
                           ) : null}
                           {section.listings.length > 0 ? (
@@ -13057,7 +13188,10 @@ function App() {
                                 effectiveCommunityBrowseView,
                               )}`}
                             >
-                              {section.listings.map((l) => (
+                              {section.listings.map((l) => {
+                                const isOwnListing =
+                                  String(l.sellerId || "") === String(user?.id || "");
+                                return (
                                 <LazyCommunityShopListingCard
                                   key={l.id}
                                   listing={l}
@@ -13074,7 +13208,8 @@ function App() {
                                   hideCardDescription={!isMobileViewport}
                                   mobileEntireCardTappable={isMobileViewport}
                                   isFavorite={favoriteIds.has(l.id)}
-                                  showActions
+                                  showActions={isMobileViewport || isOwnListing}
+                                  hideOwnerManageActions
                                   currentUserId={user?.id || ""}
                                   buyNowDisabled={buyNowBlocked}
                                   buyNowDisabledReason={buyNowBlockedReason}
@@ -13084,42 +13219,48 @@ function App() {
                                   onAdd={() => openQuickAddModal(l, "cart")}
                                   onToggleFavorite={() => toggleFavorite(l.id, !favoriteIds.has(l.id))}
                                   onInspect={() => {
-                                    const isOwn = String(l.sellerId || "") === String(user?.id || "");
                                     const stockListed = Math.max(0, Number(l.quantity) || 0);
                                     openProductInspect(l, {
                                       quantity: stockListed,
-                                      quantityLabel: "Stock listed",
+                                      quantityLabel: "Quantity Available",
                                       subtitle: "",
                                       listingStockQty: stockListed,
-                                      showBuyerCommerceActions: !isOwn,
-                                      showSellerCommerceActions: isOwn,
-                                      onAddToCart: isOwn
+                                      showBuyerCommerceActions: !isOwnListing,
+                                      showSellerCommerceActions: isOwnListing,
+                                      onAddToCart: isOwnListing
                                         ? undefined
                                         : () => {
                                             openQuickAddModal(l, "cart");
                                           },
-                                      onBuyNow: isOwn
+                                      onBuyNow: isOwnListing
                                         ? undefined
                                         : () => {
                                             openQuickAddModal(l, "buy");
                                           },
-                                      buyNowDisabled: !isOwn && buyNowBlocked,
-                                      buyNowDisabledReason: !isOwn ? buyNowBlockedReason : "",
-                                      onEditListing: isOwn
+                                      buyNowDisabled: !isOwnListing && buyNowBlocked,
+                                      buyNowDisabledReason: !isOwnListing ? buyNowBlockedReason : "",
+                                      onEditListing: isOwnListing
                                         ? () => {
                                             beginEditSellerListing(l);
                                           }
                                         : undefined,
-                                      onSaleSelect: isOwn
+                                      onSaleSelect: isOwnListing
                                         ? (pct) => {
                                             closeProductInspect();
                                             void applySellerListingDiscount(l, pct);
                                           }
                                         : undefined,
+                                      onDeleteListing: isOwnListing
+                                        ? () => {
+                                            closeProductInspect();
+                                            void deleteSellerListingById(l.id);
+                                          }
+                                        : undefined,
                                     });
                                   }}
                                 />
-                              ))}
+                              );
+                              })}
                             </div>
                           ) : null}
                         </section>
@@ -13160,7 +13301,7 @@ function App() {
                             const stockListed = Math.max(0, Number(l.quantity) || 0);
                             openProductInspect(l, {
                               quantity: stockListed,
-                              quantityLabel: "Stock listed",
+                              quantityLabel: "Quantity Available",
                               subtitle: "Saved listing",
                               listingStockQty: stockListed,
                               showBuyerCommerceActions: !isOwn,
@@ -13186,6 +13327,12 @@ function App() {
                                 ? (pct) => {
                                     closeProductInspect();
                                     void applySellerListingDiscount(l, pct);
+                                  }
+                                : undefined,
+                              onDeleteListing: isOwn
+                                ? () => {
+                                    closeProductInspect();
+                                    void deleteSellerListingById(l.id);
                                   }
                                 : undefined,
                             });
@@ -13248,7 +13395,7 @@ function App() {
                             },
                           }
                         : activeView === VIEWS.COMMUNITY_SHOP && shopCommunityId
-                          ? { label: "Browse all communities", onClick: goBrowse }
+                          ? { label: "Browse all communities", onClick: leaveCommunityToGlobalMarketplace }
                           : undefined
                     }
                   />
@@ -14102,7 +14249,7 @@ function App() {
                         const stockListed = Math.max(0, Number(l.quantity) || 0);
                         openProductInspect(l, {
                           quantity: stockListed,
-                          quantityLabel: "Stock listed",
+                          quantityLabel: "Quantity Available",
                           subtitle: "Saved listing",
                           listingStockQty: stockListed,
                           showBuyerCommerceActions: !isOwn,
@@ -14128,6 +14275,12 @@ function App() {
                             ? (pct) => {
                                 closeProductInspect();
                                 void applySellerListingDiscount(l, pct);
+                              }
+                            : undefined,
+                          onDeleteListing: isOwn
+                            ? () => {
+                                closeProductInspect();
+                                void deleteSellerListingById(l.id);
                               }
                             : undefined,
                         });
@@ -15082,38 +15235,50 @@ function App() {
                       ? "Tell buyers if you pick them up door-to-door, at a meet-up point, or both."
                       : "Choose where clients can receive the service (at their place, at yours, or both)."}
                   </p>
-                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <div className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2">
                     {String(listingForm.serviceCategoryId || "") === "transport_services" ? (
                       <>
                         <button
                           type="button"
                           aria-pressed={listingForm.delivery}
-                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
-                            listingForm.delivery
-                              ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
-                              : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
-                          }`}
+                          className={listingOutlineChipClassName(listingForm.delivery, { withIcon: true })}
                           onClick={() => {
                             setListingForm((p) => ({ ...p, delivery: !p.delivery }));
                             if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
                           }}
                         >
-                          Door-to-door
+                          {listingForm.delivery ? (
+                            <span className="absolute right-2 top-2 inline-flex rounded-full bg-brand-primary/15 p-1 text-brand-primary dark:bg-brand-accent/20 dark:text-brand-accent">
+                              <svg className="size-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.4">
+                                <path d="M5 10.5 8.2 14 15 7.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </span>
+                          ) : null}
+                          <span className="min-w-0">
+                            <span className="block font-semibold">Door-to-door</span>
+                            <span className="mt-0.5 block text-xs text-neutral-500 dark:text-slate-400">Pickup and drop-off service</span>
+                          </span>
                         </button>
                         <button
                           type="button"
                           aria-pressed={listingForm.pickup}
-                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
-                            listingForm.pickup
-                              ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
-                              : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
-                          }`}
+                          className={listingOutlineChipClassName(listingForm.pickup, { withIcon: true })}
                           onClick={() => {
                             setListingForm((p) => ({ ...p, pickup: !p.pickup }));
                             if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
                           }}
                         >
-                          Meet-up point
+                          {listingForm.pickup ? (
+                            <span className="absolute right-2 top-2 inline-flex rounded-full bg-brand-primary/15 p-1 text-brand-primary dark:bg-brand-accent/20 dark:text-brand-accent">
+                              <svg className="size-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.4">
+                                <path d="M5 10.5 8.2 14 15 7.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </span>
+                          ) : null}
+                          <span className="min-w-0">
+                            <span className="block font-semibold">Meet-up point</span>
+                            <span className="mt-0.5 block text-xs text-neutral-500 dark:text-slate-400">Client meets at agreed location</span>
+                          </span>
                         </button>
                       </>
                     ) : (
@@ -15121,32 +15286,44 @@ function App() {
                         <button
                           type="button"
                           aria-pressed={listingForm.delivery}
-                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
-                            listingForm.delivery
-                              ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
-                              : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
-                          }`}
+                          className={listingOutlineChipClassName(listingForm.delivery, { withIcon: true })}
                           onClick={() => {
                             setListingForm((p) => ({ ...p, delivery: !p.delivery }));
                             if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
                           }}
                         >
-                          Home Service
+                          {listingForm.delivery ? (
+                            <span className="absolute right-2 top-2 inline-flex rounded-full bg-brand-primary/15 p-1 text-brand-primary dark:bg-brand-accent/20 dark:text-brand-accent">
+                              <svg className="size-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.4">
+                                <path d="M5 10.5 8.2 14 15 7.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </span>
+                          ) : null}
+                          <span className="min-w-0">
+                            <span className="block font-semibold">Home Service</span>
+                            <span className="mt-0.5 block text-xs text-neutral-500 dark:text-slate-400">You go to the client</span>
+                          </span>
                         </button>
                         <button
                           type="button"
                           aria-pressed={listingForm.pickup}
-                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
-                            listingForm.pickup
-                              ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
-                              : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
-                          }`}
+                          className={listingOutlineChipClassName(listingForm.pickup, { withIcon: true })}
                           onClick={() => {
                             setListingForm((p) => ({ ...p, pickup: !p.pickup }));
                             if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
                           }}
                         >
-                          Walk-in Service
+                          {listingForm.pickup ? (
+                            <span className="absolute right-2 top-2 inline-flex rounded-full bg-brand-primary/15 p-1 text-brand-primary dark:bg-brand-accent/20 dark:text-brand-accent">
+                              <svg className="size-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.4">
+                                <path d="M5 10.5 8.2 14 15 7.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </span>
+                          ) : null}
+                          <span className="min-w-0">
+                            <span className="block font-semibold">Walk-in Service</span>
+                            <span className="mt-0.5 block text-xs text-neutral-500 dark:text-slate-400">Client comes to your place</span>
+                          </span>
                         </button>
                       </>
                     )}
@@ -15579,20 +15756,23 @@ function App() {
               <>
               <div id="listing-section-fulfillment" className="py-5 md:py-4">
                 <p className="label-base">Fulfillment *</p>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
+                <div className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2">
                   <button
                     type="button"
                     aria-pressed={listingForm.delivery}
-                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
-                      listingForm.delivery
-                        ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
-                        : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
-                    }`}
+                    className={listingOutlineChipClassName(listingForm.delivery, { withIcon: true })}
                     onClick={() => {
                       setListingForm((p) => ({ ...p, delivery: !p.delivery }));
                       if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
                     }}
                   >
+                    {listingForm.delivery ? (
+                      <span className="absolute right-2 top-2 inline-flex rounded-full bg-brand-primary/15 p-1 text-brand-primary dark:bg-brand-accent/20 dark:text-brand-accent">
+                        <svg className="size-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.4">
+                          <path d="M5 10.5 8.2 14 15 7.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                    ) : null}
                     <span className="inline-flex shrink-0 items-center justify-center" aria-hidden>
                       <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" />
@@ -15602,28 +15782,37 @@ function App() {
                         <circle cx="7" cy="18" r="2" />
                       </svg>
                     </span>
-                    <span>COD Delivery</span>
+                    <span className="min-w-0">
+                      <span className="block font-semibold">COD Delivery</span>
+                      <span className="mt-0.5 block text-xs text-neutral-500 dark:text-slate-400">Cash payment on handoff</span>
+                    </span>
                   </button>
                   <button
                     type="button"
                     aria-pressed={listingForm.pickup}
-                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium leading-none transition ${
-                      listingForm.pickup
-                        ? "border-brand-primary bg-brand-primary text-white hover:brightness-95 dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
-                        : "border-brand-primary/35 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 dark:border-brand-accent/40 dark:bg-brand-accent/15 dark:text-slate-100 dark:hover:bg-brand-accent/25"
-                    }`}
+                    className={listingOutlineChipClassName(listingForm.pickup, { withIcon: true })}
                     onClick={() => {
                       setListingForm((p) => ({ ...p, pickup: !p.pickup }));
                       if (listingFieldErrors.fulfillment) setListingFieldErrors((prev) => ({ ...prev, fulfillment: "" }));
                     }}
                   >
+                    {listingForm.pickup ? (
+                      <span className="absolute right-2 top-2 inline-flex rounded-full bg-brand-primary/15 p-1 text-brand-primary dark:bg-brand-accent/20 dark:text-brand-accent">
+                        <svg className="size-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.4">
+                          <path d="M5 10.5 8.2 14 15 7.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                    ) : null}
                     <span className="inline-flex shrink-0 items-center justify-center" aria-hidden>
                       <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
                         <circle cx="12" cy="10" r="3" />
                       </svg>
                     </span>
-                    <span>Pick-up</span>
+                    <span className="min-w-0">
+                      <span className="block font-semibold">Pick-up</span>
+                      <span className="mt-0.5 block text-xs text-neutral-500 dark:text-slate-400">Meet up with buyer</span>
+                    </span>
                   </button>
                 </div>
                 <p className="mt-2 text-xs text-neutral-500 dark:text-slate-400">Choose how buyers can receive the item.</p>
@@ -15633,6 +15822,11 @@ function App() {
                   </p>
                 ) : null}
               </div>
+              {!isServiceUpload ? (
+                <p className="py-2 text-xs text-neutral-500 dark:text-slate-400 md:col-span-2">
+                  Pick-up meet-up uses your profile address on the map. Update it under Profile if buyers need a different area.
+                </p>
+              ) : null}
               <div id="listing-section-advanced" className="md:col-span-2 py-1">
                 <div
                   role="button"
@@ -16585,28 +16779,46 @@ function App() {
         )}
 
         {activeView === VIEWS.ACTIVITY && (
+          <ActivityHubCourierPresenceProvider
+            token={token}
+            communityId={String(user?.communityId || joinedShopCommunityId || "").trim()}
+            user={user}
+            buyNowFromProfile={buyNowFromProfile}
+            applyCourierPresenceToUser={applyCourierPresenceToUser}
+            getDisplayNameFromUser={getDisplayNameFromUser}
+          >
           <section
             id="activity-hub-panel"
-            className={`${activityTabChrome.activityViewSection} md:grid md:min-w-0 md:grid-cols-[minmax(10rem,11.5rem)_1fr] md:items-start md:gap-6`}
+            className={`${activityTabChrome.activityViewSection} ${
+              !isMobileViewport &&
+              token &&
+              (activityCourier || (activityCommerceHubOpen && !ordersFetchError))
+                ? "md:grid md:min-w-0 md:grid-cols-[minmax(10rem,11.5rem)_1fr] md:items-start md:gap-6"
+                : ""
+            }`}
           >
-            <aside
-              className="hidden min-h-0 w-full shrink-0 border-neutral-200/70 dark:border-slate-700/70 md:flex md:flex-col md:border-r md:pr-4"
-              aria-label="Orders hub sections"
-            >
-              <ActivityPrimaryTabs
-                desktopSidebar
+            {!isMobileViewport &&
+            token &&
+            (activityCourier || (activityCommerceHubOpen && !ordersFetchError)) ? (
+              <ActivityHubDesktopSidebar
+                activityCommerceAll={activityCommerceAll}
+                activityBooking={activityBooking}
+                activityCourier={activityCourier}
                 activityTab={activityTab}
-                goActivity={goActivity}
-                buyingBadge={activityPrimaryBuyingBadge}
-                sellingBadge={activityPrimarySellingBadge}
-                bookingBadge={activityPrimaryBookingBadge}
-                courierBadge={activityPrimaryCourierBadge}
-                courierProfileIncomplete={!buyNowFromProfile.ready}
-                ordersRole={activityCommerceAll ? commerceAllHubRole : ordersRole}
+                ordersRole={ordersRole}
+                commerceAllHubRole={commerceAllHubRole}
+                setCommerceAllHubRole={setCommerceAllHubRole}
+                setOrdersRole={setOrdersRole}
+                commitOrdersRoleToggle={commitOrdersRoleToggle}
+                ordersRoleBuyerNavBadge={ordersRoleBuyerNavBadge}
+                ordersRoleSellerNavBadge={ordersRoleSellerNavBadge}
+                ordersRoleBookingBuyerNavBadge={ordersRoleBookingBuyerNavBadge}
+                ordersRoleBookingSellerNavBadge={ordersRoleBookingSellerNavBadge}
+                buyNowFromProfile={buyNowFromProfile}
               />
-            </aside>
+            ) : null}
             <div className="min-w-0 space-y-4 md:min-w-0">
-            {(activityBuying || activitySelling) && !ordersFetchError ? (
+            {isMobileViewport && (activityBuying || activitySelling) && !ordersFetchError ? (
               <OrdersRoleToggle
                 activityTab={activityTab}
                 onChange={(nextTab) => commitOrdersRoleToggle(nextTab)}
@@ -16617,7 +16829,7 @@ function App() {
                 className="w-full"
               />
             ) : null}
-            {activityBooking && !ordersFetchError ? (
+            {isMobileViewport && activityBooking && !ordersFetchError ? (
               <OrdersRoleToggle
                 role={ordersRole}
                 onRoleChange={setOrdersRole}
@@ -16633,34 +16845,20 @@ function App() {
               !ordersFetchError ? (
                 activityCommerceAll ? (
                   <>
-                    <div className="border-b border-neutral-200/70 space-y-3 pb-3 dark:border-slate-700/70">
-                      <OrdersRoleToggle
-                        role={commerceAllHubRole}
-                        onRoleChange={setCommerceAllHubRole}
-                        ariaLabel="All activity hub — my orders vs my sales"
-                        buyerLabel="My Orders"
-                        sellerLabel="My Sales"
-                        buyingBadge={ordersRoleBuyerNavBadge}
-                        sellingBadge={ordersRoleSellerNavBadge}
-                        className="w-full"
-                      />
-                      <ActivityHubOrderStatusStrip
-                        variant="desktopMerged"
-                        desktopRowJustify="start"
-                        activityBooking={false}
-                        bookingOrdersRole={commerceAllHubRole}
-                        ordersStatusTab={ordersStatusTab}
-                        commitOrdersStatusTab={commitCommerceAllUnifiedStatusTab}
-                        pendingTabBadgeDisplayCount={commerceAllUnifiedPendingTabBadgeDisplayCount}
-                        processingTabBadgeDisplayCount={commerceAllUnifiedProcessingTabBadgeDisplayCount}
-                        ordersTabBadgeIdsByTab={commerceAllUnifiedOrdersTabBadgeIdsByTab}
-                        bookingOrdersStatusTab={bookingOrdersStatusTab}
-                        commitBookingOrdersStatusTab={commitBookingOrdersStatusTab}
-                        bookingActiveTabBadgeDisplayCount={bookingActiveTabBadgeDisplayCount}
-                        bookingApproveTabBadgeDisplayCount={bookingApproveTabBadgeDisplayCount}
-                        bookingHistoryTabBadgeDisplayCount={bookingHistoryTabBadgeDisplayCount}
-                      />
-                    </div>
+                    <ActivityHubOrderStatusStrip
+                      activityBooking={false}
+                      bookingOrdersRole={commerceAllHubRole}
+                      ordersStatusTab={ordersStatusTab}
+                      commitOrdersStatusTab={commitCommerceAllUnifiedStatusTab}
+                      pendingTabBadgeDisplayCount={commerceAllUnifiedPendingTabBadgeDisplayCount}
+                      processingTabBadgeDisplayCount={commerceAllUnifiedProcessingTabBadgeDisplayCount}
+                      ordersTabBadgeIdsByTab={commerceAllUnifiedOrdersTabBadgeIdsByTab}
+                      bookingOrdersStatusTab={bookingOrdersStatusTab}
+                      commitBookingOrdersStatusTab={commitBookingOrdersStatusTab}
+                      bookingActiveTabBadgeDisplayCount={bookingActiveTabBadgeDisplayCount}
+                      bookingApproveTabBadgeDisplayCount={bookingApproveTabBadgeDisplayCount}
+                      bookingHistoryTabBadgeDisplayCount={bookingHistoryTabBadgeDisplayCount}
+                    />
                     <ActivityHubCommerceKindFilter
                       showWorkspaceRail
                       activityTab={activityTab}
@@ -16677,24 +16875,20 @@ function App() {
                   </>
                 ) : (
                   <>
-                    <div className="border-b border-neutral-200/70 pb-3 dark:border-slate-700/70">
-                      <ActivityHubOrderStatusStrip
-                        variant="desktopMerged"
-                        desktopRowJustify="start"
-                        activityBooking={activityBooking}
-                        bookingOrdersRole={ordersRole}
-                        ordersStatusTab={ordersStatusTab}
-                        commitOrdersStatusTab={commitOrdersStatusTab}
-                        pendingTabBadgeDisplayCount={pendingTabBadgeDisplayCount}
-                        processingTabBadgeDisplayCount={processingTabBadgeDisplayCount}
-                        ordersTabBadgeIdsByTab={ordersTabBadgeIdsByTabCommerce}
-                        bookingOrdersStatusTab={bookingOrdersStatusTab}
-                        commitBookingOrdersStatusTab={commitBookingOrdersStatusTab}
-                        bookingActiveTabBadgeDisplayCount={bookingActiveTabBadgeDisplayCount}
-                        bookingApproveTabBadgeDisplayCount={bookingApproveTabBadgeDisplayCount}
-                        bookingHistoryTabBadgeDisplayCount={bookingHistoryTabBadgeDisplayCount}
-                      />
-                    </div>
+                    <ActivityHubOrderStatusStrip
+                      activityBooking={activityBooking}
+                      bookingOrdersRole={ordersRole}
+                      ordersStatusTab={ordersStatusTab}
+                      commitOrdersStatusTab={commitOrdersStatusTab}
+                      pendingTabBadgeDisplayCount={pendingTabBadgeDisplayCount}
+                      processingTabBadgeDisplayCount={processingTabBadgeDisplayCount}
+                      ordersTabBadgeIdsByTab={ordersTabBadgeIdsByTabCommerce}
+                      bookingOrdersStatusTab={bookingOrdersStatusTab}
+                      commitBookingOrdersStatusTab={commitBookingOrdersStatusTab}
+                      bookingActiveTabBadgeDisplayCount={bookingActiveTabBadgeDisplayCount}
+                      bookingApproveTabBadgeDisplayCount={bookingApproveTabBadgeDisplayCount}
+                      bookingHistoryTabBadgeDisplayCount={bookingHistoryTabBadgeDisplayCount}
+                    />
                     <ActivityHubCommerceKindFilter
                       showWorkspaceRail
                       activityTab={activityTab}
@@ -18197,8 +18391,8 @@ function App() {
                     courierHubFeedback={courierHubFeedback}
                     setCourierHubTab={setCourierHubTab}
                     refreshCourierAndOrders={refreshCourierAndOrders}
-                    applyCourierPresenceToUser={applyCourierPresenceToUser}
                     buyNowFromProfile={buyNowFromProfile}
+                    hideAvailabilityRoleToggle={!isMobileViewport}
                     openProfileEdit={openProfileEdit}
                     getDisplayNameFromUser={getDisplayNameFromUser}
                     user={user}
@@ -18210,6 +18404,7 @@ function App() {
             )}
             </div>
           </section>
+          </ActivityHubCourierPresenceProvider>
         )}
 
         {activeView === VIEWS.SEND_FEEDBACK && (
@@ -18350,9 +18545,41 @@ function App() {
                 ) : null}
                 {profileRenderUser ? (
               profileEditing ? (
-                <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-900/50 p-4 backdrop-blur-[2px] md:p-6">
-                  <div className={`my-2 max-h-[90vh] w-full max-w-5xl overflow-y-auto overscroll-y-contain p-5 md:my-4 ${UI_KIT.surfaceFloating}`}>
-                <form onSubmit={handleProfileSubmit} noValidate className="space-y-3">
+                typeof document !== "undefined"
+                  ? createPortal(
+                <div
+                  className="fixed inset-0 z-[110] flex flex-col bg-white dark:bg-slate-950 max-md:pt-[env(safe-area-inset-top,0px)] md:items-center md:justify-center md:overflow-y-auto md:bg-slate-900/50 md:p-6 md:backdrop-blur-[2px]"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="profile-edit-title"
+                >
+                  <div
+                    className={`flex min-h-0 w-full flex-1 flex-col overflow-hidden md:max-h-[min(90vh,920px)] md:w-full md:max-w-5xl md:flex-none md:rounded-2xl ${UI_KIT.surfaceFloating}`}
+                  >
+                  <header className="shrink-0 border-b border-neutral-200/90 bg-white dark:border-slate-700/90 dark:bg-slate-950 md:rounded-t-2xl">
+                    <div className="flex h-12 min-h-12 items-center gap-1 px-2 md:px-4">
+                      <button
+                        type="button"
+                        className="inline-flex size-10 shrink-0 items-center justify-center rounded-md text-neutral-700 transition hover:bg-neutral-100 active:bg-neutral-100 dark:text-slate-100 dark:hover:bg-white/[0.08]"
+                        aria-label="Close edit profile"
+                        onClick={cancelProfileEdit}
+                        disabled={profileSaving}
+                      >
+                        <svg className="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 12H5" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M11 6l-6 6 6 6" />
+                        </svg>
+                      </button>
+                      <h2
+                        id="profile-edit-title"
+                        className="min-w-0 flex-1 text-lg font-semibold tracking-tight text-neutral-900 dark:text-slate-100"
+                      >
+                        Edit profile
+                      </h2>
+                    </div>
+                  </header>
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pt-3 md:px-5 md:pt-4">
+                <form id="profile-edit-form" onSubmit={handleProfileSubmit} noValidate className="space-y-3">
                   <div className="rounded-xl border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 text-xs text-neutral-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
                     <span className="font-semibold text-neutral-800 dark:text-slate-100">*</span> Required fields. Optional fields are labeled.
                   </div>
@@ -18691,9 +18918,6 @@ function App() {
                             }}
                             required
                           />
-                          <p className="mt-1 text-[11px] text-neutral-500 dark:text-slate-400">
-                            You can type the date manually (YYYY-MM-DD) or pick from the calendar.
-                          </p>
                           {profileFieldErrors.birthday ? (
                             <p className="field-error-text mt-1">{profileFieldErrors.birthday}</p>
                           ) : null}
@@ -19139,18 +19363,12 @@ function App() {
                         </div>
                       </div>
                       <div className="mt-4">
-                        <label className="label-base" htmlFor="profile-address-url">
-                          Address link (Google Maps URL, optional)
-                        </label>
-                        <input
-                          id="profile-address-url"
-                          name="addressUrl"
-                          type="url"
-                          autoComplete="url"
-                          className="input-base mt-1"
-                          placeholder="https://maps.google.com/..."
-                          value={profileDraft.addressUrl}
-                          onChange={(e) => setProfileDraft((prev) => ({ ...prev, addressUrl: e.target.value }))}
+                        <ProfileAddressLocationSection
+                          profileDraft={profileDraft}
+                          user={user}
+                          initialDefaultLat={user?.defaultLat}
+                          initialDefaultLng={user?.defaultLng}
+                          onLocationChange={handleProfileLocationPinChange}
                         />
                       </div>
                     </div>
@@ -19236,30 +19454,40 @@ function App() {
                       {profileError}
                     </p>
                   ) : null}
-                  <MobileFormActions className="flex flex-col gap-2 pt-5 md:static md:flex-row md:flex-wrap md:justify-end md:border-0 md:bg-transparent md:p-0 md:pt-0 md:shadow-none md:backdrop-blur-none">
-                    <button
-                      type="submit"
-                      className="btn-primary w-full min-w-0 md:w-auto md:min-w-[7rem]"
-                      disabled={profileSaving}
-                      aria-busy={profileSaving || undefined}
-                    >
-                      {profileSaving ? (
-                        <span className="inline-flex items-center justify-center gap-2">
-                          <span
-                            className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white border-t-transparent motion-reduce:animate-none"
-                            aria-hidden
-                          />
-                          Saving…
-                        </span>
-                      ) : (
-                        "Save changes"
-                      )}
-                    </button>
-                    <button type="button" className="btn-secondary w-full min-w-0 md:w-auto md:min-w-[7rem]" disabled={profileSaving} onClick={cancelProfileEdit}>
-                      Cancel
-                    </button>
-                  </MobileFormActions>
                 </form>
+                    </div>
+                  <footer className="shrink-0 border-t border-neutral-200/90 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] dark:border-slate-700/90 dark:bg-slate-950 md:rounded-b-2xl md:px-5 md:py-4">
+                    <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:justify-end md:gap-3">
+                      <button
+                        type="submit"
+                        form="profile-edit-form"
+                        className="btn-primary order-1 w-full min-w-0 md:order-2 md:w-auto md:min-w-[7.5rem]"
+                        disabled={profileSaving}
+                        aria-busy={profileSaving || undefined}
+                      >
+                        {profileSaving ? (
+                          <span className="inline-flex items-center justify-center gap-2">
+                            <span
+                              className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white border-t-transparent motion-reduce:animate-none"
+                              aria-hidden
+                            />
+                            Saving…
+                          </span>
+                        ) : (
+                          "Save changes"
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary order-2 w-full min-w-0 md:order-1 md:w-auto md:min-w-[7.5rem]"
+                        disabled={profileSaving}
+                        onClick={cancelProfileEdit}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </footer>
+                  </div>
                 {profileAvatarCropEditor.open ? (
                   <div className="fixed inset-0 z-[118] flex items-center justify-center p-4">
                     <button
@@ -19442,8 +19670,10 @@ function App() {
                     </div>
                   </div>
                 ) : null}
-                  </div>
-                </div>
+                </div>,
+                    document.body,
+                  )
+                  : null
               ) : (
                 <div className="space-y-6">
                   <div className="flex flex-col items-center gap-4 border-b border-neutral-200/35 pb-8 text-center dark:border-slate-700/35 md:rounded-xl md:border md:border-neutral-200/50 md:bg-white md:p-5 md:pb-5 md:shadow-sm dark:md:border-slate-700/60 dark:md:bg-slate-900/50">
@@ -19740,10 +19970,9 @@ function App() {
                                 >
                                   {section.title}
                                 </h3>
-                                {section.id === "shop" && section.listings.length === 0 ? (
+                                {section.listings.length === 0 ? (
                                   <p className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/80 px-4 py-6 text-center text-sm text-neutral-600 dark:border-slate-600/70 dark:bg-slate-800/40 dark:text-slate-400">
-                                    No shop listings yet. Community shop upload is not available yet — listings will appear
-                                    here when it is.
+                                    {getProfileSellerSectionEmptyText(section.id)}
                                   </p>
                                 ) : null}
                                 {section.listings.length > 0 ? (
@@ -19760,9 +19989,10 @@ function App() {
                                       mobileOwnerActionsInMenu={isMobileViewport && effectiveSellerProductsView !== "list"}
                                       disableGallerySwipe
                                       softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
-                                      browseSummaryGrid={isMobileViewport && effectiveSellerProductsView === "grid"}
+                                      browseSummaryGrid={effectiveSellerProductsView === "grid"}
                                       mobileCardUx={isMobileViewport}
                                       mobileEntireCardTappable={isMobileViewport}
+                                      hideOwnerManageActions={!isMobileViewport}
                                       isFavorite={false}
                                       showActions
                                       currentUserId={user?.id || ""}
@@ -19775,7 +20005,7 @@ function App() {
                                         const stockListed = Math.max(0, Number(l.quantity) || 0);
                                         openProductInspect(l, {
                                           quantity: stockListed,
-                                          quantityLabel: "Stock listed",
+                                          quantityLabel: "Quantity Available",
                                           subtitle: "Your listing",
                                           listingStockQty: stockListed,
                                           showSellerCommerceActions: true,
@@ -19785,6 +20015,10 @@ function App() {
                                           onSaleSelect: (pct) => {
                                             closeProductInspect();
                                             void applySellerListingDiscount(l, pct);
+                                          },
+                                          onDeleteListing: () => {
+                                            closeProductInspect();
+                                            void deleteSellerListingById(l.id);
                                           },
                                         });
                                       }}
@@ -19834,20 +20068,26 @@ function App() {
                   </Suspense>
                 )}
                 {sellerTab === SELLER_TABS.PRODUCTS ? (
-                  <button
-                    type="button"
-                    className="fixed right-4 z-40 inline-flex items-center gap-2 rounded-full border border-[#1f3c56]/40 bg-[#1F2A37] px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-[#223140] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1F2A37]/50 max-md:bottom-[max(1rem,calc(var(--mobile-nav-stack-bottom)+1.25rem))] md:right-6 md:bottom-10 dark:border-dark-border/60 dark:bg-dark-surface dark:hover:bg-dark-elevated dark:focus-visible:outline-dark-border"
-                    onClick={openProfileUploadChooser}
-                    aria-label="Upload listing"
-                    aria-haspopup="menu"
-                    aria-controls="profile-upload-chooser"
-                    aria-expanded={profileUploadChooserOpen}
+                  <div
+                    className="pointer-events-none fixed inset-x-0 z-40 px-3.5 max-md:bottom-[max(1rem,calc(var(--mobile-nav-stack-bottom)+1.25rem))] md:bottom-10 md:px-6"
                   >
-                    <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
-                    </svg>
-                    Upload
-                  </button>
+                    <div className="pointer-events-auto mx-auto flex w-full max-w-7xl justify-end">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-2 rounded-full border border-[#1f3c56]/40 bg-[#1F2A37] px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-[#223140] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1F2A37]/50 dark:border-dark-border/60 dark:bg-dark-surface dark:hover:bg-dark-elevated dark:focus-visible:outline-dark-border"
+                        onClick={openProfileUploadChooser}
+                        aria-label="Upload listing"
+                        aria-haspopup="menu"
+                        aria-controls="profile-upload-chooser"
+                        aria-expanded={profileUploadChooserOpen}
+                      >
+                        <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+                        </svg>
+                        Upload
+                      </button>
+                    </div>
+                  </div>
                 ) : null}
               </aside>
               ) : (
@@ -19959,10 +20199,9 @@ function App() {
                               >
                                 {section.title}
                               </h3>
-                              {section.id === "shop" && section.listings.length === 0 ? (
+                              {section.listings.length === 0 ? (
                                 <p className="rounded-xl border border-dashed border-neutral-200/90 bg-neutral-50/80 px-4 py-6 text-center text-sm text-neutral-600 dark:border-slate-600/70 dark:bg-slate-800/40 dark:text-slate-400">
-                                  No shop listings yet. Community shop upload is not available yet — listings will appear
-                                  here when it is.
+                                  {getProfileSellerSectionEmptyText(section.id)}
                                 </p>
                               ) : null}
                               {section.listings.length > 0 ? (
@@ -19981,9 +20220,10 @@ function App() {
                                       mobileOwnerActionsInMenu={isMobileViewport && effectiveSellerProductsView !== "list"}
                                       disableGallerySwipe={false}
                                       softBrowseChrome={isMobileViewport && effectiveSellerProductsView !== "list"}
-                                      browseSummaryGrid={isMobileViewport && effectiveSellerProductsView === "grid"}
+                                      browseSummaryGrid={effectiveSellerProductsView === "grid"}
                                       mobileCardUx={isMobileViewport}
                                       mobileEntireCardTappable={isMobileViewport}
+                                      hideOwnerManageActions={!isMobileViewport}
                                       isFavorite={favoriteIds.has(l.id)}
                                       showActions
                                       currentUserId={user?.id || ""}
@@ -19998,7 +20238,7 @@ function App() {
                                         const stockListed = Math.max(0, Number(l.quantity) || 0);
                                         openProductInspect(l, {
                                           quantity: stockListed,
-                                          quantityLabel: "Stock listed",
+                                          quantityLabel: "Quantity Available",
                                           subtitle: "",
                                           listingStockQty: stockListed,
                                           showBuyerCommerceActions: !isOwn,
@@ -20024,6 +20264,12 @@ function App() {
                                             ? (pct) => {
                                                 closeProductInspect();
                                                 void applySellerListingDiscount(l, pct);
+                                              }
+                                            : undefined,
+                                          onDeleteListing: isOwn
+                                            ? () => {
+                                                closeProductInspect();
+                                                void deleteSellerListingById(l.id);
                                               }
                                             : undefined,
                                         });

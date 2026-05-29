@@ -33,4 +33,10 @@ export const config = {
   /** Prefer Messaging Service SID (`MG…`) when set; else use `TWILIO_FROM_NUMBER`. */
   twilioMessagingServiceSid: String(process.env.TWILIO_MESSAGING_SERVICE_SID || "").trim(),
   twilioFromNumber: String(process.env.TWILIO_FROM_NUMBER || "").trim(),
+  /** OpenStreetMap Nominatim — geocoding proxy (see server/README.md). */
+  nominatimBaseUrl: String(process.env.NOMINATIM_BASE_URL || "https://nominatim.openstreetmap.org").trim(),
+  nominatimUserAgent: String(
+    process.env.NOMINATIM_USER_AGENT ||
+      "LinkMart/1.0 (community-marketplace; contact: linkmart-dev@local.invalid)",
+  ).trim(),
 };

@@ -23,6 +23,8 @@ import {
   orderIsServiceListingBooking,
 } from "../../lib/listingServiceCardMeta.js";
 import { ListingDescriptionMarkdown } from "./ListingDescriptionMarkdown.jsx";
+import { ListingLocationMap } from "../geo/ListingLocationMap.jsx";
+import { hasValidCoords } from "../../lib/geo/constants.js";
 import { OrderStatusMilestoneList } from "./OrderStatusMilestoneList.jsx";
 import {
   OrderCourierPoolAdjust,
@@ -229,6 +231,7 @@ export function ProductInspectModal({
   onBuyNow,
   onEditListing,
   onSaleSelect,
+  onDeleteListing,
   onViewSellerProfile,
   onContactSeller,
   buyNowDisabled = false,
@@ -247,6 +250,9 @@ export function ProductInspectModal({
   /** Service listing: show `serviceMeta` instead of stock / fulfillment / product order chips. */
   serviceListing = false,
   serviceMeta = null,
+  listingLat = null,
+  listingLng = null,
+  listingCityLabel = "",
   isFavorite = false,
   onToggleFavorite,
   /** When set (e.g. opened from an order card), show milestone timeline for this order only. */
@@ -265,6 +271,7 @@ export function ProductInspectModal({
   const [customDiscountDraft, setCustomDiscountDraft] = useState("");
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewLoadFailed, setImagePreviewLoadFailed] = useState(false);
+  const [locationModalOpen, setLocationModalOpen] = useState(false);
   const [galleryThumbIdx, setGalleryThumbIdx] = useState(0);
   const heroContainerRef = useRef(null);
   const suppressHeroClickRef = useRef(false);
@@ -285,6 +292,8 @@ export function ProductInspectModal({
   const [lightboxDragPx, setLightboxDragPx] = useState(0);
   const [lightboxStripDragging, setLightboxStripDragging] = useState(false);
   const [sellerAvatarBroken, setSellerAvatarBroken] = useState(false);
+  const [webActionsMenuOpen, setWebActionsMenuOpen] = useState(false);
+  const webActionsMenuRef = useRef(null);
 
   const imageUrlsSignature = useMemo(
     () =>
@@ -353,24 +362,32 @@ export function ProductInspectModal({
       if (imagePreviewOpen) {
         e.preventDefault();
         setImagePreviewOpen(false);
+      } else if (locationModalOpen) {
+        e.preventDefault();
+        setLocationModalOpen(false);
       } else {
         onClose();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose, imagePreviewOpen]);
+  }, [open, onClose, imagePreviewOpen, locationModalOpen]);
 
   useEffect(() => {
     if (!open) {
       setSalePickerOpen(false);
       setShowOtherSaleOptions(false);
       setCustomDiscountDraft("");
+      setWebActionsMenuOpen(false);
     }
   }, [open]);
 
   useEffect(() => {
     if (!open) setImagePreviewOpen(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) setLocationModalOpen(false);
   }, [open]);
 
   useEffect(() => {
@@ -385,6 +402,18 @@ export function ProductInspectModal({
   useEffect(() => {
     setSellerAvatarBroken(false);
   }, [open, sellerAvatarUrl]);
+
+  useEffect(() => {
+    if (!webActionsMenuOpen) return undefined;
+    const onPointerDown = (event) => {
+      const wrap = webActionsMenuRef.current;
+      if (!wrap) return;
+      if (wrap.contains(event.target)) return;
+      setWebActionsMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [webActionsMenuOpen]);
 
   useEffect(() => {
     galleryThumbIdxRef.current = galleryThumbIdx;
@@ -590,11 +619,12 @@ export function ProductInspectModal({
   const sellerAddressLineTrim = String(sellerAddressLine || "").trim();
   const sellerAvatarTrim = String(sellerAvatarUrl || "").trim();
   const hasSellerDetails =
-    sellerUsernameTrim.length > 0 ||
-    sellerAddressLineTrim.length > 0 ||
-    sellerAvatarTrim.length > 0 ||
-    typeof onViewSellerProfile === "function" ||
-    typeof onContactSeller === "function";
+    !showSellerCommerceActions &&
+    (sellerUsernameTrim.length > 0 ||
+      sellerAddressLineTrim.length > 0 ||
+      sellerAvatarTrim.length > 0 ||
+      typeof onViewSellerProfile === "function" ||
+      typeof onContactSeller === "function");
   const sellerInitials = initialsFromUsername(sellerUsernameTrim);
   const commentTrim = String(comment || "").trim();
   const showCommentBlock = commentSectionRequired || commentTrim.length > 0;
@@ -603,12 +633,16 @@ export function ProductInspectModal({
   const soldQty =
     listingSoldQty != null && Number.isFinite(Number(listingSoldQty)) ? Math.max(0, Number(listingSoldQty)) : null;
   const serviceListingEffective = Boolean(serviceListing);
+  const hasMeetupLocation = hasValidCoords(listingLat, listingLng);
   const isOutOfStock = serviceListingEffective ? false : stock != null && stock <= 0;
   const quantityNumber = quantity != null && Number.isFinite(Number(quantity)) ? Number(quantity) : null;
   const showQuantityLine = quantityNumber != null && !serviceListingEffective;
   const quantityLabelNorm = String(quantityLabel || "").trim().toLowerCase();
   const isQuantityStockLine =
-    quantityLabelNorm === "stock listed" || quantityLabelNorm === "stock available" || quantityLabelNorm === "stock";
+    quantityLabelNorm === "quantity available" ||
+    quantityLabelNorm === "stock listed" ||
+    quantityLabelNorm === "stock available" ||
+    quantityLabelNorm === "stock";
   const hideStockAvailableAsDuplicate = showQuantityLine && stock != null && isQuantityStockLine && quantityNumber === stock;
   const serviceBuyerBookOnly =
     serviceListingEffective && showBuyerCommerceActions && typeof onBuyNow === "function";
@@ -672,11 +706,219 @@ export function ProductInspectModal({
     serviceListingEffective &&
     (Boolean(descPlain) || serviceInspectSummaryRowCount > 0);
 
+  /** Desktop: commerce CTAs sit below description; mobile keeps sticky footer. */
+  const showBuyerFooterBar = hasBuyerHandlers || !showActionFooter;
+  const buyerFooterMobileOnly = hasBuyerHandlers && showActionFooter;
+
+  const inspectVariantsSection =
+    !serviceListingEffective ? (
+      <div className="space-y-2.5 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
+        <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
+          Product variants
+        </h3>
+        {hasAnyVariantData ? (
+          <div className="space-y-2">
+            {nameATrim || variantValsA.length > 0 ? (
+              <div className="space-y-1">
+                <p className="text-xs font-semibold text-neutral-800 dark:text-slate-100">{nameATrim || "Variant"}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {variantValsA.length > 0 ? (
+                    variantValsA.map((choice) => (
+                      <span
+                        key={`variant-a-${choice}`}
+                        className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
+                      >
+                        {choice}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-neutral-500 dark:text-slate-400">No choices set.</span>
+                  )}
+                </div>
+              </div>
+            ) : null}
+            {(nameATrim || variantValsA.length > 0) && (nameBTrim || variantValsB.length > 0) ? (
+              <div className="h-px w-full bg-neutral-200/80 dark:bg-slate-700/80" aria-hidden />
+            ) : null}
+            {nameBTrim || variantValsB.length > 0 ? (
+              <div className="space-y-1">
+                <p className="text-xs font-semibold text-neutral-800 dark:text-slate-100">{nameBTrim || "Variant"}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {variantValsB.length > 0 ? (
+                    variantValsB.map((choice) => (
+                      <span
+                        key={`variant-b-${choice}`}
+                        className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
+                      >
+                        {choice}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-neutral-500 dark:text-slate-400">No choices set.</span>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <p className="text-sm text-neutral-500 dark:text-slate-400">No product variants.</p>
+        )}
+      </div>
+    ) : null;
+
+  const inspectDescriptionSection = descPlain ? (
+    <section className="min-w-0 space-y-1.5 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+        Description
+      </h3>
+      <ListingDescriptionMarkdown text={description} />
+    </section>
+  ) : null;
+
+  const inspectServiceDetailsSidebarBlock = showWebServiceDetailsDescriptionBlock ? (
+    <div className="min-w-0 space-y-4 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
+      {serviceInspectSummaryRowCount > 0 ? (
+        <ListingServiceCardSummary
+          listing={{
+            verticalId: "services",
+            categories: "services",
+            title,
+            subId: serviceMeta?.categoryId,
+            priceCents,
+            serviceMeta,
+          }}
+          variant="inspect"
+        />
+      ) : null}
+      {descPlain ? (
+        <section className="min-w-0 space-y-1.5">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+            Description
+          </h3>
+          <ListingDescriptionMarkdown text={description} />
+        </section>
+      ) : null}
+    </div>
+  ) : null;
+
+  const inspectBuyerCommerceActions = hasBuyerHandlers ? (
+    <div className="flex w-full flex-row items-stretch gap-2">
+      {serviceBuyerBookOnly ? (
+        <button
+          type="button"
+          title={
+            buyNowDisabled && buyNowDisabledReason
+              ? buyNowDisabledReason
+              : "Request a booking — add preferred time in your note"
+          }
+          aria-label={buyNowDisabled ? "Booking unavailable" : "Book service"}
+          className={`min-h-[56px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-[11px] font-semibold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-11 md:text-sm flex flex-col items-center justify-center gap-1 ${
+            buyNowDisabled
+              ? "cursor-not-allowed opacity-50"
+              : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
+          } disabled:cursor-not-allowed disabled:opacity-50`}
+          disabled={buyNowDisabled}
+          onClick={() => onBuyNow()}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 md:h-5 md:w-5" aria-hidden>
+            <path d="M8 2v4" />
+            <path d="M16 2v4" />
+            <rect width="16" height="14" x="4" y="6" rx="2" />
+            <path d="M8 14h.01" />
+            <path d="M12 14h.01" />
+            <path d="M16 14h.01" />
+            <path d="M8 18h.01" />
+            <path d="M12 18h.01" />
+            <path d="M16 18h.01" />
+          </svg>
+          Book
+        </button>
+      ) : (
+        <>
+          {typeof onAddToCart === "function" ? (
+            <button
+              type="button"
+              className="min-h-[56px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-[11px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-11 md:text-sm flex flex-col items-center justify-center gap-1"
+              disabled={isOutOfStock}
+              onClick={() => onAddToCart()}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 md:h-5 md:w-5" aria-hidden>
+                <circle cx="9" cy="20" r="1" />
+                <circle cx="17" cy="20" r="1" />
+                <path d="M3 4h2l2.2 10.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 7H7.1" />
+              </svg>
+              {isOutOfStock ? "Unavailable" : "Add to cart"}
+            </button>
+          ) : null}
+          {typeof onBuyNow === "function" ? (
+            <button
+              type="button"
+              title={
+                isOutOfStock
+                  ? undefined
+                  : buyNowDisabled && buyNowDisabledReason
+                    ? buyNowDisabledReason
+                    : undefined
+              }
+              aria-label={isOutOfStock ? "Out of stock" : "Place order"}
+              className={`min-h-[56px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-[11px] font-semibold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-11 md:text-sm flex flex-col items-center justify-center gap-1 ${
+                isOutOfStock
+                  ? "cursor-not-allowed opacity-50"
+                  : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
+              } disabled:cursor-not-allowed disabled:opacity-50`}
+              disabled={isOutOfStock}
+              onClick={() => onBuyNow()}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 md:h-5 md:w-5" aria-hidden>
+                <path d="M6 8h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 8z" />
+                <path d="M9 8V6a3 3 0 0 1 6 0v2" />
+              </svg>
+              {isOutOfStock ? "Out of stock" : "Place order"}
+            </button>
+          ) : null}
+        </>
+      )}
+    </div>
+  ) : null;
+
+  const inspectBuyerCommerceActionsWeb = inspectBuyerCommerceActions ? (
+    <div className="hidden border-t border-neutral-200/70 pt-3 dark:border-slate-700/70 md:block">{inspectBuyerCommerceActions}</div>
+  ) : null;
+
+  /**
+   * Hero sizing — phone: full viewport width, square aspect (height follows width);
+   * desktop full-page: gallery column beside details (width from grid, not a fixed rem cap);
+   * modal: compact square thumb.
+   */
+  const inspectHeroMobileSquare = "max-md:w-full max-md:min-w-0 max-md:aspect-square max-md:h-auto";
+
+  /** Full-bleed hero inside padded scroll — avoids side gutters on narrow screens. */
+  const inspectHeroMobileBleed =
+    "max-md:relative max-md:left-1/2 max-md:w-screen max-md:max-w-[100vw] max-md:-translate-x-1/2";
+
+  const inspectHeroOuterClass = fullScreen
+    ? `relative z-0 isolate w-full min-w-0 max-w-full shrink-0 overflow-hidden ${inspectHeroMobileBleed} md:sticky md:top-4 md:col-start-1 md:row-start-1 md:self-start md:left-auto md:translate-x-0`
+    : `relative z-0 isolate mx-auto w-full max-w-[12.5rem] shrink-0 overflow-hidden ${inspectHeroMobileBleed} md:left-auto md:mx-0 md:w-full md:max-w-[12rem] md:translate-x-0 lg:max-w-[14rem]`;
+
+  const inspectHeroBoxClass = fullScreen
+    ? `relative shrink-0 overflow-hidden rounded-xl bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 ${inspectHeroMobileSquare} md:aspect-square md:h-auto md:w-full md:max-w-none`
+    : `relative min-h-0 max-w-full shrink-0 overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 ${inspectHeroMobileSquare} md:aspect-square md:w-full`;
+
+  const inspectTopLayoutClass = fullScreen
+    ? "flex min-w-0 flex-col gap-3 min-[360px]:gap-4 md:grid md:grid-cols-[minmax(14rem,20rem)_minmax(0,1fr)] md:items-start md:gap-6 lg:grid-cols-[minmax(16rem,24rem)_minmax(0,1fr)] lg:gap-8"
+    : "flex min-w-0 flex-col gap-3 md:items-start md:gap-4 md:flex-col";
+
+  const inspectPrimaryDetailsClass = fullScreen
+    ? "min-w-0 space-y-1.5 min-[360px]:space-y-2 md:col-start-2 md:row-start-1 md:flex md:flex-col md:gap-3 md:space-y-0 lg:gap-4"
+    : `min-w-0 space-y-1.5 min-[360px]:space-y-2 md:space-y-2 ${
+        fullScreen && serviceListingEffective ? "w-full flex-none md:w-full" : "flex-1"
+      }`;
+
   return (
     <div
       className={
         fullScreen
-          ? "flex w-full min-h-0 flex-1 flex-col max-md:h-full max-md:w-[calc(100%+1.75rem)] max-md:self-stretch max-md:-mx-3.5 md:mx-0 md:w-full md:flex-none"
+          ? "flex w-full min-h-0 flex-1 flex-col max-md:h-full max-md:w-[calc(100%+1.75rem)] max-md:self-stretch max-md:-mx-3.5 md:mx-0 md:w-full"
           : "fixed inset-0 z-[95] flex items-end justify-center p-0 md:items-center md:p-4"
       }
       role={fullScreen ? "region" : "dialog"}
@@ -693,11 +935,11 @@ export function ProductInspectModal({
         />
       ) : null}
       <div
-        className={`relative z-10 flex w-full flex-col ${
+        className={`relative z-10 flex w-full min-h-0 flex-col ${
           fullScreen
-            ? "mx-auto w-full max-w-screen-lg rounded-none border-0 bg-white shadow-none dark:bg-slate-950 max-md:max-h-[100dvh] max-md:min-h-0 max-md:flex-1 max-md:overflow-hidden md:min-h-0 md:h-auto"
-            : "max-h-[min(88dvh,42rem)] max-w-lg rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-[#1f3c56] dark:bg-[#0f2234] md:max-h-[min(90dvh,44rem)] md:rounded-2xl md:shadow-[0_20px_60px_rgba(15,23,42,0.22)]"
-        } ${UI_KIT.surfaceFloating}`}
+            ? "mx-auto flex min-h-0 w-full max-w-none flex-1 flex-col rounded-none border-0 bg-white shadow-none dark:bg-slate-950 max-md:max-h-[100dvh] max-md:overflow-hidden"
+            : `max-h-[min(88dvh,42rem)] max-w-lg rounded-t-2xl border border-neutral-200/90 bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.18)] dark:border-[#1f3c56] dark:bg-[#0f2234] md:max-h-[min(90dvh,44rem)] md:rounded-2xl md:shadow-[0_20px_60px_rgba(15,23,42,0.22)] ${UI_KIT.surfaceFloating}`
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {imagePreviewOpen && String(displayImageUrl || "").trim() ? (
@@ -871,64 +1113,116 @@ export function ProductInspectModal({
               <span className="hidden text-sm font-semibold leading-none md:inline">Back</span>
             ) : null}
           </button>
-          {typeof onToggleFavorite === "function" ? (
-            <button
-              type="button"
-              className={`inline-flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center transition [-webkit-tap-highlight-color:transparent] md:h-9 md:min-h-0 md:min-w-0 md:w-9 ${
-                isFavorite
-                  ? "text-rose-600 hover:text-rose-700 dark:text-rose-300 dark:hover:text-rose-200"
-                  : "text-neutral-500 hover:text-neutral-800 dark:text-slate-400 dark:hover:text-slate-100"
-              }`}
-              aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
-              onClick={() => onToggleFavorite()}
-            >
-              <span aria-hidden className={`text-[24px] leading-none ${isFavorite ? "drop-shadow-[0_1px_2px_rgba(190,24,93,0.28)]" : ""}`}>
-                {isFavorite ? "♥" : "♡"}
-              </span>
-            </button>
-          ) : (
-            <span className="h-11 w-11 md:h-9 md:w-9" aria-hidden />
-          )}
+          <div className="flex shrink-0 items-center gap-1">
+            {typeof onToggleFavorite === "function" ? (
+              <button
+                type="button"
+                className={`inline-flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center transition [-webkit-tap-highlight-color:transparent] md:h-9 md:min-h-0 md:min-w-0 md:w-9 ${
+                  isFavorite
+                    ? "text-rose-600 hover:text-rose-700 dark:text-rose-300 dark:hover:text-rose-200"
+                    : "text-neutral-500 hover:text-neutral-800 dark:text-slate-400 dark:hover:text-slate-100"
+                }`}
+                aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                onClick={() => onToggleFavorite()}
+              >
+                <span
+                  aria-hidden
+                  className={`text-[24px] leading-none ${isFavorite ? "drop-shadow-[0_1px_2px_rgba(190,24,93,0.28)]" : ""}`}
+                >
+                  {isFavorite ? "♥" : "♡"}
+                </span>
+              </button>
+            ) : (
+              <span className="h-11 w-11 md:h-9 md:w-9" aria-hidden />
+            )}
+            {hasSellerHandlers ? (
+              <div className="relative block" ref={webActionsMenuRef}>
+                <button
+                  type="button"
+                  className="inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 md:h-9 md:w-9 md:min-h-0 md:min-w-0"
+                  aria-label="More options"
+                  aria-haspopup="menu"
+                  aria-expanded={webActionsMenuOpen}
+                  onClick={() => setWebActionsMenuOpen((v) => !v)}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    className="h-5 w-5"
+                    aria-hidden
+                  >
+                    <circle cx="12" cy="5" r="1.75" />
+                    <circle cx="12" cy="12" r="1.75" />
+                    <circle cx="12" cy="19" r="1.75" />
+                  </svg>
+                </button>
+                {webActionsMenuOpen ? (
+                  <div
+                    role="menu"
+                    aria-label="Listing actions"
+                    className="absolute right-0 top-full z-20 mt-1.5 w-44 overflow-hidden rounded-lg border border-neutral-200/90 bg-white py-1 shadow-lg ring-1 ring-black/[0.04] dark:border-slate-600 dark:bg-slate-900 dark:ring-white/[0.06]"
+                  >
+                    {typeof onSaleSelect === "function" ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center px-3 py-2 text-left text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                        onClick={() => {
+                          setWebActionsMenuOpen(false);
+                          setSalePickerOpen(true);
+                        }}
+                      >
+                        Discount
+                      </button>
+                    ) : null}
+                    {typeof onEditListing === "function" ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center px-3 py-2 text-left text-sm font-semibold text-neutral-700 transition hover:bg-neutral-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                        onClick={() => {
+                          setWebActionsMenuOpen(false);
+                          onEditListing();
+                        }}
+                      >
+                        Edit listing
+                      </button>
+                    ) : null}
+                    {typeof onDeleteListing === "function" ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center px-3 py-2 text-left text-sm font-semibold text-rose-700 transition hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                        onClick={() => {
+                          setWebActionsMenuOpen(false);
+                          onDeleteListing();
+                        }}
+                      >
+                        Delete
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div
           className={`drawer-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-2.5 min-[360px]:px-5 min-[360px]:py-3 md:px-5 md:py-4 ${
             fullScreen
-              ? "max-md:pt-0 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] md:flex-none md:overflow-visible md:overscroll-y-auto md:pb-5"
+              ? "max-md:pt-0 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] md:min-h-0 md:pb-5"
               : ""
           }`}
         >
-          <div
-            className={`flex flex-col gap-3 md:items-start md:gap-4 ${
-              fullScreen && serviceListingEffective ? "md:flex-col" : "md:flex-row"
-            } ${fullScreen ? "lg:gap-6" : ""}`}
-          >
-            <div
-              className={`mx-auto flex w-full shrink-0 flex-col ${
-                fullScreen
-                  ? serviceListingEffective
-                    ? "max-md:-mx-3 max-md:w-[calc(100%+1.5rem)] max-md:max-w-none min-[360px]:max-md:-mx-5 min-[360px]:max-md:w-[calc(100%+2.5rem)] md:mx-auto md:w-full md:max-w-sm lg:max-w-md"
-                    : "max-md:-mx-3 max-md:w-[calc(100%+1.5rem)] max-md:max-w-none min-[360px]:max-md:-mx-5 min-[360px]:max-md:w-[calc(100%+2.5rem)] md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
-                  : "max-w-[12.5rem] md:mx-0 md:max-w-none"
-              }`}
-            >
+          <div className={inspectTopLayoutClass}>
+            <div className={`flex w-full min-h-0 shrink-0 flex-col ${inspectHeroOuterClass}`}>
               <div
-                className={`relative mx-auto w-full shrink-0 ${
+                className={`relative min-h-0 w-full min-w-0 shrink-0 ${
                   galleryMulti && !imagePreviewOpen
-                    ? `max-md:aspect-square md:flex md:items-center md:justify-center md:gap-2 ${
-                        fullScreen
-                          ? serviceListingEffective
-                            ? "max-md:max-w-none md:max-w-full"
-                            : "max-md:max-w-none md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
-                          : "max-w-[12.5rem] md:mx-0 md:max-w-none"
-                      }`
-                    : `aspect-square ${
-                        fullScreen
-                          ? serviceListingEffective
-                            ? "max-md:max-w-none md:max-w-full"
-                            : "max-md:max-w-none md:mx-0 md:max-w-[12rem] lg:max-w-[14rem]"
-                          : "max-w-[12.5rem] md:mx-0 md:h-36 md:w-36 md:max-w-none md:aspect-auto"
-                      }`
+                    ? "md:flex md:w-full md:items-center md:justify-center md:gap-2"
+                    : ""
                 }`}
               >
                 {String(displayImageUrl || "").trim() ? (
@@ -950,7 +1244,17 @@ export function ProductInspectModal({
                         </button>
                         <div
                           ref={heroContainerRef}
-                          className="relative aspect-square w-full min-w-0 overflow-hidden rounded-none bg-neutral-100 ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10 md:flex-1"
+                          className={`${inspectHeroBoxClass} max-md:min-w-0 max-md:flex-1`}
+                          onClick={onHeroImageActivate}
+                          role="button"
+                          tabIndex={0}
+                          aria-label="View larger product image"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onHeroImageActivate();
+                            }
+                          }}
                         >
                           <div
                             className="flex h-full touch-none select-none will-change-transform"
@@ -965,14 +1269,25 @@ export function ProductInspectModal({
                             {galleryUrls.map((url, i) => (
                               <div
                                 key={`hero-g-${i}-${String(url).slice(-28)}`}
-                                className="h-full shrink-0"
+                                className="relative h-full shrink-0 overflow-hidden"
                                 style={{ width: `${100 / galleryUrls.length}%` }}
                               >
-                                <img
+                                <ProductListingMedia
+                                  listing={listingForFocal}
                                   src={url}
+                                  galleryIndex={i}
                                   alt={i === 0 ? title || "Product" : ""}
-                                  className="h-full w-full object-cover select-none"
-                                  draggable={false}
+                                  variant="grid"
+                                  fillFrame
+                                  className="pointer-events-none absolute inset-0 min-h-0"
+                                  imageClassName="select-none"
+                                  sizes={
+                                    fullScreen
+                                      ? serviceListingEffective
+                                        ? "(max-width: 768px) 100vw, 28rem"
+                                        : "(max-width: 768px) 100vw, 12rem"
+                                      : "(max-width: 768px) 100vw, 9rem"
+                                  }
                                   loading={i === 0 ? "eager" : "lazy"}
                                 />
                               </div>
@@ -980,13 +1295,16 @@ export function ProductInspectModal({
                           </div>
                           <button
                             type="button"
-                            className="absolute inset-0 z-[4] cursor-grab bg-transparent active:cursor-grabbing"
+                            className="absolute inset-0 z-[4] cursor-grab bg-transparent active:cursor-grabbing md:hidden"
                             aria-label="View larger product image. Drag left or right for more photos."
                             onPointerDown={onHeroStripPointerDown}
                             onPointerMove={onHeroStripPointerMove}
                             onPointerUp={onHeroStripPointerUp}
                             onPointerCancel={onHeroStripPointerCancel}
-                            onClick={onHeroImageActivate}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onHeroImageActivate();
+                            }}
                             style={{ touchAction: "none" }}
                           />
                           <p
@@ -1013,7 +1331,7 @@ export function ProductInspectModal({
                     ) : (
                       <button
                         type="button"
-                        className="relative z-0 aspect-square w-full cursor-zoom-in overflow-hidden rounded-none touch-pan-y ring-1 ring-black/5 dark:ring-white/10"
+                        className={`relative z-0 min-h-0 max-w-full shrink-0 cursor-zoom-in touch-pan-y ${inspectHeroBoxClass}`}
                         aria-label="View larger product image"
                         onClick={onHeroImageActivate}
                         style={{ touchAction: "pan-x pan-y" }}
@@ -1031,9 +1349,9 @@ export function ProductInspectModal({
                           sizes={
                             fullScreen
                               ? serviceListingEffective
-                                ? "(max-width: 768px) min(100vw, 64rem), 28rem"
-                                : "(max-width: 768px) min(100vw, 64rem), 12rem"
-                              : "(max-width: 768px) min(90vw, 12.5rem), 9rem"
+                                ? "(max-width: 768px) 100vw, 28rem"
+                                : "(max-width: 768px) 100vw, 12rem"
+                              : "(max-width: 768px) 100vw, 9rem"
                           }
                           loading="eager"
                         />
@@ -1052,12 +1370,8 @@ export function ProductInspectModal({
               </div>
               {galleryUrls.length > 1 ? (
                 <div
-                  className={`mt-2 flex gap-1.5 overflow-x-auto pb-0.5 pt-0.5 [-webkit-overflow-scrolling:touch] ${
-                    fullScreen
-                      ? serviceListingEffective
-                        ? "w-full justify-center md:w-full"
-                        : "w-full max-md:justify-center md:max-w-[12rem] lg:max-w-[14rem]"
-                      : "max-w-[12.5rem] md:max-w-[9rem]"
+                  className={`mt-2 flex w-full max-w-full gap-1.5 overflow-x-auto pb-0.5 pt-0.5 [-webkit-overflow-scrolling:touch] max-md:justify-center ${
+                    fullScreen ? `${inspectHeroMobileBleed} md:left-auto md:translate-x-0` : "max-md:max-w-none md:max-w-[9rem]"
                   }`}
                   role="list"
                   aria-label="Product photos"
@@ -1069,7 +1383,7 @@ export function ProductInspectModal({
                       role="listitem"
                       aria-label={`Photo ${i + 1} of ${galleryUrls.length}`}
                       aria-current={i === galleryThumbIdx ? "true" : undefined}
-                      className={`h-14 w-14 shrink-0 overflow-hidden rounded-none border-2 transition ${
+                      className={`relative h-14 w-14 shrink-0 overflow-hidden rounded-none border-2 transition ${
                         i === galleryThumbIdx
                           ? "border-brand-primary ring-1 ring-brand-primary/30 dark:border-brand-accent dark:ring-brand-accent/25"
                           : "border-transparent opacity-85 hover:opacity-100"
@@ -1091,11 +1405,7 @@ export function ProductInspectModal({
                 </div>
               ) : null}
             </div>
-            <div
-              className={`min-w-0 space-y-1.5 min-[360px]:space-y-2 md:space-y-2 ${
-                fullScreen && serviceListingEffective ? "w-full flex-none md:w-full" : "flex-1"
-              }`}
-            >
+            <div className={inspectPrimaryDetailsClass}>
               <div className="min-w-0">
                 <h2
                   id="product-inspect-title"
@@ -1275,67 +1585,33 @@ export function ProductInspectModal({
                   <OrderTimelineFeedbackBlocks order={orderTimelineOrder} viewerRole={orderTimelineViewerRole} />
                 </>
               ) : null}
+              {fullScreen ? (
+                <div className="hidden min-w-0 md:flex md:flex-col md:gap-4">
+                  {inspectVariantsSection}
+                  {showWebServiceDetailsDescriptionBlock
+                    ? inspectServiceDetailsSidebarBlock
+                    : inspectDescriptionSection}
+                  {inspectBuyerCommerceActionsWeb}
+                </div>
+              ) : null}
             </div>
           </div>
 
           <div className="mt-3.5 space-y-2.5 min-[360px]:mt-4 min-[360px]:space-y-3 md:mt-5 md:space-y-4">
             {!serviceListingEffective ? (
-              <div className="space-y-2.5 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
-                <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500 dark:text-slate-400">
-                  Product variants
-                </h3>
-                {hasAnyVariantData ? (
-                  <div className="space-y-2">
-                    {nameATrim || variantValsA.length > 0 ? (
-                      <div className="space-y-1">
-                        <p className="text-xs font-semibold text-neutral-800 dark:text-slate-100">{nameATrim || "Variant"}</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {variantValsA.length > 0 ? (
-                            variantValsA.map((choice) => (
-                              <span
-                                key={`variant-a-${choice}`}
-                                className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
-                              >
-                                {choice}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-xs text-neutral-500 dark:text-slate-400">No choices set.</span>
-                          )}
-                        </div>
-                      </div>
-                    ) : null}
-                    {(nameATrim || variantValsA.length > 0) && (nameBTrim || variantValsB.length > 0) ? (
-                      <div className="h-px w-full bg-neutral-200/80 dark:bg-slate-700/80" aria-hidden />
-                    ) : null}
-                    {nameBTrim || variantValsB.length > 0 ? (
-                      <div className="space-y-1">
-                        <p className="text-xs font-semibold text-neutral-800 dark:text-slate-100">{nameBTrim || "Variant"}</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {variantValsB.length > 0 ? (
-                            variantValsB.map((choice) => (
-                              <span
-                                key={`variant-b-${choice}`}
-                                className="rounded-full border border-brand-primary/35 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary dark:border-brand-accent/35 dark:bg-brand-accent/15 dark:text-slate-100"
-                              >
-                                {choice}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-xs text-neutral-500 dark:text-slate-400">No choices set.</span>
-                          )}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="text-sm text-neutral-500 dark:text-slate-400">No product variants.</p>
-                )}
-              </div>
+              fullScreen ? (
+                <div className="md:hidden">{inspectVariantsSection}</div>
+              ) : (
+                inspectVariantsSection
+              )
             ) : null}
 
             {showWebServiceDetailsDescriptionBlock ? (
-              <div className="hidden min-w-0 space-y-4 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70 md:mt-5 md:block">
+              <div
+                className={`min-w-0 space-y-4 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70 ${
+                  fullScreen ? "md:hidden" : "hidden md:mt-5 md:block"
+                }`}
+              >
                 {serviceInspectSummaryRowCount > 0 ? (
                   <ListingServiceCardSummary
                     listing={{
@@ -1357,17 +1633,58 @@ export function ProductInspectModal({
                     <ListingDescriptionMarkdown text={description} />
                   </section>
                 ) : null}
+                {inspectBuyerCommerceActionsWeb}
               </div>
             ) : null}
 
             {descPlain ? (
               <section
-                className={`min-w-0 space-y-1.5 ${showWebServiceDetailsDescriptionBlock ? "md:hidden" : ""}`}
+                className={`min-w-0 space-y-1.5 ${
+                  showWebServiceDetailsDescriptionBlock || fullScreen ? "md:hidden" : ""
+                }`}
               >
                 <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
                   Description
                 </h3>
                 <ListingDescriptionMarkdown text={description} />
+              </section>
+            ) : null}
+            {!fullScreen ? inspectBuyerCommerceActionsWeb : null}
+
+            {!serviceListing ? (
+              <section className="relative z-[1] isolate clear-both min-w-0 space-y-2 border-t border-neutral-200/70 pt-2.5 dark:border-slate-700/70">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+                  Location
+                </h3>
+                <button
+                  type="button"
+                  className="inline-flex w-full items-center justify-between gap-2 rounded-lg border border-neutral-300/90 bg-white px-3 py-2.5 text-sm font-semibold text-neutral-800 transition hover:border-neutral-400 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  disabled={!hasMeetupLocation}
+                  onClick={() => setLocationModalOpen(true)}
+                >
+                  <span className="inline-flex min-w-0 items-center gap-2">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4 shrink-0 text-brand-primary dark:text-brand-accent"
+                      aria-hidden
+                    >
+                      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+                      <circle cx="12" cy="10" r="3" />
+                    </svg>
+                    <span className="truncate">
+                      {hasMeetupLocation ? listingCityLabel || "View location" : "Location not set"}
+                    </span>
+                  </span>
+                  {hasMeetupLocation ? (
+                    <span className="shrink-0 text-xs font-medium text-neutral-500 dark:text-slate-400">View</span>
+                  ) : null}
+                </button>
               </section>
             ) : null}
 
@@ -1446,224 +1763,208 @@ export function ProductInspectModal({
                 ) : null}
               </div>
             ) : null}
-          </div>
-        </div>
 
-        <div className="sticky bottom-0 z-20 shrink-0 border-t border-neutral-200/80 bg-white/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/85 min-[360px]:px-5 min-[360px]:pt-2.5 dark:border-[#1f3c56]/85 dark:bg-[#0f2234]/95 dark:shadow-none md:static md:bg-transparent md:px-5 md:pb-4 md:pt-3 md:shadow-none md:backdrop-blur-0">
-          {hasSellerHandlers ? (
-            <div className="space-y-2">
-              {salePickerOpen && typeof onSaleSelect === "function" ? (
-                <div className="min-w-0 w-full rounded-xl border border-amber-200/80 bg-amber-50/80 p-2 dark:border-amber-500/30 dark:bg-amber-500/10">
-                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">
-                    Apply discount
-                  </p>
-                  <div className="flex w-full min-w-0 flex-wrap gap-1.5">
-                    {PRIMARY_QUICK_SALE_PERCENTS.map((percent) => (
-                      <button
-                        key={percent}
-                        type="button"
-                        className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
-                        onClick={() => {
-                          onSaleSelect(percent);
-                          setCustomDiscountDraft("");
-                          setSalePickerOpen(false);
-                        }}
-                      >
-                        {percent}%
-                      </button>
-                    ))}
-                    {OTHER_QUICK_SALE_PERCENTS.length > 0 ? (
-                      <button
-                        type="button"
-                        className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
-                        aria-expanded={showOtherSaleOptions}
-                        onClick={() => setShowOtherSaleOptions((prev) => !prev)}
-                      >
-                        {showOtherSaleOptions ? "Hide options" : "More options"}
-                      </button>
-                    ) : null}
-                  </div>
-                  {showOtherSaleOptions && OTHER_QUICK_SALE_PERCENTS.length > 0 ? (
-                    <div className="mt-1.5 flex w-full min-w-0 flex-wrap gap-1.5">
-                      {OTHER_QUICK_SALE_PERCENTS.map((percent) => (
+            {hasSellerHandlers && salePickerOpen && typeof onSaleSelect === "function" && typeof document !== "undefined"
+              ? createPortal(
+                  <div className="fixed inset-0 z-[340] flex items-center justify-center p-4">
+                    <button
+                      type="button"
+                      className="absolute inset-0 bg-neutral-900/55 backdrop-blur-[1px]"
+                      aria-label="Close discount popup"
+                      onClick={() => {
+                        setShowOtherSaleOptions(false);
+                        setCustomDiscountDraft("");
+                        setSalePickerOpen(false);
+                      }}
+                    />
+                    <div
+                      role="dialog"
+                      aria-modal="true"
+                      aria-label="Apply discount"
+                      className="relative z-10 w-full max-w-md overflow-hidden rounded-xl border border-amber-200/85 bg-amber-50 shadow-xl dark:border-amber-500/35 dark:bg-slate-900"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center gap-2 border-b border-amber-200/70 px-3 py-2 dark:border-amber-500/25">
                         <button
-                          key={`other-${percent}`}
                           type="button"
-                          className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                          className="inline-flex h-10 w-10 min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-neutral-700 transition hover:bg-white/75 dark:text-slate-200 dark:hover:bg-slate-800"
+                          aria-label="Back"
                           onClick={() => {
-                            onSaleSelect(percent);
-                            setCustomDiscountDraft("");
                             setShowOtherSaleOptions(false);
+                            setCustomDiscountDraft("");
                             setSalePickerOpen(false);
                           }}
                         >
-                          {percent}%
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.25"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="h-5 w-5"
+                            aria-hidden
+                          >
+                            <path d="M19 12H5" />
+                            <path d="M11 6l-6 6 6 6" />
+                          </svg>
                         </button>
-                      ))}
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">
+                          Apply discount
+                        </p>
+                      </div>
+                      <div className="max-h-[80dvh] overflow-y-auto p-3">
+                        <div className="flex w-full min-w-0 flex-wrap gap-1.5">
+                          {PRIMARY_QUICK_SALE_PERCENTS.map((percent) => (
+                            <button
+                              key={percent}
+                              type="button"
+                              className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                              onClick={() => {
+                                onSaleSelect(percent);
+                                setCustomDiscountDraft("");
+                                setSalePickerOpen(false);
+                              }}
+                            >
+                              {percent}%
+                            </button>
+                          ))}
+                          {OTHER_QUICK_SALE_PERCENTS.length > 0 ? (
+                            <button
+                              type="button"
+                              className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                              aria-expanded={showOtherSaleOptions}
+                              onClick={() => setShowOtherSaleOptions((prev) => !prev)}
+                            >
+                              {showOtherSaleOptions ? "Hide options" : "More options"}
+                            </button>
+                          ) : null}
+                        </div>
+                        {showOtherSaleOptions && OTHER_QUICK_SALE_PERCENTS.length > 0 ? (
+                          <div className="mt-1.5 flex w-full min-w-0 flex-wrap gap-1.5">
+                            {OTHER_QUICK_SALE_PERCENTS.map((percent) => (
+                              <button
+                                key={`other-${percent}`}
+                                type="button"
+                                className="rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                                onClick={() => {
+                                  onSaleSelect(percent);
+                                  setCustomDiscountDraft("");
+                                  setShowOtherSaleOptions(false);
+                                  setSalePickerOpen(false);
+                                }}
+                              >
+                                {percent}%
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          <input
+                            type="number"
+                            min={1}
+                            max={99}
+                            step={1}
+                            inputMode="numeric"
+                            placeholder="Custom %"
+                            className="h-8 w-24 rounded-md border border-amber-300/90 bg-white px-2 text-xs font-semibold text-amber-900 outline-none transition placeholder:text-amber-500/80 focus:border-amber-400 focus:ring-2 focus:ring-amber-300/40 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-100 dark:placeholder:text-amber-300/70"
+                            value={customDiscountDraft}
+                            onChange={(e) => {
+                              const digits = String(e.target.value || "").replace(/[^\d]/g, "");
+                              if (!digits) {
+                                setCustomDiscountDraft("");
+                                return;
+                              }
+                              setCustomDiscountDraft(String(Math.min(99, Number(digits))));
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="h-8 rounded-md border border-amber-300/90 bg-white px-2.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                            disabled={!customDiscountValid}
+                            onClick={() => {
+                              if (!customDiscountValid) return;
+                              onSaleSelect(customDiscountValue);
+                              setCustomDiscountDraft("");
+                              setShowOtherSaleOptions(false);
+                              setSalePickerOpen(false);
+                            }}
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                  ) : null}
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <input
-                      type="number"
-                      min={1}
-                      max={99}
-                      step={1}
-                      inputMode="numeric"
-                      placeholder="Custom %"
-                      className="h-8 w-24 rounded-md border border-amber-300/90 bg-white px-2 text-xs font-semibold text-amber-900 outline-none transition placeholder:text-amber-500/80 focus:border-amber-400 focus:ring-2 focus:ring-amber-300/40 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-100 dark:placeholder:text-amber-300/70"
-                      value={customDiscountDraft}
-                      onChange={(e) => {
-                        const digits = String(e.target.value || "").replace(/[^\d]/g, "");
-                        if (!digits) {
-                          setCustomDiscountDraft("");
-                          return;
-                        }
-                        setCustomDiscountDraft(String(Math.min(99, Number(digits))));
-                      }}
-                    />
+                  </div>,
+                  document.body,
+                )
+              : null}
+
+            {locationModalOpen && hasMeetupLocation && typeof document !== "undefined"
+              ? createPortal(
+                  <div className="fixed inset-0 z-[330] flex items-end justify-center p-0 md:items-center md:p-4">
                     <button
                       type="button"
-                      className="h-8 rounded-md border border-amber-300/90 bg-white px-2.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500/50 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-900/30"
-                      disabled={!customDiscountValid}
-                      onClick={() => {
-                        if (!customDiscountValid) return;
-                        onSaleSelect(customDiscountValue);
-                        setCustomDiscountDraft("");
-                        setShowOtherSaleOptions(false);
-                        setSalePickerOpen(false);
-                      }}
+                      className="absolute inset-0 bg-neutral-900/55 backdrop-blur-[1px]"
+                      aria-label="Close location"
+                      onClick={() => setLocationModalOpen(false)}
+                    />
+                    <div
+                      role="dialog"
+                      aria-modal="true"
+                      aria-label="Location"
+                      className="relative z-10 w-full max-w-lg overflow-hidden rounded-t-2xl border border-neutral-200/90 bg-white shadow-xl dark:border-slate-600 dark:bg-slate-900 md:rounded-2xl"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      Apply
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-              <div className="flex w-full flex-row items-stretch gap-2">
-                {typeof onSaleSelect === "function" ? (
-                  <button
-                    type="button"
-                    className="min-h-[56px] flex-1 rounded-lg border border-amber-300 px-3 py-2 text-[11px] font-semibold leading-none text-amber-800 transition hover:bg-amber-50 dark:border-amber-500/50 dark:text-amber-200 dark:hover:bg-amber-950/35 md:min-h-12 flex flex-col items-center justify-center gap-1"
-                    aria-expanded={salePickerOpen}
-                    onClick={() =>
-                      setSalePickerOpen((v) => {
-                        const next = !v;
-                        if (!next) {
-                          setShowOtherSaleOptions(false);
-                          setCustomDiscountDraft("");
-                        }
-                        return next;
-                      })
-                    }
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
-                      <path d="M20.6 13.4L12.4 21.6a2 2 0 0 1-2.8 0L2.4 14.4a2 2 0 0 1 0-2.8L10.6 3.4a2 2 0 0 1 1.4-.6H19a2 2 0 0 1 2 2v7a2 2 0 0 1-.4 1.2z" />
-                      <circle cx="16.5" cy="7.5" r="1.25" />
-                    </svg>
-                    Discount
-                  </button>
-                ) : null}
-                {typeof onEditListing === "function" ? (
-                  <button
-                    type="button"
-                    className="min-h-[56px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-[11px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-12 flex flex-col items-center justify-center gap-1"
-                    onClick={() => onEditListing()}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
-                      <path d="M12 20h9" />
-                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-                    </svg>
-                    Edit listing
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
+                      <div className="flex items-center justify-between gap-2 border-b border-neutral-200/80 px-4 py-3 dark:border-slate-700">
+                        <p className="text-sm font-semibold text-neutral-800 dark:text-slate-100">Location</p>
+                        <button
+                          type="button"
+                          className="inline-flex h-9 w-9 min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-neutral-600 transition hover:bg-neutral-100 dark:text-slate-300 dark:hover:bg-slate-800 md:h-9 md:w-9 md:min-h-0 md:min-w-0"
+                          aria-label="Close location"
+                          onClick={() => setLocationModalOpen(false)}
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="h-5 w-5"
+                            aria-hidden
+                          >
+                            <path d="M18 6 6 18" />
+                            <path d="m6 6 12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))]">
+                        <ListingLocationMap
+                          lat={listingLat}
+                          lng={listingLng}
+                          cityLabel={listingCityLabel}
+                          interactive
+                          heightClass="h-[320px] md:h-[400px]"
+                        />
+                      </div>
+                    </div>
+                  </div>,
+                  document.body,
+                )
+              : null}
+          </div>
+        </div>
 
-          {hasBuyerHandlers ? (
-            <div
-              className={
-                hasSellerHandlers ? "mt-2 border-t border-neutral-200/50 pt-2 dark:border-[#1f3c56]/55" : ""
-              }
-            >
-              <div className="flex w-full flex-row items-stretch gap-2">
-                {serviceBuyerBookOnly ? (
-                  <button
-                    type="button"
-                    title={
-                      buyNowDisabled && buyNowDisabledReason
-                        ? buyNowDisabledReason
-                        : "Request a booking — add preferred time in your note"
-                    }
-                    aria-label={buyNowDisabled ? "Booking unavailable" : "Book service"}
-                    className={`min-h-[56px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-[11px] font-semibold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-12 flex flex-col items-center justify-center gap-1 ${
-                      buyNowDisabled
-                        ? "cursor-not-allowed opacity-50"
-                        : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
-                    } disabled:cursor-not-allowed disabled:opacity-50`}
-                    disabled={buyNowDisabled}
-                    onClick={() => onBuyNow()}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
-                      <path d="M8 2v4" />
-                      <path d="M16 2v4" />
-                      <rect width="16" height="14" x="4" y="6" rx="2" />
-                      <path d="M8 14h.01" />
-                      <path d="M12 14h.01" />
-                      <path d="M16 14h.01" />
-                      <path d="M8 18h.01" />
-                      <path d="M12 18h.01" />
-                      <path d="M16 18h.01" />
-                    </svg>
-                    Book
-                  </button>
-                ) : (
-                  <>
-                    {typeof onAddToCart === "function" ? (
-                      <button
-                        type="button"
-                        className="min-h-[56px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-[11px] font-semibold leading-none text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800 md:min-h-12 flex flex-col items-center justify-center gap-1"
-                        disabled={isOutOfStock}
-                        onClick={() => onAddToCart()}
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
-                          <circle cx="9" cy="20" r="1" />
-                          <circle cx="17" cy="20" r="1" />
-                          <path d="M3 4h2l2.2 10.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 7H7.1" />
-                        </svg>
-                        {isOutOfStock ? "Unavailable" : "Add to cart"}
-                      </button>
-                    ) : null}
-                    {typeof onBuyNow === "function" ? (
-                      <button
-                        type="button"
-                        title={
-                          isOutOfStock
-                            ? undefined
-                            : buyNowDisabled && buyNowDisabledReason
-                              ? buyNowDisabledReason
-                              : undefined
-                        }
-                        aria-label={isOutOfStock ? "Out of stock" : "Place order"}
-                        className={`min-h-[56px] flex-1 rounded-lg bg-brand-primary px-3 py-2 text-[11px] font-semibold leading-none text-white shadow-sm shadow-brand-primary/15 transition dark:text-slate-900 dark:shadow-none md:min-h-12 flex flex-col items-center justify-center gap-1 ${
-                          isOutOfStock
-                            ? "cursor-not-allowed opacity-50"
-                            : "hover:bg-brand-primary/90 dark:hover:bg-brand-accent/90"
-                        } disabled:cursor-not-allowed disabled:opacity-50`}
-                        disabled={isOutOfStock}
-                        onClick={() => onBuyNow()}
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
-                          <path d="M6 8h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 8z" />
-                          <path d="M9 8V6a3 3 0 0 1 6 0v2" />
-                        </svg>
-                        {isOutOfStock ? "Out of stock" : "Place order"}
-                      </button>
-                    ) : null}
-                  </>
-                )}
-              </div>
-            </div>
-          ) : null}
+        {showBuyerFooterBar ? (
+        <div
+          className={`sticky bottom-0 z-20 shrink-0 border-t border-neutral-200/80 bg-white/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/85 min-[360px]:px-5 min-[360px]:pt-2.5 dark:border-[#1f3c56]/85 dark:bg-[#0f2234]/95 dark:shadow-none md:static md:bg-transparent md:px-5 md:pb-4 md:pt-3 md:shadow-none md:backdrop-blur-0 ${
+            buyerFooterMobileOnly ? "md:hidden" : ""
+          }`}
+        >
+          {hasBuyerHandlers ? <div>{inspectBuyerCommerceActions}</div> : null}
 
           {!showActionFooter ? (
             <div className="flex justify-stretch md:justify-end">
@@ -1680,6 +1981,7 @@ export function ProductInspectModal({
             </div>
           ) : null}
         </div>
+        ) : null}
       </div>
     </div>
   );

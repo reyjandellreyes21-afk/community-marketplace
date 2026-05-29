@@ -556,6 +556,7 @@ function ThemeToggleGroup({ theme, setTheme }) {
  * @param {(collapsed: boolean) => void} [props.onMobileBrowseNavCollapsedChange] Fires when mobile primary+secondary chrome finishes collapsing/expanding (shop-like views).
  * @param {number} [props.mobileSecondaryDragX] Horizontal drag offset for secondary nav swipe gestures.
  * @param {boolean} [props.hideNavigationChrome] Mobile: hide primary header row, in-header strips, and bottom tab bar (e.g. full-screen product).
+ * @param {boolean} [props.hideDesktopTopBar] Desktop: hide the md+ logo/nav row (e.g. full-screen profile edit).
  * @param {boolean} [props.liftChromeAboveOverlay] Raise header stacking above app-root overlays (e.g. quick-add sheet backdrop).
  * @param {"form"|"thanks"} [props.sendFeedbackPhase] Send feedback screen: form vs thank-you (drives mobile secondary chrome title only).
  * @param {() => void} [props.onSecondaryMobileScreenBack] When set, mobile secondary bar (About, Terms, Send feedback) back uses this instead of `goBrowse` (e.g. return to Profile from Send feedback).
@@ -601,6 +602,7 @@ export function LoggedInHeader({
   onMobileBrowseNavCollapsedChange,
   mobileSecondaryDragX = 0,
   hideNavigationChrome = false,
+  hideDesktopTopBar = false,
   liftChromeAboveOverlay = false,
   activityHubChildStrip = null,
   sendFeedbackPhase = "form",
@@ -1308,7 +1310,9 @@ export function LoggedInHeader({
         </div>
       </div>
 
-      <div className="app-container hidden md:flex h-[4.25rem] items-center justify-between gap-2 md:gap-3">
+      <div
+        className={`app-container hidden h-[4.25rem] items-center justify-between gap-2 md:gap-3 ${hideDesktopTopBar ? "md:hidden" : "md:flex"}`}
+      >
         <button
           type="button"
           className="rounded-xl px-1 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950"

@@ -11,6 +11,7 @@ import { useId } from "react";
  *   saveStatus: (next: string) => void | Promise<void>,
  *   hintText?: string,
  *   className?: string,
+ *   desktopSidebar?: boolean,
  * }} props
  */
 export function CourierHubAvailabilityRoleToggle({
@@ -21,6 +22,7 @@ export function CourierHubAvailabilityRoleToggle({
   saveStatus,
   hintText = "",
   className = "",
+  desktopSidebar = false,
 }) {
   const hintId = useId();
   const segments = [
@@ -48,9 +50,13 @@ export function CourierHubAvailabilityRoleToggle({
     },
   ];
 
+  const tabListClass = desktopSidebar
+    ? `flex w-full min-w-0 flex-col gap-1 ${className}`
+    : `flex w-full min-w-0 items-stretch gap-1.5 ${className}`;
+
   return (
     <>
-      {hintText ? (
+      {hintText && !desktopSidebar ? (
         <p
           id={hintId}
           className="mb-2 px-1 text-center text-[11px] leading-snug text-neutral-600 dark:text-slate-400"
@@ -62,32 +68,71 @@ export function CourierHubAvailabilityRoleToggle({
       <div
         role="tablist"
         aria-label="Courier availability"
-        aria-describedby={hintText ? hintId : undefined}
-        className={`flex w-full min-w-0 items-stretch gap-1.5 ${className}`}
+        aria-describedby={hintText && !desktopSidebar ? hintId : undefined}
+        aria-orientation={desktopSidebar ? "vertical" : undefined}
+        className={tabListClass}
       >
-        {segments.map((seg) => (
-          <button
-            key={seg.id}
-            type="button"
-            role="tab"
-            aria-selected={seg.selected}
-            tabIndex={seg.selected ? 0 : -1}
-            disabled={seg.disabled}
-            title={seg.title}
-            onClick={() => {
-              if (seg.selected) return;
-              seg.onSelect();
-            }}
-            className={`relative flex min-h-[3rem] flex-1 min-w-0 items-center justify-center gap-1.5 rounded-2xl px-2 py-3 text-sm font-semibold leading-tight transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900 min-[380px]:gap-2 min-[380px]:px-3 md:px-4 ${
-              seg.selected
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20 dark:bg-indigo-500 dark:shadow-indigo-500/25"
-                : "border border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-            } ${seg.disabled ? "cursor-not-allowed opacity-60" : ""}`}
-          >
-            <span className="min-w-0 truncate">{seg.label}</span>
-          </button>
-        ))}
+        {segments.map((seg) => {
+          if (desktopSidebar) {
+            return (
+              <button
+                key={seg.id}
+                type="button"
+                role="tab"
+                aria-selected={seg.selected}
+                tabIndex={seg.selected ? 0 : -1}
+                disabled={seg.disabled}
+                title={seg.title}
+                onClick={() => {
+                  if (seg.selected) return;
+                  seg.onSelect();
+                }}
+                className={`relative flex w-full min-w-0 flex-row items-center gap-2 rounded-r-lg border-l-[3px] py-2.5 pl-2.5 pr-2 text-left transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 ${
+                  seg.selected
+                    ? "border-violet-500 bg-neutral-100/90 dark:border-violet-400 dark:bg-slate-800/65"
+                    : "border-transparent hover:bg-neutral-50/95 dark:hover:bg-slate-800/45"
+                } ${seg.disabled ? "cursor-not-allowed opacity-60" : ""}`}
+              >
+                <span
+                  className={`min-w-0 flex-1 text-xs font-semibold leading-tight ${
+                    seg.selected ? "text-violet-800 dark:text-violet-200" : "text-neutral-600 dark:text-slate-400"
+                  }`}
+                >
+                  {seg.label === "ON" ? "Courier on" : "Courier off"}
+                </span>
+              </button>
+            );
+          }
+
+          return (
+            <button
+              key={seg.id}
+              type="button"
+              role="tab"
+              aria-selected={seg.selected}
+              tabIndex={seg.selected ? 0 : -1}
+              disabled={seg.disabled}
+              title={seg.title}
+              onClick={() => {
+                if (seg.selected) return;
+                seg.onSelect();
+              }}
+              className={`relative flex min-h-[3rem] flex-1 min-w-0 items-center justify-center gap-1.5 rounded-2xl px-2 py-3 text-sm font-semibold leading-tight transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900 min-[380px]:gap-2 min-[380px]:px-3 md:px-4 ${
+                seg.selected
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20 dark:bg-indigo-500 dark:shadow-indigo-500/25"
+                  : "border border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              } ${seg.disabled ? "cursor-not-allowed opacity-60" : ""}`}
+            >
+              <span className="min-w-0 truncate">{seg.label}</span>
+            </button>
+          );
+        })}
       </div>
+      {hintText && desktopSidebar ? (
+        <p className="mt-2 px-1 text-[10px] leading-snug text-neutral-500 dark:text-slate-500" aria-live="polite">
+          {hintText}
+        </p>
+      ) : null}
     </>
   );
 }

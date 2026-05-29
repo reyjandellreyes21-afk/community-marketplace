@@ -960,3 +960,61 @@
     right: max(0.75rem, env(safe-area-inset-right, 0px));
   }
 }
+
+/* Leaflet — outside @layer so Tailwind preflight cannot squash tile images (grey map). */
+.leaflet-container {
+  font-family: inherit;
+  background: #ddd;
+}
+
+.leaflet-container .leaflet-tile-pane {
+  z-index: 2;
+}
+
+.leaflet-container .leaflet-overlay-pane,
+.leaflet-container .leaflet-marker-pane {
+  z-index: 4;
+}
+
+.leaflet-container img.leaflet-tile {
+  max-width: none !important;
+  max-height: none !important;
+  width: 256px !important;
+  height: 256px !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  display: block !important;
+  pointer-events: none;
+}
+
+.leaflet-container img.leaflet-marker-icon,
+.leaflet-container img.leaflet-marker-shadow {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+/**
+ * Leaflet map shells (product inspect, listing detail) — keep tiles inside a fixed box.
+ * Default Leaflet panes use z-index 400+; without isolation they can paint over gallery heroes.
+ */
+.lm-listing-map-shell {
+  position: relative;
+  isolation: isolate;
+  contain: layout style paint;
+}
+
+.lm-listing-map-shell .leaflet-container {
+  position: relative;
+  z-index: 0;
+  height: 100%;
+  width: 100%;
+}
+
+.lm-listing-map-shell .leaflet-pane {
+  z-index: 1;
+}
+
+.lm-listing-map-shell .leaflet-top,
+.lm-listing-map-shell .leaflet-bottom {
+  z-index: 2;
+}

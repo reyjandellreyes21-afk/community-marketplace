@@ -123,6 +123,19 @@ function pickCommunityIdFromPool(pool, label) {
   return fuzzy?.id ? String(fuzzy.id) : null;
 }
 
+/**
+ * Resolve a community UUID from a free-text community *name* using the same
+ * exact → strip-"Barangay" → case-insensitive → fuzzy rules the client uses to
+ * decide which community shop to show. Name-only (no locale) match, so the
+ * profile's `community_id` stays in sync with the community the user sees.
+ * @param {Record<string, unknown>[]} communityRows from `communities` select *
+ * @param {string} communityName saved profile `community` label
+ * @returns {string | null} community UUID or null
+ */
+export function findCommunityIdByName(communityRows, communityName) {
+  return pickCommunityIdFromPool(communityRows || [], communityName);
+}
+
 /** Profile Brgy segment vs community `name` — same rules as `pickCommunityIdFromPool` for a single row. */
 function labelMatchesCommunityName(profileBrgyLabel, commName) {
   const pool = [{ name: commName, id: "x" }];
@@ -177,6 +190,36 @@ export function findCommunityIdForSellerAddress(communityRows, profileAddress) {
   return pickCommunityIdFromPool(communityRows, label);
 }
 
+function isFinitePinCoord(lat, lng) {
+  const la = Number(lat);
+  const ln = Number(lng);
+  return Number.isFinite(la) && Number.isFinite(ln) && la >= -90 && la <= 90 && ln >= -180 && ln <= 180;
+}
+
+/**
+ * Persist the seller's profile pin onto every product (non-service) listing they own, so the
+ * product "Meet-up location" map matches the seller's profile pin even without the read-time overlay.
+ * Services keep their own per-listing pin and are left untouched. A null/invalid pin is a no-op
+ * (we never wipe stored coordinates from here).
+ * @param {import("@supabase/supabase-js").SupabaseClient} supabase
+ */
+export async function syncSellerListingsLocationPin(supabase, sellerId, { lat, lng } = {}) {
+  if (!sellerId || !isFinitePinCoord(lat, lng)) return;
+  try {
+    const { error } = await supabase
+      .from("listings")
+      .update({ lat: Number(lat), lng: Number(lng) })
+      .eq("seller_id", sellerId)
+      .neq("vertical_id", "services")
+      .neq("status", "deleted");
+    if (error) {
+      // Missing lat/lng columns, RLS, or schema cache — profile save must still succeed.
+    }
+  } catch {
+    /* ignore — pin persistence is best-effort */
+  }
+}
+
 /**
  * Point all of the seller’s listings at the community that matches their profile address Brgy + locale.
  * @param {import("@supabase/supabase-js").SupabaseClient} supabase
@@ -186,6 +229,10 @@ export async function syncSellerListingsCommunityId(supabase, sellerId, profileA
     const { data: rows, error: cerr } = await supabase.from("communities").select("*");
     if (cerr) return;
     const communityId = findCommunityIdForSellerAddress(rows || [], profileAddress);
+    // Never wipe an existing attachment from an address edit: only (re)assign when the
+    // address resolves to a community. A null result leaves listings on their current
+    // community (e.g. one set explicitly when the seller joined or published).
+    if (!communityId) return;
     const { error: uerr } = await supabase.from("listings").update({ community_id: communityId }).eq("seller_id", sellerId);
     if (uerr) {
       // Missing `community_id` column, RLS, or schema cache — profile save must still succeed

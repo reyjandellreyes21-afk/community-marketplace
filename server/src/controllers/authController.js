@@ -4,7 +4,11 @@ import { AppError } from "../errors/AppError.js";
 import { uploadAvatarImage } from "../lib/communityImageStorage.js";
 import { generateSixDigitCode, hashPhoneOtp, sendTwilioSms } from "../lib/phoneVerification.js";
 import { displayNameForStoragePath } from "../lib/storagePathLabel.js";
-import { syncSellerListingsCommunityId } from "../lib/profileListingCommunity.js";
+import {
+  findCommunityIdByName,
+  syncSellerListingsCommunityId,
+  syncSellerListingsLocationPin,
+} from "../lib/profileListingCommunity.js";
 import { supabaseAdmin, supabaseAuth } from "../lib/supabase.js";
 import { splitGoogleDisplayName, userToClient } from "../utils/displayName.js";
 
@@ -22,6 +26,8 @@ const isMissingProfilesPushTokenColumn = (error) =>
   /profiles|schema cache/i.test(String(error?.message || ""));
 const isMissingPhoneVerifiedColumn = (error) =>
   /phone_verified_at/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
+const isMissingProfilesDefaultLatLngColumn = (error) =>
+  /default_lat|default_lng/i.test(String(error?.message || "")) && /profiles|schema cache/i.test(String(error?.message || ""));
 const isMissingPhoneChallengeTable = (error) =>
   /phone_verification_challenges|relation.*does not exist/i.test(String(error?.message || ""));
 const USERNAME_RULE = /^[a-z][a-z0-9._]{2,19}$/;
@@ -166,6 +172,8 @@ const profileToClient = (profile, authUser = null) =>
       : null,
     subscription_tier: profile.subscription_tier ?? "basic",
     courierStatus: profile.courier_status ?? "offline",
+    defaultLat: profile.default_lat != null && Number.isFinite(Number(profile.default_lat)) ? Number(profile.default_lat) : null,
+    defaultLng: profile.default_lng != null && Number.isFinite(Number(profile.default_lng)) ? Number(profile.default_lng) : null,
     emailVerified: authUser != null ? Boolean(authUser.email_confirmed_at) : true,
     phoneVerified: Boolean(profile.phone_verified_at),
   });
@@ -210,10 +218,9 @@ const resolveProfileCommunityId = async ({ community }) => {
   try {
     const { data: communityRows, error } = await supabaseAdmin.from("communities").select("*");
     if (error) return null;
-    const label = String(community || "").trim().toLowerCase();
-    if (!label) return null;
-    const exact = (communityRows || []).find((c) => String(c?.name || "").trim().toLowerCase() === label);
-    return exact?.id ? String(exact.id) : null;
+    // Use the same exact → strip-"Barangay" → case-insensitive → fuzzy rules the client uses
+    // to pick a community shop, so the profile's `community_id` matches the community the user sees.
+    return findCommunityIdByName(communityRows || [], community);
   } catch {
     return null;
   }
@@ -475,6 +482,8 @@ export const updateMe = async (req, res, next) => {
       allowCourierTaskNotifications,
       pushNotificationToken,
       pushNotificationPlatform,
+      defaultLat,
+      defaultLng,
     } = req.body || {};
 
     const updates = {};
@@ -505,6 +514,24 @@ export const updateMe = async (req, res, next) => {
     }
     if (allowCourierTaskNotifications !== undefined) {
       updates.notify_courier_open_tasks = Boolean(allowCourierTaskNotifications);
+    }
+    if (defaultLat !== undefined) {
+      if (defaultLat === null || defaultLat === "") {
+        updates.default_lat = null;
+      } else {
+        const n = Number(defaultLat);
+        if (!Number.isFinite(n) || n < -90 || n > 90) throw new AppError(400, "defaultLat must be between -90 and 90.");
+        updates.default_lat = n;
+      }
+    }
+    if (defaultLng !== undefined) {
+      if (defaultLng === null || defaultLng === "") {
+        updates.default_lng = null;
+      } else {
+        const n = Number(defaultLng);
+        if (!Number.isFinite(n) || n < -180 || n > 180) throw new AppError(400, "defaultLng must be between -180 and 180.");
+        updates.default_lng = n;
+      }
     }
     if (pushNotificationToken !== undefined) {
       const raw = String(pushNotificationToken ?? "").trim();
@@ -575,7 +602,10 @@ export const updateMe = async (req, res, next) => {
         if (community === undefined) updates.community = String(communityRow.name || "").trim();
       }
     }
-    if (updates.address !== undefined || updates.community !== undefined) {
+    // Only derive community_id from the name when the caller did not pass an explicit,
+    // already-validated communityId (e.g. the "Join community" flow). Otherwise the
+    // validated id below would be clobbered by a name lookup that may not match.
+    if (communityId === undefined && (updates.address !== undefined || updates.community !== undefined)) {
       const nextCommunity = updates.community !== undefined ? updates.community : String(existingProfile?.community || "");
       updates.community_id = await resolveProfileCommunityId({ community: nextCommunity });
     }
@@ -589,6 +619,7 @@ export const updateMe = async (req, res, next) => {
           isMissingProfilesCourierSuggestedColumn(error) ||
           isMissingProfilesNotifyCourierColumn(error) ||
           isMissingProfilesPushTokenColumn(error) ||
+          isMissingProfilesDefaultLatLngColumn(error) ||
           isMissingPhoneVerifiedColumn(error))
       ) {
         const updatesWithoutMissingColumns = { ...updates };
@@ -599,6 +630,10 @@ export const updateMe = async (req, res, next) => {
         if (isMissingProfilesPushTokenColumn(error)) {
           delete updatesWithoutMissingColumns.push_notification_token;
           delete updatesWithoutMissingColumns.push_notification_platform;
+        }
+        if (isMissingProfilesDefaultLatLngColumn(error)) {
+          delete updatesWithoutMissingColumns.default_lat;
+          delete updatesWithoutMissingColumns.default_lng;
         }
         if (isMissingPhoneVerifiedColumn(error)) delete updatesWithoutMissingColumns.phone_verified_at;
         const retry = await supabaseAdmin.from("profiles").update(updatesWithoutMissingColumns).eq("id", req.user.id);
@@ -620,6 +655,12 @@ export const updateMe = async (req, res, next) => {
       }
       if (updates.address !== undefined) {
         await syncSellerListingsCommunityId(supabaseAdmin, req.user.id, String(data?.address ?? ""));
+      }
+      if (updates.default_lat !== undefined || updates.default_lng !== undefined) {
+        await syncSellerListingsLocationPin(supabaseAdmin, req.user.id, {
+          lat: data?.default_lat,
+          lng: data?.default_lng,
+        });
       }
       const { data: authAfterProfile } = await supabaseAdmin.auth.admin.getUserById(req.user.id);
       return res.json({ user: profileToClient(data, authAfterProfile?.user || null) });

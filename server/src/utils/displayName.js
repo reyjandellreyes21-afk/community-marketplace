@@ -67,6 +67,18 @@ export function userToClient(doc) {
       o.pushNotificationPlatform === "fcm" || o.pushNotificationPlatform === "apns" ? o.pushNotificationPlatform : null,
     subscriptionTier: normalizeSubscriptionTier(o.subscriptionTier ?? o.subscription_tier),
     courierStatus: normalizeCourierStatusForClient(o.courierStatus),
+    defaultLat:
+      o.defaultLat != null && Number.isFinite(Number(o.defaultLat))
+        ? Number(o.defaultLat)
+        : o.default_lat != null && Number.isFinite(Number(o.default_lat))
+          ? Number(o.default_lat)
+          : null,
+    defaultLng:
+      o.defaultLng != null && Number.isFinite(Number(o.defaultLng))
+        ? Number(o.defaultLng)
+        : o.default_lng != null && Number.isFinite(Number(o.default_lng))
+          ? Number(o.default_lng)
+          : null,
     emailVerified: o.emailVerified === undefined ? true : Boolean(o.emailVerified),
     phoneVerified: Boolean(o.phoneVerified),
   };

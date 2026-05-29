@@ -851,16 +851,33 @@ const listingRowToApi = (row) => ({
   updatedAt: row.updated_at,
 });
 
+/** Product (non-service) meet-up pins follow the seller's profile pin; services keep their own per-listing pin. */
+const listingRowIsServiceVertical = (row) =>
+  String(row?.vertical_id ?? row?.categories ?? "").trim().toLowerCase() === "services";
+
+const isFiniteCoord = (lat, lng) => {
+  const la = Number(lat);
+  const ln = Number(lng);
+  return Number.isFinite(la) && Number.isFinite(ln) && la >= -90 && la <= 90 && ln >= -180 && ln <= 180;
+};
+
 async function enrichListingsWithSellerProfile(rows) {
   const input = Array.isArray(rows) ? rows : [];
   if (input.length === 0) return [];
   const sellerIds = [...new Set(input.map((r) => String(r?.seller_id || "").trim()).filter(Boolean))];
   let profileById = new Map();
   if (sellerIds.length > 0) {
-    const { data: profiles, error } = await supabaseAdmin
+    let { data: profiles, error } = await supabaseAdmin
       .from("profiles")
-      .select("id,username,address,avatar_url")
+      .select("id,username,address,avatar_url,default_lat,default_lng")
       .in("id", sellerIds);
+    // Older DBs may lack the default_lat/default_lng columns — fall back to the legacy projection.
+    if (isSchemaMissingError(error) || /default_lat|default_lng/i.test(String(error?.message || ""))) {
+      ({ data: profiles, error } = await supabaseAdmin
+        .from("profiles")
+        .select("id,username,address,avatar_url")
+        .in("id", sellerIds));
+    }
     if (!error) {
       profileById = new Map(
         (profiles || []).map((p) => [
@@ -869,6 +886,8 @@ async function enrichListingsWithSellerProfile(rows) {
             username: String(p?.username || "").trim(),
             address: String(p?.address || "").trim(),
             avatarUrl: String(p?.avatar_url || "").trim(),
+            defaultLat: p?.default_lat != null && Number.isFinite(Number(p.default_lat)) ? Number(p.default_lat) : null,
+            defaultLng: p?.default_lng != null && Number.isFinite(Number(p.default_lng)) ? Number(p.default_lng) : null,
           },
         ]),
       );
@@ -877,6 +896,15 @@ async function enrichListingsWithSellerProfile(rows) {
   return input.map((row) => {
     const base = listingRowToApi(row);
     const seller = profileById.get(String(row?.seller_id || "").trim()) || null;
+    // Keep the product meet-up pin in sync with the seller's current profile pin (read-time overlay).
+    if (
+      seller &&
+      !listingRowIsServiceVertical(row) &&
+      isFiniteCoord(seller.defaultLat, seller.defaultLng)
+    ) {
+      base.lat = seller.defaultLat;
+      base.lng = seller.defaultLng;
+    }
     return {
       ...base,
       sellerUsername: seller?.username || "",
@@ -2203,7 +2231,7 @@ export const listMyListings = async (req, res, next) => {
         sellerReviewCount: rs.sellerReviewCount,
       });
     if (error) throw new AppError(500, error.message);
-    const mapped = (data || []).map(listingRowToApi);
+    const mapped = await enrichListingsWithSellerProfile(data || []);
     const listingIdsForRatings = mapped.map((l) => String(l?.id || "").trim()).filter(Boolean);
     const listingRatingMap =
       listingIdsForRatings.length > 0 ? await aggregateListingOrderRatingStatsByListingId(listingIdsForRatings) : new Map();
@@ -2247,7 +2275,7 @@ export const listFavorites = async (req, res, next) => {
     if (lerr) throw new AppError(500, lerr.message);
     const byId = new Map((listings || []).map((l) => [l.id, l]));
     const orderedRows = ids.map((id) => byId.get(id)).filter(Boolean);
-    const mapped = orderedRows.map(listingRowToApi);
+    const mapped = await enrichListingsWithSellerProfile(orderedRows);
     const listingIdsForRatings = mapped.map((l) => String(l?.id || "").trim()).filter(Boolean);
     const listingRatingMap =
       listingIdsForRatings.length > 0 ? await aggregateListingOrderRatingStatsByListingId(listingIdsForRatings) : new Map();

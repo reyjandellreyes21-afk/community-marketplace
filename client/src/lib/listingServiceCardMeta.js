@@ -156,7 +156,9 @@ export function orderProfileSellerListings(listings) {
 
 /**
  * Sections for profile “Your listings” / another seller’s list.
- * **Products**: all non-service listings. **Services**: services. **Shop**: placeholder until shop upload exists.
+ * **Products**: all non-service listings. **Services**: service listings (own distinct shelf, always shown).
+ * **Shop**: placeholder until shop upload exists. Services and Shop always render (with empty state) so they stay
+ * visible as distinct sections even when empty; Products renders whenever any listings exist.
  * @param {unknown[] | null | undefined} listings
  * @returns {{ id: 'products' | 'services' | 'shop', title: string, listings: unknown[] }[]}
  */
@@ -165,10 +167,30 @@ export function getProfileSellerListingSections(listings) {
   const { products, services, shop } = partitionProfileSellerListings(arr);
   /** @type {{ id: 'products' | 'services' | 'shop', title: string, listings: unknown[] }[]} */
   const sections = [];
-  if (products.length) sections.push({ id: "products", title: "Products", listings: products });
-  if (services.length) sections.push({ id: "services", title: "Services", listings: services });
-  if (arr.length > 0) sections.push({ id: "shop", title: "Shop", listings: shop });
+  if (arr.length > 0) {
+    sections.push({ id: "products", title: "Products", listings: products });
+    sections.push({ id: "services", title: "Services", listings: services });
+    sections.push({ id: "shop", title: "Shop", listings: shop });
+  }
   return sections;
+}
+
+/**
+ * Empty-state copy for a profile/community listing section when it has no listings.
+ * @param {'products' | 'services' | 'shop' | string} sectionId
+ * @returns {string}
+ */
+export function getProfileSellerSectionEmptyText(sectionId) {
+  switch (sectionId) {
+    case "products":
+      return "No products yet. Product listings will appear here once published.";
+    case "services":
+      return "No services yet. Service listings will appear here once published.";
+    case "shop":
+      return "No shop listings yet. Community shop upload is not available yet — listings will appear here when it is.";
+    default:
+      return "No listings yet.";
+  }
 }
 
 function truncate(text, max) {

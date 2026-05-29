@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getListingCategoryShortLabel, getVerticalById } from "../../categoryNav.js";
-import { UI_KIT } from "../../lib/appUiKit.js";
 import { formatPesoWhole, SALE_PERCENT_OPTIONS } from "../../lib/listingSaleMeta.js";
 import { resolveListingGalleryUrls } from "../../lib/listingImageUrl.js";
 import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
@@ -35,7 +34,7 @@ export function CommunityShopListingCard({
   mobileOwnerActionsInMenu = false,
   /** Lighter image chrome (mobile shop browse). */
   softBrowseChrome = false,
-  /** Mobile 2-col grid: omit description block for shorter, even rows; list mode ignores this. */
+  /** Grid: omit description block; on web profile grid, use a square hero (same width and height). */
   browseSummaryGrid = false,
   /** Mobile marketplace browse: tighter grid/list density, aspect images, secondary owner CTAs. */
   mobileCardUx = false,
@@ -47,6 +46,8 @@ export function CommunityShopListingCard({
   unseenAttention = false,
   /** Profile → Products: delete listing (owner only). */
   onDelete,
+  /** Profile (web/desktop): hide Edit / Discount / Delete on the card; use inspect modal instead. */
+  hideOwnerManageActions = false,
   /** Home › Community & Profile › Products (mobile): entire card opens inspect like tapping Add to cart flow. */
   mobileEntireCardTappable = false,
   /** Hide inline description text in the product card body. */
@@ -176,6 +177,8 @@ export function CommunityShopListingCard({
       : "aspect-square w-full min-h-0 overflow-hidden"
     : gridMode && compactGrid
       ? "h-28 w-full"
+      : gridMode && browseSummaryGrid
+        ? "aspect-square w-full min-h-0 overflow-hidden"
       : gridMode && mobileUx
         ? "aspect-[4/3] w-full"
         : gridMode && softBrowseChrome
@@ -197,8 +200,12 @@ export function CommunityShopListingCard({
   const isListMode = !gridMode;
   /** Web/desktop list: compact action strip — mobile list keeps full-width stacked/grid buttons. */
   const listDesktopCompactActions = isListMode && !mobileUx;
+  const hideOwnerManageOnCard = Boolean(hideOwnerManageActions && isOwner);
+  const showOwnerManageOnCard = isOwner && !hideOwnerManageOnCard;
   const ownerGridOverflow =
-    Boolean(mobileOwnerActionsInMenu) && isOwner && gridMode && !isListMode && showActions;
+    Boolean(mobileOwnerActionsInMenu) && showOwnerManageOnCard && gridMode && !isListMode && showActions;
+  const showCardActionStrip =
+    showActions && !hideCardActionsOnMobile && (showOwnerManageOnCard || !isOwner);
 
   useEffect(() => {
     if (!ownerMenuOpen) return undefined;
@@ -486,30 +493,22 @@ export function CommunityShopListingCard({
             listingAvgRating={listing.listingAvgRating}
             listingReviewCount={listing.listingReviewCount}
           />
-          {useFeedLayout && listing.cityLabel ? (
-            <div className="lm-product-card-badge-row">
-              {listing.cityLabel ? (
-                <span className={`line-clamp-1 max-w-full ${UI_KIT.chipMuted} py-px text-[10px] leading-tight`}>
-                  {listing.cityLabel}
-                </span>
-              ) : null}
-            </div>
-          ) : (
-            <>
-              {listing.cityLabel ? (
-                <span
-                  className={
-                    mobileUx && gridMode ? `${UI_KIT.chipMuted} py-px text-[10px] leading-tight` : UI_KIT.chipMuted
-                  }
-                >
-                  {listing.cityLabel}
-                </span>
-              ) : null}
-            </>
-          )}
         </div>
       </div>
-      {showActions && !hideCardActionsOnMobile ? (
+      {listing.cityLabel ? (
+        <div className={useFeedLayout ? "px-2 pb-2 min-[360px]:px-2.5 min-[360px]:pb-2.5" : ""}>
+          <div className="mt-2 border-t border-neutral-200/80 pt-2 dark:border-slate-600/55">
+            <p
+              className={`line-clamp-1 min-w-0 text-neutral-600 dark:text-slate-400 ${
+                mobileUx && gridMode ? "text-[10px] leading-tight" : "text-[11px] leading-snug"
+              }`}
+            >
+              {listing.cityLabel}
+            </p>
+          </div>
+        </div>
+      ) : null}
+      {showCardActionStrip ? (
         <div
           className={`flex flex-col gap-2 ${gridMode ? (useFeedLayout ? "mt-auto px-2 pb-2 pt-1.5 min-[360px]:px-2.5 min-[360px]:pb-2.5" : "mt-auto pt-3") : listDesktopCompactActions ? "mt-3 border-t border-neutral-200/70 pt-3 dark:border-slate-600/55" : "mt-3"}`}
         >
@@ -588,7 +587,7 @@ export function CommunityShopListingCard({
             </div>
           ) : (
             <>
-          {isOwner ? (
+          {showOwnerManageOnCard ? (
             <div
               className={
                 isListMode
@@ -782,7 +781,7 @@ export function CommunityShopListingCard({
           )}
         </div>
       ) : null}
-      {showActions && !hideCardActionsOnMobile && isOwner && saleOpen ? (
+      {showCardActionStrip && showOwnerManageOnCard && saleOpen ? (
         <div className={gridMode ? (useFeedLayout ? "mt-2 shrink-0 px-2 pb-2 min-[360px]:px-2.5" : "mt-2 shrink-0") : "mt-2"}>
           <div className="rounded-xl border border-rose-200/80 bg-rose-50/80 p-2 dark:border-rose-500/30 dark:bg-rose-500/10">
             <div className="flex flex-wrap items-center gap-2">

@@ -29,3 +29,12 @@ export const writeLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: { message: "Too many writes. Slow down and try again." } },
 });
+
+/** Nominatim proxy — keep below public instance fair-use limits. */
+export const geoLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: { message: "Too many location lookups. Please wait a moment." } },
+});

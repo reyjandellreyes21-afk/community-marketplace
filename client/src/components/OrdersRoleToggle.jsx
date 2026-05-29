@@ -7,6 +7,11 @@ const PILL_SEEN_UNSELECTED =
   "bg-slate-500 text-white dark:bg-slate-600";
 const PILL_SEEN_SELECTED = "bg-white/95 text-slate-700 dark:bg-white/95 dark:text-slate-800";
 
+const SIDEBAR_BADGE_ROSE =
+  "pointer-events-none ml-auto inline-flex min-h-[1rem] min-w-[1rem] shrink-0 items-center justify-center rounded-full bg-rose-600 px-[3px] py-px text-[9px] font-bold leading-none text-white shadow-sm dark:bg-rose-500";
+const SIDEBAR_BADGE_SLATE =
+  "pointer-events-none ml-auto inline-flex min-h-[1rem] min-w-[1rem] shrink-0 items-center justify-center rounded-full bg-slate-500 px-[3px] py-px text-[9px] font-bold leading-none text-white shadow-sm dark:bg-slate-600";
+
 /**
  * Segmented switcher used by both the **Orders** and **Bookings** primary tabs.
  *
@@ -32,6 +37,7 @@ const PILL_SEEN_SELECTED = "bg-white/95 text-slate-700 dark:bg-white/95 dark:tex
  * @param {{ count: number, rose?: boolean }} [props.sellingBadge] Optional unseen-count pill for the seller segment
  * @param {string} [props.ariaLabel] Override for the tablist `aria-label`
  * @param {string} [props.className] Wrapper extra classes
+ * @param {boolean} [props.desktopSidebar] Vertical rail for md+ Activity hub left aside
  */
 export function OrdersRoleToggle({
   activityTab,
@@ -44,6 +50,7 @@ export function OrdersRoleToggle({
   sellingBadge = { count: 0, rose: false },
   ariaLabel = "Orders view",
   className = "",
+  desktopSidebar = false,
 }) {
   const usingRoleMode = role === "buyer" || role === "seller";
   const isBuyer = usingRoleMode ? role === "buyer" : activityTab !== ACTIVITY_TABS.SELLING;
@@ -54,6 +61,7 @@ export function OrdersRoleToggle({
       activityTab: ACTIVITY_TABS.BUYING,
       badge: buyingBadge,
       selected: isBuyer,
+      selectedBorder: "border-indigo-500 dark:border-indigo-400",
     },
     {
       id: "seller",
@@ -61,14 +69,20 @@ export function OrdersRoleToggle({
       activityTab: ACTIVITY_TABS.SELLING,
       badge: sellingBadge,
       selected: !isBuyer,
+      selectedBorder: "border-emerald-500 dark:border-emerald-400",
     },
   ];
+
+  const tabListClass = desktopSidebar
+    ? `flex w-full min-w-0 flex-col gap-1 ${className}`
+    : `flex w-full min-w-0 items-stretch gap-1.5 ${className}`;
 
   return (
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className={`flex w-full min-w-0 items-stretch gap-1.5 ${className}`}
+      aria-orientation={desktopSidebar ? "vertical" : undefined}
+      className={tabListClass}
     >
       {segments.map((seg) => {
         const rawCount = Number(seg.badge?.count) || 0;
@@ -83,6 +97,46 @@ export function OrdersRoleToggle({
           : seg.selected
             ? PILL_SEEN_SELECTED
             : PILL_SEEN_UNSELECTED;
+
+        if (desktopSidebar) {
+          return (
+            <button
+              key={seg.id}
+              type="button"
+              role="tab"
+              aria-selected={seg.selected}
+              tabIndex={seg.selected ? 0 : -1}
+              aria-label={showBadge ? `${seg.label}, ${String(countDisplay).replace("+", " plus ")}` : seg.label}
+              onClick={() => {
+                if (seg.selected) return;
+                if (usingRoleMode) {
+                  onRoleChange?.(seg.id);
+                } else {
+                  onChange?.(seg.activityTab, seg.id);
+                }
+              }}
+              className={`relative flex w-full min-w-0 flex-row items-center gap-2 rounded-r-lg border-l-[3px] py-2.5 pl-2.5 pr-2 text-left transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 ${
+                seg.selected
+                  ? `${seg.selectedBorder} bg-neutral-100/90 dark:bg-slate-800/65`
+                  : "border-transparent hover:bg-neutral-50/95 dark:hover:bg-slate-800/45"
+              }`}
+            >
+              <span
+                className={`min-w-0 flex-1 text-xs font-semibold leading-tight ${
+                  seg.selected ? "text-indigo-700 dark:text-indigo-300" : "text-neutral-600 dark:text-slate-400"
+                }`}
+              >
+                {seg.label}
+              </span>
+              {showBadge ? (
+                <span className={rose ? SIDEBAR_BADGE_ROSE : SIDEBAR_BADGE_SLATE} aria-hidden>
+                  {countDisplay}
+                </span>
+              ) : null}
+            </button>
+          );
+        }
+
         return (
           <button
             key={seg.id}
