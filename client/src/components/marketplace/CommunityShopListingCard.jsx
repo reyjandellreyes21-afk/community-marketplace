@@ -6,6 +6,7 @@ import { ProductListingMedia } from "../media/ProductListingMedia.jsx";
 import { MarketplaceProductDetailStack } from "./MarketplaceProductDetailStack.jsx";
 import { ListingServiceCardSummary } from "./ListingServiceCardSummary.jsx";
 import { getServiceCardHeadlinePriceLabel, getServiceCardProfileHeader, isServiceListing } from "../../lib/listingServiceCardMeta.js";
+import { listingDistanceLabel } from "../../lib/geo/distance.js";
 
 /** Minimum horizontal movement (px) to count as swipe vs tap-to-view-details — aligned with `ProductInspectModal`. */
 const CARD_GALLERY_SWIPE_MIN_PX = 48;
@@ -52,6 +53,8 @@ export function CommunityShopListingCard({
   mobileEntireCardTappable = false,
   /** Hide inline description text in the product card body. */
   hideCardDescription = false,
+  /** Viewer origin for card distance (profile address or GPS) — `{ lat, lng }` or null. */
+  viewerCoords = null,
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
@@ -93,6 +96,13 @@ export function CommunityShopListingCard({
   const serviceBookHandler = typeof onBook === "function" ? onBook : typeof onBuy === "function" ? onBuy : null;
   const serviceHeadlinePrice =
     isServiceCard ? getServiceCardHeadlinePriceLabel(listing) ?? formatPesoWhole(listing.priceCents) : "";
+
+  const cardDistanceLabel = useMemo(
+    () => listingDistanceLabel(viewerCoords, listing),
+    [viewerCoords, listing?.lat, listing?.lng, listing?.id],
+  );
+  const locationLine = String(listing.cityLabel || "").trim();
+  const showLocationFoot = Boolean(locationLine || cardDistanceLabel);
 
   const galleryUrls = useMemo(() => resolveListingGalleryUrls(listing), [listing]);
   const galleryUrlsKey = galleryUrls.join("|");
@@ -277,10 +287,12 @@ export function CommunityShopListingCard({
   const readOnlyStockRow = (
     <div className="min-w-0">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300">
-          <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">Stock</span>
-          <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
-          <span className="tabular-nums font-semibold text-text-primary dark:text-slate-100">{stockQty}</span>
+        <p className="lm-community-card-stock">
+          <span>Stock</span>
+          <span className="mx-1 text-slate-300 dark:text-slate-600" aria-hidden>
+            ·
+          </span>
+          <span className="lm-community-card-stock-value">{stockQty}</span>
         </p>
         {isOutOfStock ? <span className="lm-tag-danger">Out of stock</span> : null}
       </div>
@@ -454,7 +466,7 @@ export function CommunityShopListingCard({
           </p>
         ) : null}
         <div
-          className={`min-w-0 flex-1 ${
+          className={`lm-community-shop-card-body min-w-0 flex-1 ${
             useFeedLayout
               ? `lm-product-card-body ${compactGrid ? "!gap-1" : ""}`
               : gridMode
@@ -466,6 +478,7 @@ export function CommunityShopListingCard({
         >
           <MarketplaceProductDetailStack
             variant="card"
+            communityShopCard
             browseStackMode={mobileUx ? "listMobile" : null}
             compactListMeta={isListMode || mobileUx}
             title={isServiceCard ? serviceTitleLine : listing.title || "Untitled product"}
@@ -488,18 +501,24 @@ export function CommunityShopListingCard({
             hideDescription={Boolean(hideCardDescription || isListMode || (gridMode && (compactGrid || browseSummaryGrid)))}
             listingAvgRating={listing.listingAvgRating}
             listingReviewCount={listing.listingReviewCount}
+            listingSoldCount={listing.soldCount}
+            isServiceListing={isServiceCard}
           />
         </div>
       </div>
-      {listing.cityLabel ? (
+      {showLocationFoot ? (
         <div className={useFeedLayout ? "px-2 pb-2 min-[360px]:px-2.5 min-[360px]:pb-2.5" : ""}>
-          <div className="mt-2 border-t border-neutral-200/80 pt-2 dark:border-slate-600/55">
-            <p
-              className={`line-clamp-1 min-w-0 text-neutral-600 dark:text-slate-400 ${
-                mobileUx && gridMode ? "text-[10px] leading-tight" : "text-[11px] leading-snug"
-              }`}
-            >
-              {listing.cityLabel}
+          <div className="lm-community-shop-card-foot">
+            <p className="lm-community-shop-card-location">
+              {locationLine ? <span>{locationLine}</span> : null}
+              {locationLine && cardDistanceLabel ? (
+                <span className="mx-1 text-slate-300 dark:text-slate-600" aria-hidden>
+                  ·
+                </span>
+              ) : null}
+              {cardDistanceLabel ? (
+                <span className="tabular-nums text-slate-600 dark:text-slate-300">{cardDistanceLabel}</span>
+              ) : null}
             </p>
           </div>
         </div>

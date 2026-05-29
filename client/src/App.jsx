@@ -105,8 +105,10 @@ import { CHAT_QUICK_EMOJIS } from "./lib/chatComposerEmojis.js";
 import { UI_KIT } from "./lib/appUiKit.js";
 import { scrollAppToTop } from "./lib/scrollAppToTop.js";
 import { useNearMeLocation } from "./hooks/useNearMeLocation.js";
+import { useGpsForDistance } from "./hooks/useGpsForDistance.js";
 import { hasValidCoords } from "./lib/geo/constants.js";
 import { resolveProductListingLocation } from "./lib/geo/resolveSellerListingLocation.js";
+import { resolveProfileCoords } from "./lib/geo/resolveProfileCoords.js";
 import { ProfileAddressLocationSection } from "./components/geo/ProfileAddressLocationSection.jsx";
 import {
   filterOrdersExcludeServiceBookings,
@@ -280,6 +282,7 @@ import {
   favoritesGridClass,
   commerceFlowLineItemsClass,
   lmBrowseViewShellClass,
+  profileListingsGridClass,
 } from "./lib/lmViewLayouts.js";
 
 /** Corner pill anchored to the tab glyph (icon-above-label layout). Rose when tab has unseen attention; muted when badge is queue depth only. */
@@ -2212,6 +2215,8 @@ function App() {
     [communities, shopCommunityId],
   );
   const nearMe = useNearMeLocation();
+  const gpsForDistance = useGpsForDistance();
+  const [profileCoordsForDistance, setProfileCoordsForDistance] = useState(null);
   /** Latest map pin while profile edit is open — committed on Save changes. */
   const profileLocationPinRef = useRef({ lat: null, lng: null });
   const handleProfileLocationPinChange = useCallback((coords) => {
@@ -2220,6 +2225,54 @@ function App() {
       lng: coords?.lng ?? null,
     };
   }, []);
+
+  /** Default card-distance origin: profile map pin, else geocoded saved address. */
+  useEffect(() => {
+    if (!token || !user?.id) {
+      setProfileCoordsForDistance(null);
+      return undefined;
+    }
+    let cancelled = false;
+    void (async () => {
+      if (hasValidCoords(user?.defaultLat, user?.defaultLng)) {
+        if (!cancelled) {
+          setProfileCoordsForDistance({
+            lat: Number(user.defaultLat),
+            lng: Number(user.defaultLng),
+          });
+        }
+        return;
+      }
+      try {
+        const resolved = await resolveProfileCoords({ user });
+        if (!cancelled) setProfileCoordsForDistance(resolved);
+      } catch {
+        if (!cancelled) setProfileCoordsForDistance(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, user?.id, user?.defaultLat, user?.defaultLng, user?.address]);
+
+  /** Card distance: GPS when Current location is on; otherwise profile address coords. */
+  const communityCardViewerCoords = useMemo(() => {
+    if (gpsForDistance.active && gpsForDistance.coords && hasValidCoords(gpsForDistance.coords.lat, gpsForDistance.coords.lng)) {
+      return { lat: gpsForDistance.coords.lat, lng: gpsForDistance.coords.lng };
+    }
+    if (profileCoordsForDistance && hasValidCoords(profileCoordsForDistance.lat, profileCoordsForDistance.lng)) {
+      return profileCoordsForDistance;
+    }
+    return null;
+  }, [gpsForDistance.active, gpsForDistance.coords, profileCoordsForDistance]);
+
+  const handleToggleCurrentLocationForDistance = useCallback(async () => {
+    if (gpsForDistance.active) {
+      gpsForDistance.disableGps();
+      return;
+    }
+    await gpsForDistance.enableGps();
+  }, [gpsForDistance]);
   /** City · province · postal for the open community shop header (structured fields from API). */
   const activeCommunityLocaleLine = useMemo(() => {
     const ac = activeCommunity;
@@ -13041,6 +13094,41 @@ function App() {
                           <span className="truncate">{nearMe.loading ? "Locating…" : nearMe.enabled ? "Near me" : "Near me"}</span>
                         </button>
                       ) : null}
+                      {activeView === VIEWS.COMMUNITY_SHOP ? (
+                        <button
+                          type="button"
+                          className={`inline-flex min-h-[44px] shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-semibold shadow-sm transition active:scale-[0.98] md:min-h-10 md:text-sm ${
+                            gpsForDistance.active
+                              ? "border-brand-primary bg-brand-primary text-white dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
+                              : "border-neutral-200/90 bg-white text-neutral-800 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                          }`}
+                          aria-pressed={gpsForDistance.active}
+                          disabled={gpsForDistance.loading}
+                          onClick={() => void handleToggleCurrentLocationForDistance()}
+                          aria-label={
+                            gpsForDistance.active
+                              ? "Use profile address for card distances"
+                              : "Use current location for card distances"
+                          }
+                        >
+                          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                            <circle cx="12" cy="12" r="3" />
+                            <path strokeLinecap="round" d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+                          </svg>
+                          <span className="truncate">
+                            {gpsForDistance.loading
+                              ? "Locating…"
+                              : gpsForDistance.active
+                                ? "Current location"
+                                : "Current location"}
+                          </span>
+                        </button>
+                      ) : null}
+                      {activeView === VIEWS.COMMUNITY_SHOP && gpsForDistance.error ? (
+                        <p className="w-full text-xs text-rose-700 dark:text-rose-300 max-lg:order-4" role="alert">
+                          {gpsForDistance.error}
+                        </p>
+                      ) : null}
                       {activeView === VIEWS.COMMUNITY_SHOP && nearMe.error ? (
                         <p className="w-full text-xs text-rose-700 dark:text-rose-300 max-lg:order-4" role="alert">
                           {nearMe.error}
@@ -13195,6 +13283,7 @@ function App() {
                                 <LazyCommunityShopListingCard
                                   key={l.id}
                                   listing={l}
+                                  viewerCoords={communityCardViewerCoords}
                                   gridMode={effectiveCommunityBrowseView !== "list"}
                                   compactGrid={effectiveCommunityBrowseView === "compact"}
                                   mobileOwnerActionsInMenu={
@@ -16793,7 +16882,7 @@ function App() {
               !isMobileViewport &&
               token &&
               (activityCourier || (activityCommerceHubOpen && !ordersFetchError))
-                ? "md:grid md:min-w-0 md:grid-cols-[minmax(10rem,11.5rem)_1fr] md:items-start md:gap-6"
+                ? "md:grid md:min-w-0 md:grid-cols-[minmax(10rem,11.5rem)_1fr] md:items-stretch md:gap-6"
                 : ""
             }`}
           >
@@ -19909,7 +19998,7 @@ function App() {
                       <div className="mt-3">
                         {isMobileViewport ? (
                           <BrowseGridSkeleton
-                            gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                            gridClassName={`${profileListingsGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
                             variant={
                               effectiveSellerProductsView === "list"
                                 ? "list"
@@ -19942,7 +20031,7 @@ function App() {
                         <Suspense
                           fallback={
                             <BrowseGridSkeleton
-                              gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                              gridClassName={`${profileListingsGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
                               variant={
                                 effectiveSellerProductsView === "list"
                                   ? "list"
@@ -19977,7 +20066,7 @@ function App() {
                                 ) : null}
                                 {section.listings.length > 0 ? (
                                 <div
-                                  className={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                                  className={`${profileListingsGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
                                 >
                                   {section.listings.map((l) => (
                                     <LazyCommunityShopListingCard
@@ -20006,7 +20095,6 @@ function App() {
                                         openProductInspect(l, {
                                           quantity: stockListed,
                                           quantityLabel: "Quantity Available",
-                                          subtitle: "Your listing",
                                           listingStockQty: stockListed,
                                           showSellerCommerceActions: true,
                                           onEditListing: () => {
@@ -20139,7 +20227,7 @@ function App() {
                     <div className="mt-3">
                       {isMobileViewport ? (
                         <BrowseGridSkeleton
-                          gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                          gridClassName={`${profileListingsGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
                           variant={
                             effectiveSellerProductsView === "list"
                               ? "list"
@@ -20171,7 +20259,7 @@ function App() {
                       <Suspense
                         fallback={
                           <BrowseGridSkeleton
-                            gridClassName={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                            gridClassName={`${profileListingsGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
                             variant={
                               effectiveSellerProductsView === "list"
                                 ? "list"
@@ -20206,7 +20294,7 @@ function App() {
                               ) : null}
                               {section.listings.length > 0 ? (
                               <div
-                                className={`${communityBrowseGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
+                                className={`${profileListingsGridClass(effectiveSellerProductsView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(effectiveSellerProductsView)}`}
                               >
                                 {section.listings.map((l) => {
                                   const isOwn = String(l.sellerId || "") === String(user?.id || "");
@@ -20850,18 +20938,13 @@ function App() {
                       ) : (
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300">
-                              <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">
-                                Stock
+                            <p className="lm-community-card-stock">
+                              <span>Stock</span>
+                              <span className="mx-1 text-slate-300 dark:text-slate-600" aria-hidden>
+                                ·
                               </span>
-                              <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
-                              <span className="tabular-nums font-semibold text-text-primary dark:text-slate-100">
-                                {stockQtyQa}
-                              </span>
+                              <span className="lm-community-card-stock-value">{stockQtyQa}</span>
                             </p>
-                            {soldQtyQa != null ? (
-                              <span className="lm-tag-neutral uppercase tracking-wide">Sold {soldQtyQa}</span>
-                            ) : null}
                             {isOutOfStockQa ? <span className="lm-tag-danger">Out of stock</span> : null}
                           </div>
                         </div>
@@ -20881,9 +20964,10 @@ function App() {
                       const stripPlaceOrderSectionFrame = quickActionType === "buy";
                       return (
                         <>
-                          <div className="min-w-0 space-y-2">
+                          <div className="lm-community-shop-card-body min-w-0 space-y-2">
                             <DeferredProductDetailStack
                               variant="card"
+                              communityShopCard
                               browseStackMode={snapMobile ? "listMobile" : null}
                               compactListMeta={listModeQa || snapMobile}
                               title={isServiceQa ? qaServiceStackTitle : quickAddListing.title || "Untitled product"}
@@ -20913,21 +20997,15 @@ function App() {
                               omitProductMetaExtras={isServiceQa}
                               listingAvgRating={quickAddListing.listingAvgRating}
                               listingReviewCount={quickAddListing.listingReviewCount}
+                              listingSoldCount={soldQtyQa}
+                              isServiceListing={isServiceQa}
                               descriptionPresentation={
                                 quickAddTargetIsService && quickActionType === "buy" ? "inspect" : "card"
                               }
                               unframeDescription={stripPlaceOrderSectionFrame}
                             />
                             {quickAddListing.cityLabel ? (
-                              <span
-                                className={
-                                  snapMobile && gridModeQa
-                                    ? "lm-tag-neutral truncate py-px text-[10px] leading-tight"
-                                    : "lm-tag-neutral truncate"
-                                }
-                              >
-                                {quickAddListing.cityLabel}
-                              </span>
+                              <p className="lm-community-shop-card-location">{quickAddListing.cityLabel}</p>
                             ) : null}
                           </div>
                           {showVariantPickers ? (

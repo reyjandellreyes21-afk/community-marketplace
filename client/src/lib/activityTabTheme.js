@@ -1,172 +1,52 @@
 import { ACTIVITY_TABS } from "../views.js";
 
+/** Shared layout shells — neutral; accent tint is unified below. */
+const SHARED_SHELL = {
+  shellMobile:
+    "border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.04)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.2)]",
+  shellDesktop:
+    "border-b border-neutral-200/60 bg-neutral-50 dark:border-slate-700/60 dark:bg-slate-950",
+  childStripHeaderBand:
+    "w-full shrink-0 border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.03)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.15)] md:border-t-0 md:border-b md:border-neutral-200/60 md:bg-neutral-50 md:shadow-none dark:md:border-slate-700/60 dark:md:bg-slate-950",
+  primaryTabsFooter:
+    "border-t border-neutral-200/70 bg-neutral-50 shadow-[0_-4px_24px_-8px_rgba(15,23,42,0.06)] dark:border-slate-700/70 dark:bg-slate-950 dark:shadow-[0_-4px_24px_-8px_rgba(0,0,0,0.35)]",
+  orderFlowStrip:
+    "border-t border-transparent bg-transparent dark:border-transparent md:border-b md:border-neutral-200/50 md:bg-transparent dark:md:border-slate-700/50",
+  activityMainSurface: "bg-neutral-50 dark:bg-slate-950",
+  activityShellWrap:
+    "!bg-neutral-50 dark:!bg-slate-950 md:!bg-transparent md:!dark:bg-transparent",
+  activityViewSection:
+    "w-full max-md:space-y-0 space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-4 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-4 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
+};
+
+/** One brand tint for nav labels, glyphs, empty states, recovery CTAs, and density toggles. */
+const SHARED_ACCENT = {
+  labelSelected: "text-primary dark:text-brand-accent",
+  barSelected: "bg-primary dark:bg-brand-accent",
+  glyphSelected: "text-primary dark:text-brand-accent",
+  emptySurface:
+    "border-primary/30 bg-primary-soft/55 dark:border-brand-accent/35 dark:bg-slate-900/45",
+  recoveryPrimary:
+    "!border-transparent !bg-primary !text-white shadow-sm !shadow-primary/25 hover:!bg-primary/90 active:!bg-primary/80 focus-visible:!ring-primary/50 dark:!bg-brand-accent dark:hover:!bg-brand-accent/90 dark:focus-visible:!ring-brand-accent/45",
+  recoverySecondary:
+    "!border-primary !bg-primary-soft/80 !text-primary hover:!bg-primary-soft dark:!border-brand-accent dark:!bg-slate-800/80 dark:!text-brand-accent dark:hover:!bg-slate-800",
+  segmentActive:
+    "!bg-primary-soft !text-primary shadow-none !ring-1 !ring-inset !ring-primary/35 dark:!bg-slate-800/85 dark:!text-brand-accent dark:!ring-brand-accent/30",
+  segmentActiveMuted:
+    "!bg-primary-soft/90 !text-primary !ring-1 !ring-inset !ring-primary/25 dark:!bg-slate-800/70 dark:!text-brand-accent dark:!ring-brand-accent/25",
+  courierPanelSurface:
+    "rounded-xl border border-primary/30 bg-primary-soft/55 p-4 dark:border-brand-accent/35 dark:bg-slate-900/45",
+};
+
 /**
- * Distinct accent + tinted shells for Activity primary tabs (Buying / Selling / Booking / Courier),
- * fixed footer for primary tabs, and child strips (order status / courier sub-tabs) under the header.
+ * Activity hub chrome — shared neutral shells; brand-primary tint for accents and content surfaces.
  */
 export const ACTIVITY_TAB_CHROME = {
-  [ACTIVITY_TABS.COMMERCE_ALL]: {
-    labelSelected: "text-indigo-600 dark:text-indigo-400",
-    barSelected: "bg-indigo-500 dark:bg-indigo-400",
-    glyphSelected: "text-indigo-600 dark:text-indigo-400",
-    shellMobile:
-      "border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.04)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.2)]",
-    shellDesktop:
-      "border-b border-neutral-200/60 bg-neutral-50 dark:border-slate-700/60 dark:bg-slate-950",
-    childStripHeaderBand:
-      "w-full shrink-0 border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.03)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.15)] md:border-t-0 md:border-b md:border-neutral-200/60 md:bg-neutral-50 md:shadow-none dark:md:border-slate-700/60 dark:md:bg-slate-950",
-    primaryTabsFooter:
-      "border-t border-neutral-200/70 bg-neutral-50 shadow-[0_-4px_24px_-8px_rgba(15,23,42,0.06)] dark:border-slate-700/70 dark:bg-slate-950 dark:shadow-[0_-4px_24px_-8px_rgba(0,0,0,0.35)]",
-    orderFlowStrip:
-      "border-t border-transparent bg-transparent dark:border-transparent md:border-b md:border-neutral-200/50 md:bg-transparent dark:md:border-slate-700/50",
-    emptySurface:
-      "border-indigo-200/80 bg-indigo-50/50 dark:border-indigo-800/45 dark:bg-indigo-950/25",
-    recoveryPrimary:
-      "!border-transparent !bg-indigo-600 !text-white shadow-sm !shadow-indigo-600/25 hover:!bg-indigo-700 active:!bg-indigo-800 focus-visible:!ring-indigo-500/50 dark:!bg-indigo-500 dark:hover:!bg-indigo-400 dark:focus-visible:!ring-indigo-400/45",
-    recoverySecondary:
-      "!border-indigo-600 !bg-indigo-100/50 !text-indigo-950 hover:!bg-indigo-100/90 dark:!border-indigo-500 dark:!bg-indigo-950/45 dark:!text-indigo-200 dark:hover:!bg-indigo-950/60",
-    activityMainSurface:
-      "bg-neutral-50 dark:bg-slate-950",
-    activityShellWrap:
-      "!bg-neutral-50 dark:!bg-slate-950 md:!bg-transparent md:!dark:bg-transparent",
-    activityViewSection:
-      "w-full max-md:space-y-0 space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-4 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-4 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
-    segmentActive:
-      "!bg-indigo-100 !text-indigo-950 shadow-none !ring-1 !ring-inset !ring-indigo-300/45 dark:!bg-indigo-950/55 dark:!text-indigo-100 dark:!ring-indigo-600/35",
-    segmentActiveMuted:
-      "!bg-indigo-100/95 !text-indigo-950 !ring-1 !ring-inset !ring-indigo-400/50 dark:!bg-indigo-950/70 dark:!text-indigo-100 dark:!ring-indigo-500/45",
-  },
-  [ACTIVITY_TABS.BUYING]: {
-    labelSelected: "text-emerald-600 dark:text-emerald-400",
-    barSelected: "bg-emerald-500 dark:bg-emerald-400",
-    glyphSelected: "text-emerald-600 dark:text-emerald-400",
-    shellMobile:
-      "border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.04)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.2)]",
-    shellDesktop:
-      "border-b border-neutral-200/60 bg-neutral-50 dark:border-slate-700/60 dark:bg-slate-950",
-    childStripHeaderBand:
-      "w-full shrink-0 border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.03)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.15)] md:border-t-0 md:border-b md:border-neutral-200/60 md:bg-neutral-50 md:shadow-none dark:md:border-slate-700/60 dark:md:bg-slate-950",
-    primaryTabsFooter:
-      "border-t border-neutral-200/70 bg-neutral-50 shadow-[0_-4px_24px_-8px_rgba(15,23,42,0.06)] dark:border-slate-700/70 dark:bg-slate-950 dark:shadow-[0_-4px_24px_-8px_rgba(0,0,0,0.35)]",
-    orderFlowStrip:
-      "border-t border-transparent bg-transparent dark:border-transparent md:border-b md:border-neutral-200/50 md:bg-transparent dark:md:border-slate-700/50",
-    /** ScreenEmpty dashed surface — aligns with Buying chrome */
-    emptySurface:
-      "border-emerald-200/75 bg-emerald-50/45 dark:border-emerald-800/40 dark:bg-emerald-950/20",
-    /** Overrides on `Button` primary — stacked after `lm-btn-primary` */
-    recoveryPrimary:
-      "!border-transparent !bg-emerald-600 !text-white shadow-sm !shadow-emerald-600/25 hover:!bg-emerald-700 active:!bg-emerald-800 focus-visible:!ring-emerald-500/50 dark:!bg-emerald-500 dark:hover:!bg-emerald-400 dark:focus-visible:!ring-emerald-400/45",
-    recoverySecondary:
-      "!border-emerald-600 !bg-emerald-100/50 !text-emerald-900 hover:!bg-emerald-100/90 dark:!border-emerald-500 dark:!bg-emerald-950/45 dark:!text-emerald-200 dark:hover:!bg-emerald-950/60",
-    /** Same canvas as strips/footer — avoids mint vs white banding on mobile. */
-    activityMainSurface:
-      "bg-neutral-50 dark:bg-slate-950",
-    activityShellWrap:
-      "!bg-neutral-50 dark:!bg-slate-950 md:!bg-transparent md:!dark:bg-transparent",
-    activityViewSection:
-      "w-full max-md:space-y-0 space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-4 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-4 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
-    /** Density toggle selected segment — replaces `lm-btn-segment-active` */
-    segmentActive:
-      "!bg-emerald-100 !text-emerald-900 shadow-none !ring-1 !ring-inset !ring-emerald-300/45 dark:!bg-emerald-950/55 dark:!text-emerald-100 dark:!ring-emerald-600/35",
-    segmentActiveMuted:
-      "!bg-emerald-100/95 !text-emerald-950 !ring-1 !ring-inset !ring-emerald-400/50 dark:!bg-emerald-950/70 dark:!text-emerald-100 dark:!ring-emerald-500/45",
-  },
-  [ACTIVITY_TABS.SELLING]: {
-    labelSelected: "text-amber-600 dark:text-amber-400",
-    barSelected: "bg-amber-500 dark:bg-amber-400",
-    glyphSelected: "text-amber-600 dark:text-amber-400",
-    shellMobile:
-      "border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.04)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.2)]",
-    shellDesktop:
-      "border-b border-neutral-200/60 bg-neutral-50 dark:border-slate-700/60 dark:bg-slate-950",
-    childStripHeaderBand:
-      "w-full shrink-0 border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.03)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.15)] md:border-t-0 md:border-b md:border-neutral-200/60 md:bg-neutral-50 md:shadow-none dark:md:border-slate-700/60 dark:md:bg-slate-950",
-    primaryTabsFooter:
-      "border-t border-neutral-200/70 bg-neutral-50 shadow-[0_-4px_24px_-8px_rgba(15,23,42,0.06)] dark:border-slate-700/70 dark:bg-slate-950 dark:shadow-[0_-4px_24px_-8px_rgba(0,0,0,0.35)]",
-    orderFlowStrip:
-      "border-t border-transparent bg-transparent dark:border-transparent md:border-b md:border-neutral-200/50 md:bg-transparent dark:md:border-slate-700/50",
-    emptySurface:
-      "border-amber-200/75 bg-amber-50/45 dark:border-amber-800/40 dark:bg-amber-950/20",
-    recoveryPrimary:
-      "!border-transparent !bg-amber-600 !text-white shadow-sm !shadow-amber-600/25 hover:!bg-amber-700 active:!bg-amber-800 focus-visible:!ring-amber-500/50 dark:!bg-amber-500 dark:hover:!bg-amber-400 dark:focus-visible:!ring-amber-400/45",
-    recoverySecondary:
-      "!border-amber-600 !bg-amber-100/50 !text-amber-950 hover:!bg-amber-100/90 dark:!border-amber-500 dark:!bg-amber-950/45 dark:!text-amber-200 dark:hover:!bg-amber-950/60",
-    activityMainSurface:
-      "bg-neutral-50 dark:bg-slate-950",
-    activityShellWrap:
-      "!bg-neutral-50 dark:!bg-slate-950 md:!bg-transparent md:!dark:bg-transparent",
-    activityViewSection:
-      "w-full max-md:space-y-0 space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-4 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-4 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
-    segmentActive:
-      "!bg-amber-100 !text-amber-950 shadow-none !ring-1 !ring-inset !ring-amber-300/45 dark:!bg-amber-950/55 dark:!text-amber-100 dark:!ring-amber-600/35",
-    segmentActiveMuted:
-      "!bg-amber-100/95 !text-amber-950 !ring-1 !ring-inset !ring-amber-400/50 dark:!bg-amber-950/70 dark:!text-amber-100 dark:!ring-amber-500/45",
-  },
-  [ACTIVITY_TABS.BOOKING]: {
-    labelSelected: "text-sky-600 dark:text-sky-400",
-    barSelected: "bg-sky-500 dark:bg-sky-400",
-    glyphSelected: "text-sky-600 dark:text-sky-400",
-    shellMobile:
-      "border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.04)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.2)]",
-    shellDesktop:
-      "border-b border-neutral-200/60 bg-neutral-50 dark:border-slate-700/60 dark:bg-slate-950",
-    childStripHeaderBand:
-      "w-full shrink-0 border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.03)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.15)] md:border-t-0 md:border-b md:border-neutral-200/60 md:bg-neutral-50 md:shadow-none dark:md:border-slate-700/60 dark:md:bg-slate-950",
-    primaryTabsFooter:
-      "border-t border-neutral-200/70 bg-neutral-50 shadow-[0_-4px_24px_-8px_rgba(15,23,42,0.06)] dark:border-slate-700/70 dark:bg-slate-950 dark:shadow-[0_-4px_24px_-8px_rgba(0,0,0,0.35)]",
-    orderFlowStrip:
-      "border-t border-transparent bg-transparent dark:border-transparent md:border-b md:border-neutral-200/50 md:bg-transparent dark:md:border-slate-700/50",
-    emptySurface:
-      "border-sky-200/75 bg-sky-50/45 dark:border-sky-800/40 dark:bg-sky-950/20",
-    recoveryPrimary:
-      "!border-transparent !bg-sky-600 !text-white shadow-sm !shadow-sky-600/25 hover:!bg-sky-700 active:!bg-sky-800 focus-visible:!ring-sky-500/50 dark:!bg-sky-500 dark:hover:!bg-sky-400 dark:focus-visible:!ring-sky-400/45",
-    recoverySecondary:
-      "!border-sky-600 !bg-sky-100/50 !text-sky-950 hover:!bg-sky-100/90 dark:!border-sky-500 dark:!bg-sky-950/45 dark:!text-sky-200 dark:hover:!bg-sky-950/60",
-    activityMainSurface:
-      "bg-neutral-50 dark:bg-slate-950",
-    activityShellWrap:
-      "!bg-neutral-50 dark:!bg-slate-950 md:!bg-transparent md:!dark:bg-transparent",
-    activityViewSection:
-      "w-full max-md:space-y-0 space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-4 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-4 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
-    segmentActive:
-      "!bg-sky-100 !text-sky-950 shadow-none !ring-1 !ring-inset !ring-sky-300/45 dark:!bg-sky-950/55 dark:!text-sky-100 dark:!ring-sky-600/35",
-    segmentActiveMuted:
-      "!bg-sky-100/95 !text-sky-950 !ring-1 !ring-inset !ring-sky-400/50 dark:!bg-sky-950/70 dark:!text-sky-100 dark:!ring-sky-500/45",
-  },
-  [ACTIVITY_TABS.COURIER]: {
-    labelSelected: "text-violet-600 dark:text-violet-400",
-    barSelected: "bg-violet-500 dark:bg-violet-400",
-    glyphSelected: "text-violet-600 dark:text-violet-400",
-    shellMobile:
-      "border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.04)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.2)]",
-    shellDesktop:
-      "border-b border-neutral-200/60 bg-neutral-50 dark:border-slate-700/60 dark:bg-slate-950",
-    childStripHeaderBand:
-      "w-full shrink-0 border-t border-neutral-200/60 bg-neutral-50 shadow-[0_1px_0_rgba(15,23,42,0.03)] dark:border-slate-700/60 dark:bg-slate-950 dark:shadow-[0_1px_0_rgba(0,0,0,0.15)] md:border-t-0 md:border-b md:border-neutral-200/60 md:bg-neutral-50 md:shadow-none dark:md:border-slate-700/60 dark:md:bg-slate-950",
-    primaryTabsFooter:
-      "border-t border-neutral-200/70 bg-neutral-50 shadow-[0_-4px_24px_-8px_rgba(15,23,42,0.06)] dark:border-slate-700/70 dark:bg-slate-950 dark:shadow-[0_-4px_24px_-8px_rgba(0,0,0,0.35)]",
-    orderFlowStrip:
-      "border-t border-transparent bg-transparent dark:border-transparent md:border-b md:border-neutral-200/50 md:bg-transparent dark:md:border-slate-700/50",
-    emptySurface:
-      "border-violet-200/75 bg-violet-50/45 dark:border-violet-800/40 dark:bg-violet-950/20",
-    recoveryPrimary:
-      "!border-transparent !bg-violet-600 !text-white shadow-sm !shadow-violet-600/25 hover:!bg-violet-700 active:!bg-violet-800 focus-visible:!ring-violet-500/50 dark:!bg-violet-500 dark:hover:!bg-violet-400 dark:focus-visible:!ring-violet-400/45",
-    recoverySecondary:
-      "!border-violet-600 !bg-violet-100/50 !text-violet-950 hover:!bg-violet-100/90 dark:!border-violet-500 dark:!bg-violet-950/45 dark:!text-violet-200 dark:hover:!bg-violet-950/60",
-    activityMainSurface:
-      "bg-neutral-50 dark:bg-slate-950",
-    activityShellWrap:
-      "!bg-neutral-50 dark:!bg-slate-950 md:!bg-transparent md:!dark:bg-transparent",
-    activityViewSection:
-      "w-full max-md:space-y-0 space-y-4 border-0 bg-transparent p-0 shadow-none ring-0 dark:bg-transparent md:space-y-4 md:rounded-2xl md:border md:border-neutral-200/60 md:bg-white/90 md:p-4 md:shadow-sm md:dark:border-slate-700/60 md:dark:bg-slate-900/80",
-    segmentActive:
-      "!bg-violet-100 !text-violet-950 shadow-none !ring-1 !ring-inset !ring-violet-300/45 dark:!bg-violet-950/55 dark:!text-violet-100 dark:!ring-violet-600/35",
-    segmentActiveMuted:
-      "!bg-violet-100/95 !text-violet-950 !ring-1 !ring-inset !ring-violet-400/50 dark:!bg-violet-950/70 dark:!text-violet-100 dark:!ring-violet-500/45",
-    /** Optional modes card — matches Courier nav / footer strip tint */
-    courierPanelSurface:
-      "rounded-xl border border-violet-200/75 bg-violet-50/50 p-4 dark:border-violet-800/45 dark:bg-violet-950/25",
-  },
+  [ACTIVITY_TABS.COMMERCE_ALL]: { ...SHARED_SHELL, ...SHARED_ACCENT },
+  [ACTIVITY_TABS.BUYING]: { ...SHARED_SHELL, ...SHARED_ACCENT },
+  [ACTIVITY_TABS.SELLING]: { ...SHARED_SHELL, ...SHARED_ACCENT },
+  [ACTIVITY_TABS.BOOKING]: { ...SHARED_SHELL, ...SHARED_ACCENT },
+  [ACTIVITY_TABS.COURIER]: { ...SHARED_SHELL, ...SHARED_ACCENT },
 };
 
 /** In-flow layout for order-status and courier sub-tab strips (below app header, not fixed). */
@@ -180,7 +60,6 @@ const COMMERCE_CHILD_STRIP_LAYOUT =
  */
 export const ACTIVITY_ORDERS_TAB_ID = "orders";
 
-/** Orders primary tab chrome — reuses the Buying palette (emerald) as the merged accent. */
 ACTIVITY_TAB_CHROME[ACTIVITY_ORDERS_TAB_ID] = ACTIVITY_TAB_CHROME[ACTIVITY_TABS.BUYING];
 
 export function getActivityTabChrome(tabId) {

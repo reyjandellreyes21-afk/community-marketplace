@@ -109,11 +109,19 @@ export function ActivityHubCommerceKindFilter({
   const bookingIconSelected = activityBooking;
   const courierIconSelected = activityCourier;
 
-  const pillBase =
-    "inline-flex min-h-[2.75rem] shrink-0 select-none items-center justify-center rounded-full border text-sm font-semibold transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900";
+  const focusRing =
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-900";
 
-  const iconPillBase =
-    "relative inline-flex size-11 shrink-0 touch-manipulation items-center justify-center rounded-full border transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900";
+  const pillBase =
+    `relative inline-flex min-h-[2.75rem] shrink-0 select-none touch-manipulation items-center justify-center gap-1.5 rounded-full border text-sm font-semibold transition-colors duration-150 ease-out ${focusRing}`;
+
+  /** Selected = one obvious fill; unselected = neutral so only the current workspace reads as active. */
+  const styleSelected =
+    "border-primary bg-primary text-white shadow-sm dark:border-brand-accent dark:bg-brand-accent";
+  const styleUnselected =
+    "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-200";
+
+  const pillClass = (selected) => (selected ? styleSelected : styleUnselected);
 
   const allHint =
     "All activity — product orders and service bookings in one workspace with shared status tabs.";
@@ -141,12 +149,9 @@ export function ActivityHubCommerceKindFilter({
       {showWorkspaceRail ? (
         <button
           type="button"
-          className={`${pillBase} min-w-[4.5rem] px-4 py-2 ${
-            allSelected
-              ? "border-indigo-600 bg-indigo-600 text-white shadow-sm dark:border-indigo-500 dark:bg-indigo-500"
-              : "border-neutral-200 bg-white text-neutral-800 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-          }`}
+          className={`${pillBase} min-w-[4.5rem] px-4 py-2 ${pillClass(allSelected)}`}
           aria-pressed={allSelected}
+          aria-current={allSelected ? "true" : undefined}
           title={activityCourier ? `${allHint} Opens the All hub from Courier.` : allHint}
           onClick={onAllHub}
         >
@@ -156,17 +161,15 @@ export function ActivityHubCommerceKindFilter({
 
       <button
         type="button"
-        className={`${iconPillBase} ${
-          ordersIconSelected
-            ? "border-emerald-600 bg-emerald-600 text-white shadow-sm dark:border-emerald-500 dark:bg-emerald-500"
-            : "border-emerald-200/90 bg-emerald-50 text-emerald-800 hover:bg-emerald-100/90 dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-200 dark:hover:bg-emerald-900/55"
-        }`}
+        className={`${pillBase} min-w-[5.5rem] px-3 py-2 ${pillClass(ordersIconSelected)}`}
         aria-label={showOrdersBadge ? `Orders, ${ordersCount}` : "Orders"}
         aria-pressed={ordersIconSelected}
+        aria-current={ordersIconSelected ? "true" : undefined}
         title={ordersHint}
         onClick={onOrdersHub}
       >
-        <BagIcon />
+        <BagIcon className="size-5 shrink-0" />
+        <span>Orders</span>
         {showOrdersBadge ? (
           <span className={ordersNavBadge.rose ? TAB_BADGE_ROSE : TAB_BADGE_SLATE} aria-hidden>
             {ordersCount}
@@ -176,17 +179,15 @@ export function ActivityHubCommerceKindFilter({
 
       <button
         type="button"
-        className={`${iconPillBase} ${
-          bookingIconSelected
-            ? "border-sky-600 bg-sky-600 text-white shadow-sm dark:border-sky-500 dark:bg-sky-500"
-            : "border-sky-200/90 bg-sky-50 text-sky-900 hover:bg-sky-100/90 dark:border-sky-800/60 dark:bg-sky-950/50 dark:text-sky-100 dark:hover:bg-sky-900/55"
-        }`}
+        className={`${pillBase} min-w-[5.75rem] px-3 py-2 ${pillClass(bookingIconSelected)}`}
         aria-label={showBookingBadge ? `Booking, ${bookingCount}` : "Booking"}
         aria-pressed={bookingIconSelected}
+        aria-current={bookingIconSelected ? "true" : undefined}
         title={bookingHint}
         onClick={onBookingHub}
       >
-        <CalendarIcon />
+        <CalendarIcon className="size-5 shrink-0" />
+        <span>Booking</span>
         {showBookingBadge ? (
           <span className={bb.rose ? TAB_BADGE_ROSE : TAB_BADGE_SLATE} aria-hidden>
             {bookingCount}
@@ -196,17 +197,15 @@ export function ActivityHubCommerceKindFilter({
 
       <button
         type="button"
-        className={`${iconPillBase} ${
-          courierIconSelected
-            ? "border-violet-600 bg-violet-600 text-white shadow-sm dark:border-violet-500 dark:bg-violet-500"
-            : "border-violet-200/90 bg-violet-50 text-violet-900 hover:bg-violet-100/90 dark:border-violet-800/60 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/55"
-        }`}
+        className={`${pillBase} min-w-[5.75rem] px-3 py-2 ${pillClass(courierIconSelected)}`}
         aria-label={showCourierBadge ? `Courier, ${courierCount}` : "Courier"}
         aria-pressed={courierIconSelected}
+        aria-current={courierIconSelected ? "true" : undefined}
         title={courierHint}
         onClick={onCourierHub}
       >
-        <TruckIcon />
+        <TruckIcon className="size-5 shrink-0" />
+        <span>Courier</span>
         {showCourierBadge ? (
           <span className={cb.rose ? TAB_BADGE_ROSE : TAB_BADGE_SLATE} aria-hidden>
             {courierCount}

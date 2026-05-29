@@ -712,6 +712,63 @@
     @apply text-pretty text-xs leading-relaxed text-text-secondary min-[360px]:text-sm dark:text-slate-300;
   }
 
+  /**
+   * Listing commerce UI — community tiles, view product, add-to-cart / place-order.
+   * Calmer type scale, softer badges, sharp-corner chips. Scope via `.lm-community-shop-card-body`.
+   * Activated via `communityShopCard` on `MarketplaceProductDetailStack` or the wrapper class on inspect.
+   */
+  .lm-community-card-title {
+    @apply text-[14px] font-semibold leading-[1.35] tracking-[-0.015em] text-slate-900 dark:text-slate-50 min-[360px]:text-[15px];
+  }
+
+  .lm-community-card-sold {
+    @apply shrink-0 rounded-none border border-slate-200/90 bg-slate-50/95 px-1.5 py-0.5 text-[10px] font-medium tabular-nums leading-none text-slate-500 dark:border-slate-600/75 dark:bg-slate-800/55 dark:text-slate-400 min-[360px]:text-[11px];
+  }
+
+  .lm-community-card-sold-label {
+    @apply font-medium text-slate-500 dark:text-slate-400;
+  }
+
+  .lm-community-card-sold-count {
+    @apply font-semibold text-slate-700 dark:text-slate-200;
+  }
+
+  .lm-community-card-price {
+    @apply text-[1.0625rem] font-bold tabular-nums tracking-[-0.02em] text-[#0a7575] min-[360px]:text-[1.125rem] dark:text-teal-300;
+  }
+
+  .lm-community-card-stock {
+    @apply text-[11px] font-normal leading-snug text-slate-500 dark:text-slate-400 min-[360px]:text-xs;
+  }
+
+  .lm-community-card-stock-value {
+    @apply font-semibold tabular-nums text-slate-800 dark:text-slate-100;
+  }
+
+  .lm-community-shop-card-body .lm-tag-category {
+    @apply rounded-none border-teal-200/75 bg-teal-50/95 px-2 py-0.5 text-[10px] font-medium tracking-normal text-teal-900 dark:border-teal-500/30 dark:bg-teal-950/40 dark:text-teal-100 min-[360px]:text-[11px];
+  }
+
+  .lm-community-shop-card-body .lm-tag-neutral {
+    @apply rounded-none border-slate-200/85 bg-slate-50/90 px-2 py-0.5 text-[10px] font-medium tracking-normal text-slate-600 dark:border-slate-600/70 dark:bg-slate-800/55 dark:text-slate-300 min-[360px]:text-[11px];
+  }
+
+  .lm-community-shop-card-body .lm-tag-sale {
+    @apply rounded-none border-rose-200/80 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-rose-600 dark:border-rose-500/35 dark:bg-rose-950/45 dark:text-rose-300;
+  }
+
+  .lm-community-shop-card-body .lm-price-original {
+    @apply text-[11px] font-normal text-slate-400 dark:text-slate-500;
+  }
+
+  .lm-community-shop-card-foot {
+    @apply mt-2 border-t border-slate-200/70 pt-2 dark:border-slate-700/55;
+  }
+
+  .lm-community-shop-card-location {
+    @apply line-clamp-1 text-[10px] font-normal leading-snug text-slate-500 dark:text-slate-400 min-[360px]:text-[11px];
+  }
+
   /* Mobile: stronger meta contrast (WCAG AA); md+ keeps lighter meta. */
   .meta-label {
     @apply text-[11px] font-semibold uppercase tracking-wide leading-snug text-neutral-700 dark:text-slate-200 min-[380px]:text-xs md:text-xs md:font-semibold md:uppercase md:tracking-wide md:text-neutral-500 md:dark:text-slate-400;

@@ -1,4 +1,4 @@
-import { ACTIVITY_ORDERS_TAB_ID, getActivityTabChrome } from "../lib/activityTabTheme.js";
+import { ACTIVITY_ORDERS_TAB_ID } from "../lib/activityTabTheme.js";
 import { ACTIVITY_TABS } from "../views.js";
 import { ActivityPrimaryTabGlyph } from "./ActivityPrimaryTabGlyph.jsx";
 
@@ -105,12 +105,10 @@ export function ActivityPrimaryTabs({
       ? "flex w-full min-w-0 justify-center py-0"
       : "app-shell-content-inset flex w-full min-w-0 justify-center py-1.5 md:py-2.5";
 
-  const sidebarSelectedBorder = (id) => {
-    if (isAllWorkspaceTab(id)) return "border-indigo-500 dark:border-indigo-400";
-    if (isOrdersTab(id)) return "border-emerald-500 dark:border-emerald-400";
-    if (id === ACTIVITY_TABS.BOOKING) return "border-sky-500 dark:border-sky-400";
-    return "border-violet-500 dark:border-violet-400";
-  };
+  const sidebarSelectedBorder = "border-primary dark:border-brand-accent";
+  const selectedLabelClass = "text-primary dark:text-brand-accent";
+  const selectedGlyphClass = "text-primary dark:text-brand-accent";
+  const selectedBarClass = "bg-primary dark:bg-brand-accent";
 
   return (
     <div className={outerWrapClass}>
@@ -155,7 +153,6 @@ export function ActivityPrimaryTabs({
             ? `${hintBase} Finish your profile before turning on courier availability.`
             : hintBase;
         const selected = tabSelected(id);
-        const chrome = getActivityTabChrome(id);
         const b = badge && typeof badge === "object" ? badge : { count: 0, rose: false };
         const rawCount = typeof b.count === "number" ? b.count : 0;
         const count = Math.min(99, Math.max(0, rawCount));
@@ -169,7 +166,7 @@ export function ActivityPrimaryTabs({
         const embedUnselected = embedInActivityCard && !selected ? "md:hover:bg-neutral-50/90 dark:md:hover:bg-slate-900/70" : "";
         const pillSelected =
           !embedInActivityCard && selected
-            ? `${chrome.segmentActiveMuted} max-md:!bg-transparent max-md:!shadow-none max-md:!ring-0`
+            ? "!bg-primary-soft/95 !text-primary !ring-1 !ring-inset !ring-primary/35 max-md:!bg-brand-primary/12 max-md:!ring-0 dark:!bg-slate-800/80 dark:!text-brand-accent dark:!ring-brand-accent/30 dark:max-md:!bg-brand-accent/15"
             : "";
         const pillUnselected =
           !embedInActivityCard && !selected
@@ -184,8 +181,8 @@ export function ActivityPrimaryTabs({
           desktopSidebar &&
           `relative flex w-full min-w-0 flex-row items-center gap-2 rounded-r-lg border-l-[3px] py-2.5 pl-2.5 pr-2 text-left transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 ${
             selected
-              ? `${sidebarSelectedBorder(id)} bg-neutral-100/90 dark:bg-slate-800/65`
-              : "border-transparent hover:bg-neutral-50/95 dark:hover:bg-slate-800/45"
+              ? `${sidebarSelectedBorder} bg-primary-soft/75 dark:bg-slate-800/65`
+              : "border-transparent hover:bg-primary-soft/40 dark:hover:bg-slate-800/45"
           }`;
 
         if (desktopSidebar) {
@@ -209,7 +206,7 @@ export function ActivityPrimaryTabs({
                 <ActivityPrimaryTabGlyph
                   tabId={id}
                   selected={selected}
-                  selectedAccentClass={chrome.glyphSelected}
+                  selectedAccentClass={selectedGlyphClass}
                 />
                 {showBadge ? (
                   <span className={rose ? TAB_BADGE_ROSE : TAB_BADGE_SLATE} aria-hidden>
@@ -219,7 +216,7 @@ export function ActivityPrimaryTabs({
               </span>
               <span
                 className={`min-w-0 flex-1 text-xs font-semibold leading-tight ${
-                  selected ? chrome.labelSelected : "text-neutral-600 dark:text-slate-400"
+                  selected ? selectedLabelClass : "text-neutral-600 dark:text-slate-400"
                 }`}
               >
                 {label}
@@ -254,7 +251,7 @@ export function ActivityPrimaryTabs({
                   <ActivityPrimaryTabGlyph
                     tabId={id}
                     selected={selected}
-                    selectedAccentClass={chrome.glyphSelected}
+                    selectedAccentClass={selectedGlyphClass}
                   />
                   {showBadge ? (
                     <span className={rose ? TAB_BADGE_ROSE : TAB_BADGE_SLATE} aria-hidden>
@@ -265,7 +262,7 @@ export function ActivityPrimaryTabs({
                 <span
                   className={`line-clamp-2 min-w-0 max-w-full shrink-0 px-0.5 text-center text-[10px] font-semibold leading-tight tracking-tight md:text-xs ${
                     selected
-                      ? chrome.labelSelected
+                      ? selectedLabelClass
                       : embedInActivityCard
                         ? "text-neutral-500 dark:text-slate-500 md:text-neutral-600 dark:md:text-slate-400"
                         : "text-neutral-500 dark:text-slate-500"
@@ -276,7 +273,7 @@ export function ActivityPrimaryTabs({
               </span>
               <span
                 className={`mt-0.5 h-[3px] w-9 shrink-0 rounded-full transition-opacity duration-150 ease-out motion-reduce:transition-none ${
-                  selected ? `${chrome.barSelected} opacity-100` : "opacity-0"
+                  selected ? `${selectedBarClass} opacity-100` : "opacity-0"
                 }`}
                 aria-hidden
               />

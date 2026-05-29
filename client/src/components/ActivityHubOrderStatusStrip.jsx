@@ -324,11 +324,11 @@ export function ActivityHubOrderStatusStrip({
 
               aria-label={showCount ? `${label}, ${String(countDisplay).replace("+", " plus ")}` : label}
 
-              className={`relative min-h-[2.75rem] pb-2 pt-1 text-sm font-semibold leading-tight transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900 ${tabLayoutClass} ${
+              className={`relative min-h-[2.75rem] pb-2 pt-1 text-sm font-semibold leading-tight transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-900 ${tabLayoutClass} ${
 
                 selected
 
-                  ? "text-indigo-600 after:absolute after:inset-x-0 after:-bottom-px after:h-[2.5px] after:rounded-full after:bg-indigo-600 dark:text-indigo-400 dark:after:bg-indigo-400"
+                  ? "text-primary after:absolute after:inset-x-0 after:-bottom-px after:h-[2.5px] after:rounded-full after:bg-primary dark:text-brand-accent dark:after:bg-brand-accent"
 
                   : "text-neutral-500 hover:text-neutral-700 dark:text-slate-400 dark:hover:text-slate-200"
 

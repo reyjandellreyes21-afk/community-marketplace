@@ -1399,38 +1399,50 @@ export function ProductInspectModal({
                 </div>
               ) : null}
             </div>
-            <div className={inspectPrimaryDetailsClass}>
-              <div className="min-w-0">
-                <h2
-                  id="product-inspect-title"
-                  className="break-words text-pretty text-[1.12rem] font-bold leading-tight tracking-tight text-neutral-900 min-[360px]:text-xl dark:text-slate-100 md:text-2xl"
-                >
-                  {inspectTitlePrimary}
-                </h2>
-                {inspectTitleTypePill ? (
-                  <p className="mt-1.5">
-                    <span className="lm-tag-category">{inspectTitleTypePill}</span>
-                  </p>
-                ) : null}
+            <div className={`${inspectPrimaryDetailsClass} lm-community-shop-card-body`}>
+              <div className="min-w-0 space-y-1.5">
+                <div className="flex min-w-0 items-start justify-between gap-2">
+                  <h2
+                    id="product-inspect-title"
+                    className="lm-community-card-title line-clamp-2 min-w-0 flex-1 text-pretty"
+                  >
+                    {inspectTitlePrimary}
+                  </h2>
+                  {soldQty != null ? (
+                    <span
+                      className="lm-community-card-sold"
+                      title={`${serviceListingEffective ? "Booked" : "Sold"}: ${soldQty}`}
+                    >
+                      <span className="lm-community-card-sold-label">
+                        {serviceListingEffective ? "Booked" : "Sold"}
+                      </span>
+                      <span className="mx-0.5 text-slate-300 dark:text-slate-600" aria-hidden>
+                        ·
+                      </span>
+                      <span className="lm-community-card-sold-count">{soldQty}</span>
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <p className="lm-community-card-price min-w-0">{inspectHeadlinePriceText}</p>
+                  {originalPesos != null && originalPesos > currentPesos ? (
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="lm-price-original">₱{originalPesos}</span>
+                      {saleMeta?.percent ? <span className="lm-tag-sale">-{saleMeta.percent}%</span> : null}
+                    </div>
+                  ) : null}
+                </div>
+                {inspectTitleTypePill ? <span className="lm-tag-category">{inspectTitleTypePill}</span> : null}
                 {subtitle ? (
-                  <p className="mt-0.5 line-clamp-2 break-words text-xs text-neutral-500 dark:text-slate-400">{subtitle}</p>
+                  <p className="line-clamp-2 break-words text-[11px] font-normal leading-snug text-slate-500 dark:text-slate-400">
+                    {subtitle}
+                  </p>
                 ) : null}
                 <SellerBuyerRatingSummary
                   avg={listingAvgRating}
                   count={listingReviewCount}
-                  className="mt-1 text-sm text-amber-900/95 dark:text-amber-100/95"
+                  className="text-[11px] leading-snug text-amber-800/90 dark:text-amber-200/90"
                 />
-              </div>
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <p className="text-[1.1rem] font-extrabold tabular-nums tracking-tight text-brand-primary min-[360px]:text-xl dark:text-brand-accent md:text-2xl">
-                  {inspectHeadlinePriceText}
-                </p>
-                {originalPesos != null && originalPesos > currentPesos ? (
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <span className="lm-price-original">₱{originalPesos}</span>
-                    {saleMeta?.percent ? <span className="lm-tag-sale">-{saleMeta.percent}%</span> : null}
-                  </div>
-                ) : null}
               </div>
               <div className="flex min-w-0 flex-col gap-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -1464,24 +1476,22 @@ export function ProductInspectModal({
                 ) : null}
               </div>
               {showQuantityLine ? (
-                <p className="text-xs text-neutral-600 dark:text-slate-400">
-                  <span className="font-semibold text-neutral-700 dark:text-slate-300">{quantityLabel}:</span>{" "}
-                  <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{quantityNumber}</span>
+                <p className="lm-community-card-stock">
+                  <span>{quantityLabel}</span>
+                  <span className="mx-1 text-slate-300 dark:text-slate-600" aria-hidden>
+                    ·
+                  </span>
+                  <span className="lm-community-card-stock-value">{quantityNumber}</span>
                 </p>
               ) : null}
               {!serviceListingEffective && stock != null && !hideStockAvailableAsDuplicate ? (
-                <p className="text-xs text-neutral-600 dark:text-slate-400">
-                  <span className="font-semibold text-neutral-700 dark:text-slate-300">Stock available:</span>{" "}
-                  <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{stock}</span>
+                <p className="lm-community-card-stock">
+                  <span>Stock</span>
+                  <span className="mx-1 text-slate-300 dark:text-slate-600" aria-hidden>
+                    ·
+                  </span>
+                  <span className="lm-community-card-stock-value">{stock}</span>
                   {isOutOfStock ? <span className="lm-tag-danger ml-2">Out of stock</span> : null}
-                </p>
-              ) : null}
-              {soldQty != null ? (
-                <p className="text-xs text-neutral-600 dark:text-slate-400">
-                  <span className="font-semibold text-neutral-700 dark:text-slate-300">
-                    {serviceListingEffective ? "Booked:" : "Sold:"}
-                  </span>{" "}
-                  <span className="tabular-nums font-semibold text-neutral-900 dark:text-slate-100">{soldQty}</span>
                 </p>
               ) : null}
               {orderTimelineOrder && String(orderTimelineContextTab || "").trim() ? (

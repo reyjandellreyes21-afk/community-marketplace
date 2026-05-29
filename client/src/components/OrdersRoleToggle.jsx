@@ -61,7 +61,11 @@ export function OrdersRoleToggle({
       activityTab: ACTIVITY_TABS.BUYING,
       badge: buyingBadge,
       selected: isBuyer,
-      selectedBorder: "border-indigo-500 dark:border-indigo-400",
+      sidebarSelected:
+        "border-primary bg-neutral-100/90 dark:border-brand-accent dark:bg-slate-800/65",
+      sidebarLabelSelected: "text-primary dark:text-brand-accent",
+      mobileSelected:
+        "border-primary bg-primary text-white shadow-md shadow-primary/20 dark:border-brand-accent dark:bg-brand-accent dark:shadow-brand-accent/25",
     },
     {
       id: "seller",
@@ -69,7 +73,11 @@ export function OrdersRoleToggle({
       activityTab: ACTIVITY_TABS.SELLING,
       badge: sellingBadge,
       selected: !isBuyer,
-      selectedBorder: "border-emerald-500 dark:border-emerald-400",
+      sidebarSelected:
+        "border-primary bg-primary-soft/80 ring-1 ring-primary/15 dark:border-brand-accent dark:bg-slate-800/80 dark:ring-brand-accent/20",
+      sidebarLabelSelected: "text-primary dark:text-brand-accent",
+      mobileSelected:
+        "border-2 border-primary bg-primary-soft text-primary shadow-sm dark:border-brand-accent dark:bg-slate-800 dark:text-brand-accent",
     },
   ];
 
@@ -117,13 +125,13 @@ export function OrdersRoleToggle({
               }}
               className={`relative flex w-full min-w-0 flex-row items-center gap-2 rounded-r-lg border-l-[3px] py-2.5 pl-2.5 pr-2 text-left transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-950 ${
                 seg.selected
-                  ? `${seg.selectedBorder} bg-neutral-100/90 dark:bg-slate-800/65`
+                  ? seg.sidebarSelected
                   : "border-transparent hover:bg-neutral-50/95 dark:hover:bg-slate-800/45"
               }`}
             >
               <span
                 className={`min-w-0 flex-1 text-xs font-semibold leading-tight ${
-                  seg.selected ? "text-indigo-700 dark:text-indigo-300" : "text-neutral-600 dark:text-slate-400"
+                  seg.selected ? seg.sidebarLabelSelected : "text-neutral-600 dark:text-slate-400"
                 }`}
               >
                 {seg.label}
@@ -152,9 +160,9 @@ export function OrdersRoleToggle({
                 onChange?.(seg.activityTab, seg.id);
               }
             }}
-            className={`relative flex min-h-[3rem] flex-1 min-w-0 items-center justify-center gap-1.5 rounded-2xl px-2 py-3 text-sm font-semibold leading-tight transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900 min-[380px]:gap-2 min-[380px]:px-3 md:px-4 ${
+            className={`relative flex min-h-[3rem] flex-1 min-w-0 items-center justify-center gap-1.5 rounded-2xl px-2 py-3 text-sm font-semibold leading-tight transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-900 min-[380px]:gap-2 min-[380px]:px-3 md:px-4 ${
               seg.selected
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20 dark:bg-indigo-500 dark:shadow-indigo-500/25"
+                ? seg.mobileSelected
                 : "border border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
             }`}
           >

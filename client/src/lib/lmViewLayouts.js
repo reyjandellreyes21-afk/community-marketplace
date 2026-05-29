@@ -41,12 +41,17 @@ export function sellerListingsGridClass(view) {
   }
   return [
     "lm-grid-layout lm-grid-layout--seller-comfortable",
-    "grid-cols-1",
-    "gap-4 md:gap-5",
-    "lg:[grid-template-columns:repeat(auto-fill,minmax(min(100%,10.75rem),1fr))]",
-    "xl:[grid-template-columns:repeat(auto-fill,minmax(min(100%,15.5rem),1fr))]",
-    "2xl:[grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))]",
+    "grid-cols-2 gap-3",
+    "md:grid-cols-3 md:gap-4",
   ].join(" ");
+}
+
+/** Profile seller hub listings — mobile keeps 2-up browse; web grid view uses 3 inline cards. */
+export function profileListingsGridClass(view, mobileTwoColumnBrowse = false) {
+  if (view === "list") return sellerListingsGridClass("list");
+  if (view === "compact") return sellerListingsGridClass("compact");
+  if (mobileTwoColumnBrowse) return "lm-grid-layout lm-grid-layout--browse-mobile-2col";
+  return sellerListingsGridClass("grid");
 }
 
 /**

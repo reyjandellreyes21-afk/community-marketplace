@@ -37,7 +37,11 @@ export const listingCodAvailabilityLabel = (fulfillmentModes) => {
   const modes = Array.isArray(fulfillmentModes) ? fulfillmentModes : [];
   const supportsPickup = modes.includes("pickup");
   const supportsDelivery = modes.includes("delivery");
-  return supportsPickup && supportsDelivery ? "COD pickup or delivery" : supportsDelivery ? "COD delivery" : "COD pickup";
+  return supportsPickup && supportsDelivery
+    ? "COD Pickup or Delivery"
+    : supportsDelivery
+      ? "COD Delivery"
+      : "COD Pickup";
 };
 
 /**

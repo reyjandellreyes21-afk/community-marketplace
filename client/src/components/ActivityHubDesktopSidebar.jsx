@@ -56,7 +56,7 @@ export function ActivityHubDesktopSidebar({
 
   return (
     <aside
-      className="hidden min-h-0 w-full shrink-0 border-neutral-200/70 dark:border-slate-700/70 md:flex md:flex-col md:border-r md:pr-4"
+      className="hidden min-h-0 w-full shrink-0 self-stretch border-neutral-200/70 dark:border-slate-700/70 md:flex md:flex-col md:border-r md:pr-4"
       aria-label={showCourierAvailability ? "Courier availability" : "Orders role"}
     >
       {showCommerceRole && activityCommerceAll ? (

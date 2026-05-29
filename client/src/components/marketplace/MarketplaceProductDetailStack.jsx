@@ -19,6 +19,9 @@ import { SellerBuyerRatingSummary } from "./SellerBuyerRatingSummary.jsx";
  * @param {number | null} [props.listingAvgRating] — from `order_reviews.product_rating` aggregate for this listing.
  * @param {number} [props.listingReviewCount]
  * @param {string} [props.headlinePriceOverride] — pre-formatted main price (service range line); empty uses `priceCents`.
+ * @param {number | null} [props.listingSoldCount] — completed sales (products) or bookings (services); card title row only.
+ * @param {boolean} [props.isServiceListing] — when true with `listingSoldCount`, label reads "Booked" instead of "Sold".
+ * @param {boolean} [props.communityShopCard] — community tiles, view product, add-to-cart / place-order: refined type + badge colors.
  */
 export function MarketplaceProductDetailStack({
   title,
@@ -54,6 +57,9 @@ export function MarketplaceProductDetailStack({
   titleHighlight = "",
   descriptionPresentation = "card",
   unframeDescription = false,
+  listingSoldCount = null,
+  isServiceListing = false,
+  communityShopCard = false,
 }) {
   const saleMeta = parseSaleMetaFromDescription(description);
   const headlinePriceTrim = String(headlinePriceOverride || "").trim();
@@ -62,24 +68,16 @@ export function MarketplaceProductDetailStack({
   const descriptionPreview = markdownToPlainPreview(description);
   const availabilityLabel = listingCodAvailabilityLabel(fulfillmentModes);
   const isCard = variant === "card";
+  const communityCard = communityShopCard && isCard;
 
   const qtyBlock = quantityRow ? <div className={isCard ? "" : "pt-0.5"}>{quantityRow}</div> : null;
 
   const availabilityBlock = isCard ? (
-    <div className="min-w-0">
-      {compactListMeta ? (
-        <p className="text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300">
-          <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">Fulfillment</span>
-          <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
-          <span className="text-text-primary dark:text-slate-100">{availabilityLabel}</span>
-        </p>
-      ) : (
-        <>
-          <p className="product-meta-label">Fulfillment</p>
-          <p className="product-meta-body">{availabilityLabel}</p>
-        </>
-      )}
-    </div>
+    availabilityLabel ? (
+      <div className="lm-product-card-badge-row">
+        <span className="lm-tag-neutral line-clamp-1">{availabilityLabel}</span>
+      </div>
+    ) : null
   ) : (
     <p className="text-xs text-text-secondary dark:text-slate-400">Availability: {availabilityLabel}</p>
   );
@@ -129,9 +127,7 @@ export function MarketplaceProductDetailStack({
     browseStackMode === "gridMobile" && isCard && (quantityRow || (!hideAvailability && availabilityLabel)) ? (
       <div className="lm-product-card-meta space-y-1.5">
         {!hideAvailability && availabilityLabel ? (
-          <p className="line-clamp-1 text-[11px] font-medium leading-tight text-text-secondary dark:text-slate-400">
-            {availabilityLabel}
-          </p>
+          <span className="lm-tag-neutral line-clamp-1">{availabilityLabel}</span>
         ) : null}
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           {categoryLabel ? (
@@ -159,7 +155,9 @@ export function MarketplaceProductDetailStack({
   const metaStrip =
     browseStackMode === "gridMobile" && isCard ? metaStripCompact : metaStripDefault;
 
-  const titleClass = isCard
+  const titleClass = communityCard
+    ? "lm-community-card-title line-clamp-2 min-w-0 break-words"
+    : isCard
     ? compactListMeta
       ? "line-clamp-1 min-w-0 break-words text-[14px] font-semibold leading-snug tracking-tight text-text-primary dark:text-slate-100 min-[360px]:text-[15px]"
       : browseStackMode === "gridMobile"
@@ -167,7 +165,9 @@ export function MarketplaceProductDetailStack({
         : "product-card-title"
     : "truncate text-sm font-semibold leading-snug text-text-primary dark:text-slate-100 min-[360px]:text-[15px]";
 
-  const priceMainClass = isCard
+  const priceMainClass = communityCard
+    ? "lm-community-card-price min-w-0"
+    : isCard
     ? compactListMeta
       ? "text-[1.02rem] font-bold tabular-nums tracking-tight text-primary dark:text-brand-accent"
       : browseStackMode === "gridMobile"
@@ -175,8 +175,9 @@ export function MarketplaceProductDetailStack({
       : "product-price"
     : "text-sm font-semibold tabular-nums text-text-primary dark:text-slate-200 min-[360px]:text-base";
 
-  const rootGap =
-    compactListMeta
+  const rootGap = communityCard
+    ? "space-y-1.5"
+    : compactListMeta
       ? "space-y-1"
       : isCard && browseStackMode === "gridMobile"
       ? "space-y-2"
@@ -188,25 +189,89 @@ export function MarketplaceProductDetailStack({
 
   const titleHighlightTrim = String(titleHighlight || "").trim();
   const serviceTypePillClass = "lm-tag-category";
+  const titleTransactionCount =
+    isCard && listingSoldCount != null && Number.isFinite(Number(listingSoldCount))
+      ? Math.max(0, Math.floor(Number(listingSoldCount)))
+      : null;
+  const titleTransactionLabel = isServiceListing ? "Booked" : "Sold";
+  const titleTransactionClass = communityCard
+    ? "lm-community-card-sold"
+    : compactListMeta
+      ? "text-[10px] leading-snug min-[360px]:text-[11px]"
+      : browseStackMode === "gridMobile"
+        ? "text-[10px] leading-tight min-[360px]:text-[11px]"
+        : "text-[11px] leading-snug min-[360px]:text-xs";
+
+  const titleHeadBlock = title ? (
+    <div className="flex min-w-0 items-start justify-between gap-2">
+      <p className={`${titleClass} min-w-0 flex-1 text-pretty`}>{title}</p>
+      {titleTransactionCount != null ? (
+        communityCard ? (
+          <span className={titleTransactionClass} title={`${titleTransactionLabel}: ${titleTransactionCount}`}>
+            <span className="lm-community-card-sold-label">{titleTransactionLabel}</span>
+            <span className="mx-0.5 text-slate-300 dark:text-slate-600" aria-hidden>
+              ·
+            </span>
+            <span className="lm-community-card-sold-count">{titleTransactionCount}</span>
+          </span>
+        ) : (
+          <span
+            className={`shrink-0 pt-px tabular-nums text-text-secondary dark:text-slate-400 ${titleTransactionClass}`}
+            title={`${titleTransactionLabel}: ${titleTransactionCount}`}
+          >
+            <span className="font-semibold text-text-secondary/90 dark:text-slate-300">{titleTransactionLabel}</span>
+            <span className="mx-0.5 text-text-secondary/50 dark:text-slate-500" aria-hidden>
+              ·
+            </span>
+            <span className="font-semibold text-text-primary/90 dark:text-slate-100">{titleTransactionCount}</span>
+          </span>
+        )
+      ) : null}
+      {titleEnd ? <div className="shrink-0 pt-0.5">{titleEnd}</div> : null}
+    </div>
+  ) : null;
+
+  const priceBlock = (
+    <div
+      className={
+        communityCard
+          ? "flex min-w-0 flex-wrap items-center gap-1.5"
+          : compactListMeta
+          ? "flex min-w-0 items-center gap-1.5"
+          : isCard && browseStackMode === "gridMobile"
+            ? "lm-product-card-price-row"
+            : "flex min-w-0 flex-wrap items-center gap-2"
+      }
+    >
+      <p className={`min-w-0 ${priceMainClass}`}>
+        {headlinePriceTrim ? headlinePriceTrim : formatPesoWhole(priceCents)}
+      </p>
+      {originalPesos != null && originalPesos > currentPesos ? (
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="lm-price-original min-[380px]:text-xs">
+            ₱{originalPesos}
+          </span>
+          {saleMeta.percent ? (
+            <span className={browseStackMode === "gridMobile" ? "lm-product-card-pill" : "lm-tag-sale"}>
+              -{saleMeta.percent}%
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 
   return (
     <div className={`min-w-0 flex-1 ${rootGap}`}>
       {title ? (
-        titleEnd ? (
-          <div className="flex min-w-0 items-start justify-between gap-2">
-            <div className="min-w-0 flex-1 space-y-1">
-              <p className={`${titleClass} text-pretty`}>{title}</p>
-              {titleHighlightTrim ? <span className={serviceTypePillClass}>{titleHighlightTrim}</span> : null}
-            </div>
-            <div className="shrink-0 pt-0.5">{titleEnd}</div>
-          </div>
-        ) : (
-          <div className="min-w-0 space-y-1">
-            <p className={`${titleClass} text-pretty`}>{title}</p>
-            {titleHighlightTrim ? <span className={serviceTypePillClass}>{titleHighlightTrim}</span> : null}
-          </div>
-        )
-      ) : null}
+        <div className="min-w-0 space-y-1">
+          {titleHeadBlock}
+          {priceBlock}
+        </div>
+      ) : (
+        priceBlock
+      )}
+      {titleHighlightTrim ? <span className={serviceTypePillClass}>{titleHighlightTrim}</span> : null}
       <SellerBuyerRatingSummary
         avg={listingAvgRating}
         count={listingReviewCount}
@@ -218,31 +283,6 @@ export function MarketplaceProductDetailStack({
             : "text-sm text-amber-900/95 dark:text-amber-100/95"
         }
       />
-      <div
-        className={
-          compactListMeta
-            ? "flex min-w-0 items-center gap-1.5"
-            : isCard && browseStackMode === "gridMobile"
-            ? "lm-product-card-price-row"
-            : "flex min-w-0 flex-wrap items-center gap-2"
-        }
-      >
-        <p className={`min-w-0 ${priceMainClass}`}>
-          {headlinePriceTrim ? headlinePriceTrim : formatPesoWhole(priceCents)}
-        </p>
-        {originalPesos != null && originalPesos > currentPesos ? (
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="lm-price-original min-[380px]:text-xs">
-              ₱{originalPesos}
-            </span>
-            {saleMeta.percent ? (
-              <span className={browseStackMode === "gridMobile" ? "lm-product-card-pill" : "lm-tag-sale"}>
-                -{saleMeta.percent}%
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
       {!omitProductMetaExtras && isCard && browseStackMode === "gridMobile" ? (
         <div className="lm-product-card-badge-row">
           <ListingProductMetaExtras
