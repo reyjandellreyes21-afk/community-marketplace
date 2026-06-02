@@ -55,6 +55,10 @@ export function CommunityShopListingCard({
   hideCardDescription = false,
   /** Viewer origin for card distance (profile address or GPS) — `{ lat, lng }` or null. */
   viewerCoords = null,
+  /** Cart row: quantity stepper footer; grid mode may also use `cartLine.checkboxOnImage`. */
+  cartLine = null,
+  /** Cart: fade-out while line is being removed. */
+  removing = false,
 }) {
   const [saleOpen, setSaleOpen] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
@@ -214,8 +218,72 @@ export function CommunityShopListingCard({
   const showOwnerManageOnCard = isOwner && !hideOwnerManageOnCard;
   const ownerGridOverflow =
     Boolean(mobileOwnerActionsInMenu) && showOwnerManageOnCard && gridMode && !isListMode && showActions;
+  const cartMode = Boolean(cartLine);
   const showCardActionStrip =
-    showActions && !hideCardActionsOnMobile && (showOwnerManageOnCard || !isOwner);
+    !cartMode && showActions && !hideCardActionsOnMobile && (showOwnerManageOnCard || !isOwner);
+
+  const cartQuantityFooter = cartLine ? (
+    <div
+      className={`mt-auto flex items-center gap-2 border-t border-neutral-200/70 pt-2 dark:border-slate-700/60 ${
+        useFeedLayout ? "mx-2 mb-2 min-[360px]:mx-2.5 min-[360px]:mb-2.5" : gridMode ? "" : ""
+      }`}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <span className="text-[11px] font-medium text-text-secondary dark:text-slate-400">Quantity</span>
+      <div className="inline-flex items-stretch overflow-hidden rounded-md border border-neutral-200/90 bg-white dark:border-slate-600/80 dark:bg-slate-900">
+        <button
+          type="button"
+          className="inline-flex h-8 w-8 touch-manipulation items-center justify-center border-r border-neutral-200/90 bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600/80 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+          aria-label="Decrease quantity"
+          disabled={cartLine.qtySaving || (Number(cartLine.quantity) || 0) <= 0}
+          onClick={(e) => {
+            e.stopPropagation();
+            cartLine.onDecrement?.();
+          }}
+        >
+          −
+        </button>
+        <span
+          className="inline-flex h-8 min-w-[2.5rem] items-center justify-center px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:text-slate-100"
+          aria-label={cartLine.qtyAriaLabel || "Cart quantity"}
+        >
+          {cartLine.qtyDisplay ?? String(Number(cartLine.quantity) || 1)}
+        </span>
+        <button
+          type="button"
+          className="inline-flex h-8 w-8 touch-manipulation items-center justify-center border-l border-neutral-200/90 bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600/80 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
+          aria-label="Increase quantity"
+          disabled={
+            cartLine.qtySaving || (Number(cartLine.quantity) || 0) >= Math.max(1, Number(cartLine.maxQuantity) || 1)
+          }
+          onClick={(e) => {
+            e.stopPropagation();
+            cartLine.onIncrement?.();
+          }}
+        >
+          +
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  const cartCheckboxInput =
+    cartLine && cartLine.checkboxOnImage ? (
+      <label
+        className="pointer-events-auto absolute left-2 top-2 z-20 inline-flex cursor-pointer items-center justify-center"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <input
+          type="checkbox"
+          className="h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary/35 dark:border-slate-500"
+          checked={Boolean(cartLine.selected)}
+          onChange={() => cartLine.onToggleSelect?.()}
+          aria-label={cartLine.selectAriaLabel || "Select cart item"}
+        />
+      </label>
+    ) : null;
 
   useEffect(() => {
     if (!ownerMenuOpen) return undefined;
@@ -325,7 +393,9 @@ export function CommunityShopListingCard({
         gridMode ? "lm-grid-card lm-product-card-grid" : "lm-list-card lm-product-card-list"
       } ${useFeedLayout ? "lm-product-card lm-product-card--feed" : ""} ${pad} ${gridMode ? "flex h-full min-h-0 flex-col" : ""} ${
         unseenAttention ? "bg-primary-soft dark:bg-primary/15" : ""
-      } ${wholeCardTapOpensInspect ? "cursor-pointer" : ""}`}
+      } ${removing ? "pointer-events-none opacity-0" : "opacity-100"} ${
+        wholeCardTapOpensInspect ? "cursor-pointer" : ""
+      }`}
       onClick={wholeCardTapOpensInspect ? onCardHeroInspectClick : undefined}
       onKeyDown={wholeCardTapOpensInspect ? onCardShellKeyDown : undefined}
     >
@@ -339,6 +409,7 @@ export function CommunityShopListingCard({
         }`}
       >
         <div className={`${!gridMode && !mobileUx ? "shrink-0 " : ""}relative ${imgBox}`}>
+          {cartCheckboxInput}
           {favoriteOverlayOnImage ? (
             <button
               type="button"
@@ -523,6 +594,7 @@ export function CommunityShopListingCard({
           </div>
         </div>
       ) : null}
+      {cartQuantityFooter ? cartQuantityFooter : null}
       {showCardActionStrip ? (
         <div
           className={`flex flex-col gap-2 ${gridMode ? (useFeedLayout ? "mt-auto px-2 pb-2 pt-1.5 min-[360px]:px-2.5 min-[360px]:pb-2.5" : "mt-auto pt-3") : listDesktopCompactActions ? "mt-3 border-t border-neutral-200/70 pt-3 dark:border-slate-600/55" : "mt-3"}`}

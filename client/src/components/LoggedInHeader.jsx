@@ -406,32 +406,27 @@ const accountMenuItemBase =
 const accountMenuIconWrap =
   "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-neutral-200/80 bg-neutral-50 text-neutral-600 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-400";
 
-/** Mobile: squircle hit targets (no circular chrome). md+: bordered pills like desktop chrome. */
+/** Mobile: squircle hit targets (no circular chrome). md+: segments inside the utility cluster pill. */
 const headerUtilityButtonBase =
-  "relative inline-flex h-11 w-11 items-center justify-center rounded-xl border-0 bg-transparent text-neutral-700 transition motion-reduce:transition-none hover:bg-neutral-100/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30 focus-visible:ring-offset-2 focus-visible:ring-offset-white active:bg-neutral-100/70 dark:text-slate-200 dark:hover:bg-slate-800/85 dark:focus-visible:ring-brand-accent/35 dark:focus-visible:ring-offset-slate-950 md:h-10 md:w-10 md:rounded-full md:border md:border-neutral-200/75 md:bg-white md:hover:border-neutral-300 md:hover:bg-neutral-50/90 md:active:bg-white dark:md:border-slate-600/90 dark:md:bg-slate-900 dark:md:hover:border-slate-500 dark:md:hover:bg-slate-800";
+  "relative inline-flex h-11 w-11 items-center justify-center rounded-xl border-0 bg-transparent text-neutral-700 transition motion-reduce:transition-none hover:bg-neutral-100/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30 focus-visible:ring-offset-2 focus-visible:ring-offset-white active:bg-neutral-100/70 dark:text-slate-200 dark:hover:bg-slate-800/85 dark:focus-visible:ring-brand-accent/35 dark:focus-visible:ring-offset-slate-950 md:h-9 md:w-9 md:rounded-full md:border-0 md:bg-transparent md:text-text-secondary md:hover:bg-white/95 md:hover:text-text-primary md:active:bg-white/80 dark:md:text-slate-400 dark:md:hover:bg-slate-700/90 dark:md:hover:text-slate-100";
 
-/** Mobile: flat teal tint only (no ring). md+: bordered pill matches desktop chrome. */
+/** Mobile: flat teal tint. md+: filled segment in the utility cluster. */
 const headerUtilityButtonActive =
-  "bg-brand-soft/95 text-brand-primary dark:bg-slate-800 dark:text-brand-accent md:border-primary/35 md:bg-primary-soft/80 md:text-primary md:ring-1 md:ring-primary/20 md:dark:border-brand-accent/40 md:dark:ring-brand-accent/18";
+  "bg-brand-soft/95 text-brand-primary dark:bg-slate-800 dark:text-brand-accent md:bg-primary md:text-white md:shadow-sm md:dark:bg-brand-accent md:dark:text-slate-900";
 
-/** Desktop pills for Marketplace vs Cart — shop flow inside the shop segment. */
-function navPillShop(active, role) {
-  const layout =
-    "inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold transition duration-200 ease-in-out md:min-h-[2.5rem] md:px-3.5 md:py-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-offset-slate-900";
+/** Desktop primary nav segment — shared layout for Home / Cart / Orders pills. */
+const desktopNavPillLayout =
+  "inline-flex shrink-0 items-center gap-2 rounded-full px-3.5 py-2 text-[0.8125rem] font-semibold tracking-tight transition duration-200 ease-out md:min-h-[2.625rem] md:px-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent/45 dark:focus-visible:ring-offset-slate-900";
+
+function navPillShop(active) {
   if (!active) {
-    return `${layout} ring-1 ring-transparent text-text-primary/80 hover:bg-primary-soft/55 hover:text-text-primary focus-visible:ring-primary/35 dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100 dark:focus-visible:ring-primary/30`;
+    return `${desktopNavPillLayout} text-text-secondary hover:bg-white/90 hover:text-text-primary hover:shadow-sm dark:text-slate-400 dark:hover:bg-slate-700/90 dark:hover:text-slate-100`;
   }
-  return `${layout} bg-primary-soft text-primary shadow-sm ring-1 ring-primary/35 focus-visible:ring-primary/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-primary/45`;
+  return `${desktopNavPillLayout} bg-primary text-white shadow-[0_2px_8px_rgba(31,166,166,0.35)] hover:bg-primary-hover dark:bg-brand-accent dark:text-slate-900 dark:shadow-[0_2px_10px_rgba(45,212,191,0.28)] dark:hover:bg-brand-accent`;
 }
 
-/** Desktop pills for Buying vs Selling — distinct active colors inside the trade group. */
-function navPillTrade(active, role) {
-  const layout =
-    "inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold transition duration-200 ease-in-out md:min-h-[2.5rem] md:px-3.5 md:py-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f4f4f5] dark:focus-visible:ring-primary/35 dark:focus-visible:ring-offset-slate-900";
-  if (!active) {
-    return `${layout} ring-1 ring-transparent text-text-primary/80 hover:bg-primary-soft/55 hover:text-text-primary dark:text-slate-400 dark:hover:bg-slate-700/85 dark:hover:text-slate-100`;
-  }
-  return `${layout} bg-primary-soft text-primary shadow-sm ring-1 ring-primary/35 dark:bg-slate-900 dark:text-slate-100 dark:ring-primary/45`;
+function navPillTrade(active) {
+  return navPillShop(active);
 }
 
 /** Mobile secondary nav (icon + label below): icon stacked over a small text label; active = soft pill + teal + bold label. */
@@ -462,7 +457,16 @@ const navBadgeRose = "bg-rose-600 text-white dark:bg-rose-500";
 const navBadgeMuted = "bg-slate-500 text-white dark:bg-slate-600";
 
 const desktopNavPillBadgeBase =
-  "ml-0.5 inline-flex min-w-[1.15rem] shrink-0 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none shadow-sm";
+  "ml-0.5 inline-flex min-h-[1.125rem] min-w-[1.125rem] shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-bold leading-none";
+
+/** Count badges on primary nav pills — rose = attention; teal-muted = totals only. */
+const desktopNavPillBadgeRose = `${desktopNavPillBadgeBase} bg-white/95 text-rose-600 shadow-sm dark:bg-slate-900 dark:text-rose-400`;
+const desktopNavPillBadgeMuted = `${desktopNavPillBadgeBase} bg-white/25 text-white/95 dark:bg-slate-900/40 dark:text-slate-900`;
+const desktopNavPillBadgeMutedIdle = `${desktopNavPillBadgeBase} bg-primary/15 text-primary dark:bg-brand-accent/20 dark:text-brand-accent`;
+
+/** Desktop: Messages / Notifications / Favorites grouped with primary nav. */
+const desktopUtilityCluster =
+  "flex items-center gap-0.5 rounded-full border border-neutral-200/80 bg-neutral-50/90 p-1 shadow-sm dark:border-slate-600/70 dark:bg-slate-800/55";
 
 const mobileSheetMenuItem = `${accountMenuItemBase} min-h-[44px] items-center rounded-xl py-3`;
 
@@ -1141,7 +1145,7 @@ export function LoggedInHeader({
     /* Mobile: column (header → main). md+: `contents` flattens into App shell so sticky header + scroll work without an extra nested flex wrapper. */
     <div className="flex w-full min-h-0 flex-1 flex-col overflow-hidden md:contents">
     <header
-      className={`mobile-app-top-header sticky top-0 shrink-0 md:sticky md:top-0 md:border-b md:border-neutral-200/40 md:bg-white/95 md:pt-[env(safe-area-inset-top,0px)] md:backdrop-blur-md md:shadow-[0_1px_0_rgba(15,23,42,0.04)] dark:md:border-slate-700/60 dark:md:bg-slate-900/95 max-md:border-b-0 max-md:bg-transparent max-md:backdrop-blur-none ${
+      className={`mobile-app-top-header sticky top-0 shrink-0 md:sticky md:top-0 md:border-b md:border-neutral-200/50 md:bg-white/98 md:pt-[env(safe-area-inset-top,0px)] md:backdrop-blur-lg md:shadow-[0_1px_0_rgba(15,23,42,0.06),0_4px_16px_-4px_rgba(15,23,42,0.08)] dark:md:border-slate-700/55 dark:md:bg-slate-900/98 dark:md:shadow-[0_1px_0_rgba(0,0,0,0.35),0_4px_20px_-6px_rgba(0,0,0,0.45)] max-md:border-b-0 max-md:bg-transparent max-md:backdrop-blur-none ${
         liftChromeAboveOverlay ? "z-[100]" : "z-50"
       }`}
     >
@@ -1311,109 +1315,121 @@ export function LoggedInHeader({
       </div>
 
       <div
-        className={`app-container hidden h-[4.25rem] items-center justify-between gap-2 md:gap-3 ${hideDesktopTopBar ? "md:hidden" : "md:flex"}`}
+        className={`app-container hidden md:grid md:h-[4.5rem] md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-4 ${hideDesktopTopBar ? "md:hidden" : ""}`}
       >
-        <button
-          type="button"
-          className="rounded-xl px-1 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950"
-          onClick={goMarketplaceRoot}
-          aria-label="Go to marketplace"
-        >
-          <LinkMartLogo className="h-9 w-auto max-w-full shrink-0 object-contain md:h-10 md:max-w-[min(10.5rem,100%)]" />
-        </button>
-
-        <div className="hidden min-w-0 flex-1 items-center justify-center overflow-x-auto md:flex">
-          <nav className="flex min-w-0 max-w-full items-center justify-center" aria-label="Main">
-            <div
-              className="flex max-w-full shrink-0 items-center gap-1.5 rounded-full bg-neutral-100/60 p-1 dark:bg-slate-800/55 md:gap-2 md:p-1.5"
-              role="group"
-              aria-label="Home, cart, and activity"
-            >
-              <button
-                type="button"
-                className={navPillShop(browsePillActive, "browse")}
-                aria-label="Home"
-                title="Browse listings"
-                onClick={() => {
-                  setAccountMenuOpen(false);
-                  setDesktopSettingsOpen(false);
-                  goMarketplaceRoot();
-                  closeAllMenus();
-                }}
-              >
-                <MenuStoreIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${browsePillActive ? "text-primary dark:text-primary-soft" : ""}`}
-                />
-                <span className="max-w-[5.5rem] truncate md:max-w-none">Home</span>
-              </button>
-              <button
-                type="button"
-                className={navPillShop(activeView === VIEWS.CART, "cart")}
-                aria-label={
-                  cartItemCount > 0
-                    ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} new item${cartItemCount === 1 ? "" : "s"}`
-                    : totalCartCount > 0
-                      ? `Cart, ${totalCartCount > 99 ? "99 plus" : totalCartCount} item${totalCartCount === 1 ? "" : "s"}`
-                      : "Shopping cart"
-                }
-                title="Review items before checkout"
-                onClick={() => {
-                  goCart();
-                  closeAllMenus();
-                }}
-              >
-                <MenuCartIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.CART ? "text-primary dark:text-primary-soft" : ""}`}
-                />
-                <span className="max-w-[7rem] truncate md:max-w-none">Cart</span>
-                {cartItemCount > 0 ? (
-                  <span className={`${desktopNavPillBadgeBase} ${navBadgeRose}`}>
-                    {cartItemCount > 99 ? "99+" : cartItemCount}
-                  </span>
-                ) : totalCartCount > 0 ? (
-                  <span className={`${desktopNavPillBadgeBase} ${navBadgeMuted}`}>
-                    {totalCartCount > 99 ? "99+" : totalCartCount}
-                  </span>
-                ) : null}
-              </button>
-              <button
-                type="button"
-                className={navPillTrade(activeView === VIEWS.ACTIVITY, "buy")}
-                aria-label={
-                  activityAttentionCount > 0
-                    ? `Orders, ${activityAttentionCount > 99 ? "99 plus" : activityAttentionCount} updates`
-                    : activityTotalPipelineCount > 0
-                      ? `Orders, ${activityTotalPipelineCount > 99 ? "99 plus" : activityTotalPipelineCount} open items`
-                      : "Orders — purchases, sales, and courier"
-                }
-                title="Orders, bookings, and courier coordination"
-                onClick={() => {
-                  openActivity();
-                  closeAllMenus();
-                }}
-              >
-                <MenuFileIcon
-                  className={`h-[18px] w-[18px] shrink-0 ${activeView === VIEWS.ACTIVITY ? "text-primary dark:text-primary-soft" : ""}`}
-                />
-                <span className="max-w-[6rem] truncate md:max-w-none">Orders</span>
-                {activityAttentionCount > 0 ? (
-                  <span
-                    className={`${desktopNavPillBadgeBase} ${activityAttentionRose ? navBadgeRose : navBadgeMuted}`}
-                  >
-                    {activityAttentionCount > 99 ? "99+" : activityAttentionCount}
-                  </span>
-                ) : activityTotalPipelineCount > 0 ? (
-                  <span className={`${desktopNavPillBadgeBase} ${navBadgeMuted}`}>
-                    {activityTotalPipelineCount > 99 ? "99+" : activityTotalPipelineCount}
-                  </span>
-                ) : null}
-              </button>
-            </div>
-          </nav>
+        <div className="flex min-w-0 items-center justify-start">
+          <button
+            type="button"
+            className="rounded-xl px-1 py-1 transition hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-brand-accent dark:focus-visible:ring-offset-slate-950"
+            onClick={goMarketplaceRoot}
+            aria-label="Go to marketplace"
+          >
+            <LinkMartLogo className="h-9 w-auto max-w-full shrink-0 object-contain md:h-10 md:max-w-[min(11rem,100%)]" />
+          </button>
         </div>
 
-        <div className="hidden shrink-0 items-center gap-2 md:flex">
-          <div className="flex items-center gap-1.5">
+        <nav className="flex min-w-0 items-center justify-center overflow-x-auto" aria-label="Main">
+          <div
+            className="flex max-w-full shrink-0 items-center gap-1 rounded-full border border-neutral-200/90 bg-white p-1 shadow-[0_1px_2px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.9)] dark:border-slate-600/80 dark:bg-slate-800/70 dark:shadow-[0_1px_2px_rgba(0,0,0,0.35)] md:gap-1.5 md:p-1.5"
+            role="group"
+            aria-label="Home, cart, and activity"
+          >
+            <button
+              type="button"
+              className={navPillShop(browsePillActive)}
+              aria-label="Home"
+              title="Browse listings"
+              onClick={() => {
+                setAccountMenuOpen(false);
+                setDesktopSettingsOpen(false);
+                goMarketplaceRoot();
+                closeAllMenus();
+              }}
+            >
+              <MenuStoreIcon className="h-[18px] w-[18px] shrink-0" />
+              <span className="max-w-[5.5rem] truncate md:max-w-none">Home</span>
+            </button>
+            <button
+              type="button"
+              className={navPillShop(activeView === VIEWS.CART)}
+              aria-label={
+                cartItemCount > 0
+                  ? `Cart, ${cartItemCount > 99 ? "99 plus" : cartItemCount} new item${cartItemCount === 1 ? "" : "s"}`
+                  : totalCartCount > 0
+                    ? `Cart, ${totalCartCount > 99 ? "99 plus" : totalCartCount} item${totalCartCount === 1 ? "" : "s"}`
+                    : "Shopping cart"
+              }
+              title="Review items before checkout"
+              onClick={() => {
+                goCart();
+                closeAllMenus();
+              }}
+            >
+              <MenuCartIcon className="h-[18px] w-[18px] shrink-0" />
+              <span className="max-w-[7rem] truncate md:max-w-none">Cart</span>
+              {cartItemCount > 0 ? (
+                <span
+                  className={
+                    activeView === VIEWS.CART
+                      ? desktopNavPillBadgeRose
+                      : `${desktopNavPillBadgeBase} ${navBadgeRose}`
+                  }
+                >
+                  {cartItemCount > 99 ? "99+" : cartItemCount}
+                </span>
+              ) : totalCartCount > 0 ? (
+                <span
+                  className={activeView === VIEWS.CART ? desktopNavPillBadgeMuted : desktopNavPillBadgeMutedIdle}
+                >
+                  {totalCartCount > 99 ? "99+" : totalCartCount}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              className={navPillTrade(activeView === VIEWS.ACTIVITY)}
+              aria-label={
+                activityAttentionCount > 0
+                  ? `Orders, ${activityAttentionCount > 99 ? "99 plus" : activityAttentionCount} updates`
+                  : activityTotalPipelineCount > 0
+                    ? `Orders, ${activityTotalPipelineCount > 99 ? "99 plus" : activityTotalPipelineCount} open items`
+                    : "Orders — purchases, sales, and courier"
+              }
+              title="Orders, bookings, and courier coordination"
+              onClick={() => {
+                openActivity();
+                closeAllMenus();
+              }}
+            >
+              <MenuFileIcon className="h-[18px] w-[18px] shrink-0" />
+              <span className="max-w-[6rem] truncate md:max-w-none">Orders</span>
+              {activityAttentionCount > 0 ? (
+                <span
+                  className={
+                    activeView === VIEWS.ACTIVITY
+                      ? activityAttentionRose
+                        ? desktopNavPillBadgeRose
+                        : desktopNavPillBadgeMuted
+                      : activityAttentionRose
+                        ? `${desktopNavPillBadgeBase} ${navBadgeRose}`
+                        : `${desktopNavPillBadgeBase} ${navBadgeMuted}`
+                  }
+                >
+                  {activityAttentionCount > 99 ? "99+" : activityAttentionCount}
+                </span>
+              ) : activityTotalPipelineCount > 0 ? (
+                <span
+                  className={activeView === VIEWS.ACTIVITY ? desktopNavPillBadgeMuted : desktopNavPillBadgeMutedIdle}
+                >
+                  {activityTotalPipelineCount > 99 ? "99+" : activityTotalPipelineCount}
+                </span>
+              ) : null}
+            </button>
+          </div>
+        </nav>
+
+        <div className="flex min-w-0 items-center justify-end gap-2.5">
+          <div className={desktopUtilityCluster} role="group" aria-label="Messages, notifications, and favorites">
             <button
               type="button"
               className={`${headerUtilityButtonBase} relative ${activeView === VIEWS.MESSAGES ? headerUtilityButtonActive : ""}`}
@@ -1428,10 +1444,7 @@ export function LoggedInHeader({
               }}
             >
               <span className={headerUtilityIconBadgeWrap} aria-hidden>
-                <MessagesIcon
-                  filled={activeView === VIEWS.MESSAGES}
-                  className={activeView === VIEWS.MESSAGES ? "text-emerald-600 dark:text-emerald-300" : ""}
-                />
+                <MessagesIcon filled={activeView === VIEWS.MESSAGES} />
                 {messagesUnreadCount > 0 ? (
                   <span className={`${headerUtilityBadgePin} ${navBadgeRose}`}>
                     {messagesUnreadCount > 99 ? "99+" : messagesUnreadCount}
@@ -1449,10 +1462,7 @@ export function LoggedInHeader({
               }}
             >
               <span className={headerUtilityIconBadgeWrap} aria-hidden>
-                <NotificationsIcon
-                  filled={activeView === VIEWS.NOTIFICATIONS}
-                  className={activeView === VIEWS.NOTIFICATIONS ? "text-emerald-600 dark:text-emerald-300" : ""}
-                />
+                <NotificationsIcon filled={activeView === VIEWS.NOTIFICATIONS} />
                 {notificationUnreadCount > 0 ? (
                   <span className={`${headerUtilityBadgePin} ${navBadgeRose}`}>
                     {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
@@ -1483,10 +1493,7 @@ export function LoggedInHeader({
               }}
             >
               <span className={headerUtilityIconBadgeWrap} aria-hidden>
-                <HeartIcon
-                  filled={activeView === VIEWS.FAVORITES}
-                  className={activeView === VIEWS.FAVORITES ? "text-emerald-600 dark:text-emerald-300" : ""}
-                />
+                <HeartIcon filled={activeView === VIEWS.FAVORITES} />
                 {favoritesBadgeCount > 0 ? (
                   <span className={`${headerUtilityBadgePin} ${navBadgeRose}`}>
                     {favoritesBadgeCount > 99 ? "99+" : favoritesBadgeCount}
@@ -1499,14 +1506,18 @@ export function LoggedInHeader({
               </span>
             </button>
           </div>
+          <div
+            className="hidden h-8 w-px shrink-0 bg-neutral-200/90 dark:bg-slate-600/80 md:block"
+            aria-hidden
+          />
           <div className="relative" ref={accountMenuRef}>
             <button
               type="button"
-              className={`inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border bg-white text-neutral-700 shadow-sm transition hover:-translate-y-px hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 ${
+              className={`inline-flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border-2 bg-white text-neutral-700 shadow-[0_1px_3px_rgba(15,23,42,0.08)] transition hover:-translate-y-px hover:shadow-md dark:bg-slate-900 dark:text-slate-100 ${
                 activeView === VIEWS.PROFILE
-                  ? "border-primary/55 ring-2 ring-primary/25 hover:border-primary/65 dark:border-brand-accent/55 dark:ring-brand-accent/20"
-                  : "border-neutral-200/90 hover:border-neutral-300 dark:border-slate-600 dark:hover:border-slate-500"
-              } ${accountMenuOpen ? headerUtilityButtonActive : ""}`}
+                  ? "border-primary shadow-[0_0_0_3px_rgba(31,166,166,0.18)] dark:border-brand-accent dark:shadow-[0_0_0_3px_rgba(45,212,191,0.15)]"
+                  : "border-neutral-200/90 hover:border-primary/40 dark:border-slate-600 dark:hover:border-brand-accent/50"
+              } ${accountMenuOpen ? "ring-2 ring-primary/25 dark:ring-brand-accent/20" : ""}`}
               aria-expanded={accountMenuOpen}
               aria-haspopup="menu"
               aria-label={

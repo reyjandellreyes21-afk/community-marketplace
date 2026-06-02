@@ -104,7 +104,6 @@ import {
 import { CHAT_QUICK_EMOJIS } from "./lib/chatComposerEmojis.js";
 import { UI_KIT } from "./lib/appUiKit.js";
 import { scrollAppToTop } from "./lib/scrollAppToTop.js";
-import { useNearMeLocation } from "./hooks/useNearMeLocation.js";
 import { useGpsForDistance } from "./hooks/useGpsForDistance.js";
 import { hasValidCoords } from "./lib/geo/constants.js";
 import { resolveProductListingLocation } from "./lib/geo/resolveSellerListingLocation.js";
@@ -279,11 +278,14 @@ import {
 } from "./lib/serviceUploadConfig.js";
 import {
   communityBrowseGridClass,
-  favoritesGridClass,
   commerceFlowLineItemsClass,
   lmBrowseViewShellClass,
   profileListingsGridClass,
 } from "./lib/lmViewLayouts.js";
+import {
+  communityBrowseListingCardProps,
+  listingFromCartItem,
+} from "./lib/communityBrowseListingCardProps.js";
 
 /** Corner pill anchored to the tab glyph (icon-above-label layout). Rose when tab has unseen attention; muted when badge is queue depth only. */
 const ORDER_STATUS_TAB_BADGE_ON_GLYPH_BASE =
@@ -2214,7 +2216,6 @@ function App() {
     () => (shopCommunityId ? communities.find((x) => x.id === shopCommunityId) ?? null : null),
     [communities, shopCommunityId],
   );
-  const nearMe = useNearMeLocation();
   const gpsForDistance = useGpsForDistance();
   const [profileCoordsForDistance, setProfileCoordsForDistance] = useState(null);
   /** Latest map pin while profile edit is open — committed on Save changes. */
@@ -3020,11 +3021,6 @@ function App() {
           qs.set("verticalId", browseVerticalId);
           if (browseSubId && browseSubId !== "all") qs.set("subId", browseSubId);
         }
-        if (nearMe.enabled && nearMe.coords) {
-          qs.set("lat", String(nearMe.coords.lat));
-          qs.set("lng", String(nearMe.coords.lng));
-          qs.set("radiusKm", String(nearMe.radiusKm));
-        }
         const rows = await fetchAllListingsPages(token, qs);
         if (cancelledRef?.()) return;
         setListings(rows);
@@ -3041,30 +3037,12 @@ function App() {
         setListingsRefreshing(false);
       }
     },
-    [token, activeView, browseVerticalId, browseSubId, shopCommunityId, communityIncludeOwnListings, nearMe.enabled, nearMe.coords, nearMe.radiusKm],
+    [token, activeView, browseVerticalId, browseSubId, shopCommunityId, communityIncludeOwnListings],
   );
 
   const refreshCommunityShopListings = useCallback(() => {
     void loadCommunityShopListings({ preserveExistingRows: true });
   }, [loadCommunityShopListings]);
-
-  const handleToggleNearMeBrowse = useCallback(async () => {
-    if (nearMe.enabled) {
-      nearMe.disableNearMe();
-      if (activeView === VIEWS.COMMUNITY_SHOP) {
-        void loadCommunityShopListings({ preserveExistingRows: false, force: true });
-      }
-      return;
-    }
-    const fallback =
-      hasValidCoords(user?.defaultLat, user?.defaultLng)
-        ? { lat: Number(user.defaultLat), lng: Number(user.defaultLng) }
-        : null;
-    await nearMe.enableNearMe(fallback);
-    if (activeView === VIEWS.COMMUNITY_SHOP) {
-      void loadCommunityShopListings({ preserveExistingRows: false, force: true });
-    }
-  }, [nearMe, activeView, loadCommunityShopListings, user?.defaultLat, user?.defaultLng]);
 
   /** Remove this seller's listings from a community shop when they leave (runs in background — do not await before navigation). */
   const detachSellerListingsFromCommunity = useCallback(
@@ -5723,11 +5701,8 @@ function App() {
     if (activeView === VIEWS.COMMUNITY_SHOP && communityIncludeOwnListings) {
       items.push("Including: My products");
     }
-    if (activeView === VIEWS.COMMUNITY_SHOP && nearMe.enabled) {
-      items.push("Near me");
-    }
     return items;
-  }, [browseQuickFilter, browseVerticalId, activeView, communityListingsQuery, listingSort, communityIncludeOwnListings, nearMe.enabled]);
+  }, [browseQuickFilter, browseVerticalId, activeView, communityListingsQuery, listingSort, communityIncludeOwnListings]);
   const activeBrowseResultsCount =
     activeView === VIEWS.FAVORITES ? visibleFavoritesListings.length : visibleBrowseListings.length;
 
@@ -7123,13 +7098,9 @@ function App() {
   useEffect(() => {
     if (!token || activeView !== VIEWS.COMMUNITY_SHOP) return undefined;
     const inCommunity = !!shopCommunityId;
-    const nearKey =
-      nearMe.enabled && nearMe.coords
-        ? `near|${nearMe.coords.lat}|${nearMe.coords.lng}|${nearMe.radiusKm}`
-        : "all-areas";
     const queryKey = `${inCommunity ? shopCommunityId : "global"}|${browseVerticalId ?? ""}|${browseSubId ?? ""}|${
       communityIncludeOwnListings ? "with-own" : "without-own"
-    }|${nearKey}`;
+    }`;
     if (communityShopListingsQueryKeyRef.current !== queryKey) {
       communityShopListingsQueryKeyRef.current = queryKey;
       setListings([]);
@@ -7139,7 +7110,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, activeView, browseVerticalId, browseSubId, shopCommunityId, communityIncludeOwnListings, nearMe.enabled, nearMe.coords, nearMe.radiusKm, loadCommunityShopListings]);
+  }, [token, activeView, browseVerticalId, browseSubId, shopCommunityId, communityIncludeOwnListings, loadCommunityShopListings]);
 
   useEffect(() => {
     if (!token || activeView !== VIEWS.FAVORITES) return undefined;
@@ -12214,7 +12185,7 @@ function App() {
         ) : null}
         {isBrowseLikeView && activeView !== VIEWS.FAVORITES && (
           <section
-            className={`${UI_KIT.viewSection} ${
+            className={`${UI_KIT.viewSection} mx-auto w-full max-w-2xl pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] [-webkit-overflow-scrolling:touch] md:mx-0 md:w-full md:max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:flex md:flex-col ${
               activeView === VIEWS.COMMUNITY_SHOP ? "space-y-3 md:space-y-6" : "space-y-4 md:space-y-6"
             }`}
           >
@@ -12940,7 +12911,7 @@ function App() {
                   favoritesLoading && strictFavoritesList.length === 0 ? (
                     isMobileViewport ? (
                       <BrowseGridSkeleton
-                        gridClassName={favoritesGridClass(effectiveFavoriteBrowseView)}
+                        gridClassName={communityBrowseGridClass(effectiveFavoriteBrowseView, isMobileViewport)}
                         variant={effectiveFavoriteBrowseView === "compact" ? "compact" : effectiveFavoriteBrowseView === "list" ? "list" : "grid"}
                         count={effectiveFavoriteBrowseView === "compact" ? 8 : 6}
                         ariaLabel="Loading favorites"
@@ -13004,11 +12975,7 @@ function App() {
                       activeView === VIEWS.COMMUNITY_SHOP
                         ? `flex flex-col pb-3 ${
                             isMobileViewport && !listingsRefreshing ? "gap-2" : "gap-3"
-                          } lg:gap-3 lg:rounded-xl lg:border lg:border-neutral-200/75 lg:bg-neutral-50/80 lg:p-3 lg:shadow-sm lg:shadow-slate-900/[0.03] dark:lg:border-slate-600/90 dark:lg:bg-slate-900/55 dark:lg:shadow-none ${
-                            isMobileViewport
-                              ? "z-20 bg-white shadow-sm dark:bg-slate-950"
-                              : ""
-                          }`
+                          } lg:gap-3`
                         : "flex justify-end"
                     }
                   >
@@ -13026,7 +12993,7 @@ function App() {
                           : "flex shrink-0 flex-wrap items-center gap-2"
                       }
                     >
-                    {activeView === VIEWS.COMMUNITY_SHOP || activeView === VIEWS.FAVORITES ? (
+                    {activeView === VIEWS.FAVORITES ? (
                       <p className="text-xs font-medium text-neutral-500 dark:text-slate-400 lg:order-2 lg:ml-auto lg:text-sm" aria-live="polite">
                         {activeBrowseResultsCount} {activeBrowseResultsCount === 1 ? "result" : "results"}
                       </p>
@@ -13078,26 +13045,6 @@ function App() {
                         <button
                           type="button"
                           className={`inline-flex min-h-[44px] shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-semibold shadow-sm transition active:scale-[0.98] md:min-h-10 md:text-sm ${
-                            nearMe.enabled
-                              ? "border-brand-primary bg-brand-primary text-white dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
-                              : "border-neutral-200/90 bg-white text-neutral-800 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                          }`}
-                          aria-pressed={nearMe.enabled}
-                          disabled={nearMe.loading}
-                          onClick={() => void handleToggleNearMeBrowse()}
-                          aria-label={nearMe.enabled ? "Turn off near me filter" : "Show listings near me"}
-                        >
-                          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 21s7-4.5 7-11a7 7 0 1 0-14 0c0 6.5 7 11 7 11Z" />
-                            <circle cx="12" cy="10" r="2.5" />
-                          </svg>
-                          <span className="truncate">{nearMe.loading ? "Locating…" : nearMe.enabled ? "Near me" : "Near me"}</span>
-                        </button>
-                      ) : null}
-                      {activeView === VIEWS.COMMUNITY_SHOP ? (
-                        <button
-                          type="button"
-                          className={`inline-flex min-h-[44px] shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-semibold shadow-sm transition active:scale-[0.98] md:min-h-10 md:text-sm ${
                             gpsForDistance.active
                               ? "border-brand-primary bg-brand-primary text-white dark:border-brand-accent dark:bg-brand-accent dark:text-slate-900"
                               : "border-neutral-200/90 bg-white text-neutral-800 hover:bg-neutral-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
@@ -13128,25 +13075,6 @@ function App() {
                         <p className="w-full text-xs text-rose-700 dark:text-rose-300 max-lg:order-4" role="alert">
                           {gpsForDistance.error}
                         </p>
-                      ) : null}
-                      {activeView === VIEWS.COMMUNITY_SHOP && nearMe.error ? (
-                        <p className="w-full text-xs text-rose-700 dark:text-rose-300 max-lg:order-4" role="alert">
-                          {nearMe.error}
-                        </p>
-                      ) : null}
-                      {activeView === VIEWS.COMMUNITY_SHOP ? (
-                        <select
-                          value={listingSort}
-                          onChange={(e) => setListingSort(e.target.value)}
-                          className="input-base hidden min-h-[44px] w-full min-w-[9.5rem] max-w-full rounded-xl py-2 pl-3 pr-8 text-xs sm:max-w-[14rem] md:block md:h-10 md:min-h-0 md:text-sm lg:w-52 lg:max-w-none lg:shrink-0"
-                          aria-label="Sort listings"
-                        >
-                          {LISTING_SORT_OPTIONS.map((opt) => (
-                            <option key={opt.id} value={opt.id}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
                       ) : null}
                       {activeView === VIEWS.FAVORITES && !isMobileViewport ? (
                         <select
@@ -13226,7 +13154,7 @@ function App() {
                         <BrowseGridSkeleton
                           gridClassName={
                             activeView === VIEWS.FAVORITES
-                              ? favoritesGridClass(effectiveFavoriteBrowseView)
+                              ? communityBrowseGridClass(effectiveFavoriteBrowseView, isMobileViewport)
                               : communityBrowseGridClass(effectiveCommunityBrowseView, isMobileViewport)
                           }
                           variant={
@@ -13283,22 +13211,13 @@ function App() {
                                 <LazyCommunityShopListingCard
                                   key={l.id}
                                   listing={l}
-                                  viewerCoords={communityCardViewerCoords}
-                                  gridMode={effectiveCommunityBrowseView !== "list"}
-                                  compactGrid={effectiveCommunityBrowseView === "compact"}
-                                  mobileOwnerActionsInMenu={
-                                    isMobileViewport && effectiveCommunityBrowseView !== "list"
-                                  }
-                                  disableGallerySwipe
-                                  hideGalleryPageIndicators={false}
-                                  softBrowseChrome={isMobileViewport}
-                                  browseSummaryGrid={isMobileViewport && effectiveCommunityBrowseView === "grid"}
-                                  mobileCardUx={isMobileViewport}
-                                  hideCardDescription={!isMobileViewport}
-                                  mobileEntireCardTappable={isMobileViewport}
+                                  {...communityBrowseListingCardProps({
+                                    browseView: effectiveCommunityBrowseView,
+                                    isMobileViewport,
+                                    viewerCoords: communityCardViewerCoords,
+                                    isOwnListing,
+                                  })}
                                   isFavorite={favoriteIds.has(l.id)}
-                                  showActions={isMobileViewport || isOwnListing}
-                                  hideOwnerManageActions
                                   currentUserId={user?.id || ""}
                                   buyNowDisabled={buyNowBlocked}
                                   buyNowDisabledReason={buyNowBlockedReason}
@@ -13357,26 +13276,25 @@ function App() {
                     </div>
                   ) : (
                     <div
-                      className={`${favoritesGridClass(effectiveFavoriteBrowseView)} w-full min-w-0 ${lmBrowseViewShellClass(
+                      className={`${communityBrowseGridClass(effectiveFavoriteBrowseView, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(
                         effectiveFavoriteBrowseView,
                       )}`}
                     >
-                      {visibleFavoritesListings.map((l) => (
+                      {visibleFavoritesListings.map((l) => {
+                        const isOwn = String(l.sellerId || "") === String(user?.id || "");
+                        return (
                         <LazyCommunityShopListingCard
                           key={l.id}
                           listing={l}
-                          gridMode={effectiveFavoriteBrowseView !== "list"}
-                          compactGrid={effectiveFavoriteBrowseView === "compact"}
-                          mobileOwnerActionsInMenu={false}
-                          disableGallerySwipe={false}
-                          hideGalleryPageIndicators
-                          softBrowseChrome={false}
-                          browseSummaryGrid={isMobileViewport && effectiveFavoriteBrowseView === "grid"}
-                          mobileCardUx={isMobileViewport}
-                          hideCardDescription={false}
-                          mobileEntireCardTappable={false}
+                          {...communityBrowseListingCardProps({
+                            browseView: effectiveFavoriteBrowseView,
+                            isMobileViewport,
+                            viewerCoords: communityCardViewerCoords,
+                            isOwnListing: isOwn,
+                            unseenAttention: !favoriteSeenSet.has(String(l.id)),
+                          })}
                           isFavorite={favoriteIds.has(l.id)}
-                          showActions
+                          showActions={isMobileViewport || isOwn}
                           currentUserId={user?.id || ""}
                           buyNowDisabled={buyNowBlocked}
                           buyNowDisabledReason={buyNowBlockedReason}
@@ -13427,7 +13345,8 @@ function App() {
                             });
                           }}
                         />
-                      ))}
+                      );
+                      })}
                     </div>
                   )}
                   </Suspense>
@@ -14060,7 +13979,9 @@ function App() {
         )}
 
         {activeView === VIEWS.NOTIFICATIONS && (
-          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
+          <section
+            className={`${UI_KIT.viewSection} mx-auto w-full max-w-2xl pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] [-webkit-overflow-scrolling:touch] md:mx-0 md:w-full md:max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:flex md:flex-col space-y-4 md:space-y-6`}
+          >
             <div className="w-full min-w-0 space-y-2">
               <div className="flex min-w-0 items-center justify-between gap-2">
                 <h2 className="min-w-0 flex-1 text-xl font-semibold tracking-tight text-neutral-900 dark:text-slate-100 sm:text-2xl">
@@ -14221,7 +14142,9 @@ function App() {
         )}
 
         {activeView === VIEWS.FAVORITES && (
-          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
+          <section
+            className={`${UI_KIT.viewSection} mx-auto w-full max-w-2xl pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] [-webkit-overflow-scrolling:touch] md:mx-0 md:w-full md:max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:flex md:flex-col space-y-4 md:space-y-6`}
+          >
             {!(favoritesLoading && strictFavoritesList.length === 0) &&
             !favoritesFetchError &&
             strictFavoritesList.length === 0 ? (
@@ -14255,7 +14178,7 @@ function App() {
                 {favoritesLoading && strictFavoritesList.length === 0 ? (
                   isMobileViewport ? (
                     <BrowseGridSkeleton
-                      gridClassName={favoritesGridClass(effectiveFavoriteBrowseView)}
+                      gridClassName={communityBrowseGridClass(effectiveFavoriteBrowseView, isMobileViewport)}
                       variant={
                         effectiveFavoriteBrowseView === "compact"
                           ? "compact"
@@ -14293,7 +14216,7 @@ function App() {
                   fallback={
                     isMobileViewport ? (
                       <BrowseGridSkeleton
-                        gridClassName={favoritesGridClass(effectiveFavoriteBrowseView)}
+                        gridClassName={communityBrowseGridClass(effectiveFavoriteBrowseView, isMobileViewport)}
                         variant={
                           effectiveFavoriteBrowseView === "compact"
                             ? "compact"
@@ -14311,20 +14234,23 @@ function App() {
                   }
                 >
                 <div
-                  className={`${favoritesGridClass(effectiveFavoriteBrowseView)} ${lmBrowseViewShellClass(effectiveFavoriteBrowseView)}`}
+                  className={`${communityBrowseGridClass(effectiveFavoriteBrowseView, isMobileViewport)} ${lmBrowseViewShellClass(effectiveFavoriteBrowseView)}`}
                 >
-                  {strictFavoritesList.map((l) => (
+                  {strictFavoritesList.map((l) => {
+                    const isOwn = String(l.sellerId || "") === String(user?.id || "");
+                    return (
                     <LazyCommunityShopListingCard
                       key={l.id}
                       listing={l}
-                      hideGalleryPageIndicators
-                      unseenAttention={!favoriteSeenSet.has(String(l.id))}
-                      gridMode={effectiveFavoriteBrowseView !== "list"}
-                      compactGrid={effectiveFavoriteBrowseView === "compact"}
-                      browseSummaryGrid={isMobileViewport && effectiveFavoriteBrowseView === "grid"}
-                      mobileCardUx={isMobileViewport}
+                      {...communityBrowseListingCardProps({
+                        browseView: effectiveFavoriteBrowseView,
+                        isMobileViewport,
+                        viewerCoords: communityCardViewerCoords,
+                        isOwnListing: isOwn,
+                        unseenAttention: !favoriteSeenSet.has(String(l.id)),
+                      })}
                       isFavorite={favoriteIds.has(l.id)}
-                      showActions
+                      showActions={isMobileViewport || isOwn}
                       currentUserId={user?.id || ""}
                       buyNowDisabled={buyNowBlocked}
                       buyNowDisabledReason={buyNowBlockedReason}
@@ -14375,7 +14301,8 @@ function App() {
                         });
                       }}
                     />
-                  ))}
+                  );
+                  })}
                 </div>
                 </Suspense>
               </>
@@ -16425,7 +16352,9 @@ function App() {
         )}
 
         {activeView === VIEWS.CART && (
-          <section className={`${UI_KIT.viewSection} space-y-4 md:space-y-6`}>
+          <section
+            className={`${UI_KIT.viewSection} mx-auto w-full max-w-2xl pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] [-webkit-overflow-scrolling:touch] md:mx-0 md:w-full md:max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:flex md:flex-col space-y-4 md:space-y-6`}
+          >
             {cartItems.length === 0 ? (
               <>
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -16541,9 +16470,27 @@ function App() {
                         </label>
                         <p className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-slate-300">{sellerLabel}</p>
                       </div>
+                      <Suspense
+                        fallback={
+                          <BrowseGridSkeleton
+                            gridClassName={communityBrowseGridClass(effectiveCommerceFlowViewBuyer, isMobileViewport)}
+                            variant={
+                              effectiveCommerceFlowViewBuyer === "compact"
+                                ? "compact"
+                                : effectiveCommerceFlowViewBuyer === "list"
+                                  ? "list"
+                                  : "grid"
+                            }
+                            softBrowseChrome={isMobileViewport && effectiveCommerceFlowViewBuyer !== "list"}
+                            count={Math.min(orderedItems.length, 4)}
+                            className="min-h-[6rem] w-full min-w-0"
+                            ariaLabel="Loading cart items"
+                          />
+                        }
+                      >
                       <div
-                        className={`${commerceFlowLineItemsClass(effectiveCommerceFlowViewBuyer, { variant: "cart" })} ${lmBrowseViewShellClass(
-                          effectiveCommerceFlowViewBuyer === "list" ? "list" : "grid",
+                        className={`${communityBrowseGridClass(effectiveCommerceFlowViewBuyer, isMobileViewport)} w-full min-w-0 ${lmBrowseViewShellClass(
+                          effectiveCommerceFlowViewBuyer,
                         )}`}
                       >
                         {orderedItems.map((item) => {
@@ -16552,17 +16499,13 @@ function App() {
                           const isCartLineUnseen = Boolean(lid && !cartSeenSet.has(lid));
                           const isRemoving = cartRemovingListingIds.includes(lineKey);
                           const cfList = effectiveCommerceFlowViewBuyer === "list";
-                          const cfCompact = effectiveCommerceFlowViewBuyer === "compact";
+                          const listing = listingFromCartItem(item);
                           const maxAvailableQty = Math.max(
                             1,
                             Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : Number(item.quantity) || 1,
                           );
                           const openCartItemInspect = () => {
-                            const listingForQuick = {
-                              ...item,
-                              id: item.listingId,
-                              priceCents: item.unitPriceCents,
-                            };
+                            const listingForQuick = listingFromCartItem(item);
                             const stockAvail =
                               Number(item.listingQuantity) >= 0
                                 ? Math.max(0, Number(item.listingQuantity))
@@ -16583,18 +16526,6 @@ function App() {
                               },
                             });
                           };
-                          const thumbClass = cfList
-                            ? "aspect-square w-[7.5rem] shrink-0"
-                            : "lm-product-card-media aspect-square w-full min-h-0";
-                          const cartLineVariantPick = narrowListingOptionValuesForBuyerSelection(item);
-                          const cartModesList = Array.isArray(item.fulfillmentModes) ? item.fulfillmentModes.map(String) : [];
-                          const cartFtResolved =
-                            item.fulfillmentType === "pickup" || item.fulfillmentType === "delivery"
-                              ? item.fulfillmentType
-                              : cartModesList.includes("pickup")
-                                ? "pickup"
-                                : cartModesList[0] || "pickup";
-                          const cartFulfillmentModesForLabel = [cartFtResolved];
                           const cartLineCheckbox = (
                             <input
                               type="checkbox"
@@ -16604,260 +16535,59 @@ function App() {
                               aria-label={`Select ${item.title || "product"}`}
                             />
                           );
-                          /** List layout: checkbox column beside card. Grid (all viewports): checkbox over image. */
-                          const showCartCheckboxBesideCard = cfList;
-                          return (
-                            <div
-                              key={lineKey}
-                              className={`flex min-w-0 items-start ${showCartCheckboxBesideCard ? "gap-2 md:gap-2.5" : ""}`}
-                            >
-                              {showCartCheckboxBesideCard ? (
+                          const cartLine = {
+                            selected: Boolean(cartItemSelection[lineKey]),
+                            onToggleSelect: () => toggleCartListingSelected(lineKey),
+                            checkboxOnImage: !cfList,
+                            quantity: Number(item.quantity) || 1,
+                            maxQuantity: maxAvailableQty,
+                            qtySaving: cartQtySavingId === lineKey,
+                            qtyDisplay:
+                              cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1),
+                            selectAriaLabel: `Select ${item.title || "product"}`,
+                            qtyAriaLabel: `Quantity for ${item.title || "product"}`,
+                            onDecrement: () => {
+                              setCartQtyEdit({ id: null, str: "" });
+                              void setCartLineQuantity(item, (Number(item.quantity) || 1) - 1);
+                            },
+                            onIncrement: () => {
+                              setCartQtyEdit({ id: null, str: "" });
+                              void setCartLineQuantity(item, (Number(item.quantity) || 0) + 1);
+                            },
+                          };
+                          const card = (
+                            <LazyCommunityShopListingCard
+                              listing={listing}
+                              {...communityBrowseListingCardProps({
+                                browseView: effectiveCommerceFlowViewBuyer,
+                                isMobileViewport,
+                                viewerCoords: communityCardViewerCoords,
+                                unseenAttention: isCartLineUnseen,
+                              })}
+                              showActions={false}
+                              cartLine={cartLine}
+                              removing={isRemoving}
+                              isFavorite={favoriteIds.has(lid)}
+                              onInspect={openCartItemInspect}
+                              onToggleFavorite={() => toggleFavorite(lid, !favoriteIds.has(lid))}
+                            />
+                          );
+                          if (cfList) {
+                            return (
+                              <div key={lineKey} className="flex min-w-0 items-start gap-2 md:gap-2.5">
                                 <div className="flex shrink-0 items-center self-center pt-0.5">{cartLineCheckbox}</div>
-                              ) : null}
-                              <div
-                                className={`min-w-0 flex-1 transition-opacity duration-[2000ms] ${
-                                  cfList
-                                    ? "relative lm-card lm-list-card lm-product-card-list flex items-start gap-3 p-3 md:gap-3.5"
-                                    : "relative lm-card lm-grid-card lm-product-card lm-product-card--feed flex h-full min-h-0 flex-col p-0"
-                                } ${
-                                  isCartLineUnseen ? "bg-primary-soft dark:bg-primary/15" : ""
-                                } ${
-                                  isRemoving ? "pointer-events-none opacity-0" : "opacity-100"
-                                }`}
-                              >
-                              {cfList ? (
-                                <>
-                                  {isMobileViewport ? (
-                                    <button
-                                      type="button"
-                                      className={`lm-product-media lm-product-media--soft relative ${thumbClass} shrink-0 overflow-hidden cursor-pointer`}
-                                      aria-label={`View details: ${item.title || "product"}`}
-                                      onClick={openCartItemInspect}
-                                    >
-                                      <ProductListingMedia
-                                        listing={item}
-                                        variant="list"
-                                        className="absolute inset-0 min-h-0"
-                                        loading="lazy"
-                                        sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
-                                      />
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      className={`lm-product-media lm-product-media--soft relative ${thumbClass} shrink-0 overflow-hidden cursor-pointer`}
-                                      aria-label={`View details: ${item.title || "product"}`}
-                                      onClick={openCartItemInspect}
-                                    >
-                                      <ProductListingMedia
-                                        listing={item}
-                                        variant="list"
-                                        className="absolute inset-0 min-h-0"
-                                        loading="lazy"
-                                        sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
-                                      />
-                                    </button>
-                                  )}
-                                  <div className="flex w-full min-w-0 flex-1 flex-col">
-                                <div
-                                  className="w-full min-w-0 flex-1 text-left touch-manipulation"
-                                  role="button"
-                                  tabIndex={0}
-                                  aria-label={`View details: ${item.title || "product"}`}
-                                  onClick={openCartItemInspect}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter" || e.key === " ") {
-                                      e.preventDefault();
-                                      openCartItemInspect();
-                                    }
-                                  }}
-                                >
-                                  <DeferredProductDetailStack
-                                    variant="card"
-                                    title={item.title || "Product"}
-                                    titleEnd={null}
-                                    priceCents={item.unitPriceCents}
-                                    description={item.description}
-                                    hideDescription
-                                    fulfillmentModes={cartFulfillmentModesForLabel}
-                                    orderType={item.orderType}
-                                    processingTime={item.processingTime}
-                                    optionNameA={item.optionNameA}
-                                    optionValuesA={cartLineVariantPick.optionValuesA}
-                                    optionNameB={item.optionNameB}
-                                    optionValuesB={cartLineVariantPick.optionValuesB}
-                                    browseStackMode={cfList ? "listMobile" : null}
-                                    compactListMeta={cfList}
-                                    quantityRow={
-                                      cfList ? (
-                                        <p className="text-[12px] font-medium leading-snug text-text-secondary dark:text-slate-300">
-                                          <span className="font-semibold uppercase tracking-wide text-[10px] text-text-secondary/80 dark:text-slate-400">
-                                            Stock
-                                          </span>
-                                          <span className="mx-1 text-text-secondary/65 dark:text-slate-500">:</span>
-                                          <span className="tabular-nums font-semibold text-text-primary dark:text-slate-100">
-                                            {Number(item.listingQuantity) >= 1 ? Number(item.listingQuantity) : "—"}
-                                          </span>
-                                        </p>
-                                      ) : null
-                                    }
-                                    listingMetaDensity="compact"
-                                  />
-                                </div>
-                                <div className="mt-auto flex items-center gap-2 border-t border-neutral-200/70 pt-2 dark:border-slate-700/60">
-                                    <span className="text-[11px] font-medium text-text-secondary dark:text-slate-400">
-                                      Quantity
-                                    </span>
-                                    <div className="inline-flex items-stretch overflow-hidden rounded-md border border-neutral-200/90 bg-white dark:border-slate-600/80 dark:bg-slate-900">
-                                      <button
-                                        type="button"
-                                        className="inline-flex h-8 w-8 touch-manipulation items-center justify-center border-r border-neutral-200/90 bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600/80 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                        aria-label="Decrease quantity"
-                                        disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          setCartQtyEdit({ id: null, str: "" });
-                                          void setCartLineQuantity(item, (Number(item.quantity) || 1) - 1);
-                                        }}
-                                      >
-                                        −
-                                      </button>
-                                      <span
-                                        className="inline-flex h-8 min-w-[2.5rem] items-center justify-center px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:text-slate-100"
-                                        aria-label={`Quantity for ${item.title || "product"}`}
-                                      >
-                                        {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        className="inline-flex h-8 w-8 touch-manipulation items-center justify-center border-l border-neutral-200/90 bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600/80 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                        aria-label="Increase quantity"
-                                        disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) >= maxAvailableQty}
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          setCartQtyEdit({ id: null, str: "" });
-                                          void setCartLineQuantity(item, (Number(item.quantity) || 0) + 1);
-                                        }}
-                                      >
-                                        +
-                                      </button>
-                                    </div>
-                                  </div>
+                                <div className="min-w-0 flex-1 transition-opacity duration-[2000ms]">{card}</div>
                               </div>
-                                </>
-                              ) : (
-                                <div className="flex min-h-0 w-full flex-1 flex-col px-2 pt-2">
-                                    <div className="relative w-full shrink-0">
-                                      <label
-                                        className="pointer-events-auto absolute left-2 top-2 z-20 inline-flex cursor-pointer items-center justify-center"
-                                        onPointerDown={(e) => e.stopPropagation()}
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        {cartLineCheckbox}
-                                      </label>
-                                      <button
-                                        type="button"
-                                        className={`${thumbClass} lm-product-card--tap`}
-                                        aria-label={`View details: ${item.title || "product"}`}
-                                        onClick={openCartItemInspect}
-                                      >
-                                        <ProductListingMedia
-                                          listing={item}
-                                          variant="grid"
-                                          className="absolute inset-0 min-h-0"
-                                          loading="lazy"
-                                          sizes="(max-width: 768px) 22vw, min(112px, 10vw)"
-                                        />
-                                      </button>
-                                    </div>
-                                    <div className="lm-product-card-body flex min-h-0 flex-1 flex-col">
-                                      <div
-                                        className="w-full min-w-0 flex-1 text-left touch-manipulation"
-                                        role="button"
-                                        tabIndex={0}
-                                        aria-label={`View details: ${item.title || "product"}`}
-                                        onClick={openCartItemInspect}
-                                        onKeyDown={(e) => {
-                                          if (e.key === "Enter" || e.key === " ") {
-                                            e.preventDefault();
-                                            openCartItemInspect();
-                                          }
-                                        }}
-                                      >
-                                        <DeferredProductDetailStack
-                                          variant="card"
-                                          title={item.title || "Product"}
-                                          titleEnd={null}
-                                          priceCents={item.unitPriceCents}
-                                          description={item.description}
-                                          hideDescription
-                                          fulfillmentModes={cartFulfillmentModesForLabel}
-                                          orderType={item.orderType}
-                                          processingTime={item.processingTime}
-                                          optionNameA={item.optionNameA}
-                                          optionValuesA={cartLineVariantPick.optionValuesA}
-                                          optionNameB={item.optionNameB}
-                                          optionValuesB={cartLineVariantPick.optionValuesB}
-                                          browseStackMode={null}
-                                          compactListMeta={false}
-                                          quantityRow={null}
-                                          listingMetaDensity="compact"
-                                        />
-                                      </div>
-                                      <div className="mt-auto flex items-center gap-2 border-t border-neutral-200/70 pt-2 dark:border-slate-700/60">
-                                        <span className="text-[11px] font-medium text-text-secondary dark:text-slate-400">
-                                          Quantity
-                                        </span>
-                                        <div className="inline-flex items-stretch overflow-hidden rounded-md border border-neutral-200/90 bg-white dark:border-slate-600/80 dark:bg-slate-900">
-                                          <button
-                                            type="button"
-                                            className="inline-flex h-8 w-8 touch-manipulation items-center justify-center border-r border-neutral-200/90 bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600/80 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                            aria-label="Decrease quantity"
-                                            disabled={cartQtySavingId === lineKey || (Number(item.quantity) || 0) <= 0}
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-                                              setCartQtyEdit({ id: null, str: "" });
-                                              void setCartLineQuantity(item, (Number(item.quantity) || 1) - 1);
-                                            }}
-                                          >
-                                            −
-                                          </button>
-                                          <span
-                                            className="inline-flex h-8 min-w-[2.5rem] items-center justify-center px-2 text-center text-[13px] font-semibold tabular-nums text-text-primary dark:text-slate-100"
-                                            aria-label={`Quantity for ${item.title || "product"}`}
-                                          >
-                                            {cartQtyEdit.id === lineKey ? cartQtyEdit.str || "0" : String(Number(item.quantity) || 1)}
-                                          </span>
-                                          <button
-                                            type="button"
-                                            className="inline-flex h-8 w-8 touch-manipulation items-center justify-center border-l border-neutral-200/90 bg-transparent text-base font-semibold text-primary transition duration-200 ease-in-out hover:bg-primary-soft/60 focus:outline-none focus-visible:ring-0 active:bg-primary-soft/70 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600/80 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:active:bg-slate-800/75"
-                                            aria-label="Increase quantity"
-                                            disabled={
-                                              cartQtySavingId === lineKey ||
-                                              (Number(item.quantity) || 0) >= maxAvailableQty
-                                            }
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-                                              setCartQtyEdit({ id: null, str: "" });
-                                              void setCartLineQuantity(item, (Number(item.quantity) || 0) + 1);
-                                            }}
-                                          >
-                                            +
-                                          </button>
-                                        </div>
-                                      </div>
-                                    </div>
-                                </div>
-                              )}
-                            </div>
+                            );
+                          }
+                          return (
+                            <div key={lineKey} className="min-w-0 transition-opacity duration-[2000ms]">
+                              {card}
                             </div>
                           );
                         })}
                       </div>
+                      </Suspense>
                     </div>
                   );
                 })}
@@ -16878,7 +16608,7 @@ function App() {
           >
           <section
             id="activity-hub-panel"
-            className={`${activityTabChrome.activityViewSection} ${
+            className={`${activityTabChrome.activityViewSection} mx-auto w-full max-w-2xl pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] [-webkit-overflow-scrolling:touch] md:mx-0 md:w-full md:max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] ${
               !isMobileViewport &&
               token &&
               (activityCourier || (activityCommerceHubOpen && !ordersFetchError))
@@ -18573,7 +18303,7 @@ function App() {
         )}
 
         {activeView === VIEWS.PROFILE && (
-          <section className="w-full min-w-0 max-w-none space-y-6 md:space-y-6 lg:space-y-8">
+          <section className="min-w-0 mx-auto w-full max-w-2xl pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] [-webkit-overflow-scrolling:touch] md:mx-0 md:w-full md:max-w-none md:min-h-[calc(100dvh-7.75rem-env(safe-area-inset-bottom,0px))] md:flex md:flex-col space-y-6 md:space-y-6 lg:space-y-8">
             <div className="grid w-full min-w-0 max-w-none gap-6 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start lg:gap-8">
               <div className="min-w-0 space-y-6 bg-transparent p-0 md:space-y-6 lg:rounded-2xl lg:border lg:border-neutral-200/60 lg:bg-white lg:p-5 lg:shadow-sm dark:lg:border-slate-600 dark:lg:bg-slate-900/80">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
